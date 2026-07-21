@@ -1,0 +1,19 @@
+src/claude-wrapper.ts
+  s_997092c4e9daa2::t_5f619d796f945a 25,28,134-145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "22a5b08f50fb6182aeffbb24ef49f419dd6e2ca7",
+  "prompts": {},
+  "sessions": {
+    "s_997092c4e9daa2": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_07fccfa1fffesDN0QCTXoEHvR5",
+        "model": "k3"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}
