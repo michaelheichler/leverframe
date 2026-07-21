@@ -1,0 +1,30 @@
+node_modules/
+docs/plans/
+*.js.map
+*.tgz
+.env
+.env.*
+.DS_Store
+*.log
+npm-debug.log*
+coverage/
+*.tsbuildinfo
+spike/
+vertex-models.json
+
+# IDE / Editor folders
+.vscode/
+.idea/
+.cursor/
+
+# Local agent planning / logs
+.claude/
+.gemini/
+.planning/
+ANTIGRAVITY-DEBUG-SESSION.md
+
+# Personal model alias config for the custom-model patcher (edit the example)
+scripts/patch-custom-models/model-config.json
+
+# Local build output
+dist/

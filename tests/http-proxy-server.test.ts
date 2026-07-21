@@ -1,0 +1,1029 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import * as https from 'node:https';
+import * as http from 'node:http';
+import * as net from 'node:net';
+import * as tls from 'node:tls';
+import { once } from 'node:events';
+import { gzipSync } from 'node:zlib';
+import { ensureHttpProxyCaBundle, ensureHttpProxyCertificates } from '../src/http-proxy/ca.js';
+import { shouldInterceptConnect, startHttpProxy } from '../src/http-proxy/server.js';
+
+const testHome = mkdtempSync(join(tmpdir(), 'leverframe-http-proxy-'));
+const previousRelayHome = process.env['LEVERFRAME_HOME'];
+
+async function listen(server: http.Server | https.Server): Promise<number> {
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('test server did not bind');
+  return address.port;
+}
+
+async function connectMitm(proxyPort: number, ca: string, proxyToken?: string): Promise<tls.TLSSocket> {
+  const socket = net.connect(proxyPort, '127.0.0.1');
+  await once(socket, 'connect');
+  const authHeader = proxyToken
+    ? `Proxy-Authorization: Basic ${Buffer.from(`leverframe:${proxyToken}`).toString('base64')}\r\n`
+    : '';
+  socket.write(`CONNECT api.anthropic.com:443 HTTP/1.1\r\nHost: api.anthropic.com:443\r\n${authHeader}\r\n`);
+
+  let response = Buffer.alloc(0);
+  while (!response.includes(Buffer.from('\r\n\r\n'))) {
+    const [chunk] = await once(socket, 'data') as [Buffer];
+    response = Buffer.concat([response, chunk]);
+  }
+  const boundary = response.indexOf('\r\n\r\n') + 4;
+  expect(response.subarray(0, boundary).toString()).toContain('200 Connection Established');
+  const remainder = response.subarray(boundary);
+  if (remainder.length > 0) socket.unshift(remainder);
+
+  const secure = tls.connect({ socket, servername: 'api.anthropic.com', ca });
+  await once(secure, 'secureConnect');
+  return secure;
+}
+
+function activeProxySockets(proxyPort: number): net.Socket[] {
+  const getActiveHandles = (process as typeof process & {
+    _getActiveHandles(): unknown[];
+  })._getActiveHandles;
+  return getActiveHandles.call(process).filter((handle): handle is net.Socket =>
+    handle instanceof net.Socket
+    && handle.localPort === proxyPort
+    && !handle.destroyed);
+}
+
+beforeAll(() => {
+  process.env['LEVERFRAME_HOME'] = testHome;
+});
+
+afterAll(() => {
+  if (previousRelayHome === undefined) delete process.env['LEVERFRAME_HOME'];
+  else process.env['LEVERFRAME_HOME'] = previousRelayHome;
+  rmSync(testHome, { recursive: true, force: true });
+});
+
+describe('selective HTTP proxy', () => {
+  it('rejects an occupied port without leaking the adapter, server, or process listeners', async () => {
+    const occupier = net.createServer();
+    const occupiedPort = await listen(occupier);
+    const activeServers = (): net.Server[] => {
+      const getActiveHandles = (process as typeof process & { _getActiveHandles(): unknown[] })._getActiveHandles;
+      return getActiveHandles.call(process).filter((handle): handle is net.Server =>
+        handle instanceof net.Server && handle.listening);
+    };
+    const beforeServers = activeServers().length;
+    const beforeRejections = process.listenerCount('unhandledRejection');
+    const beforeExceptions = process.listenerCount('uncaughtException');
+
+    try {
+      await expect(startHttpProxy({
+        port: occupiedPort,
+        routes: [{
+          aliasId: 'leverframe:test:bind-failure',
+          realModelId: 'bind-failure',
+          displayName: 'Bind Failure',
+          upstreamUrl: '',
+          apiKey: '',
+          modelFormat: 'openai',
+          npm: '@ai-sdk/openai-compatible',
+          providerId: 'test',
+        }],
+      })).rejects.toMatchObject({ code: 'EADDRINUSE' });
+
+      expect(activeServers()).toHaveLength(beforeServers);
+      expect(process.listenerCount('unhandledRejection')).toBe(beforeRejections);
+      expect(process.listenerCount('uncaughtException')).toBe(beforeExceptions);
+    } finally {
+      await new Promise<void>(resolve => occupier.close(() => resolve()));
+    }
+  });
+
+  it('preserves an existing custom CA in the child trust bundle', () => {
+    const certificates = ensureHttpProxyCertificates();
+    const extraPath = join(testHome, 'corporate-ca.pem');
+    writeFileSync(extraPath, '-----BEGIN CERTIFICATE-----\ncorporate-test\n-----END CERTIFICATE-----\n');
+    const combinedPath = ensureHttpProxyCaBundle(certificates.caCertPath, extraPath);
+    const combined = readFileSync(combinedPath, 'utf8');
+    expect(combinedPath).not.toBe(certificates.caCertPath);
+    expect(combined).toContain(certificates.caCert.trim());
+    expect(combined).toContain('corporate-test');
+  });
+
+  it('intercepts only api.anthropic.com on port 443', () => {
+    expect(shouldInterceptConnect('api.anthropic.com:443')).toBe(true);
+    expect(shouldInterceptConnect('API.ANTHROPIC.COM.:443')).toBe(true);
+    expect(shouldInterceptConnect('api.anthropic.com:8443')).toBe(false);
+    expect(shouldInterceptConnect('statsig.anthropic.com:443')).toBe(false);
+    expect(shouldInterceptConnect('example.com:443')).toBe(false);
+  });
+
+  it('releases both sides of a passthrough CONNECT tunnel when upstream closes', async () => {
+    const upstream = net.createServer(socket => socket.end());
+    const upstreamPort = await listen(upstream);
+    const proxy = await startHttpProxy({ routes: [] });
+    const clients: net.Socket[] = [];
+    const authHeader = `Proxy-Authorization: Basic ${Buffer.from(`leverframe:${proxy.token}`).toString('base64')}\r\n`;
+
+    try {
+      for (let index = 0; index < 25; index += 1) {
+        const client = net.connect({
+          host: '127.0.0.1',
+          port: proxy.port,
+          allowHalfOpen: true,
+        });
+        clients.push(client);
+        await once(client, 'connect');
+        client.resume();
+        client.write(`CONNECT 127.0.0.1:${upstreamPort} HTTP/1.1\r\nHost: 127.0.0.1:${upstreamPort}\r\n${authHeader}\r\n`);
+        await once(client, 'end');
+      }
+      await new Promise(resolve => setImmediate(resolve));
+
+      expect(activeProxySockets(proxy.port)).toHaveLength(0);
+    } finally {
+      for (const client of clients) client.destroy();
+      await proxy.close();
+      await new Promise<void>(resolve => upstream.close(() => resolve()));
+    }
+  });
+
+  it('forwards first-party request bytes and auth unchanged', async () => {
+    const certificates = ensureHttpProxyCertificates();
+    const inferenceLogPath = join(testHome, 'anthropic-inference.jsonl');
+    const webSocketDiagnosticsLogPath = join(testHome, 'websocket-diagnostics.jsonl');
+    const previousRequestPreview = process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'];
+    process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'] = '1';
+    let receivedBody = Buffer.alloc(0);
+    let receivedAuth: string | undefined;
+    let receivedPath: string | undefined;
+    const origin = https.createServer({
+      key: certificates.serverKey,
+      cert: certificates.serverCert,
+    }, async (req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      await once(req, 'end');
+      receivedBody = Buffer.concat(chunks);
+      receivedAuth = req.headers.authorization;
+      receivedPath = req.url;
+      const sse = [
+        'event: message_start',
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":321,"output_tokens":1,"cache_creation_input_tokens":12,"cache_read_input_tokens":210}}}',
+        '',
+        'event: content_block_delta',
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"private response text"}}',
+        '',
+        'event: message_delta',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":19,"output_tokens":8,"cache_creation_input_tokens":100,"cache_read_input_tokens":220}}',
+        '',
+        '',
+      ].join('\n');
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Content-Encoding': 'gzip',
+      });
+      res.end(gzipSync(sse));
+    });
+    const originPort = await listen(origin);
+    const proxy = await startHttpProxy({
+      routes: [],
+      inferenceLogPath,
+      webSocketDiagnosticsLogPath,
+      anthropicOrigin: `https://127.0.0.1:${originPort}`,
+      anthropicRejectUnauthorized: false,
+    });
+
+    try {
+      const body = Buffer.from('{\n  "model" : "claude-sonnet-4-6",\n  "output_config":{"effort":"high"},\n  "messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","data":"private-image-data"}},{"type":"text","text":"identify this Sonnet request"}]}],\n  "stream":true\n}\n');
+      const secure = await connectMitm(proxy.port, certificates.caCert, proxy.token);
+      let response = '';
+      secure.on('data', chunk => { response += chunk.toString(); });
+      secure.write([
+        'POST /v1/messages?beta=true HTTP/1.1',
+        'Host: api.anthropic.com',
+        'Authorization: Bearer subscription-oauth-token',
+        'Content-Type: application/json',
+        `Content-Length: ${body.length}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n') + body.toString());
+      await once(secure, 'close');
+
+      expect(response).toContain('200 OK');
+      expect(receivedPath).toBe('/v1/messages?beta=true');
+      expect(receivedAuth).toBe('Bearer subscription-oauth-token');
+      expect(receivedBody.equals(body)).toBe(true);
+      const logDeadline = Date.now() + 5000;
+      let inferenceLog = readFileSync(inferenceLogPath, 'utf8');
+      let entries = inferenceLog.trim().split('\n').map(line => JSON.parse(line));
+      while (!entries.some(entry => entry.event === 'response_completed') && Date.now() < logDeadline) {
+        await new Promise(resolve => setTimeout(resolve, 20));
+        inferenceLog = readFileSync(inferenceLogPath, 'utf8');
+        entries = inferenceLog.trim().split('\n').map(line => JSON.parse(line));
+      }
+      expect(entries[0]).toMatchObject({
+        modelId: 'claude-sonnet-4-6',
+        effort: 'high',
+        provider: 'anthropic',
+        route: 'passthrough',
+        requestPreview: 'user: identify this Sonnet request',
+      });
+      const responseStarted = entries.find(entry => entry.event === 'response_started');
+      const messageStartUsage = entries.find(entry => entry.event === 'response_usage' && entry.usageStage === 'message_start');
+      const messageDeltaUsage = entries.find(entry => entry.event === 'response_usage' && entry.usageStage === 'message_delta');
+      const responseCompleted = entries.find(entry => entry.event === 'response_completed');
+      expect(responseStarted).toMatchObject({
+        requestId: entries[0].requestId,
+        statusCode: 200,
+        route: 'passthrough',
+      });
+      expect(messageStartUsage).toMatchObject({
+        event: 'response_usage',
+        requestId: entries[0].requestId,
+        modelId: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        route: 'passthrough',
+        usageStage: 'message_start',
+        inputTokens: 321,
+        outputTokens: 1,
+        cacheCreationInputTokens: 12,
+        cacheReadInputTokens: 210,
+      });
+      expect(messageDeltaUsage).toMatchObject({
+        event: 'response_usage',
+        requestId: entries[0].requestId,
+        modelId: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        route: 'passthrough',
+        usageStage: 'message_delta',
+        inputTokens: 19,
+        outputTokens: 8,
+        cacheCreationInputTokens: 100,
+        cacheReadInputTokens: 220,
+      });
+      expect(responseCompleted).toMatchObject({
+        requestId: entries[0].requestId,
+        statusCode: 200,
+        route: 'passthrough',
+      });
+      expect(inferenceLog).not.toContain('private-image-data');
+      expect(inferenceLog).not.toContain('private response text');
+      const diagnosticRaw = readFileSync(webSocketDiagnosticsLogPath, 'utf8');
+      const diagnostic = JSON.parse(diagnosticRaw.trim());
+      expect(diagnostic).toMatchObject({
+        event: 'request_diagnostic',
+        requestId: entries[0].requestId,
+        headers: { authorization: '[REDACTED]' },
+        body: {
+          parameters: { model: 'claude-sonnet-4-6', stream: true },
+          messages: { count: 1 },
+        },
+      });
+      expect(diagnosticRaw).not.toContain('subscription-oauth-token');
+      expect(diagnosticRaw).not.toContain('private-image-data');
+      expect(diagnosticRaw).not.toContain('identify this Sonnet request');
+    } finally {
+      if (previousRequestPreview === undefined) delete process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'];
+      else process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'] = previousRequestPreview;
+      await proxy.close();
+      await new Promise<void>(resolve => origin.close(() => resolve()));
+    }
+  }, 20_000);
+
+  it('logs Haiku passthrough status, error body, and system fallback preview', async () => {
+    const certificates = ensureHttpProxyCertificates();
+    const inferenceLogPath = join(testHome, 'haiku-error-inference.jsonl');
+    const previousRequestPreview = process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'];
+    process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'] = '1';
+    const origin = https.createServer({
+      key: certificates.serverKey,
+      cert: certificates.serverCert,
+    }, async (req, res) => {
+      const ended = once(req, 'end');
+      req.resume();
+      await ended;
+      res.writeHead(529, { 'Content-Type': 'application/json', 'Connection': 'close' });
+      res.end(JSON.stringify({
+        type: 'error',
+        error: { type: 'overloaded_error', message: 'Haiku overloaded for Bearer sk-secret123456789' },
+      }));
+    });
+    const originPort = await listen(origin);
+    const proxy = await startHttpProxy({
+      routes: [],
+      inferenceLogPath,
+      anthropicOrigin: `https://127.0.0.1:${originPort}`,
+      anthropicRejectUnauthorized: false,
+    });
+
+    try {
+      const body = JSON.stringify({
+        model: 'claude-haiku-4-5',
+        system: [{ type: 'text', text: 'Generate a concise title for this Claude Code session.' }],
+        messages: [{ role: 'user', content: [{ type: 'tool_result', content: 'private tool output' }] }],
+        stream: true,
+      });
+      const secure = await connectMitm(proxy.port, certificates.caCert, proxy.token);
+      let response = '';
+      secure.on('data', chunk => { response += chunk.toString(); });
+      secure.write([
+        'POST /v1/messages HTTP/1.1',
+        'Host: api.anthropic.com',
+        'Authorization: Bearer subscription-oauth-token',
+        'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(body)}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n') + body);
+      await once(secure, 'close');
+
+      expect(response).toContain('529');
+      const entries = readFileSync(inferenceLogPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      expect(entries[0]).toMatchObject({
+        modelId: 'claude-haiku-4-5',
+        provider: 'anthropic',
+        route: 'passthrough',
+        requestPreview: 'user: [tool_result] | system: Generate a concise title for this Claude Code session.',
+      });
+      const upstreamError = entries.find(entry => entry.event === 'upstream_error');
+      expect(upstreamError).toMatchObject({
+        event: 'upstream_error',
+        modelId: 'claude-haiku-4-5',
+        provider: 'anthropic',
+        route: 'passthrough',
+        statusCode: 529,
+      });
+      expect(upstreamError.errorContent).toContain('Haiku overloaded');
+      expect(upstreamError.errorContent).toContain('[REDACTED]');
+      expect(entries).toContainEqual(expect.objectContaining({
+        event: 'response_completed',
+        requestId: entries[0].requestId,
+        statusCode: 529,
+      }));
+      expect(readFileSync(inferenceLogPath, 'utf8')).not.toContain('private tool output');
+    } finally {
+      if (previousRequestPreview === undefined) delete process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'];
+      else process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'] = previousRequestPreview;
+      await proxy.close();
+      await new Promise<void>(resolve => origin.close(() => resolve()));
+    }
+  }, 20_000);
+
+  it('logs a partial upstream error body when the origin resets before end', async () => {
+    const certificates = ensureHttpProxyCertificates();
+    const inferenceLogPath = join(testHome, 'partial-error-inference.jsonl');
+    const previousRequestPreview = process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'];
+    process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'] = '1';
+    const origin = https.createServer({
+      key: certificates.serverKey,
+      cert: certificates.serverCert,
+    }, async (req, res) => {
+      const ended = once(req, 'end');
+      req.resume();
+      await ended;
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.flushHeaders();
+      res.write('{"error":{"message":"partial outage');
+      setImmediate(() => res.destroy(new Error('origin reset')));
+    });
+    const originPort = await listen(origin);
+    const proxy = await startHttpProxy({
+      routes: [],
+      inferenceLogPath,
+      anthropicOrigin: `https://127.0.0.1:${originPort}`,
+      anthropicRejectUnauthorized: false,
+    });
+
+    try {
+      const body = JSON.stringify({
+        model: 'claude-haiku-4-5',
+        messages: [{ role: 'user', content: 'test partial error logging' }],
+        stream: true,
+      });
+      const secure = await connectMitm(proxy.port, certificates.caCert, proxy.token);
+      secure.resume();
+      secure.write([
+        'POST /v1/messages HTTP/1.1',
+        'Host: api.anthropic.com',
+        'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(body)}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n') + body);
+      await new Promise<void>(resolve => {
+        secure.once('close', () => resolve());
+        secure.once('error', () => resolve());
+      });
+
+      const entries = readFileSync(inferenceLogPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const upstreamError = entries.find(entry => entry.event === 'upstream_error');
+      expect(upstreamError).toMatchObject({
+        event: 'upstream_error',
+        modelId: 'claude-haiku-4-5',
+        statusCode: 503,
+      });
+      expect(upstreamError.errorContent).toContain('partial outage');
+      expect(upstreamError.errorContent).toContain('stream error');
+      expect(entries).toContainEqual(expect.objectContaining({
+        event: 'response_failed',
+        requestId: entries[0].requestId,
+        statusCode: 503,
+      }));
+    } finally {
+      if (previousRequestPreview === undefined) delete process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'];
+      else process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'] = previousRequestPreview;
+      await proxy.close();
+      await new Promise<void>(resolve => origin.close(() => resolve()));
+    }
+  }, 20_000);
+
+  it('logs an Anthropic connection refusal as an upstream response failure', async () => {
+    const certificates = ensureHttpProxyCertificates();
+    const inferenceLogPath = join(testHome, 'connection-refused-inference.jsonl');
+    const unavailableOrigin = https.createServer({
+      key: certificates.serverKey,
+      cert: certificates.serverCert,
+    });
+    const unavailablePort = await listen(unavailableOrigin);
+    await new Promise<void>(resolve => unavailableOrigin.close(() => resolve()));
+    const proxy = await startHttpProxy({
+      routes: [],
+      inferenceLogPath,
+      anthropicOrigin: `https://127.0.0.1:${unavailablePort}`,
+      anthropicRejectUnauthorized: false,
+    });
+
+    try {
+      const body = JSON.stringify({
+        model: 'claude-opus-4-8',
+        messages: [{ role: 'user', content: 'test refused origin' }],
+        stream: true,
+      });
+      const secure = await connectMitm(proxy.port, certificates.caCert, proxy.token);
+      let response = '';
+      secure.on('data', chunk => { response += chunk.toString(); });
+      secure.write([
+        'POST /v1/messages HTTP/1.1',
+        'Host: api.anthropic.com',
+        'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(body)}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n') + body);
+      await once(secure, 'close');
+
+      expect(response).toContain('502');
+      const entries = readFileSync(inferenceLogPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const requestEntry = entries.find(entry => !entry.event);
+      expect(entries).toContainEqual(expect.objectContaining({
+        event: 'response_failed',
+        requestId: requestEntry.requestId,
+        route: 'passthrough',
+        statusCode: 502,
+        phase: 'waiting_for_headers',
+        errorType: 'ECONNREFUSED',
+      }));
+      expect(entries).toContainEqual(expect.objectContaining({
+        event: 'upstream_error',
+        requestId: requestEntry.requestId,
+        statusCode: 502,
+      }));
+    } finally {
+      await proxy.close();
+    }
+  }, 20_000);
+
+  it('routes exact relay models and short aliases while stripping Anthropic auth from the adapter hop', async () => {
+    const certificates = ensureHttpProxyCertificates();
+    const inferenceLogPath = join(testHome, 'relay-inference.jsonl');
+    let adapterAuth: string | undefined;
+    let adapterApiKey: string | undefined;
+    let adapterClaudeSessionId: string | undefined;
+    let adapterBody = '';
+    let anthropicRequests = 0;
+    let fallbackAuth: string | undefined;
+
+    const origin = https.createServer({
+      key: certificates.serverKey,
+      cert: certificates.serverCert,
+    }, async (req, res) => {
+      anthropicRequests += 1;
+      fallbackAuth = req.headers.authorization;
+      const ended = once(req, 'end');
+      req.resume();
+      await ended;
+      res.setHeader('Connection', 'close');
+      res.end('{"unexpected":true}');
+    });
+    const originPort = await listen(origin);
+
+    const adapterServer = http.createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      await once(req, 'end');
+      adapterAuth = req.headers.authorization;
+      adapterApiKey = req.headers['x-api-key'] as string | undefined;
+      adapterClaudeSessionId = req.headers['x-claude-code-session-id'] as string | undefined;
+      adapterBody = Buffer.concat(chunks).toString();
+      await new Promise(resolve => setTimeout(resolve, 35));
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Connection': 'close' });
+      res.end([
+        'event: message_start',
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":0,"output_tokens":0}}}',
+        '',
+        'event: message_stop',
+        'data: {"type":"message_stop"}',
+        '',
+        '',
+      ].join('\n'));
+    });
+    const adapterPort = await listen(adapterServer);
+    const proxy = await startHttpProxy({
+      routes: [{
+        aliasId: 'leverframe:groq:llama-3.3-70b',
+        realModelId: 'llama-3.3-70b-versatile',
+        displayName: 'Llama 3.3 70B (Groq)',
+        upstreamUrl: '',
+        apiKey: 'provider-key',
+        modelFormat: 'openai',
+        npm: '@ai-sdk/groq',
+        providerId: 'groq',
+      }],
+      modelAliases: [{
+        name: 'llama',
+        routeId: 'leverframe:groq:llama-3.3-70b',
+        displayName: 'Llama 3.3 70B (Groq)',
+      }],
+      adapterHandle: {
+        port: adapterPort,
+        token: 'adapter-local-token',
+        close: () => {
+          adapterServer.closeAllConnections();
+          adapterServer.close();
+        },
+      },
+      anthropicOrigin: `https://127.0.0.1:${originPort}`,
+      anthropicRejectUnauthorized: false,
+      inferenceLogPath,
+      responseProgressIntervalMs: 10,
+    });
+
+    try {
+      const body = JSON.stringify({
+        model: 'leverframe:groq:llama-3.3-70b',
+        output_config: { effort: 'medium' },
+        messages: [],
+        stream: true,
+      });
+      const secure = await connectMitm(proxy.port, certificates.caCert, proxy.token);
+      let response = '';
+      secure.on('data', chunk => { response += chunk.toString(); });
+      secure.write([
+        'POST /v1/messages HTTP/1.1',
+        'Host: api.anthropic.com',
+        'Authorization: Bearer subscription-oauth-token',
+        'X-Claude-Code-Session-Id: 11111111-1111-4111-8111-111111111111',
+        'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(body)}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n') + body);
+      await once(secure, 'close');
+
+      expect(response).toContain('200 OK');
+      expect(anthropicRequests).toBe(0);
+      expect(adapterAuth).toBeUndefined();
+      expect(adapterApiKey).toBe('adapter-local-token');
+      expect(adapterClaudeSessionId).toBe('11111111-1111-4111-8111-111111111111');
+      expect(adapterBody).toBe(body);
+      const relayEntries = readFileSync(inferenceLogPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const requestEntry = relayEntries.find(entry => !entry.event);
+      expect(requestEntry).toMatchObject({
+        modelId: 'leverframe:groq:llama-3.3-70b',
+        effort: 'medium',
+        provider: 'groq',
+        route: 'translated',
+        stream: true,
+      });
+      expect(requestEntry.requestId).toEqual(expect.any(String));
+      expect(relayEntries).toContainEqual(expect.objectContaining({
+        event: 'response_progress',
+        requestId: requestEntry.requestId,
+        phase: 'waiting_for_headers',
+        bytes: 0,
+        chunks: 0,
+      }));
+      expect(relayEntries).toContainEqual(expect.objectContaining({
+        event: 'response_started',
+        requestId: requestEntry.requestId,
+        statusCode: 200,
+      }));
+      expect(relayEntries).toContainEqual(expect.objectContaining({
+        event: 'response_usage',
+        requestId: requestEntry.requestId,
+        modelId: 'leverframe:groq:llama-3.3-70b',
+        provider: 'groq',
+        route: 'translated',
+        usageStage: 'message_start',
+        inputTokens: 0,
+        outputTokens: 0,
+      }));
+      expect(relayEntries).toContainEqual(expect.objectContaining({
+        event: 'response_completed',
+        requestId: requestEntry.requestId,
+        statusCode: 200,
+      }));
+
+      const aliasBody = JSON.stringify({ model: 'llama', messages: [], stream: true });
+      const aliasSocket = await connectMitm(proxy.port, certificates.caCert, proxy.token);
+      aliasSocket.resume();
+      aliasSocket.write([
+        'POST /v1/messages HTTP/1.1',
+        'Host: api.anthropic.com',
+        'Authorization: Bearer subscription-oauth-token',
+        'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(aliasBody)}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n') + aliasBody);
+      await once(aliasSocket, 'close');
+
+      expect(anthropicRequests).toBe(0);
+      expect(JSON.parse(adapterBody)).toMatchObject({
+        model: 'llama',
+        messages: [],
+      });
+      const aliasEntries = readFileSync(inferenceLogPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      expect(aliasEntries.find(entry => !entry.event && entry.modelId === 'llama')).toMatchObject({
+        provider: 'groq',
+        route: 'translated',
+      });
+
+      const typoBody = JSON.stringify({ model: 'leverframe:groq:typo', messages: [] });
+      const typoSocket = await connectMitm(proxy.port, certificates.caCert, proxy.token);
+      typoSocket.resume();
+      typoSocket.write([
+        'POST /v1/messages HTTP/1.1',
+        'Host: api.anthropic.com',
+        'Authorization: Bearer subscription-oauth-token',
+        'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(typoBody)}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n') + typoBody);
+      await once(typoSocket, 'close');
+      expect(anthropicRequests).toBe(1);
+      expect(fallbackAuth).toBe('Bearer subscription-oauth-token');
+      const inferenceEntries = readFileSync(inferenceLogPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      expect(inferenceEntries.find(entry => !entry.event && entry.modelId === 'leverframe:groq:typo')).toMatchObject({
+        modelId: 'leverframe:groq:typo',
+        provider: 'anthropic',
+        route: 'passthrough',
+      });
+    } finally {
+      await proxy.close();
+      await new Promise<void>(resolve => origin.close(() => resolve()));
+    }
+  }, 20_000);
+
+  it('routes count_tokens to the adapter without recording it as inference', async () => {
+    const certificates = ensureHttpProxyCertificates();
+    const inferenceLogPath = join(testHome, 'count-tokens-inference.jsonl');
+    let adapterPath: string | undefined;
+    let anthropicRequests = 0;
+
+    const origin = https.createServer({
+      key: certificates.serverKey,
+      cert: certificates.serverCert,
+    }, (req, res) => {
+      anthropicRequests += 1;
+      req.resume();
+      res.end('{"unexpected":true}');
+    });
+    const originPort = await listen(origin);
+    const adapterServer = http.createServer(async (req, res) => {
+      adapterPath = req.url;
+      const ended = once(req, 'end');
+      req.resume();
+      await ended;
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Connection': 'close' });
+      res.end('{"input_tokens":42}');
+    });
+    const adapterPort = await listen(adapterServer);
+    const route = {
+      aliasId: 'leverframe:test:translated-model',
+      realModelId: 'translated-model',
+      displayName: 'Translated Model',
+      upstreamUrl: '',
+      apiKey: 'provider-key',
+      modelFormat: 'openai' as const,
+      npm: '@ai-sdk/openai-compatible',
+      providerId: 'test-provider',
+    };
+    const proxy = await startHttpProxy({
+      routes: [route],
+      adapterHandle: {
+        port: adapterPort,
+        token: 'adapter-local-token',
+        close: () => {
+          adapterServer.closeAllConnections();
+          adapterServer.close();
+        },
+      },
+      anthropicOrigin: `https://127.0.0.1:${originPort}`,
+      anthropicRejectUnauthorized: false,
+      inferenceLogPath,
+    });
+
+    try {
+      const body = JSON.stringify({
+        model: route.aliasId,
+        messages: [{ role: 'user', content: 'count this' }],
+      });
+      const secure = await connectMitm(proxy.port, certificates.caCert, proxy.token);
+      let response = '';
+      secure.on('data', chunk => { response += chunk.toString(); });
+      secure.write([
+        'POST /v1/messages/count_tokens?beta=true HTTP/1.1',
+        'Host: api.anthropic.com',
+        'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(body)}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n') + body);
+      await once(secure, 'close');
+
+      expect(response).toContain('200 OK');
+      expect(response).toContain('{"input_tokens":42}');
+      expect(adapterPath).toBe('/v1/messages/count_tokens?beta=true');
+      expect(anthropicRequests).toBe(0);
+      expect(existsSync(inferenceLogPath)).toBe(false);
+    } finally {
+      await proxy.close();
+      await new Promise<void>(resolve => origin.close(() => resolve()));
+    }
+  }, 20_000);
+
+  it('closes the adapter request and logs a terminal client disconnect', async () => {
+    const certificates = ensureHttpProxyCertificates();
+    const inferenceLogPath = join(testHome, 'client-disconnect-inference.jsonl');
+    let adapterReceivedResolve!: () => void;
+    const adapterReceived = new Promise<void>(resolve => { adapterReceivedResolve = resolve; });
+    let adapterClosedResolve!: () => void;
+    const adapterClosed = new Promise<void>(resolve => { adapterClosedResolve = resolve; });
+    const adapterServer = http.createServer((req) => {
+      req.resume();
+      req.once('end', adapterReceivedResolve);
+      req.socket.once('close', adapterClosedResolve);
+    });
+    const adapterPort = await listen(adapterServer);
+    const route = {
+      aliasId: 'leverframe:test:translated-model',
+      realModelId: 'translated-model',
+      displayName: 'Translated Model',
+      upstreamUrl: '',
+      apiKey: 'provider-key',
+      modelFormat: 'openai' as const,
+      npm: '@ai-sdk/openai-compatible',
+      providerId: 'test-provider',
+    };
+    const proxy = await startHttpProxy({
+      routes: [route],
+      adapterHandle: {
+        port: adapterPort,
+        token: 'adapter-local-token',
+        close: () => {
+          adapterServer.closeAllConnections();
+          adapterServer.close();
+        },
+      },
+      inferenceLogPath,
+    });
+
+    try {
+      const body = JSON.stringify({
+        model: route.aliasId,
+        messages: [{ role: 'user', content: 'wait forever' }],
+        stream: false,
+      });
+      const secure = await connectMitm(proxy.port, certificates.caCert, proxy.token);
+      secure.on('error', () => {});
+      secure.write([
+        'POST /v1/messages HTTP/1.1',
+        'Host: api.anthropic.com',
+        'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(body)}`,
+        '',
+        '',
+      ].join('\r\n') + body);
+      await adapterReceived;
+      secure.destroy();
+      await adapterClosed;
+      await new Promise(resolve => setImmediate(resolve));
+
+      const entries = readFileSync(inferenceLogPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const requestEntry = entries.find(entry => !entry.event);
+      expect(entries).toContainEqual(expect.objectContaining({
+        event: 'response_client_disconnected',
+        requestId: requestEntry.requestId,
+        phase: 'waiting_for_headers',
+      }));
+      expect(entries.some(entry => entry.event === 'response_completed')).toBe(false);
+      expect(entries.some(entry => entry.event === 'response_failed')).toBe(false);
+    } finally {
+      await proxy.close();
+    }
+  }, 20_000);
+
+  it('terminates and logs a translated response when the adapter closes before end', async () => {
+    const certificates = ensureHttpProxyCertificates();
+    const inferenceLogPath = join(testHome, 'adapter-abort-inference.jsonl');
+    const adapterServer = http.createServer(async (req, res) => {
+      const ended = once(req, 'end');
+      req.resume();
+      await ended;
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write('event: message_start\ndata: {"type":"message_start"}\n\n');
+      setImmediate(() => res.destroy(new Error('adapter reset')));
+    });
+    const adapterPort = await listen(adapterServer);
+    const route = {
+      aliasId: 'leverframe:test:translated-model',
+      realModelId: 'translated-model',
+      displayName: 'Translated Model',
+      upstreamUrl: '',
+      apiKey: 'provider-key',
+      modelFormat: 'openai' as const,
+      npm: '@ai-sdk/openai-compatible',
+      providerId: 'test-provider',
+    };
+    const proxy = await startHttpProxy({
+      routes: [route],
+      adapterHandle: {
+        port: adapterPort,
+        token: 'adapter-local-token',
+        close: () => {
+          adapterServer.closeAllConnections();
+          adapterServer.close();
+        },
+      },
+      inferenceLogPath,
+    });
+
+    try {
+      const body = JSON.stringify({
+        model: route.aliasId,
+        messages: [{ role: 'user', content: 'test adapter reset' }],
+        stream: true,
+      });
+      const secure = await connectMitm(proxy.port, certificates.caCert, proxy.token);
+      secure.resume();
+      secure.write([
+        'POST /v1/messages HTTP/1.1',
+        'Host: api.anthropic.com',
+        'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(body)}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n') + body);
+      await new Promise<void>(resolve => {
+        secure.once('close', () => resolve());
+        secure.once('error', () => resolve());
+      });
+
+      const entries = readFileSync(inferenceLogPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const requestEntry = entries.find(entry => !entry.event);
+      expect(entries).toContainEqual(expect.objectContaining({
+        event: 'response_started',
+        requestId: requestEntry.requestId,
+        statusCode: 200,
+      }));
+      expect(entries).toContainEqual(expect.objectContaining({
+        event: 'response_failed',
+        requestId: requestEntry.requestId,
+        statusCode: 200,
+        phase: 'streaming',
+      }));
+      expect(entries.some(entry => entry.event === 'response_completed')).toBe(false);
+    } finally {
+      await proxy.close();
+    }
+  }, 20_000);
+});
+
+describe('selective HTTP proxy auth', () => {
+  it('returns 407 on CONNECT without Proxy-Authorization', async () => {
+    const proxy = await startHttpProxy({ routes: [] });
+    try {
+      const socket = net.connect(proxy.port, '127.0.0.1');
+      await once(socket, 'connect');
+      socket.write('CONNECT api.anthropic.com:443 HTTP/1.1\r\nHost: api.anthropic.com:443\r\n\r\n');
+      const response = await new Promise<string>(resolve => {
+        let buf = '';
+        socket.on('data', chunk => { buf += chunk.toString(); });
+        socket.once('close', () => resolve(buf));
+      });
+      socket.destroy();
+      expect(response.startsWith('HTTP/1.1 407')).toBe(true);
+      expect(response).toMatch(/Proxy-Authenticate: Basic realm="leverframe"/);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it('returns 407 on CONNECT with a wrong Proxy-Authorization password', async () => {
+    const proxy = await startHttpProxy({ routes: [] });
+    try {
+      const socket = net.connect(proxy.port, '127.0.0.1');
+      await once(socket, 'connect');
+      const wrong = Buffer.from('leverframe:wrong-token').toString('base64');
+      socket.write('CONNECT api.anthropic.com:443 HTTP/1.1\r\nHost: api.anthropic.com:443\r\nProxy-Authorization: Basic ' + wrong + '\r\n\r\n');
+      const response = await new Promise<string>(resolve => {
+        let buf = '';
+        socket.on('data', chunk => { buf += chunk.toString(); });
+        socket.once('close', () => resolve(buf));
+      });
+      socket.destroy();
+      expect(response.startsWith('HTTP/1.1 407')).toBe(true);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it('accepts a CONNECT with the correct Proxy-Authorization password', async () => {
+    const proxy = await startHttpProxy({ routes: [] });
+    try {
+      const socket = net.connect(proxy.port, '127.0.0.1');
+      await once(socket, 'connect');
+      const correct = Buffer.from('leverframe:' + proxy.token).toString('base64');
+      socket.write('CONNECT api.anthropic.com:443 HTTP/1.1\r\nHost: api.anthropic.com:443\r\nProxy-Authorization: Basic ' + correct + '\r\n\r\n');
+      const response = await new Promise<string>(resolve => {
+        let buf = '';
+        socket.on('data', chunk => { buf += chunk.toString(); });
+        socket.once('close', () => resolve(buf));
+        setTimeout(() => { socket.destroy(); }, 50);
+      });
+      expect(response.startsWith('HTTP/1.1 200 Connection Established')).toBe(true);
+      socket.destroy();
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it('returns 407 on plain HTTP without Proxy-Authorization', async () => {
+    const proxy = await startHttpProxy({ routes: [] });
+    try {
+      const socket = net.connect(proxy.port, '127.0.0.1');
+      await once(socket, 'connect');
+      socket.write('GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n');
+      const response = await new Promise<string>(resolve => {
+        let buf = '';
+        socket.on('data', chunk => { buf += chunk.toString(); });
+        socket.once('close', () => resolve(buf));
+      });
+      socket.destroy();
+      expect(response.startsWith('HTTP/1.1 407')).toBe(true);
+      expect(response).toMatch(/Proxy-Authenticate: Basic realm="leverframe"/);
+      const expectedBody = 'Proxy authentication required';
+      const expectedLength = String(Buffer.byteLength(expectedBody));
+      expect(response).toMatch(new RegExp(`Content-Length: ${expectedLength}\\r\\n`));
+      expect(response.endsWith('\r\n\r\n' + expectedBody)).toBe(true);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it('returns a fresh random token on the handle when no override is provided', async () => {
+    const a = await startHttpProxy({ routes: [] });
+    const b = await startHttpProxy({ routes: [] });
+    try {
+      expect(a.token).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+      expect(b.token).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+      expect(a.token).not.toBe(b.token);
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  });
+
+  it('honors an explicit proxyAuthToken override', async () => {
+    const proxy = await startHttpProxy({ routes: [], proxyAuthToken: 'fixed-test-token' });
+    try {
+      expect(proxy.token).toBe('fixed-test-token');
+    } finally {
+      await proxy.close();
+    }
+  });
+});
