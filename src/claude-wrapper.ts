@@ -22,9 +22,10 @@
 // server-runtime.ts) with minimal imports — it runs for every spawned agent.
 
 import { spawn } from 'node:child_process';
-import { accessSync, constants as fsConstants, existsSync, statSync } from 'node:fs';
+import { accessSync, constants as fsConstants, existsSync, realpathSync, statSync } from 'node:fs';
 import { connect } from 'node:net';
 import { constants as osConstants } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import {
   orderWrapperServerCandidates,
   readLiveServerRuntimeStates,
@@ -130,4 +131,15 @@ async function main(): Promise<void> {
   });
 }
 
-void main();
+function isClaudeWrapperEntryPoint(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
+  } catch {
+    return false;
+  }
+}
+
+if (isClaudeWrapperEntryPoint()) {
+  void main();
+}
