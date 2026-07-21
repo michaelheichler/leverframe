@@ -1,0 +1,396 @@
+tests/registry-add-template.test.ts
+  s_997092c4e9daa2::t_dfb390d60bded9 38-128
+  s_4a0ab92c1d023e::t_3cd016d8fd1b9a 1-37,129-156
+tests/registry-refresh-models.test.ts
+  s_997092c4e9daa2::t_dfb390d60bded9 60-107
+  s_4a0ab92c1d023e::t_5e80d23733a49e 1-59,108-275
+src/provider-catalog.ts
+  s_997092c4e9daa2::t_dfb390d60bded9 32
+  s_4a0ab92c1d023e::t_0bb0746aba0815 1-31,33-123
+src/registry/url-security.ts
+  s_997092c4e9daa2::t_dfb390d60bded9 39-90
+  s_4a0ab92c1d023e::t_837609e9e5dacc 1-38,91-190
+tests/oauth-openai.test.ts
+  s_997092c4e9daa2::t_dfb390d60bded9 206-251
+  s_4a0ab92c1d023e::t_a46aac481696b9 1-205,252-267
+.github/workflows/commitlint.yml
+  s_4a0ab92c1d023e::t_0b94ec2b316eca 1-51
+.husky/commit-msg
+  s_997092c4e9daa2::t_774c9928aedb7b 1
+.markdown-link-check.json
+  s_997092c4e9daa2::t_f9e384756f0020 1-7
+.npmignore
+  s_997092c4e9daa2::t_a00b232d0b408b 1-14
+.npmrc
+  s_997092c4e9daa2::t_4622946c8f8a56 1
+.nvmrc
+  s_997092c4e9daa2::t_042c74fcf3e17f 1
+LICENSE
+  s_997092c4e9daa2::t_2a32bf54d545ac 1-21
+commitlint.config.mjs
+  s_997092c4e9daa2::t_869760d44c9c1d 1-3
+pnpm-lock.yaml
+  s_997092c4e9daa2::t_d730f32b5333d0 1-3514
+pnpm-workspace.yaml
+  s_997092c4e9daa2::t_ddd0a606a2f774 1-4
+src/agent-io.ts
+  s_22cee8ca710ed8::t_8be7d00d0eee91 1-11
+src/anthropic-endpoints.ts
+  s_997092c4e9daa2::t_dcb41ed2d22379 1-55
+src/binary-lookup.ts
+  s_997092c4e9daa2::t_123ae2a0b868d0 1-43
+src/catalog.ts
+  s_997092c4e9daa2::t_b501687f171bc8 1-75
+src/claude-wrapper.ts
+  s_22cee8ca710ed8::t_5d697090a1e0ea 1-133
+src/config.ts
+  s_22cee8ca710ed8::t_e1ece6b9185cc2 1-636
+src/constants.ts
+  s_22cee8ca710ed8::t_86ed561bfdae87 1-73
+src/context-model-id.ts
+  s_997092c4e9daa2::t_c87652fd098b6b 1-38
+src/context-window.ts
+  s_22cee8ca710ed8::t_70a87c5f652598 1-139
+src/data/model-incompatible.json
+  s_997092c4e9daa2::t_7440820b8c5081 1-463
+src/data/models-dev-cache.json
+  s_997092c4e9daa2::t_45fe5be88e756c 1
+src/data/openai-oauth-models.ts
+  s_997092c4e9daa2::t_1c621e43e8c69a 1-80
+src/data/pricing-cache.json
+  s_997092c4e9daa2::t_da19a249a5d0be 1-51
+src/env.ts
+  s_22cee8ca710ed8::t_083d3e635ca16c 1-305
+src/favorite-provider-display.ts
+  s_997092c4e9daa2::t_cf15c950f1c46a 1-16
+src/favorites-picker.ts
+  s_22cee8ca710ed8::t_57582e9c564780 1-162
+src/favorites-resolver.ts
+  s_997092c4e9daa2::t_851f0da30c62a7 1-126
+src/favorites.ts
+  s_997092c4e9daa2::t_2f5990627db0c9 1-24
+src/first-run.ts
+  s_22cee8ca710ed8::t_f6c96e11e1f378 1-49
+src/free-models.ts
+  s_997092c4e9daa2::t_2f1de82afa6374 1-54
+src/http-proxy/ca.ts
+  s_22cee8ca710ed8::t_07ec083c65c1ff 1-365
+src/http-proxy/index.ts
+  s_22cee8ca710ed8::t_fa6a8123321312 1-190
+src/http-proxy/routes.ts
+  s_22cee8ca710ed8::t_d5a96e300cd04f 1-102
+src/http-proxy/server.ts
+  s_22cee8ca710ed8::t_31445d997edbe3 1-994
+src/http-utils.ts
+  s_997092c4e9daa2::t_b4abec9fce50df 1-68
+src/launch-target.ts
+  s_22cee8ca710ed8::t_f44fe1e7928fbd 1-143
+src/launch.ts
+  s_22cee8ca710ed8::t_f20edca68075b7 1-138
+src/model-aliases.ts
+  s_22cee8ca710ed8::t_3165b699778a6d 1-40
+src/model-compatibility.ts
+  s_997092c4e9daa2::t_18ce272414e196 1-68
+src/model-search.ts
+  s_997092c4e9daa2::t_1ec42099a8993e 1-53
+src/models.ts
+  s_997092c4e9daa2::t_ac1ea21e87360a 1-23
+src/oauth/claude-identity.ts
+  s_997092c4e9daa2::t_07fb476869febb 1-162
+src/oauth/fetch-timeout.ts
+  s_997092c4e9daa2::t_f7bd74a7b86fac 1-19
+src/oauth/openai.ts
+  s_22cee8ca710ed8::t_12e8757c923eca 1-160
+src/oauth/pkce.ts
+  s_997092c4e9daa2::t_018f8035a1c164 1-39
+src/oauth/refresh-http.ts
+  s_997092c4e9daa2::t_5bda539e82b685 1-38
+src/oauth/refresh.ts
+  s_22cee8ca710ed8::t_5392aa02475173 1-33
+src/oauth/responses-websocket.ts
+  s_22cee8ca710ed8::t_99a67a33f1caf4 1-1333
+src/oauth/types.ts
+  s_997092c4e9daa2::t_8cfd4d7eef0afa 1-84
+src/openai-adapter.ts
+  s_997092c4e9daa2::t_eda11893d02938 1-281
+src/outbound-proxy.ts
+  s_22cee8ca710ed8::t_6359f4ce4423f2 1-105
+src/patch-transforms.ts
+  s_22cee8ca710ed8::t_fe2f28ff4e660a 1-353
+src/patcher.ts
+  s_22cee8ca710ed8::t_015fb635d5a9c8 1-521
+src/provider-factory.ts
+  s_22cee8ca710ed8::t_64af3f37fb5155 1-908
+src/provider-templates.ts
+  s_22cee8ca710ed8::t_1c7ec0254d56ac 1-143
+src/proxy-shared.ts
+  s_997092c4e9daa2::t_90a01d2f791468 1-218
+src/proxy-types.ts
+  s_997092c4e9daa2::t_4e17cd21de39bb 1-152
+src/proxy.ts
+  s_4a0ab92c1d023e::t_971828774f4f93 1-756
+src/reasoning-capabilities.ts
+  s_997092c4e9daa2::t_0332543d048217 1-34
+src/registry/add-template.ts
+  s_22cee8ca710ed8::t_3b99bd1d9bf597 1-177
+src/registry/convert.ts
+  s_997092c4e9daa2::t_336f4ba94911a8 1-57
+src/registry/crud.ts
+  s_997092c4e9daa2::t_d665f6442c55d4 1-57
+src/registry/custom-endpoint.ts
+  s_22cee8ca710ed8::t_287fc27f503bcc 1-226
+src/registry/fetch-template-models.ts
+  s_22cee8ca710ed8::t_fd750208c910fe 1-338
+src/registry/google-model-id.ts
+  s_997092c4e9daa2::t_7fbd559506a81b 1-25
+src/registry/import-build.ts
+  s_997092c4e9daa2::t_c1054ed772bd94 1-11
+src/registry/index.ts
+  s_997092c4e9daa2::t_ff6def179de98d 1-20
+src/registry/io.ts
+  s_22cee8ca710ed8::t_58a54da84fdb02 1-213
+src/registry/load.ts
+  s_22cee8ca710ed8::t_3447fc519411df 1-51
+src/registry/materialize.ts
+  s_22cee8ca710ed8::t_5247b2edc6ee5f 1-145
+src/registry/migrate.ts
+  s_997092c4e9daa2::t_cbc0fafd4bbb9d 1-22
+src/registry/model-source.ts
+  s_997092c4e9daa2::t_17cbec8d812a60 1-30
+src/registry/models-dev.ts
+  s_997092c4e9daa2::t_ddd043c1faf6d5 1-301
+src/registry/pricing.ts
+  s_997092c4e9daa2::t_9061d99f820a21 1-267
+src/registry/provider-auth.ts
+  s_22cee8ca710ed8::t_df9b75ae00268a 1-189
+src/registry/refresh-credentials.ts
+  s_997092c4e9daa2::t_25341d7beaa7e8 1-75
+src/registry/refresh-models.ts
+  s_22cee8ca710ed8::t_3fb53fbd8ffc8f 1-449
+src/registry/resolve-template.ts
+  s_22cee8ca710ed8::t_b7a835f39236b2 1-50
+src/registry/types.ts
+  s_997092c4e9daa2::t_85f3eccadddae6 1-65
+src/registry/validate.ts
+  s_997092c4e9daa2::t_55eda5f9a013ed 1-24
+src/sdk-adapter.ts
+  s_997092c4e9daa2::t_3fb7e517bfdf00 1-994
+src/server-runtime.ts
+  s_22cee8ca710ed8::t_5bc99db4ebb8d6 1-350
+src/server/auth.ts
+  s_997092c4e9daa2::t_bc3825c7c8a05f 1-119
+src/server/catalog-filter.ts
+  s_997092c4e9daa2::t_cf854c6e95e2c3 1-32
+src/server/models.ts
+  s_22cee8ca710ed8::t_c64041ea260ac9 1-240
+src/server/prompts.ts
+  s_997092c4e9daa2::t_6c846b45b830f5 1-105
+src/server/provider-select.ts
+  s_997092c4e9daa2::t_6171add5e59a84 1-126
+src/server/router.ts
+  s_22cee8ca710ed8::t_a0bf4ddca21c88 1-697
+src/server/vendor-mask.ts
+  s_997092c4e9daa2::t_b9b045129faf51 1-24
+src/target-compatibility.ts
+  s_997092c4e9daa2::t_c0602951ce2c5d 1-67
+src/tool-search.ts
+  s_997092c4e9daa2::t_170d74f298974a 1-82
+src/trace-log.ts
+  s_22cee8ca710ed8::t_eddabf898537e4 1-600
+src/tweakcc.d.ts
+  s_997092c4e9daa2::t_fb42b0575ca0c4 1-41
+src/types.ts
+  s_22cee8ca710ed8::t_49f7ffb90b0924 1-144
+src/upstream-error.ts
+  s_997092c4e9daa2::t_de02e63c8f86e4 1-139
+src/upstream-forward.ts
+  s_4a0ab92c1d023e::t_a07ff1ed98eb4c 1-210
+src/wrapper-env.ts
+  s_22cee8ca710ed8::t_a8574e8eb6a3fd 1-34
+tests/catalog.test.ts
+  s_997092c4e9daa2::t_b088316c3fbc8e 1-168
+tests/claude-wrapper.test.ts
+  s_22cee8ca710ed8::t_0b798b848e8478 1-43
+tests/cli.test.ts
+  s_22cee8ca710ed8::t_1981203f924ee1 1-270
+tests/config-lock-contention-worker.test.ts
+  s_22cee8ca710ed8::t_79b57f0aaf6615 1-91
+tests/config-lock-contention.test.ts
+  s_22cee8ca710ed8::t_55b8fa33495964 1-239
+tests/config-lock-failure.test.ts
+  s_22cee8ca710ed8::t_8c6bde5aff83ff 1-127
+tests/context-model-id.test.ts
+  s_997092c4e9daa2::t_c74ccc0f3c311a 1-39
+tests/context-window.test.ts
+  s_997092c4e9daa2::t_a9f111222e10e0 1-80
+tests/debug-openai-oauth.test.ts
+  s_997092c4e9daa2::t_5e13baf421d744 1-70
+tests/env.test.ts
+  s_22cee8ca710ed8::t_82344f46c65e19 1-274
+tests/favorites-picker.test.ts
+  s_997092c4e9daa2::t_500caef38039f5 1-202
+tests/favorites-resolver.test.ts
+  s_997092c4e9daa2::t_cb05b891f9177c 1-212
+tests/favorites.test.ts
+  s_997092c4e9daa2::t_0380b5c0fcdcdb 1-108
+tests/fetch-template-models.test.ts
+  s_997092c4e9daa2::t_4c150c290b43ee 1-192
+tests/first-run.test.ts
+  s_22cee8ca710ed8::t_ccc14f626e56a6 1-42
+tests/google-model-id.test.ts
+  s_997092c4e9daa2::t_006c20ff798c12 1-34
+tests/helpers/ui-api-test-utils.ts
+  s_997092c4e9daa2::t_46ca5d66de4069 1-26
+tests/http-proxy-auth.test.ts
+  s_22cee8ca710ed8::t_a846912bdbb23d 1-91
+tests/http-proxy-ca-worker.test.ts
+  s_22cee8ca710ed8::t_281c816a2cb8f7 1-43
+tests/http-proxy-ca.test.ts
+  s_22cee8ca710ed8::t_f809c444d2bb70 1-282
+tests/http-proxy-index.test.ts
+  s_22cee8ca710ed8::t_0ac9886dabe149 1-29
+tests/http-proxy-routes.test.ts
+  s_22cee8ca710ed8::t_3f57e56e65d063 1-89
+tests/http-proxy-server.test.ts
+  s_22cee8ca710ed8::t_084a153708aaad 1-1029
+tests/http-utils.test.ts
+  s_997092c4e9daa2::t_c5d0ec9351a4b4 1-39
+tests/kimi-fallback.test.ts
+  s_997092c4e9daa2::t_a88c922a996288 1-274
+tests/launch-target.test.ts
+  s_997092c4e9daa2::t_e401166a991fab 1-104
+tests/launch-version.test.ts
+  s_22cee8ca710ed8::t_6af8f882f411d0 1-91
+tests/launch.test.ts
+  s_22cee8ca710ed8::t_3ac64efb2aa5b1 1-137
+tests/model-aliases.test.ts
+  s_22cee8ca710ed8::t_41c8d5296428fe 1-39
+tests/model-compatibility.test.ts
+  s_997092c4e9daa2::t_1d99a71756c65e 1-109
+tests/model-source.test.ts
+  s_997092c4e9daa2::t_60ea602da87b7c 1-32
+tests/models-alias-command.test.ts
+  s_22cee8ca710ed8::t_700c2829536088 1-43
+tests/models-dev.test.ts
+  s_22cee8ca710ed8::t_01269b76b3c7bf 1-277
+tests/oauth.test.ts
+  s_4a0ab92c1d023e::t_69aae5e129890d 1-97
+tests/openai-adapter.test.ts
+  s_997092c4e9daa2::t_ca4edc9fbcf2db 1-226
+tests/outbound-proxy.test.ts
+  s_997092c4e9daa2::t_d88a5028184f11 1-78
+tests/patcher.test.ts
+  s_22cee8ca710ed8::t_7ea061dd6c4e96 1-396
+tests/pricing.test.ts
+  s_997092c4e9daa2::t_eb926fa572d3e5 1-80
+tests/prompts.test.ts
+  s_997092c4e9daa2::t_3509b7d9eced1c 1-75
+tests/provider-auth.test.ts
+  s_997092c4e9daa2::t_fadf4e290b91ad 1-83
+tests/provider-catalog-display.test.ts
+  s_4a0ab92c1d023e::t_2b2174703048c8 1-119
+tests/provider-factory.test.ts
+  s_22cee8ca710ed8::t_b2bc9fa4db2bde 1-490
+tests/provider-templates.test.ts
+  s_997092c4e9daa2::t_eaca921998fe1d 1-139
+tests/providers-command.test.ts
+  s_22cee8ca710ed8::t_a0ab832e927b3e 1-202
+tests/proxy-model-id-path.test.ts
+  s_997092c4e9daa2::t_69fae8ddc21de3 1-43
+tests/proxy-rebinding.test.ts
+  s_22cee8ca710ed8::t_d46e794ceb5cc8 1-262
+tests/proxy-sdk-provider-id.test.ts
+  s_997092c4e9daa2::t_27a91de0bc4ec2 1-93
+tests/proxy-shared.test.ts
+  s_997092c4e9daa2::t_c6d66b560f1f34 1-93
+tests/reasoning-capabilities.test.ts
+  s_997092c4e9daa2::t_36c4a9f07b1a12 1-110
+tests/refresh-credentials.test.ts
+  s_997092c4e9daa2::t_3c4b3b8ee8342f 1-68
+tests/refresh-models.test.ts
+  s_997092c4e9daa2::t_5ffdf3a574a6c4 1-93
+tests/registry-convert.test.ts
+  s_997092c4e9daa2::t_df388cd711389f 1-39
+tests/registry.test.ts
+  s_22cee8ca710ed8::t_b120ea079c8f52 1-399
+tests/resolve-template.test.ts
+  s_997092c4e9daa2::t_175c0e81151c81 1-46
+tests/responses-websocket.test.ts
+  s_22cee8ca710ed8::t_c7ecbad8583572 1-1154
+tests/sdk-adapter.test.ts
+  s_997092c4e9daa2::t_c3e61b809e4362 1-990
+tests/server-auth.test.ts
+  s_997092c4e9daa2::t_f856b434df29c7 1-239
+tests/server-catalog-filter.test.ts
+  s_997092c4e9daa2::t_7400f0f9b899a6 1-88
+tests/server-favorites-only.test.ts
+  s_997092c4e9daa2::t_54cb84e8dab70e 1-34
+tests/server-index.test.ts
+  s_22cee8ca710ed8::t_653541522f2a5b 1-403
+tests/server-models.test.ts
+  s_22cee8ca710ed8::t_972dd210b6d98b 1-173
+tests/server-password-lock.test.ts
+  s_22cee8ca710ed8::t_67e868e9bac5ab 1-186
+tests/server-rebinding.test.ts
+  s_22cee8ca710ed8::t_3eda5ef9ce977a 1-307
+tests/server-router.test.ts
+  s_22cee8ca710ed8::t_cea5526bc78944 1-853
+tests/server-runtime.test.ts
+  s_22cee8ca710ed8::t_0f5ce7789e4d43 1-274
+tests/server-vendor-mask.test.ts
+  s_997092c4e9daa2::t_20eca419a60b4b 1-68
+tests/target-compatibility.test.ts
+  s_997092c4e9daa2::t_d112b851b02c14 1-74
+tests/tool-search.test.ts
+  s_997092c4e9daa2::t_9f60a19b21feb6 1-90
+tests/trace-log.test.ts
+  s_22cee8ca710ed8::t_269b0d9af9ddfc 1-337
+tests/tsconfig.json
+  s_997092c4e9daa2::t_dae2f7ab800015 1-8
+tests/upstream-forward.test.ts
+  s_997092c4e9daa2::t_231b3e349300e8 1-49
+tests/url-security-revalidate.test.ts
+  s_22cee8ca710ed8::t_103b480a72b65f 1-132
+tests/url-security.test.ts
+  s_997092c4e9daa2::t_de67aa57658488 1-54
+tests/wrapper-env.test.ts
+  s_22cee8ca710ed8::t_b51100ad281ca7 1-197
+tests/zai-verification.test.ts
+  s_997092c4e9daa2::t_056530e3ff3740 1-124
+tsconfig.json
+  s_997092c4e9daa2::t_ac389982218681 1-18
+tsup.config.ts
+  s_997092c4e9daa2::t_2ba059b0d12ba5 1-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "cf9186dd9013f7f7bccb511b425f2ce6efa75ae4",
+  "prompts": {},
+  "sessions": {
+    "s_22cee8ca710ed8": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_07a141d07ffeNzOEzOI6nx1klT",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    },
+    "s_4a0ab92c1d023e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "156ee091-5b75-47cc-8ca6-2615be02bd2e",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    },
+    "s_997092c4e9daa2": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_07fccfa1fffesDN0QCTXoEHvR5",
+        "model": "k3"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}
