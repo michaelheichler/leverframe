@@ -1,0 +1,27 @@
+tests/patcher.test.ts
+  s_35dc776856f152::t_bb233ad444254a 1-406
+tests/patcher-restore.test.ts
+  s_35dc776856f152::t_71aadc8e5e9fb5 1-71
+  s_35dc776856f152::t_1d0bf48f9ce7be 72-74
+src/patcher.ts
+  s_35dc776856f152::t_8b0194f1727e12 1-2,8,17,23,42,46-47,68-78,154-160,166,216,233-359,378-379,382-384,387-388,391-396,411,417-441,443-452,454-463,465-482,484-513
+  s_35dc776856f152::t_e3513db19fbd07 527-530,533,541-543,545-546,560-598
+  s_35dc776856f152::t_8ae7ab1a2fa7ab 514-516,524-526
+  s_35dc776856f152::t_c6d67ac6b13e68 599-601
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "b5bc3c5e0484e4b546532a2b394930306bfc1c1d",
+  "prompts": {},
+  "sessions": {
+    "s_35dc776856f152": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f9e2f-6e6a-7060-abbd-4056fb02307e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}
