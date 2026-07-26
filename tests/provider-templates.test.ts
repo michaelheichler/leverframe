@@ -9,14 +9,14 @@ import {
 import { fetchTemplateModels } from '../src/registry/fetch-template-models.js';
 
 describe('provider templates', () => {
-  it('offers Kimi, Moonshot, and z.ai as distinct addable providers', () => {
-    expect(listSupportedTemplates().map(t => t.id).sort()).toEqual(['kimi', 'moonshot', 'openai', 'zai']);
+  it('offers OpenCode Go, Kimi, Moonshot, and z.ai as distinct addable providers', () => {
+    expect(listSupportedTemplates().map(t => t.id).sort()).toEqual(['kimi', 'moonshot', 'openai', 'opencode-go', 'zai']);
   });
 
   it('filters templates by search query', () => {
     const templates = listSupportedTemplates();
     // 'openai' matches the OpenAI template id and every npm package name.
-    expect(filterTemplates(templates, 'openai').map(t => t.id).sort()).toEqual(['kimi', 'moonshot', 'openai', 'zai']);
+    expect(filterTemplates(templates, 'openai').map(t => t.id).sort()).toEqual(['kimi', 'moonshot', 'openai', 'opencode-go', 'zai']);
     expect(filterTemplates(templates, 'kimi').map(t => t.id)).toEqual(['kimi']);
     expect(filterTemplates(templates, 'z.ai').map(t => t.id)).toEqual(['zai']);
     expect(filterTemplates(templates, 'moonshot').map(t => t.id)).toEqual(['moonshot']);
@@ -28,6 +28,7 @@ describe('provider templates', () => {
     expect(getTemplateById('openai-oauth')?.authType).toBe('oauth');
     expect(getTemplateById('kimi')?.npm).toBe('@ai-sdk/openai-compatible');
     expect(getTemplateById('moonshot')?.npm).toBe('@ai-sdk/openai-compatible');
+    expect(getTemplateById('opencode-go')?.npm).toBe('@ai-sdk/openai-compatible');
     expect(getTemplateById('zai')?.npm).toBe('@ai-sdk/openai-compatible');
     expect(getTemplateById('groq')).toBeUndefined();
   });
@@ -38,12 +39,12 @@ describe('provider templates', () => {
   });
 
   it('excludes already-configured providers from addable list', () => {
-    expect(listAddableTemplates(['openai', 'kimi', 'moonshot', 'zai']).map(t => t.id)).toEqual([]);
-    expect(listAddableTemplates([]).map(t => t.id).sort()).toEqual(['kimi', 'moonshot', 'openai', 'zai']);
+    expect(listAddableTemplates(['openai', 'kimi', 'moonshot', 'opencode-go', 'zai']).map(t => t.id)).toEqual([]);
+    expect(listAddableTemplates([]).map(t => t.id).sort()).toEqual(['kimi', 'moonshot', 'openai', 'opencode-go', 'zai']);
   });
 
   it('uses @ai-sdk/openai-compatible (never @ai-sdk/openai) for non-OpenAI templates', () => {
-    for (const id of ['kimi', 'moonshot', 'zai'] as const) {
+    for (const id of ['kimi', 'moonshot', 'opencode-go', 'zai'] as const) {
       const tpl = getTemplateById(id)!;
       expect(tpl.npm).toBe('@ai-sdk/openai-compatible');
       expect(tpl.authType).toBe('api');
@@ -55,6 +56,14 @@ describe('provider templates', () => {
     expect(getTemplateById('kimi')?.defaultBaseUrl).toBe('https://api.kimi.com/coding/v1');
     expect(getTemplateById('moonshot')?.defaultBaseUrl).toBe('https://api.moonshot.ai/v1');
     expect(getTemplateById('zai')?.defaultBaseUrl).toBe('https://api.z.ai/api/coding/paas/v4');
+    expect(getTemplateById('opencode-go')?.defaultBaseUrl).toBe('https://opencode.ai/zen/go/v1');
+  });
+
+  it('configures dynamic OpenCode Go metadata sources without static models', () => {
+    const go = getTemplateById('opencode-go')!;
+    expect(go.staticModels).toBeUndefined();
+    expect(go.modelsDevProviderId).toBe('opencode-go');
+    expect(go.supplierMetadataUrl).toContain('raw.githubusercontent.com/anomalyco/opencode/');
   });
 
   it('seeds exact Kimi Coding Plan IDs with k3 at documented context', () => {
@@ -110,6 +119,85 @@ describe('fetchTemplateModels', () => {
     expect(result.models).toHaveLength(1);
     expect(result.models[0]?.id).toBe('gpt-5.6-sol');
     expect(result.models[0]?.modelFormat).toBe('openai');
+  });
+
+  it('applies OpenCode Go protocol and subscription metadata to live models', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          data: [{ id: 'glm-next' }, { id: 'qwen-next' }, { id: 'preview-next' }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          'opencode-go': {
+            id: 'opencode-go',
+            npm: '@ai-sdk/openai-compatible',
+            models: {
+              'glm-next': {
+                id: 'glm-next', name: 'GLM Next', reasoning: true,
+                limit: { context: 900_000 }, cost: { input: 1, output: 2 },
+              },
+              'qwen-next': {
+                id: 'qwen-next', name: 'Qwen Next', reasoning: true,
+                limit: { context: 800_000 }, provider: { npm: '@ai-sdk/anthropic' },
+                cost: { input: 0.5, output: 1.5 },
+              },
+            },
+          },
+          previewVendor: {
+            models: {
+              'preview-next': {
+                id: 'preview-next', name: 'Preview Next', reasoning: true,
+                limit: { context: 700_000 },
+              },
+            },
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => [
+          'then **$10/month**',
+          '| Model | Input | Output | Cached Read | Cached Write | Usage |',
+          '| --- | --- | --- | --- | --- | --- |',
+          '| GLM Next | $1 | $2 | - | - | $60 |',
+          '| Qwen Next | $0.5 | $1.5 | - | - | $15 |',
+          '| Model | Model ID | Endpoint | AI SDK Package |',
+          '| --- | --- | --- | --- |',
+          '| GLM Next | glm-next | `https://opencode.ai/zen/go/v1/chat/completions` | `@ai-sdk/openai-compatible` |',
+          '| Qwen Next | qwen-next | `https://opencode.ai/zen/go/v1/messages` | `@ai-sdk/anthropic` |',
+        ].join('\n'),
+      }));
+
+    const result = await fetchTemplateModels(getTemplateById('opencode-go')!, 'test-key');
+    expect(result.models).toEqual([
+      expect.objectContaining({
+        id: 'glm-next',
+        name: 'GLM Next',
+        contextWindow: 900_000,
+        modelFormat: 'openai',
+        usageMultiplier: 6,
+      }),
+      expect.objectContaining({
+        id: 'qwen-next',
+        name: 'Qwen Next',
+        contextWindow: 800_000,
+        modelFormat: 'anthropic',
+        npm: '@ai-sdk/anthropic',
+        usageMultiplier: 1.5,
+      }),
+      expect.objectContaining({
+        id: 'preview-next',
+        name: 'Preview Next',
+        contextWindow: 700_000,
+        modelFormat: 'openai',
+        usageMultiplier: undefined,
+      }),
+    ]);
   });
 
   it('returns helpful error on 401', async () => {

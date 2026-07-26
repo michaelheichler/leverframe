@@ -1,6 +1,6 @@
 // src/cli.ts
 import pc from 'picocolors';
-import { leverframeIntro, leverframeOutro, providerSelectOption, fmtModel, fmtEnabledStar, formatModelLabel } from './ui.js';
+import { leverframeIntro, leverframeOutro, providerSelectOption, modelSelectOption, fmtModel, fmtEnabledStar, formatModelLabel } from './ui.js';
 import * as p from '@clack/prompts';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -797,12 +797,7 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
 
           const options = provider.models.map(m => {
             const favorited = isFavorite(favorites, { providerId: provider!.id, modelId: m.id });
-            const label = formatModelLabel(m);
-            return {
-              value: m.id,
-              label: fmtModel(label, m.id),
-              hint: favorited ? pc.yellow('★ already favorite') : '',
-            };
+            return modelSelectOption(m, favorited ? pc.yellow('★ already favorite') : '');
           });
 
           const pickedModelIds = await p.multiselect({

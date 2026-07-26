@@ -34,6 +34,8 @@ export interface ProviderTemplate {
   headers?: Record<string, string>;
   modelSource: ProviderModelSource;
   staticModels?: ProviderTemplateStaticModel[];
+  modelsDevProviderId?: string;
+  supplierMetadataUrl?: string;
   supported: boolean;
   addable?: boolean;
   hidden?: boolean;
@@ -58,6 +60,18 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     npm: '@ai-sdk/openai',
     signupUrl: 'https://chatgpt.com',
     modelSource: 'api-list',
+    supported: true,
+  },
+  {
+    id: 'opencode-go',
+    name: 'OpenCode Go (Subscription)',
+    authType: 'api',
+    npm: '@ai-sdk/openai-compatible',
+    defaultBaseUrl: 'https://opencode.ai/zen/go/v1',
+    signupUrl: 'https://opencode.ai/auth',
+    modelSource: 'api-list',
+    modelsDevProviderId: 'opencode-go',
+    supplierMetadataUrl: 'https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/content/docs/go.mdx',
     supported: true,
   },
   {

@@ -211,6 +211,7 @@ export function enrichModelsWithPricing(
   platform?: string,
 ): CachedModel[] {
   return models.map(model => {
+    if (model.cost) return model;
     const cost =
       lookupModelCost(index, model.id, platform) ??
       lookupModelCost(index, model.upstreamModelId, platform);

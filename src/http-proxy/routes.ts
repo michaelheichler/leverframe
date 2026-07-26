@@ -61,7 +61,9 @@ export function buildHttpProxyRoutes(
       unavailable.push(favorite);
       continue;
     }
-    if (model.modelFormat !== 'openai' || !isSdkMigratedNpm(model.npm)) {
+    const firstPartyAnthropic = provider.id === 'anthropic' && model.modelFormat === 'anthropic';
+    const unsupportedOpenAi = model.modelFormat === 'openai' && !isSdkMigratedNpm(model.npm);
+    if (firstPartyAnthropic || unsupportedOpenAi) {
       unsupported.push(favorite);
       continue;
     }

@@ -185,7 +185,7 @@ describe('providers add menu', () => {
 
     const options = selectMock.mock.calls[0]?.[0].options.map((option: { value: string }) => option.value);
     // OAuth surfaces first, then every supported API template (sorted alphabetically by name).
-    expect(options).toEqual(['oauth:openai-oauth', 'api:kimi', 'api:moonshot', 'api:openai', 'api:zai']);
+    expect(options).toEqual(['oauth:openai-oauth', 'api:kimi', 'api:moonshot', 'api:openai', 'api:opencode-go', 'api:zai']);
   });
 
   it('hides already-configured templates from the add menu', async () => {
@@ -197,6 +197,6 @@ describe('providers add menu', () => {
     await runProvidersAdd();
 
     const options = selectMock.mock.calls[0]?.[0].options.map((option: { value: string }) => option.value);
-    expect(options).toEqual(['oauth:openai-oauth', 'api:kimi', 'api:moonshot', 'api:zai']);
+    expect(options).toEqual(['oauth:openai-oauth', 'api:kimi', 'api:moonshot', 'api:opencode-go', 'api:zai']);
   });
 });

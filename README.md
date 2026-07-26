@@ -1,11 +1,12 @@
 # Leverframe
 
-Leverframe bridges Claude Code to OpenAI-compatible providers while preserving Claude Code tools, skills, agents, prompt caching, model switching, and auto-compaction.
+Leverframe bridges Claude Code to external model providers through Anthropic and OpenAI-compatible APIs while preserving tools, skills, agents, prompt caching, model switching, and auto-compaction.
 
 Supported provider setups include:
 
 - OpenAI API keys
 - ChatGPT/Codex plan OAuth
+- OpenCode Go subscription
 - Kimi Coding Plan
 - Moonshot pay-as-you-go
 - z.ai Coding Plan
@@ -48,7 +49,25 @@ leverframe models
 leverframe claude
 ```
 
-`providers add` supports OpenAI, Kimi Coding Plan, Moonshot, z.ai Coding Plan, and custom OpenAI-compatible endpoints. Credentials stay separate because each provider has its own endpoint and billing arrangement.
+`providers add` supports OpenAI, OpenCode Go, Kimi Coding Plan, Moonshot, z.ai Coding Plan, and custom OpenAI-compatible endpoints. Credentials stay separate because each provider has its own endpoint and billing arrangement.
+
+### OpenCode Go subscription
+
+```bash
+leverframe providers add
+leverframe models
+leverframe claude
+```
+
+Adding OpenCode Go validates the key and loads current model metadata. Run `leverframe providers refresh-models opencode-go` later to update it.
+
+Leverframe resolves Go metadata at refresh time from supplier-maintained sources:
+
+- model availability from the authenticated OpenCode Go models API
+- context windows and capabilities from [models.dev](https://models.dev/providers/opencode-go/)
+- protocols, prices, and included usage from [OpenCode's Go documentation](https://opencode.ai/docs/go/)
+
+No Go model list, context window, protocol, price, or usage multiplier is bundled in Leverframe. Usage multipliers are derived from the current monthly plan price and each model's included usage. Model choices show context and multiplier in brackets. Missing supplier values appear as `unconfirmed`, never as estimates.
 
 ## Model routes
 
@@ -66,6 +85,7 @@ leverframe:openai-oauth:gpt-5.6-sol
 leverframe:kimi:k3
 leverframe:moonshot:kimi-k3
 leverframe:zai:glm-5.2
+leverframe:opencode-go:<model-id>
 ```
 
 Aliases can replace a full route after being saved with `leverframe models --alias`.

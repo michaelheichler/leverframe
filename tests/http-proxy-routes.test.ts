@@ -61,6 +61,33 @@ describe('HTTP proxy routes', () => {
     expect(result.unavailable).toHaveLength(1);
   });
 
+  it('routes Anthropic-format models from non-Anthropic providers', () => {
+    const go: LocalProvider = {
+      id: 'opencode-go',
+      name: 'OpenCode Go',
+      apiKey: 'go-key',
+      models: [{
+        id: 'qwen3.7-plus',
+        upstreamModelId: 'qwen3.7-plus',
+        name: 'Qwen3.7 Plus',
+        family: 'qwen',
+        brand: 'Qwen',
+        modelFormat: 'anthropic',
+        npm: '@ai-sdk/anthropic',
+        baseUrl: 'https://opencode.ai/zen/go',
+        contextWindow: 1_000_000,
+      }],
+    };
+
+    const result = buildHttpProxyRoutes([go], [{ providerId: 'opencode-go', modelId: 'qwen3.7-plus' }]);
+    expect(result.unsupported).toEqual([]);
+    expect(result.routes[0]).toMatchObject({
+      aliasId: 'leverframe:opencode-go:qwen3.7-plus[1m]',
+      modelFormat: 'anthropic',
+      upstreamUrl: 'https://opencode.ai/zen/go',
+    });
+  });
+
   it('formats the exact freeform Claude model id', () => {
     expect(httpProxyModelId('openrouter', 'deepseek/deepseek-v3')).toBe('leverframe:openrouter:deepseek/deepseek-v3');
   });

@@ -8,6 +8,12 @@ import type { CachedModel } from './types.js';
 import { makeTraceLogger, getProviderDebugLogPath } from '../trace-log.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 import { revalidateCustomEndpointUrl } from './url-security.js';
+import {
+  fetchModelsDevCatalog,
+  findModelsDevModelAnywhere,
+  stripModelsDevCacheMeta,
+} from './models-dev.js';
+import { fetchOpenCodeGoMetadata } from './supplier-metadata.js';
 
 const TEST_TIMEOUT_MS = 10_000;
 
@@ -152,6 +158,44 @@ function applyTemplateModelMetadata(
   });
 }
 
+async function applyDynamicSupplierMetadata(
+  models: CachedModel[],
+  template: ProviderTemplate,
+): Promise<CachedModel[] | null> {
+  if (!template.modelsDevProviderId) return models;
+  const catalog = await fetchModelsDevCatalog();
+  if (!catalog) return null;
+
+  const provider = stripModelsDevCacheMeta(catalog)[template.modelsDevProviderId];
+  if (!provider) return null;
+  const supplier = template.supplierMetadataUrl
+    ? await fetchOpenCodeGoMetadata(template.supplierMetadataUrl)
+    : null;
+
+  return models.map(model => {
+    const providerModel = provider.models?.[model.id];
+    const capabilities = providerModel ?? findModelsDevModelAnywhere(model.id, catalog);
+    const supplied = supplier?.get(model.id);
+    const npm = supplied?.npm ?? providerModel?.provider?.npm ?? provider.npm ?? model.npm;
+    const contextWindow = capabilities?.limit?.context;
+    return {
+      ...model,
+      name: capabilities?.name ?? model.name,
+      family: capabilities?.family ?? model.family,
+      contextWindow,
+      contextWindowUnconfirmed: contextWindow === undefined,
+      npm,
+      modelFormat: modelFormatForNpm(npm ?? template.npm),
+      cost: supplied?.cost ?? providerModel?.cost ?? model.cost,
+      usageMultiplier: supplied?.usageMultiplier,
+      usageMultiplierApplies: true,
+      reasoning: capabilities?.reasoning ?? model.reasoning,
+      interleavedReasoningField: capabilities?.interleaved?.field,
+      deprecated: providerModel?.status === 'deprecated' ? true : undefined,
+    };
+  });
+}
+
 export interface FetchTemplateModelsResult {
   models: CachedModel[];
   baseUrl: string;
@@ -276,7 +320,16 @@ export async function fetchTemplateModels(
       // Failed to parse, use empty object
     }
 
-    const models = applyTemplateModelMetadata(parseModelList(json, template.npm), template);
+    const listedModels = applyTemplateModelMetadata(parseModelList(json, template.npm), template);
+    const models = await applyDynamicSupplierMetadata(listedModels, template);
+    if (!models) {
+      return {
+        models: [],
+        baseUrl,
+        error: 'Connected, but supplier model metadata was unavailable.',
+        hint: 'Try refreshing again after models.dev is reachable.',
+      };
+    }
     if (models.length === 0) {
       if (hasStaticFallback(template)) {
         return staticFallback(template, baseUrl);

@@ -25,6 +25,30 @@ export function formatModelLabel(model: Pick<LocalProviderModel, 'id' | 'name'>)
   return id;
 }
 
+function formatContextWindow(tokens: number): string {
+  if (tokens >= 1_000_000) {
+    const millions = tokens / 1_000_000;
+    return `${Number.isInteger(millions) ? millions : millions.toFixed(2).replace(/0+$/, '')}M`;
+  }
+  if (tokens >= 1_000) {
+    const thousands = tokens / 1_000;
+    return `${Number.isInteger(thousands) ? thousands : thousands.toFixed(1).replace(/\.0$/, '')}K`;
+  }
+  return String(tokens);
+}
+
+export function formatModelCapabilities(
+  model: Pick<LocalProviderModel, 'contextWindow' | 'contextWindowUnconfirmed' | 'usageMultiplier' | 'usageMultiplierApplies' | 'deprecated'>,
+): string {
+  const capabilities: string[] = [];
+  if (model.contextWindow) capabilities.push(`${formatContextWindow(model.contextWindow)} context`);
+  else if (model.contextWindowUnconfirmed) capabilities.push('context unconfirmed');
+  if (model.usageMultiplier !== undefined) capabilities.push(`${model.usageMultiplier}x usage`);
+  else if (model.usageMultiplierApplies) capabilities.push('usage multiplier unconfirmed');
+  if (model.deprecated) capabilities.push('deprecated');
+  return `[${capabilities.join(', ')}]`;
+}
+
 const bar = pc.gray('│');
 const hline = pc.gray('─');
 
@@ -131,7 +155,7 @@ export function modelSelectOption(model: LocalProviderModel, hint?: string) {
     ?? (model.name !== model.id ? model.id : model.brand || model.family || '');
   return {
     value: model.id,
-    label: fmtModel(label),
+    label: `${fmtModel(label)} ${pc.dim(formatModelCapabilities(model))}`,
     hint: hint === 'recent' ? fmtRecentHint() : defaultHint,
   };
 }

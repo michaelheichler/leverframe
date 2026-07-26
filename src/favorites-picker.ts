@@ -6,7 +6,7 @@ import { isFavorite } from './favorites.js';
 import {
   pickModelFromPagedList,
 } from './prompts.js';
-import { fmtModel, fmtProviderBracket, formatModelLabel } from './ui.js';
+import { fmtModel, fmtProviderBracket, formatModelCapabilities, formatModelLabel } from './ui.js';
 import { scoreModelSearch } from './model-search.js';
 import { favoriteProviderDisplayName } from './favorite-provider-display.js';
 import { isFreeStatus } from './free-models.js';
@@ -84,7 +84,7 @@ export function globalFavoriteSelectOption(
   const providerTag = fmtProviderBracket(entry.providerId, entry.providerName, entry.model.isFree);
   return {
     value: globalFavoritePickKey(entry),
-    label: `${fmtModel(label, entry.model.id)} ${providerTag}`,
+    label: `${fmtModel(label, entry.model.id)} ${pc.dim(formatModelCapabilities(entry.model))} ${providerTag}`,
     hint: favorited ? pc.dim('already in favorites') : '',
   };
 }

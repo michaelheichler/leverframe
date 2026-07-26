@@ -51,6 +51,20 @@ describe('pricing enrich', () => {
     expect(enriched[0]?.cost?.input).toBe(0.59);
   });
 
+  it('keeps provider-native pricing instead of replacing it with generic pricing', () => {
+    const cache = loadBundledPricingCache();
+    const index = buildPricingIndex(cache);
+    const models: CachedModel[] = [{
+      id: 'llama-3.3-70b-versatile',
+      name: 'Llama 3.3 70B',
+      upstreamModelId: 'llama-3.3-70b-versatile',
+      modelFormat: 'openai',
+      cost: { input: 0.1, output: 0.2 },
+    }];
+
+    expect(enrichModelsWithPricing(models, index, 'groq')[0]?.cost).toEqual({ input: 0.1, output: 0.2 });
+  });
+
   it('marks enriched zero-cost models as verified free', () => {
     const index = buildPricingIndex({
       models: [{

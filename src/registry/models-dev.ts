@@ -33,12 +33,18 @@ export interface ModelsDevModel {
   reasoning?: boolean;
   interleaved?: { field?: string };
   modalities?: ModelsDevModalities;
+  family?: string;
+  status?: string;
+  limit?: { context?: number; output?: number };
+  cost?: { input: number; output: number; cache_read?: number; cache_write?: number };
+  provider?: { npm?: string };
 }
 
 export interface ModelsDevProvider {
   id?: string;
   name?: string;
   models?: Record<string, ModelsDevModel>;
+  npm?: string;
 }
 
 export type ModelsDevCacheFile = Record<string, ModelsDevProvider>;
@@ -198,7 +204,7 @@ export function isModelsDevCacheFresh(
   return now - fetchedAt < MODELS_DEV_REFRESH_TTL_MS;
 }
 
-export async function fetchModelsDevCache(): Promise<ModelsDevCacheFile | null> {
+export async function fetchModelsDevCatalog(): Promise<ModelsDevCacheFile | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
@@ -209,14 +215,18 @@ export async function fetchModelsDevCache(): Promise<ModelsDevCacheFile | null> 
     if (!response.ok) return null;
     const data = (await response.json()) as Record<string, ModelsDevProvider>;
     if (!data || typeof data !== 'object') return null;
-    const withMeta = attachModelsDevCacheMeta(data);
-    writeModelsDevCache(getUserModelsDevCachePath(), withMeta);
-    return withMeta;
+    return attachModelsDevCacheMeta(data);
   } catch {
     return null;
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function fetchModelsDevCache(): Promise<ModelsDevCacheFile | null> {
+  const data = await fetchModelsDevCatalog();
+  if (data) writeModelsDevCache(getUserModelsDevCachePath(), data);
+  return data;
 }
 
 export function resolveModelsDevSlug(providerId: string): string {
@@ -287,6 +297,20 @@ export function findModelsDevModel(
   for (const candidate of normalizeModelIdCandidates(modelId)) {
     const entry = models[candidate];
     if (entry) return entry;
+  }
+  return null;
+}
+
+export function findModelsDevModelAnywhere(
+  modelId: string,
+  cache: ModelsDevCacheFile,
+): ModelsDevModel | null {
+  const candidates = normalizeModelIdCandidates(modelId);
+  for (const provider of Object.values(stripModelsDevCacheMeta(cache))) {
+    for (const candidate of candidates) {
+      const entry = provider.models?.[candidate];
+      if (entry) return entry;
+    }
   }
   return null;
 }

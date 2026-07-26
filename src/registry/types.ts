@@ -14,6 +14,10 @@ export interface CachedModel {
   brand?: string;
   contextWindow?: number;
   cost?: { input: number; output: number; cache_read?: number; cache_write?: number };
+  usageMultiplier?: number;
+  usageMultiplierApplies?: boolean;
+  deprecated?: boolean;
+  contextWindowUnconfirmed?: boolean;
   isFree?: boolean;
   freeStatus?: FreeStatus;
   modelFormat: 'anthropic' | 'openai' | 'cloud-code';

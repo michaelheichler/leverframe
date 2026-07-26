@@ -27,7 +27,12 @@ export interface LocalProviderModel {
   npm?: string;            // OpenCode api.npm package, e.g. @ai-sdk/xai (SDK routing)
   apiBaseUrl?: string;     // raw api.url, for openai-compatible/openrouter SDK base URL
   cost?: ModelCost;
+  /** Go subscription usage value divided by monthly subscription price. */
+  usageMultiplier?: number;
+  usageMultiplierApplies?: boolean;
+  deprecated?: boolean;
   contextWindow?: number;
+  contextWindowUnconfirmed?: boolean;
   /** Provider-reported request parameters, e.g. OpenRouter supported_parameters. */
   supportedParameters?: string[];
   /** Broad model metadata: model can produce reasoning/thinking output. */
