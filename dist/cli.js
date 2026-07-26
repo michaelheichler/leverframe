@@ -8,6 +8,7 @@ import {
   VERSION,
   VERTEX_ANTHROPIC_NPM,
   buildChildEnv,
+  buildClaudeVersionProbe,
   buildHttpProxyChildEnv,
   claudeCodeClientModelId,
   deleteProviderCredential,
@@ -50,7 +51,7 @@ import {
   supportsNativeOAuth,
   tokensToStoredCredential,
   unregisterServerRuntimeState
-} from "./chunk-KLEC2OEF.js";
+} from "./chunk-RL5WO4HB.js";
 
 // src/cli.ts
 import pc13 from "picocolors";
@@ -10906,12 +10907,14 @@ function planLaunchWizard(opts) {
 }
 
 // src/patcher.ts
-import { createHash as createHash5 } from "crypto";
+import { createHash as createHash5, randomUUID as randomUUID6 } from "crypto";
+import { execFileSync } from "child_process";
 import {
   copyFileSync as copyFileSync2,
   existsSync as existsSync5,
   mkdirSync as mkdirSync6,
   readFileSync as readFileSync6,
+  renameSync as renameSync3,
   statSync as statSync2,
   unlinkSync as unlinkSync3,
   writeFileSync as writeFileSync5,
@@ -10920,7 +10923,7 @@ import {
   realpathSync
 } from "fs";
 import { homedir } from "os";
-import { basename, join as join5 } from "path";
+import { basename, dirname as dirname5, join as join5 } from "path";
 import pc12 from "picocolors";
 import * as p11 from "@clack/prompts";
 
@@ -11105,6 +11108,7 @@ function applyLeverframePatches(source, config) {
 }
 
 // src/patcher.ts
+var LEVERFRAME_INJECTION_MARKER = "/*leverframe:patch:v1*/";
 function getPatchManifestPath() {
   return join5(getAppHome(), "patch-state.json");
 }
@@ -11122,9 +11126,18 @@ function readPatchManifest(path = getPatchManifestPath()) {
   return null;
 }
 function writePatchManifest(manifest, path = getPatchManifestPath()) {
-  mkdirSync6(getAppHome(), { recursive: true, mode: 448 });
-  writeFileSync5(path, `${JSON.stringify(manifest, null, 2)}
+  mkdirSync6(dirname5(path), { recursive: true, mode: 448 });
+  const staged = join5(dirname5(path), `.leverframe-${basename(path)}-${randomUUID6()}`);
+  try {
+    writeFileSync5(staged, `${JSON.stringify(manifest, null, 2)}
 `, { encoding: "utf8", mode: 384 });
+    renameSync3(staged, path);
+  } finally {
+    try {
+      unlinkSync3(staged);
+    } catch {
+    }
+  }
 }
 function buildPatchModelConfig(favorites, aliases, modelMetaFor) {
   const config = {};
@@ -11163,7 +11176,6 @@ function buildDesiredPatchConfig() {
     for (const model of provider.modelsCache?.models ?? []) {
       meta.set(`${provider.id}:${model.id}`, {
         contextWindow: model.contextWindow && model.contextWindow > 0 ? model.contextWindow : void 0,
-        // Same label `leverframe server` prints at startup and `models --list` shows.
         displayName: httpProxyDisplayName(model, provider.name)
       });
     }
@@ -11179,6 +11191,7 @@ function evaluatePatchState(manifest, current) {
   if (manifest.binaryPath !== current.binaryPath) return "unpatched";
   if (manifest.claudeVersion !== current.claudeVersion) return "stale-binary";
   if (current.binarySize !== void 0 && manifest.patchedSize !== current.binarySize) return "stale-binary";
+  if (current.binarySha256 !== void 0 && manifest.patchedSha256 !== current.binarySha256) return "stale-binary";
   if (manifest.configHash !== current.configHash) return "stale-config";
   return "current";
 }
@@ -11227,6 +11240,80 @@ function tryAcquirePatchLock(lockPath = getPatchLockPath(), opts = {}) {
 function sha256File(path) {
   return createHash5("sha256").update(readFileSync6(path)).digest("hex");
 }
+function classifyVersionedMarker(content) {
+  const markers = content.match(/\/\*leverframe:patch:[^*]*\*\//g) ?? [];
+  const markerPrefixes = content.split("/*leverframe:patch:").length - 1;
+  if (markerPrefixes !== markers.length) {
+    return { state: "ambiguous", evidence: "unknown-marker" };
+  }
+  if (markers.length === 0) {
+    return { state: "absent", evidence: "none" };
+  }
+  return markers.length === 1 && markers[0] === LEVERFRAME_INJECTION_MARKER ? { state: "present", evidence: "marker-v1" } : { state: "ambiguous", evidence: "unknown-marker" };
+}
+function classifyLeverframeInjection(content, sha256, manifest, binaryPath) {
+  const marker = classifyVersionedMarker(content);
+  if (marker.state !== "absent") return marker;
+  if (content.includes("/*ccpatch:ctx*/")) return { state: "present", evidence: "ccpatch" };
+  if (manifest?.binaryPath === binaryPath && manifest.patchedSha256.length > 0 && manifest.patchedSha256 === sha256) {
+    return { state: "present", evidence: "manifest-hash" };
+  }
+  return marker;
+}
+function addLeverframeInjectionMarker(content) {
+  const marker = classifyVersionedMarker(content);
+  if (marker.state === "ambiguous") {
+    throw new Error("leverframe patch: unrecognized injection marker");
+  }
+  return marker.state === "present" ? content : `${content}
+${LEVERFRAME_INJECTION_MARKER}`;
+}
+function choosePatchBaseline(operation, live, backup, manifest, expected) {
+  if (!live.readable || !live.sha256 || !live.version) {
+    return { ok: false, reason: "Cannot inspect the live claude binary." };
+  }
+  if (live.version !== expected.version) {
+    return { ok: false, reason: "The live claude version changed during inspection." };
+  }
+  if (live.injection.state === "ambiguous") {
+    return { ok: false, reason: "The live claude injection marker is ambiguous." };
+  }
+  if (live.injection.state === "absent") {
+    return operation === "patch" ? { ok: true, source: "live" } : { ok: false, reason: "Refusing restore because the live claude binary is not Leverframe-injected." };
+  }
+  if (!manifest) return { ok: false, reason: "Injected claude has no patch manifest." };
+  if (manifest.binaryPath !== expected.binaryPath || manifest.backupPath !== expected.backupPath) {
+    return { ok: false, reason: "The patch manifest paths do not match the live binary and baseline." };
+  }
+  if (manifest.claudeVersion !== expected.version || !backup?.version || backup.version !== expected.version) {
+    return { ok: false, reason: "The live, baseline, and manifest claude versions do not match." };
+  }
+  if (!backup.readable || !backup.sha256) {
+    return { ok: false, reason: "The saved baseline is missing or unreadable." };
+  }
+  if (backup.injection.state !== "absent" || manifest.patchedSha256 === backup.sha256) {
+    return { ok: false, reason: "The saved baseline is injected or has an ambiguous marker." };
+  }
+  if (!manifest.baselineSha256 || manifest.baselineSha256 !== backup.sha256) {
+    return { ok: false, reason: "The saved baseline hash does not match the patch manifest." };
+  }
+  return { ok: true, source: "backup" };
+}
+function readExactClaudeVersion(path) {
+  try {
+    const probe = buildClaudeVersionProbe(path);
+    if (!probe) return null;
+    const output = execFileSync(probe.file, probe.args, {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 5e3,
+      killSignal: "SIGKILL"
+    });
+    return output.match(/(\d+\.\d+\.\d+)/)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
 function resolveClaudeBinaryForPatch() {
   const envOverride = process.env["TWEAKCC_CC_INSTALLATION_PATH"];
   const nativeSymlink = join5(homedir(), ".local", "bin", "claude");
@@ -11243,14 +11330,21 @@ function resolveClaudeBinaryForPatch() {
   } catch {
     return null;
   }
-  return { binaryPath: resolved, version: getInstalledClaudeVersion(resolved) };
+  const version = readExactClaudeVersion(resolved);
+  return version ? { binaryPath: resolved, version } : null;
 }
-function backupDir() {
-  return process.env["TWEAKCC_CONFIG_DIR"]?.trim() || join5(homedir(), ".tweakcc");
-}
-function pristineBackupPath(version, binaryPath) {
+function getPristineBackupPath(version, binaryPath) {
   const tag = version.replace(/[^\w.-]+/g, "_") || basename(binaryPath);
-  return join5(backupDir(), `claude-${tag}.orig`);
+  return join5(getAppHome(), "backups", `claude-${tag}.orig`);
+}
+function stagingPath(destination) {
+  return join5(dirname5(dirname5(destination)), `.leverframe-${basename(destination)}-${randomUUID6()}`);
+}
+function removeFileIfExists(path) {
+  try {
+    unlinkSync3(path);
+  } catch {
+  }
 }
 function summarizePatchResults(results) {
   const lines = results.map(formatPatchSiteLine);
@@ -11263,29 +11357,93 @@ function summarizePatchResults(results) {
   }
   return lines;
 }
-async function applyPatch(binaryPath, version, desired, configHash, opts) {
-  const backup = pristineBackupPath(version, binaryPath);
-  mkdirSync6(backupDir(), { recursive: true });
-  if (opts.restoreFirst) {
-    if (!existsSync5(backup)) {
-      return { ok: false, message: `Cannot re-patch: pristine backup missing at ${backup}. Reinstall claude, then run leverframe patch.` };
+var patchBinaryRuntime = {
+  async inspect(path, manifest = null) {
+    try {
+      if (!statSync2(path).isFile()) throw new Error("not a file");
+      const sha256 = sha256File(path);
+      const { tryDetectInstallation, readContent } = await import("tweakcc");
+      const installation = await tryDetectInstallation({ path });
+      const version = installation.version;
+      if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("embedded version unavailable");
+      const content = await readContent(installation);
+      return {
+        path,
+        readable: true,
+        version,
+        sha256,
+        injection: classifyLeverframeInjection(content, sha256, manifest, path)
+      };
+    } catch {
+      return {
+        path,
+        readable: false,
+        version: null,
+        sha256: null,
+        injection: { state: "ambiguous", evidence: "unknown-marker" }
+      };
     }
-    copyFileSync2(backup, binaryPath);
-  } else if (!existsSync5(backup)) {
-    copyFileSync2(binaryPath, backup);
-  }
-  copyFileSync2(backup, join5(backupDir(), "native-binary.backup"));
-  const { tryDetectInstallation, readContent, writeContent } = await import("tweakcc");
-  let results;
-  try {
-    const installation = await tryDetectInstallation({ path: binaryPath });
+  },
+  async patch(path, config) {
+    const { tryDetectInstallation, readContent, writeContent } = await import("tweakcc");
+    const installation = await tryDetectInstallation({ path });
     const source = await readContent(installation);
-    const patched = applyLeverframePatches(source, desired.config);
-    results = patched.results;
-    await writeContent(installation, patched.content);
+    const patched = applyLeverframePatches(source, config);
+    await writeContent(installation, addLeverframeInjectionMarker(patched.content));
+    return patched.results;
+  }
+};
+async function applyPatchTransaction(input, runtime = patchBinaryRuntime) {
+  const {
+    binaryPath,
+    backupPath,
+    manifestPath,
+    version,
+    desired,
+    configHash,
+    manifest,
+    trace
+  } = input;
+  mkdirSync6(dirname5(backupPath), { recursive: true });
+  const baselineStage = stagingPath(backupPath);
+  const patchedStage = stagingPath(binaryPath);
+  let results = [];
+  try {
+    const live = await runtime.inspect(binaryPath, manifest);
+    const backup = live.injection.state === "present" && existsSync5(backupPath) ? await runtime.inspect(backupPath) : null;
+    const choice = choosePatchBaseline("patch", live, backup, manifest, {
+      binaryPath,
+      backupPath,
+      version
+    });
+    if (!choice.ok) return { ok: false, message: choice.reason };
+    const baseline = choice.source === "live" ? live : backup;
+    copyFileSync2(baseline.path, baselineStage);
+    const stagedBaseline = await runtime.inspect(baselineStage);
+    if (!stagedBaseline.readable || stagedBaseline.version !== version || stagedBaseline.injection.state !== "absent" || stagedBaseline.sha256 !== baseline.sha256) {
+      return { ok: false, message: "Candidate baseline failed staged validation." };
+    }
+    copyFileSync2(baselineStage, patchedStage);
+    results = await runtime.patch(patchedStage, desired.config);
+    const stagedPatched = await runtime.inspect(patchedStage);
+    if (!stagedPatched.readable || stagedPatched.version !== version || stagedPatched.injection.evidence !== "marker-v1" || !stagedPatched.sha256) {
+      return { ok: false, message: "Patched candidate failed staged validation." };
+    }
+    renameSync3(baselineStage, backupPath);
+    renameSync3(patchedStage, binaryPath);
+    writePatchManifest({
+      binaryPath,
+      claudeVersion: version,
+      configHash,
+      patchedSize: statSync2(binaryPath).size,
+      patchedSha256: stagedPatched.sha256,
+      backupPath,
+      baselineSha256: stagedBaseline.sha256,
+      patchedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }, manifestPath);
   } catch (err) {
     const detailLines = err instanceof PatchApplyError ? summarizePatchResults(err.results) : [];
-    if (opts.trace && detailLines.length) {
+    if (trace && detailLines.length) {
       process.stderr.write(`${detailLines.join("\n")}
 `);
     }
@@ -11294,21 +11452,14 @@ async function applyPatch(binaryPath, version, desired, configHash, opts) {
       message: `Patch failed: ${err instanceof Error ? err.message : String(err)}`,
       detailLines
     };
+  } finally {
+    removeFileIfExists(baselineStage);
+    removeFileIfExists(patchedStage);
   }
-  if (opts.trace) {
+  if (trace) {
     process.stderr.write(`${summarizePatchResults(results).join("\n")}
 `);
   }
-  const manifest = {
-    binaryPath,
-    claudeVersion: version,
-    configHash,
-    patchedSize: statSync2(binaryPath).size,
-    patchedSha256: sha256File(binaryPath),
-    backupPath: backup,
-    patchedAt: (/* @__PURE__ */ new Date()).toISOString()
-  };
-  writePatchManifest(manifest);
   const modelCount = Object.keys(desired.config).length;
   const aliasCount = Object.values(desired.config).filter((entry) => entry.alias).length;
   const windowCount = Object.values(desired.config).filter((entry) => entry.context).length;
@@ -11318,6 +11469,39 @@ async function applyPatch(binaryPath, version, desired, configHash, opts) {
     detailLines: summarizePatchResults(results)
   };
 }
+async function restorePatchTransaction(input, runtime = patchBinaryRuntime) {
+  const { binaryPath, backupPath, manifestPath, version, manifest } = input;
+  const staged = stagingPath(binaryPath);
+  try {
+    const live = await runtime.inspect(binaryPath, manifest);
+    const backup = live.injection.state === "present" && existsSync5(backupPath) ? await runtime.inspect(backupPath) : null;
+    const choice = choosePatchBaseline("restore", live, backup, manifest, {
+      binaryPath,
+      backupPath,
+      version
+    });
+    if (!choice.ok) return { ok: false, message: choice.reason };
+    copyFileSync2(backupPath, staged);
+    const candidate = await runtime.inspect(staged);
+    if (!candidate.readable || candidate.version !== version || candidate.injection.state !== "absent" || candidate.sha256 !== backup.sha256) {
+      return { ok: false, message: "Restore candidate failed staged validation." };
+    }
+    renameSync3(staged, binaryPath);
+    try {
+      unlinkSync3(manifestPath);
+    } catch (err) {
+      if (err.code !== "ENOENT") throw err;
+    }
+    return { ok: true, message: `Restored pristine claude ${version} from ${backupPath}.` };
+  } catch (err) {
+    return {
+      ok: false,
+      message: `Restore failed: ${err instanceof Error ? err.message : String(err)}`
+    };
+  } finally {
+    removeFileIfExists(staged);
+  }
+}
 async function runPatchCommand(opts = {}) {
   const resolved = resolveClaudeBinaryForPatch();
   if (!resolved) {
@@ -11325,20 +11509,32 @@ async function runPatchCommand(opts = {}) {
     return 1;
   }
   const { binaryPath, version } = resolved;
+  const backupPath = getPristineBackupPath(version, binaryPath);
+  const manifestPath = getPatchManifestPath();
+  const manifest = readPatchManifest(manifestPath);
   if (opts.restore) {
-    const manifest2 = readPatchManifest();
-    const backup = manifest2?.backupPath && existsSync5(manifest2.backupPath) ? manifest2.backupPath : pristineBackupPath(version, binaryPath);
-    if (!existsSync5(backup)) {
-      p11.log.error(`No pristine backup found for claude ${version} (${backup}).`);
+    const release2 = tryAcquirePatchLock();
+    if (!release2) {
+      p11.log.warn("Another leverframe process is patching the claude binary right now. Skipped.");
       return 1;
     }
-    copyFileSync2(backup, binaryPath);
     try {
-      unlinkSync3(getPatchManifestPath());
-    } catch {
+      const outcome = await restorePatchTransaction({
+        binaryPath,
+        backupPath,
+        manifestPath,
+        version,
+        manifest
+      });
+      if (!outcome.ok) {
+        p11.log.error(outcome.message);
+        return 1;
+      }
+      p11.log.success(outcome.message);
+      return 0;
+    } finally {
+      release2();
     }
-    p11.log.success(`Restored pristine claude ${version} from ${backup}.`);
-    return 0;
   }
   const desired = buildDesiredPatchConfig();
   if (Object.keys(desired.config).length === 0) {
@@ -11346,34 +11542,35 @@ async function runPatchCommand(opts = {}) {
     return 1;
   }
   for (const id of desired.unknownWindows) {
-    p11.log.warn(`No context window metadata for ${id} \u2014 Claude Code will assume the 200k default.`);
+    p11.log.warn(`No context window metadata for ${id}. Claude Code will assume the 200k default.`);
   }
   const configHash = computePatchConfigHash(desired.config);
-  const manifest = readPatchManifest();
   const state = evaluatePatchState(manifest, {
     binaryPath,
     claudeVersion: version,
     configHash,
-    binarySize: statSync2(binaryPath).size
+    binarySize: statSync2(binaryPath).size,
+    binarySha256: sha256File(binaryPath)
   });
   if (state === "current") {
-    p11.log.success(`claude ${version} is already patched with the current model config \u2014 nothing to do.`);
+    p11.log.success(`claude ${version} is already patched with the current model config. Nothing to do.`);
     return 0;
   }
   const release = tryAcquirePatchLock();
   if (!release) {
-    p11.log.warn("Another leverframe process is patching the claude binary right now \u2014 skipped.");
+    p11.log.warn("Another leverframe process is patching the claude binary right now. Skipped.");
     return 1;
   }
   try {
-    const backup = pristineBackupPath(version, binaryPath);
-    const restoreFirst = existsSync5(backup) && sha256File(backup) !== sha256File(binaryPath);
-    if (restoreFirst) {
-      p11.log.info("Binary differs from its pristine backup \u2014 restoring it before patching fresh.");
-    }
-    const outcome = await applyPatch(binaryPath, version, desired, configHash, {
-      trace: opts.trace ?? false,
-      restoreFirst
+    const outcome = await applyPatchTransaction({
+      binaryPath,
+      backupPath,
+      manifestPath,
+      version,
+      desired,
+      configHash,
+      manifest,
+      trace: opts.trace ?? false
     });
     if (!outcome.ok) {
       p11.log.error(outcome.message);
@@ -11401,13 +11598,14 @@ async function runLaunchPatchCheck(opts = {}) {
       binaryPath: resolved.binaryPath,
       claudeVersion: resolved.version,
       configHash,
-      binarySize: statSync2(resolved.binaryPath).size
+      binarySize: statSync2(resolved.binaryPath).size,
+      binarySha256: sha256File(resolved.binaryPath)
     });
     if (state === "current") return;
     const interactive = !opts.dryRun && !opts.agentStdout && process.stdin.isTTY === true && process.stdout.isTTY === true;
     if (!interactive) {
       if (!opts.agentStdout) {
-        console.error(pc12.dim(`leverframe: claude binary is ${state === "unpatched" ? "not patched" : "stale-patched"} for your favorites \u2014 run \`leverframe patch\`.`));
+        console.error(pc12.dim(`leverframe: claude binary is ${state === "unpatched" ? "not patched" : "stale-patched"} for your favorites. Run \`leverframe patch\`.`));
       }
       return;
     }

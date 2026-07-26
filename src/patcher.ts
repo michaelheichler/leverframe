@@ -1,25 +1,11 @@
-// src/patcher.ts — leverframe patch: first-class Claude Code binary patcher.
-//
-// Uses tweakcc's programmatic API (readContent/writeContent — an exact-pinned,
-// declared dependency; no npx, no network) to extract the bundled JS from the
-// Claude Code binary, applies the leverframe patch sites in-process
-// (see patch-transforms.ts), and repacks. Adds:
-//  - auto-config: the patch map is built from leverframe favorites + aliases,
-//    context windows resolved from registry model metadata (never asked),
-//  - auto-apply: no confirmation, concise summary,
-//  - idempotence: a manifest (~/.leverframe/patch-state.json) records the claude
-//    version + config hash; unchanged config → fast no-op,
-//  - re-patch: stale config/version → restore the pristine backup, patch fresh,
-//  - a pristine per-version backup (~/.tweakcc/claude-<ver>.orig) compatible
-//    with `tweakcc --restore`,
-//  - a pid lock (~/.leverframe/patch.lock) so concurrent launches cannot race.
-
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import {
   copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -28,13 +14,13 @@ import {
   realpathSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { getAppHome } from './paths.js';
 import { loadPreferences } from './config.js';
 import { loadRegistry } from './registry/io.js';
-import { findClaudeBinary, getInstalledClaudeVersion } from './launch.js';
+import { buildClaudeVersionProbe, findClaudeBinary } from './launch.js';
 import { httpProxyDisplayName, httpProxyModelId } from './http-proxy/routes.js';
 import { stripOneMContextSuffix } from './context-model-id.js';
 import {
@@ -45,23 +31,19 @@ import {
   type PatchScriptModelConfig,
 } from './patch-transforms.js';
 
-// ── Manifest ────────────────────────────────────────────────────────────────
 
 export interface PatchManifest {
-  /** Resolved (real) path of the patched claude binary. */
   binaryPath: string;
-  /** `claude --version` at patch time. */
   claudeVersion: string;
-  /** sha256 of the desired patch model config (canonical JSON). */
   configHash: string;
-  /** Size in bytes of the binary after patching (cheap staleness probe). */
   patchedSize: number;
-  /** sha256 of the binary after patching. */
   patchedSha256: string;
-  /** Pristine backup used for restore. */
   backupPath: string;
+  baselineSha256?: string;
   patchedAt: string;
 }
+
+export const LEVERFRAME_INJECTION_MARKER = '/*leverframe:patch:v1*/';
 
 export function getPatchManifestPath(): string {
   return join(getAppHome(), 'patch-state.json');
@@ -78,37 +60,35 @@ export function readPatchManifest(path = getPatchManifestPath()): PatchManifest 
       return parsed;
     }
   } catch {
-    // missing or invalid manifest → unpatched
   }
   return null;
 }
 
 function writePatchManifest(manifest: PatchManifest, path = getPatchManifestPath()): void {
-  mkdirSync(getAppHome(), { recursive: true, mode: 0o700 });
-  writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const staged = join(dirname(path), `.leverframe-${basename(path)}-${randomUUID()}`);
+  try {
+    writeFileSync(staged, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    renameSync(staged, path);
+  } finally {
+    try {
+      unlinkSync(staged);
+    } catch {
+    }
+  }
 }
 
-// ── Desired patch config (pure given inputs) ────────────────────────────────
 
 export interface DesiredPatchConfig {
   config: PatchScriptModelConfig;
-  /** Model ids whose context window is unknown (defaulting to Claude Code's 200k). */
   unknownWindows: string[];
 }
 
-/** Model metadata the patch bakes in, resolved from the registry models cache. */
 export interface PatchModelMeta {
   contextWindow?: number;
-  /** Canonical label, e.g. `GPT-5.6 Sol (OpenAI (ChatGPT))`. */
   displayName?: string;
 }
 
-/**
- * Build the patch model config from favorites + aliases.
- * Keys are the bare `leverframe:<provider>:<model>` ids (no [1m] suffix — the
- * context patch and the suffix are mutually exclusive). When an entry has an
- * alias, that alias becomes the model's identity inside the patched binary.
- */
 export function buildPatchModelConfig(
   favorites: Array<{ providerId: string; modelId: string }>,
   aliases: Array<{ name: string; providerId: string; modelId: string }>,
@@ -135,7 +115,6 @@ export function buildPatchModelConfig(
   return { config, unknownWindows };
 }
 
-/** Canonical (key-sorted) hash of a patch model config. */
 export function computePatchConfigHash(config: PatchScriptModelConfig): string {
   const canonical = Object.keys(config).sort().map(key => {
     const entry = config[key]!;
@@ -144,7 +123,6 @@ export function computePatchConfigHash(config: PatchScriptModelConfig): string {
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 }
 
-/** Read favorites + aliases + registry model metadata from disk (no network, no credentials). */
 export function buildDesiredPatchConfig(): DesiredPatchConfig {
   const prefs = loadPreferences();
   const favorites = prefs.favoriteModels ?? [];
@@ -156,7 +134,6 @@ export function buildDesiredPatchConfig(): DesiredPatchConfig {
     for (const model of provider.modelsCache?.models ?? []) {
       meta.set(`${provider.id}:${model.id}`, {
         contextWindow: model.contextWindow && model.contextWindow > 0 ? model.contextWindow : undefined,
-        // Same label `leverframe server` prints at startup and `models --list` shows.
         displayName: httpProxyDisplayName(model, provider.name),
       });
     }
@@ -169,23 +146,28 @@ export function buildDesiredPatchConfig(): DesiredPatchConfig {
   );
 }
 
-// ── Staleness (pure) ────────────────────────────────────────────────────────
 
 export type PatchState = 'unpatched' | 'current' | 'stale-config' | 'stale-binary';
 
 export function evaluatePatchState(
   manifest: PatchManifest | null,
-  current: { binaryPath: string; claudeVersion: string; configHash: string; binarySize?: number },
+  current: {
+    binaryPath: string;
+    claudeVersion: string;
+    configHash: string;
+    binarySize?: number;
+    binarySha256?: string;
+  },
 ): PatchState {
   if (!manifest) return 'unpatched';
   if (manifest.binaryPath !== current.binaryPath) return 'unpatched';
   if (manifest.claudeVersion !== current.claudeVersion) return 'stale-binary';
   if (current.binarySize !== undefined && manifest.patchedSize !== current.binarySize) return 'stale-binary';
+  if (current.binarySha256 !== undefined && manifest.patchedSha256 !== current.binarySha256) return 'stale-binary';
   if (manifest.configHash !== current.configHash) return 'stale-config';
   return 'current';
 }
 
-// ── Lock (pid + staleness) ──────────────────────────────────────────────────
 
 const PATCH_LOCK_STALE_MS = 10 * 60 * 1000;
 
@@ -203,11 +185,6 @@ function pidIsAlive(pid: number): boolean {
   }
 }
 
-/**
- * Try to take the patch lock. Returns a release function, or null when another
- * live process holds it. A lock left by a dead pid or older than 10 minutes is
- * treated as stale and replaced.
- */
 export function tryAcquirePatchLock(
   lockPath = getPatchLockPath(),
   opts: { now?: number; isAlive?: (pid: number) => boolean } = {},
@@ -226,11 +203,9 @@ export function tryAcquirePatchLock(
         try {
           unlinkSync(lockPath);
         } catch {
-          // already gone
         }
       };
     } catch {
-      // Lock exists — check staleness.
       let stale = false;
       try {
         const existing = JSON.parse(readFileSync(lockPath, 'utf8')) as PatchLockContent;
@@ -238,31 +213,150 @@ export function tryAcquirePatchLock(
           || !isAlive(existing.pid)
           || (typeof existing.startedAt === 'number' && now - existing.startedAt > PATCH_LOCK_STALE_MS);
       } catch {
-        stale = true; // unreadable lock file → stale
+        stale = true;
       }
       if (!stale) return null;
       try {
         unlinkSync(lockPath);
       } catch {
-        // raced with the owner's cleanup — retry loop handles it
       }
     }
   }
   return null;
 }
 
-// ── Binary + backup helpers ─────────────────────────────────────────────────
 
 function sha256File(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
-/**
- * Locate the REAL native binary, bypassing wrapper shims (e.g. cmux) that a
- * plain PATH lookup can return. Order (ported from the relay-ai wrapper):
- * TWEAKCC_CC_INSTALLATION_PATH → ~/.local/bin/claude (stable native-install
- * symlink) → findClaudeBinary() PATH lookup.
- */
+export type InjectionState = 'present' | 'absent' | 'ambiguous';
+
+export interface InjectionClassification {
+  state: InjectionState;
+  evidence: 'marker-v1' | 'manifest-hash' | 'ccpatch' | 'none' | 'unknown-marker';
+}
+
+function classifyVersionedMarker(content: string): InjectionClassification {
+  const markers = content.match(/\/\*leverframe:patch:[^*]*\*\//g) ?? [];
+  const markerPrefixes = content.split('/*leverframe:patch:').length - 1;
+  if (markerPrefixes !== markers.length) {
+    return { state: 'ambiguous', evidence: 'unknown-marker' };
+  }
+  if (markers.length === 0) {
+    return { state: 'absent', evidence: 'none' };
+  }
+  return markers.length === 1 && markers[0] === LEVERFRAME_INJECTION_MARKER
+    ? { state: 'present', evidence: 'marker-v1' }
+    : { state: 'ambiguous', evidence: 'unknown-marker' };
+}
+
+export function classifyLeverframeInjection(
+  content: string,
+  sha256: string,
+  manifest: PatchManifest | null,
+  binaryPath: string,
+): InjectionClassification {
+  const marker = classifyVersionedMarker(content);
+  if (marker.state !== 'absent') return marker;
+  if (content.includes('/*ccpatch:ctx*/')) return { state: 'present', evidence: 'ccpatch' };
+  if (
+    manifest?.binaryPath === binaryPath
+    && manifest.patchedSha256.length > 0
+    && manifest.patchedSha256 === sha256
+  ) {
+    return { state: 'present', evidence: 'manifest-hash' };
+  }
+  return marker;
+}
+
+export function addLeverframeInjectionMarker(content: string): string {
+  const marker = classifyVersionedMarker(content);
+  if (marker.state === 'ambiguous') {
+    throw new Error('leverframe patch: unrecognized injection marker');
+  }
+  return marker.state === 'present' ? content : `${content}\n${LEVERFRAME_INJECTION_MARKER}`;
+}
+
+export interface PatchBinaryInspection {
+  path: string;
+  readable: boolean;
+  version: string | null;
+  sha256: string | null;
+  injection: InjectionClassification;
+}
+
+export interface PatchBinaryRuntime {
+  inspect(path: string, manifest?: PatchManifest | null): Promise<PatchBinaryInspection>;
+  patch(path: string, config: PatchScriptModelConfig): Promise<PatchSiteResult[]>;
+}
+
+type PatchOperation = 'patch' | 'restore';
+
+type BaselineChoice =
+  | { ok: true; source: 'live' | 'backup' }
+  | { ok: false; reason: string };
+
+export function choosePatchBaseline(
+  operation: PatchOperation,
+  live: PatchBinaryInspection,
+  backup: PatchBinaryInspection | null,
+  manifest: PatchManifest | null,
+  expected: { binaryPath: string; backupPath: string; version: string },
+): BaselineChoice {
+  if (!live.readable || !live.sha256 || !live.version) {
+    return { ok: false, reason: 'Cannot inspect the live claude binary.' };
+  }
+  if (live.version !== expected.version) {
+    return { ok: false, reason: 'The live claude version changed during inspection.' };
+  }
+  if (live.injection.state === 'ambiguous') {
+    return { ok: false, reason: 'The live claude injection marker is ambiguous.' };
+  }
+  if (live.injection.state === 'absent') {
+    return operation === 'patch'
+      ? { ok: true, source: 'live' }
+      : { ok: false, reason: 'Refusing restore because the live claude binary is not Leverframe-injected.' };
+  }
+  if (!manifest) return { ok: false, reason: 'Injected claude has no patch manifest.' };
+  if (manifest.binaryPath !== expected.binaryPath || manifest.backupPath !== expected.backupPath) {
+    return { ok: false, reason: 'The patch manifest paths do not match the live binary and baseline.' };
+  }
+  if (
+    manifest.claudeVersion !== expected.version
+    || !backup?.version
+    || backup.version !== expected.version
+  ) {
+    return { ok: false, reason: 'The live, baseline, and manifest claude versions do not match.' };
+  }
+  if (!backup.readable || !backup.sha256) {
+    return { ok: false, reason: 'The saved baseline is missing or unreadable.' };
+  }
+  if (backup.injection.state !== 'absent' || manifest.patchedSha256 === backup.sha256) {
+    return { ok: false, reason: 'The saved baseline is injected or has an ambiguous marker.' };
+  }
+  if (!manifest.baselineSha256 || manifest.baselineSha256 !== backup.sha256) {
+    return { ok: false, reason: 'The saved baseline hash does not match the patch manifest.' };
+  }
+  return { ok: true, source: 'backup' };
+}
+
+function readExactClaudeVersion(path: string): string | null {
+  try {
+    const probe = buildClaudeVersionProbe(path);
+    if (!probe) return null;
+    const output = execFileSync(probe.file, probe.args, {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 5_000,
+      killSignal: 'SIGKILL',
+    });
+    return output.match(/(\d+\.\d+\.\d+)/)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function resolveClaudeBinaryForPatch(): { binaryPath: string; version: string } | null {
   const envOverride = process.env['TWEAKCC_CC_INSTALLATION_PATH'];
   const nativeSymlink = join(homedir(), '.local', 'bin', 'claude');
@@ -281,21 +375,26 @@ export function resolveClaudeBinaryForPatch(): { binaryPath: string; version: st
   } catch {
     return null;
   }
-  return { binaryPath: resolved, version: getInstalledClaudeVersion(resolved) };
+  const version = readExactClaudeVersion(resolved);
+  return version ? { binaryPath: resolved, version } : null;
 }
 
-function backupDir(): string {
-  return process.env['TWEAKCC_CONFIG_DIR']?.trim() || join(homedir(), '.tweakcc');
-}
-
-function pristineBackupPath(version: string, binaryPath: string): string {
+export function getPristineBackupPath(version: string, binaryPath: string): string {
   const tag = version.replace(/[^\w.-]+/g, '_') || basename(binaryPath);
-  return join(backupDir(), `claude-${tag}.orig`);
+  return join(getAppHome(), 'backups', `claude-${tag}.orig`);
 }
 
-// ── Patch reporting ─────────────────────────────────────────────────────────
+function stagingPath(destination: string): string {
+  return join(dirname(dirname(destination)), `.leverframe-${basename(destination)}-${randomUUID()}`);
+}
 
-/** Per-site report lines + summary, same shape the old tweakcc output showed. */
+function removeFileIfExists(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+  }
+}
+
 export function summarizePatchResults(results: PatchSiteResult[]): string[] {
   const lines = results.map(formatPatchSiteLine);
   const ok = results.filter(r => r.status === 'OK').length;
@@ -308,50 +407,130 @@ export function summarizePatchResults(results: PatchSiteResult[]): string[] {
   return lines;
 }
 
-// ── Apply / restore ─────────────────────────────────────────────────────────
 
-interface ApplyOutcome {
+export interface ApplyOutcome {
   ok: boolean;
   message: string;
   detailLines?: string[];
 }
 
-async function applyPatch(
-  binaryPath: string,
-  version: string,
-  desired: DesiredPatchConfig,
-  configHash: string,
-  opts: { trace: boolean; restoreFirst: boolean },
-): Promise<ApplyOutcome> {
-  const backup = pristineBackupPath(version, binaryPath);
-  mkdirSync(backupDir(), { recursive: true });
-
-  if (opts.restoreFirst) {
-    if (!existsSync(backup)) {
-      return { ok: false, message: `Cannot re-patch: pristine backup missing at ${backup}. Reinstall claude, then run leverframe patch.` };
+const patchBinaryRuntime: PatchBinaryRuntime = {
+  async inspect(path, manifest = null) {
+    try {
+      if (!statSync(path).isFile()) throw new Error('not a file');
+      const sha256 = sha256File(path);
+      const { tryDetectInstallation, readContent } = await import('tweakcc');
+      const installation = await tryDetectInstallation({ path });
+      const version = installation.version;
+      if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('embedded version unavailable');
+      const content = await readContent(installation);
+      return {
+        path,
+        readable: true,
+        version,
+        sha256,
+        injection: classifyLeverframeInjection(content, sha256, manifest, path),
+      };
+    } catch {
+      return {
+        path,
+        readable: false,
+        version: null,
+        sha256: null,
+        injection: { state: 'ambiguous', evidence: 'unknown-marker' },
+      };
     }
-    copyFileSync(backup, binaryPath);
-  } else if (!existsSync(backup)) {
-    copyFileSync(binaryPath, backup);
-  }
-  // Mirror the pristine copy to tweakcc's restore location (always from the
-  // backup, never the live binary — so it stays pristine even after patching).
-  copyFileSync(backup, join(backupDir(), 'native-binary.backup'));
-
-  // tweakcc's lib entry pulls in its interactive-picker deps (ink/react), so
-  // load it lazily — only when a patch is actually applied.
-  const { tryDetectInstallation, readContent, writeContent } = await import('tweakcc');
-
-  let results: PatchSiteResult[];
-  try {
-    const installation = await tryDetectInstallation({ path: binaryPath });
+  },
+  async patch(path, config) {
+    const { tryDetectInstallation, readContent, writeContent } = await import('tweakcc');
+    const installation = await tryDetectInstallation({ path });
     const source = await readContent(installation);
-    const patched = applyLeverframePatches(source, desired.config);
-    results = patched.results;
-    await writeContent(installation, patched.content);
+    const patched = applyLeverframePatches(source, config);
+    await writeContent(installation, addLeverframeInjectionMarker(patched.content));
+    return patched.results;
+  },
+};
+
+export interface PatchTransactionInput {
+  binaryPath: string;
+  backupPath: string;
+  manifestPath: string;
+  version: string;
+  desired: DesiredPatchConfig;
+  configHash: string;
+  manifest: PatchManifest | null;
+  trace: boolean;
+}
+
+export async function applyPatchTransaction(
+  input: PatchTransactionInput,
+  runtime: PatchBinaryRuntime = patchBinaryRuntime,
+): Promise<ApplyOutcome> {
+  const {
+    binaryPath,
+    backupPath,
+    manifestPath,
+    version,
+    desired,
+    configHash,
+    manifest,
+    trace,
+  } = input;
+  mkdirSync(dirname(backupPath), { recursive: true });
+  const baselineStage = stagingPath(backupPath);
+  const patchedStage = stagingPath(binaryPath);
+  let results: PatchSiteResult[] = [];
+  try {
+    const live = await runtime.inspect(binaryPath, manifest);
+    const backup = live.injection.state === 'present' && existsSync(backupPath)
+      ? await runtime.inspect(backupPath)
+      : null;
+    const choice = choosePatchBaseline('patch', live, backup, manifest, {
+      binaryPath,
+      backupPath,
+      version,
+    });
+    if (!choice.ok) return { ok: false, message: choice.reason };
+
+    const baseline = choice.source === 'live' ? live : backup!;
+    copyFileSync(baseline.path, baselineStage);
+    const stagedBaseline = await runtime.inspect(baselineStage);
+    if (
+      !stagedBaseline.readable
+      || stagedBaseline.version !== version
+      || stagedBaseline.injection.state !== 'absent'
+      || stagedBaseline.sha256 !== baseline.sha256
+    ) {
+      return { ok: false, message: 'Candidate baseline failed staged validation.' };
+    }
+
+    copyFileSync(baselineStage, patchedStage);
+    results = await runtime.patch(patchedStage, desired.config);
+    const stagedPatched = await runtime.inspect(patchedStage);
+    if (
+      !stagedPatched.readable
+      || stagedPatched.version !== version
+      || stagedPatched.injection.evidence !== 'marker-v1'
+      || !stagedPatched.sha256
+    ) {
+      return { ok: false, message: 'Patched candidate failed staged validation.' };
+    }
+
+    renameSync(baselineStage, backupPath);
+    renameSync(patchedStage, binaryPath);
+    writePatchManifest({
+      binaryPath,
+      claudeVersion: version,
+      configHash,
+      patchedSize: statSync(binaryPath).size,
+      patchedSha256: stagedPatched.sha256,
+      backupPath,
+      baselineSha256: stagedBaseline.sha256!,
+      patchedAt: new Date().toISOString(),
+    }, manifestPath);
   } catch (err) {
     const detailLines = err instanceof PatchApplyError ? summarizePatchResults(err.results) : [];
-    if (opts.trace && detailLines.length) {
+    if (trace && detailLines.length) {
       process.stderr.write(`${detailLines.join('\n')}\n`);
     }
     return {
@@ -359,22 +538,14 @@ async function applyPatch(
       message: `Patch failed: ${err instanceof Error ? err.message : String(err)}`,
       detailLines,
     };
+  } finally {
+    removeFileIfExists(baselineStage);
+    removeFileIfExists(patchedStage);
   }
-  if (opts.trace) {
+
+  if (trace) {
     process.stderr.write(`${summarizePatchResults(results).join('\n')}\n`);
   }
-
-  const manifest: PatchManifest = {
-    binaryPath,
-    claudeVersion: version,
-    configHash,
-    patchedSize: statSync(binaryPath).size,
-    patchedSha256: sha256File(binaryPath),
-    backupPath: backup,
-    patchedAt: new Date().toISOString(),
-  };
-  writePatchManifest(manifest);
-
   const modelCount = Object.keys(desired.config).length;
   const aliasCount = Object.values(desired.config).filter(entry => entry.alias).length;
   const windowCount = Object.values(desired.config).filter(entry => entry.context).length;
@@ -386,6 +557,59 @@ async function applyPatch(
   };
 }
 
+export interface RestoreTransactionInput {
+  binaryPath: string;
+  backupPath: string;
+  manifestPath: string;
+  version: string;
+  manifest: PatchManifest | null;
+}
+
+export async function restorePatchTransaction(
+  input: RestoreTransactionInput,
+  runtime: PatchBinaryRuntime = patchBinaryRuntime,
+): Promise<ApplyOutcome> {
+  const { binaryPath, backupPath, manifestPath, version, manifest } = input;
+  const staged = stagingPath(binaryPath);
+  try {
+    const live = await runtime.inspect(binaryPath, manifest);
+    const backup = live.injection.state === 'present' && existsSync(backupPath)
+      ? await runtime.inspect(backupPath)
+      : null;
+    const choice = choosePatchBaseline('restore', live, backup, manifest, {
+      binaryPath,
+      backupPath,
+      version,
+    });
+    if (!choice.ok) return { ok: false, message: choice.reason };
+
+    copyFileSync(backupPath, staged);
+    const candidate = await runtime.inspect(staged);
+    if (
+      !candidate.readable
+      || candidate.version !== version
+      || candidate.injection.state !== 'absent'
+      || candidate.sha256 !== backup!.sha256
+    ) {
+      return { ok: false, message: 'Restore candidate failed staged validation.' };
+    }
+    renameSync(staged, binaryPath);
+    try {
+      unlinkSync(manifestPath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
+    return { ok: true, message: `Restored pristine claude ${version} from ${backupPath}.` };
+  } catch (err) {
+    return {
+      ok: false,
+      message: `Restore failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  } finally {
+    removeFileIfExists(staged);
+  }
+}
+
 export async function runPatchCommand(opts: { restore?: boolean; trace?: boolean } = {}): Promise<number> {
   const resolved = resolveClaudeBinaryForPatch();
   if (!resolved) {
@@ -393,24 +617,33 @@ export async function runPatchCommand(opts: { restore?: boolean; trace?: boolean
     return 1;
   }
   const { binaryPath, version } = resolved;
+  const backupPath = getPristineBackupPath(version, binaryPath);
+  const manifestPath = getPatchManifestPath();
+  const manifest = readPatchManifest(manifestPath);
 
   if (opts.restore) {
-    const manifest = readPatchManifest();
-    const backup = manifest?.backupPath && existsSync(manifest.backupPath)
-      ? manifest.backupPath
-      : pristineBackupPath(version, binaryPath);
-    if (!existsSync(backup)) {
-      p.log.error(`No pristine backup found for claude ${version} (${backup}).`);
+    const release = tryAcquirePatchLock();
+    if (!release) {
+      p.log.warn('Another leverframe process is patching the claude binary right now. Skipped.');
       return 1;
     }
-    copyFileSync(backup, binaryPath);
     try {
-      unlinkSync(getPatchManifestPath());
-    } catch {
-      // no manifest to remove
+      const outcome = await restorePatchTransaction({
+        binaryPath,
+        backupPath,
+        manifestPath,
+        version,
+        manifest,
+      });
+      if (!outcome.ok) {
+        p.log.error(outcome.message);
+        return 1;
+      }
+      p.log.success(outcome.message);
+      return 0;
+    } finally {
+      release();
     }
-    p.log.success(`Restored pristine claude ${version} from ${backup}.`);
-    return 0;
   }
 
   const desired = buildDesiredPatchConfig();
@@ -419,41 +652,39 @@ export async function runPatchCommand(opts: { restore?: boolean; trace?: boolean
     return 1;
   }
   for (const id of desired.unknownWindows) {
-    p.log.warn(`No context window metadata for ${id} — Claude Code will assume the 200k default.`);
+    p.log.warn(`No context window metadata for ${id}. Claude Code will assume the 200k default.`);
   }
 
   const configHash = computePatchConfigHash(desired.config);
-  const manifest = readPatchManifest();
   const state = evaluatePatchState(manifest, {
     binaryPath,
     claudeVersion: version,
     configHash,
     binarySize: statSync(binaryPath).size,
+    binarySha256: sha256File(binaryPath),
   });
 
   if (state === 'current') {
-    p.log.success(`claude ${version} is already patched with the current model config — nothing to do.`);
+    p.log.success(`claude ${version} is already patched with the current model config. Nothing to do.`);
     return 0;
   }
 
   const release = tryAcquirePatchLock();
   if (!release) {
-    p.log.warn('Another leverframe process is patching the claude binary right now — skipped.');
+    p.log.warn('Another leverframe process is patching the claude binary right now. Skipped.');
     return 1;
   }
 
   try {
-    // Never patch on top of a patch: whenever a pristine backup exists for this
-    // version and the live binary differs from it (stale leverframe patch, an old
-    // relay-ai patch, or a lost manifest), restore the backup before patching.
-    const backup = pristineBackupPath(version, binaryPath);
-    const restoreFirst = existsSync(backup) && sha256File(backup) !== sha256File(binaryPath);
-    if (restoreFirst) {
-      p.log.info('Binary differs from its pristine backup — restoring it before patching fresh.');
-    }
-    const outcome = await applyPatch(binaryPath, version, desired, configHash, {
+    const outcome = await applyPatchTransaction({
+      binaryPath,
+      backupPath,
+      manifestPath,
+      version,
+      desired,
+      configHash,
+      manifest,
       trace: opts.trace ?? false,
-      restoreFirst,
     });
     if (!outcome.ok) {
       p.log.error(outcome.message);
@@ -470,18 +701,11 @@ export async function runPatchCommand(opts: { restore?: boolean; trace?: boolean
   }
 }
 
-// ── Launch-time check ───────────────────────────────────────────────────────
 
-/**
- * Cheap patch-state probe for `leverframe claude`:
- *  - TTY: offer to patch (y/N); declining continues the launch.
- *  - non-TTY (or agent stdout mode): one-line notice, never prompt, never block.
- *  - concurrent launches: the lock loser prints a notice and continues.
- */
 export async function runLaunchPatchCheck(opts: { agentStdout?: boolean; dryRun?: boolean } = {}): Promise<void> {
   try {
     const desired = buildDesiredPatchConfig();
-    if (Object.keys(desired.config).length === 0) return; // nothing to patch
+    if (Object.keys(desired.config).length === 0) return;
 
     const resolved = resolveClaudeBinaryForPatch();
     if (!resolved) return;
@@ -493,6 +717,7 @@ export async function runLaunchPatchCheck(opts: { agentStdout?: boolean; dryRun?
       claudeVersion: resolved.version,
       configHash,
       binarySize: statSync(resolved.binaryPath).size,
+      binarySha256: sha256File(resolved.binaryPath),
     });
     if (state === 'current') return;
 
@@ -500,7 +725,7 @@ export async function runLaunchPatchCheck(opts: { agentStdout?: boolean; dryRun?
       && process.stdin.isTTY === true && process.stdout.isTTY === true;
     if (!interactive) {
       if (!opts.agentStdout) {
-        console.error(pc.dim(`leverframe: claude binary is ${state === 'unpatched' ? 'not patched' : 'stale-patched'} for your favorites — run \`leverframe patch\`.`));
+        console.error(pc.dim(`leverframe: claude binary is ${state === 'unpatched' ? 'not patched' : 'stale-patched'} for your favorites. Run \`leverframe patch\`.`));
       }
       return;
     }
@@ -515,7 +740,6 @@ export async function runLaunchPatchCheck(opts: { agentStdout?: boolean; dryRun?
 
     await runPatchCommand({});
   } catch (err) {
-    // The patch check must never block a launch.
     console.error(pc.dim(`leverframe: patch check skipped (${err instanceof Error ? err.message : String(err)})`));
   }
 }

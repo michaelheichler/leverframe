@@ -1895,7 +1895,8 @@ export {
   getServerListenMode,
   setServerListenMode,
   findClaudeBinary,
+  buildClaudeVersionProbe,
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-KLEC2OEF.js.map
+//# sourceMappingURL=chunk-RL5WO4HB.js.map
