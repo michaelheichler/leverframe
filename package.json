@@ -23,7 +23,9 @@
     "leverframe-claude": "dist/claude-wrapper.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "docs",
+    "README.md"
   ],
   "engines": {
     "node": ">=22"
@@ -75,7 +77,7 @@
     "type": "git",
     "url": "git+https://github.com/michaelheichler/leverframe.git"
   },
-  "homepage": "https://github.com/michaelheichler/leverframe",
+  "homepage": "https://github.com/michaelheichler/leverframe#readme",
   "bugs": {
     "url": "https://github.com/michaelheichler/leverframe/issues"
   }

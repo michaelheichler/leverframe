@@ -262,7 +262,9 @@ var package_default = {
     "leverframe-claude": "dist/claude-wrapper.js"
   },
   files: [
-    "dist"
+    "dist",
+    "docs",
+    "README.md"
   ],
   engines: {
     node: ">=22"
@@ -314,7 +316,7 @@ var package_default = {
     type: "git",
     url: "git+https://github.com/michaelheichler/leverframe.git"
   },
-  homepage: "https://github.com/michaelheichler/leverframe",
+  homepage: "https://github.com/michaelheichler/leverframe#readme",
   bugs: {
     url: "https://github.com/michaelheichler/leverframe/issues"
   }
@@ -1896,4 +1898,4 @@ export {
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-2ETKXX74.js.map
+//# sourceMappingURL=chunk-KLEC2OEF.js.map
