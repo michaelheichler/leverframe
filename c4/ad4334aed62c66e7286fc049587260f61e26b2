@@ -1,0 +1,227 @@
+.gitignore
+  s_a50f20be06e662::t_06c0e72a159d48 3-6,9-15
+dist/cli.js
+  s_a50f20be06e662::t_5fb7585f833bf2 53
+dist/claude-wrapper.js
+  s_a50f20be06e662::t_5fb7585f833bf2 7
+dist/chunk-KLEC2OEF.js
+  s_a50f20be06e662::t_5fb7585f833bf2 1-1901
+package.json
+  s_a50f20be06e662::t_06c0e72a159d48 26-28,80
+.npmrc
+  s_997092c4e9daa2::t_0122bab11ed940 1
+.nvmrc
+  s_997092c4e9daa2::t_a60da4cc33b052 1
+LICENSE
+  s_997092c4e9daa2::t_da11e077eff862 1-21
+pnpm-workspace.yaml
+  s_997092c4e9daa2::t_108d7617d0b1b6 1-4
+src/agent-io.ts
+  s_22cee8ca710ed8::t_7530344d567651 1-11
+src/anthropic-endpoints.ts
+  s_997092c4e9daa2::t_92cb8daec96b41 1-55
+src/binary-lookup.ts
+  s_997092c4e9daa2::t_26d93aebec5888 1-43
+src/catalog.ts
+  s_997092c4e9daa2::t_89e16c72537792 1-75
+src/config.ts
+  s_22cee8ca710ed8::t_aa1615ad1762a8 1-636
+src/constants.ts
+  s_22cee8ca710ed8::t_6e9121cbd79b8a 1-73
+src/context-model-id.ts
+  s_997092c4e9daa2::t_352452e9cea98d 1-38
+src/context-window.ts
+  s_22cee8ca710ed8::t_37c6e05e9862bd 1-139
+src/data/model-incompatible.json
+  s_997092c4e9daa2::t_07bdab30d6fb0f 1-463
+src/data/models-dev-cache.json
+  s_997092c4e9daa2::t_cbe6d8c02bd0e1 1
+src/data/openai-oauth-models.ts
+  s_997092c4e9daa2::t_6a4dff5389f6b8 1-80
+src/data/pricing-cache.json
+  s_997092c4e9daa2::t_3702de5cffad24 1-51
+src/env.ts
+  s_22cee8ca710ed8::t_852537105481c4 1-305
+src/favorite-provider-display.ts
+  s_997092c4e9daa2::t_3e56439b4bdd93 1-16
+src/favorites-resolver.ts
+  s_997092c4e9daa2::t_36851ee9d537b0 1-126
+src/favorites.ts
+  s_997092c4e9daa2::t_c691f1d7d01e2e 1-24
+src/first-run.ts
+  s_22cee8ca710ed8::t_f33d29bc7f7090 1-49
+src/free-models.ts
+  s_997092c4e9daa2::t_e9198096612153 1-54
+src/http-proxy/ca.ts
+  s_22cee8ca710ed8::t_a7c56471bbd74d 1-365
+src/http-proxy/index.ts
+  s_22cee8ca710ed8::t_b4d50093846b3b 1-190
+src/http-proxy/routes.ts
+  s_35dc776856f152::t_ef2b2204a63fb6 1-104
+src/http-proxy/server.ts
+  s_22cee8ca710ed8::t_60062a9954ea51 1-994
+src/http-utils.ts
+  s_997092c4e9daa2::t_0810fd592fccd1 1-68
+src/launch-target.ts
+  s_22cee8ca710ed8::t_a5e22639458fa2 1-143
+src/launch.ts
+  s_22cee8ca710ed8::t_988d226b708573 1-138
+src/model-aliases.ts
+  s_22cee8ca710ed8::t_6b22a12a9c1596 1-40
+src/model-compatibility.ts
+  s_997092c4e9daa2::t_9e259ff8d6a83b 1-68
+src/model-search.ts
+  s_997092c4e9daa2::t_6c02593582f61c 1-53
+src/models.ts
+  s_997092c4e9daa2::t_ac5808781eadf6 1-23
+src/oauth/claude-identity.ts
+  s_997092c4e9daa2::t_1ce298ecc0b60e 1-162
+src/oauth/fetch-timeout.ts
+  s_997092c4e9daa2::t_7cd19ef004aba8 1-19
+src/oauth/openai.ts
+  s_22cee8ca710ed8::t_f628738888de12 1-160
+src/oauth/pkce.ts
+  s_997092c4e9daa2::t_e5c2b3f5baaa14 1-39
+src/oauth/refresh-http.ts
+  s_997092c4e9daa2::t_4cf6dbed77f490 1-38
+src/oauth/refresh.ts
+  s_22cee8ca710ed8::t_a94f59c7ce208c 1-33
+src/oauth/responses-websocket.ts
+  s_22cee8ca710ed8::t_32f15235dc9a08 1-1333
+src/oauth/types.ts
+  s_997092c4e9daa2::t_9f5a85e341535d 1-84
+src/openai-adapter.ts
+  s_997092c4e9daa2::t_a43240821c2268 1-281
+src/outbound-proxy.ts
+  s_22cee8ca710ed8::t_14a2ab00a9c3e5 1-105
+src/patch-transforms.ts
+  s_22cee8ca710ed8::t_cffb3e852f6eb2 1-353
+src/patcher.ts
+  s_22cee8ca710ed8::t_aeeade114832d2 1-521
+src/provider-factory.ts
+  s_22cee8ca710ed8::t_d41a83f1a70ff8 1-908
+src/proxy-shared.ts
+  s_997092c4e9daa2::t_6d0560947fb9f5 1-218
+src/proxy-types.ts
+  s_997092c4e9daa2::t_b8fdac4c0e53e2 1-152
+src/proxy.ts
+  s_4a0ab92c1d023e::t_897effbc429de7 1-756
+src/reasoning-capabilities.ts
+  s_997092c4e9daa2::t_ec22102b9b1317 1-34
+src/registry/add-template.ts
+  s_22cee8ca710ed8::t_00838ecbb9acd9 1-177
+src/registry/crud.ts
+  s_997092c4e9daa2::t_df2eb4ae80acf8 1-57
+src/registry/custom-endpoint.ts
+  s_22cee8ca710ed8::t_e0d03d5074dbd2 1-226
+src/registry/google-model-id.ts
+  s_997092c4e9daa2::t_272782631d9d26 1-25
+src/registry/import-build.ts
+  s_997092c4e9daa2::t_d878bf7b761533 1-11
+src/registry/index.ts
+  s_997092c4e9daa2::t_1c6bca32f54652 1-20
+src/registry/io.ts
+  s_22cee8ca710ed8::t_2d57e4f87182ca 1-213
+src/registry/load.ts
+  s_22cee8ca710ed8::t_5cf1638f91ac51 1-51
+src/registry/migrate.ts
+  s_997092c4e9daa2::t_b3c2e43da774fa 1-22
+src/registry/model-source.ts
+  s_997092c4e9daa2::t_08f7b22f75926f 1-30
+src/registry/models-dev.ts
+  s_35dc776856f152::t_787a890a4e7b45 1-325
+src/registry/provider-auth.ts
+  s_22cee8ca710ed8::t_05d1beb77efdaf 1-189
+src/registry/refresh-credentials.ts
+  s_997092c4e9daa2::t_c01419908ee0ee 1-75
+src/registry/refresh-models.ts
+  s_22cee8ca710ed8::t_42e84a5b416e73 1-449
+src/registry/resolve-template.ts
+  s_22cee8ca710ed8::t_ce00960ea33f8d 1-50
+src/registry/url-security.ts
+  s_4a0ab92c1d023e::t_d4e3024ff85976 1-190
+src/registry/validate.ts
+  s_997092c4e9daa2::t_9127b62d2f5231 1-24
+src/sdk-adapter.ts
+  s_997092c4e9daa2::t_a264cfb79e483f 1-994
+src/server-runtime.ts
+  s_22cee8ca710ed8::t_add89db9a54ce0 1-350
+src/server/auth.ts
+  s_997092c4e9daa2::t_7a33a2d5ede642 1-119
+src/server/catalog-filter.ts
+  s_997092c4e9daa2::t_e8add11e0e6345 1-32
+src/server/prompts.ts
+  s_997092c4e9daa2::t_048cc11b07b228 1-105
+src/server/provider-select.ts
+  s_997092c4e9daa2::t_c27ed3403db496 1-126
+src/server/router.ts
+  s_22cee8ca710ed8::t_9305bba9c622b2 1-697
+src/server/vendor-mask.ts
+  s_997092c4e9daa2::t_b16caaf4a83a14 1-24
+src/target-compatibility.ts
+  s_997092c4e9daa2::t_7735227a0dfaf2 1-67
+src/tool-search.ts
+  s_997092c4e9daa2::t_5fd60ce2bc3e4d 1-82
+src/trace-log.ts
+  s_22cee8ca710ed8::t_67695ff8b2baad 1-600
+src/tweakcc.d.ts
+  s_997092c4e9daa2::t_d191a34590c5a5 1-41
+src/upstream-error.ts
+  s_997092c4e9daa2::t_d641c2e91088b6 1-139
+src/upstream-forward.ts
+  s_4a0ab92c1d023e::t_55e37fbbf00ec8 1-210
+src/wrapper-env.ts
+  s_22cee8ca710ed8::t_a85206e3ebd2e1 1-34
+tsconfig.json
+  s_997092c4e9daa2::t_17e9f7530ca1cb 1-18
+tsup.config.ts
+  s_997092c4e9daa2::t_b1d8bd2ed83a11 1-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "c4ad4334aed62c66e7286fc049587260f61e26b2",
+  "prompts": {},
+  "sessions": {
+    "s_22cee8ca710ed8": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_07a141d07ffeNzOEzOI6nx1klT",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    },
+    "s_35dc776856f152": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f9e2f-6e6a-7060-abbd-4056fb02307e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    },
+    "s_4a0ab92c1d023e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "156ee091-5b75-47cc-8ca6-2615be02bd2e",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    },
+    "s_997092c4e9daa2": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_07fccfa1fffesDN0QCTXoEHvR5",
+        "model": "k3"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    },
+    "s_a50f20be06e662": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_061647258ffeheMEkhCp3Rs7UG",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}
