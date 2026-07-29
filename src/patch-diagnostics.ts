@@ -12,7 +12,11 @@ import { getPatchTargetLockPath } from './patch-lock.js';
 import { readPatchJournal, verifyPatchSites, defaultPatchRuntime, type PatchRuntime } from './patch-transaction.js';
 import { currentTransformVersion, readManifestV2, type PatchManifestV2 } from './patch-state.js';
 import { evaluatePatchStateV2, type PatchStateV2 } from './patch-classify.js';
-import { readPatchManifest as readLegacyManifest, type PatchManifest as LegacyPatchManifest } from './patcher.js';
+import {
+  inspectLegacyPatchRecovery,
+  type LegacyPatchRecoveryInspection,
+} from './patch-legacy-recovery.js';
+import { readPatchManifest as readLegacyManifest } from './patcher.js';
 import { buildDesiredPatchConfig, computePatchConfigHash } from './patcher.js';
 
 function sha256File(path: string): string | null {
@@ -71,18 +75,30 @@ export interface PatchDiagnosticsReport {
   migration: {
     legacyManifestPresent: boolean;
     eligible: boolean;
+    mode?: Extract<LegacyPatchRecoveryInspection['kind'], 'exact-adoption' | 'baseline-recovery'>;
     reason?: string;
   };
   state: PatchStateV2 | 'not_resolved';
   nextAction: string;
 }
 
-function nextActionFor(state: PatchStateV2 | 'not_resolved'): string {
+function nextActionFor(
+  state: PatchStateV2 | 'not_resolved',
+  legacyRecovery?: LegacyPatchRecoveryInspection,
+): string {
   switch (state) {
     case 'not_resolved': return 'Install Claude Code, or set TWEAKCC_CC_INSTALLATION_PATH / LEVERFRAME_CLAUDE_PATH, or pass --target.';
     case 'patched': return 'Nothing to do.';
     case 'unpatched': return 'Run `leverframe patch` to bake in your favorite models.';
-    case 'state_missing': return 'Run `leverframe patch` to reconstruct Leverframe state for this already-injected binary.';
+    case 'state_missing': {
+      if (legacyRecovery?.kind === 'baseline-recovery') {
+        return 'Run `leverframe patch` to rebuild from the verified pristine legacy backup and publish V2 state.';
+      }
+      if (legacyRecovery?.kind === 'exact-adoption') {
+        return 'Run `leverframe patch` to adopt the exact legacy state and refresh stale transforms if needed.';
+      }
+      return 'No safe automatic recovery is available; inspect the migration reason before changing this target.';
+    }
     case 'updated': return 'Run `leverframe patch` to re-patch after the claude update.';
     case 'config_stale': return 'Run `leverframe patch` to apply your current favorites/aliases.';
     case 'modified': return 'The binary was replaced or modified outside Leverframe. Run `leverframe patch` to patch it fresh.';
@@ -98,7 +114,7 @@ export async function diagnosePatchV2(
   runtime: PatchRuntime = defaultPatchRuntime,
 ): Promise<PatchDiagnosticsReport> {
   const installation = resolveClaudeInstallation({ target });
-  const legacy: LegacyPatchManifest | null = readLegacyManifest();
+  const legacy = readLegacyManifest();
   const legacyDiag = { legacyManifestPresent: legacy !== null };
 
   if (!installation) {
@@ -119,6 +135,7 @@ export async function diagnosePatchV2(
   const manifest: PatchManifestV2 | null = readManifestV2(installation.identity);
   const journal = readPatchJournal(installation.identity);
   const lockPath = getPatchTargetLockPath(installation.identity);
+  const legacyRecovery = await inspectLegacyPatchRecovery({ installation, runtime, legacy });
 
   const observedSha256 = sha256File(installation.canonicalPath);
   const live = await runtime.inspect(installation.canonicalPath, manifest?.patchedSha256);
@@ -126,7 +143,12 @@ export async function diagnosePatchV2(
   const configHash = computePatchConfigHash(desired.config);
 
   let semanticSitesComplete: boolean | null = null;
-  if (manifest && live.readable && observedSha256 && observedSha256 !== manifest.patchedSha256 && live.injection.state === 'present') {
+  if (
+    live.readable
+    && observedSha256
+    && live.injection.state === 'present'
+    && (!manifest || observedSha256 !== manifest.patchedSha256)
+  ) {
     try {
       const content = await runtime.readContent(installation.canonicalPath);
       semanticSitesComplete = verifyPatchSites(content, desired.config).complete;
@@ -142,8 +164,6 @@ export async function diagnosePatchV2(
     desiredConfigHash: configHash,
     semanticSitesComplete: semanticSitesComplete ?? undefined,
   });
-
-  const migrationEligible = !manifest && legacy !== null && legacy.binaryPath === installation.canonicalPath;
 
   return {
     resolved: true,
@@ -184,15 +204,19 @@ export async function diagnosePatchV2(
       updatedAt: journal.updatedAt,
     } : { pending: false },
     lock: { path: lockPath, held: existsSync(lockPath) },
-    migration: {
-      ...legacyDiag,
-      eligible: migrationEligible,
-      reason: migrationEligible
-        ? undefined
-        : (manifest ? 'V2 state already exists.' : (legacy ? 'Legacy manifest target does not match the live canonical target.' : 'No legacy manifest found.')),
-    },
+    migration: legacyRecovery.kind === 'unavailable'
+      ? {
+          ...legacyDiag,
+          eligible: false,
+          reason: legacyRecovery.reason,
+        }
+      : {
+          ...legacyDiag,
+          eligible: true,
+          mode: legacyRecovery.kind,
+        },
     state,
-    nextAction: nextActionFor(state),
+    nextAction: nextActionFor(state, legacyRecovery),
   };
 }
 
@@ -227,7 +251,7 @@ export function formatPatchDiagnosticsText(report: PatchDiagnosticsReport): stri
   }
   lines.push(`${pad('transaction')}${report.transaction.pending ? `pending at ${report.transaction.phase} (${report.transaction.operation})` : 'none pending'}`);
   lines.push(`${pad('lock')}${report.lock.held ? `held (${report.lock.path})` : 'free'}`);
-  lines.push(`${pad('legacy migration')}${report.migration.eligible ? 'eligible' : (report.migration.legacyManifestPresent ? `not eligible — ${report.migration.reason}` : 'no legacy state')}`);
+  lines.push(`${pad('legacy migration')}${report.migration.eligible ? `eligible — ${report.migration.mode}` : (report.migration.legacyManifestPresent ? `not eligible — ${report.migration.reason}` : 'no legacy state')}`);
   lines.push(`${pad('state')}${report.state}`);
   lines.push(`${pad('next action')}${report.nextAction}`);
   return lines;

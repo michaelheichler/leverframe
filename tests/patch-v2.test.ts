@@ -30,9 +30,9 @@ import {
 } from '../src/patch-transaction.js';
 import {
   checkPatchState,
-  migrateLegacyStateIfVerified,
   reconcilePatchTransaction,
 } from '../src/patch-reconcile.js';
+import { migrateLegacyStateIfVerified } from '../src/patch-legacy-recovery.js';
 import { addLeverframeInjectionMarker, classifyLeverframeInjectionByHash } from '../src/patch-injection.js';
 import { applyLeverframePatches } from '../src/patch-transforms.js';
 import type { PatchManifest as LegacyPatchManifest } from '../src/patcher.js';
@@ -441,7 +441,7 @@ describe('conservative legacy migration', () => {
     const legacy = legacyManifestFor(canonicalPath, backupPath, patchedContent, BASELINE);
     const installation = makeInstallation(canonicalPath);
 
-    const result = await migrateLegacyStateIfVerified(installation, fakeRuntime(), legacy);
+    const result = await migrateLegacyStateIfVerified({ installation, runtime: fakeRuntime(), legacy });
     expect(result.migrated).toBe(true);
     const manifest = readManifestV2(installation.identity);
     expect(manifest?.provenance).toBe('legacy-migrated');
@@ -450,7 +450,7 @@ describe('conservative legacy migration', () => {
     expect(readFileSync(backupPath, 'utf8')).toBe(BASELINE);
 
     // Running again is a no-op: V2 state already exists.
-    const second = await migrateLegacyStateIfVerified(installation, fakeRuntime(), legacy);
+    const second = await migrateLegacyStateIfVerified({ installation, runtime: fakeRuntime(), legacy });
     expect(second.migrated).toBe(false);
   });
 
@@ -465,7 +465,7 @@ describe('conservative legacy migration', () => {
     const legacy = legacyManifestFor(canonicalPath, backupPath, BASELINE, BASELINE); // recorded hash != live hash
     const installation = makeInstallation(canonicalPath);
 
-    const result = await migrateLegacyStateIfVerified(installation, fakeRuntime(), legacy);
+    const result = await migrateLegacyStateIfVerified({ installation, runtime: fakeRuntime(), legacy });
     expect(result.migrated).toBe(false);
     expect(readManifestV2(installation.identity)).toBeNull();
   });
@@ -482,7 +482,7 @@ describe('conservative legacy migration', () => {
     const legacy = legacyManifestFor(canonicalPath, backupPath, patchedContent, patchedContent);
     const installation = makeInstallation(canonicalPath);
 
-    const result = await migrateLegacyStateIfVerified(installation, fakeRuntime(), legacy);
+    const result = await migrateLegacyStateIfVerified({ installation, runtime: fakeRuntime(), legacy });
     expect(result.migrated).toBe(false);
     expect(readManifestV2(installation.identity)).toBeNull();
   });
@@ -495,7 +495,7 @@ describe('conservative legacy migration', () => {
     writeFileSync(canonicalPath, BASELINE);
     const installation = makeInstallation(canonicalPath);
 
-    const result = await migrateLegacyStateIfVerified(installation, fakeRuntime(), null);
+    const result = await migrateLegacyStateIfVerified({ installation, runtime: fakeRuntime(), legacy: null });
     expect(result.migrated).toBe(false);
   });
 });
@@ -610,12 +610,21 @@ describe('evaluatePatchStateV2', () => {
 });
 
 describe('verifyPatchSites (read-only semantic verification)', () => {
-  it('reports complete for a fresh apply and for an idempotent re-check, without mutating anything', () => {
+  it('reports incomplete when applying the current transform would still change the binary', () => {
+    const before = BASELINE;
+    const result = verifyPatchSites(before, CONFIG);
+
+    expect(result.complete).toBe(false);
+    expect(before).toBe(BASELINE);
+    expect(result.results.some(site => site.status === 'OK')).toBe(true);
+  });
+
+  it('reports complete only for an idempotent re-check of already-current content', () => {
     const patched = applyLeverframePatches(BASELINE, CONFIG).content;
-    const fresh = verifyPatchSites(BASELINE, CONFIG);
-    expect(fresh.complete).toBe(true);
     const recheck = verifyPatchSites(patched, CONFIG);
+
     expect(recheck.complete).toBe(true);
+    expect(recheck.results.every(site => site.status === 'SKIP')).toBe(true);
   });
 
   it('reports incomplete when a required anchor is missing', () => {

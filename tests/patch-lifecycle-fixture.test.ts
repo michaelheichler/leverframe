@@ -651,7 +651,7 @@ describe('legacy migration', () => {
       patchedAt: '2026-07-01T00:00:00.000Z',
     };
 
-    const result = await migrateLegacyStateIfVerified(installation, fixtureRuntime, legacy);
+    const result = await migrateLegacyStateIfVerified({ installation, runtime: fixtureRuntime, legacy });
     expect(result.migrated).toBe(true);
 
     const manifest = readManifestV2(installation.identity);
@@ -663,7 +663,7 @@ describe('legacy migration', () => {
     expect(readFileSync(backupPath, 'utf8')).toBe(baselineContent);
 
     // A second call is a no-op because V2 state already exists.
-    const second = await migrateLegacyStateIfVerified(installation, fixtureRuntime, legacy);
+    const second = await migrateLegacyStateIfVerified({ installation, runtime: fixtureRuntime, legacy });
     expect(second.migrated).toBe(false);
     expect(second.reason).toMatch(/already exists/);
   });
@@ -691,16 +691,19 @@ describe('legacy migration', () => {
       patchedAt: '2026-07-01T00:00:00.000Z',
     };
 
-    const result = await migrateLegacyStateIfVerified(installation, fixtureRuntime, legacy);
+    const result = await migrateLegacyStateIfVerified({ installation, runtime: fixtureRuntime, legacy });
     expect(result.migrated).toBe(false);
     expect(result.reason).toMatch(/injection markers/);
     expect(readManifestV2(installation.identity)).toBeNull();
   });
 
-  it('refuses to migrate when the legacy patched hash does not exactly match the live target', async () => {
+  it('refuses migration and recovery when the live hash differs and the target is unmarked', async () => {
     const claudePath = join(workDir, 'claude-a');
     writeFixtureClaude(claudePath);
     const installation = resolveClaudeInstallation({ target: claudePath })!;
+    const backupPath = join(workDir, 'legacy-pristine.orig');
+    const baselineContent = wholeFileContent(BASELINE_SOURCE);
+    writeFileSync(backupPath, baselineContent, 'utf8');
 
     const legacy: LegacyPatchManifest = {
       binaryPath: installation.canonicalPath,
@@ -708,14 +711,14 @@ describe('legacy migration', () => {
       configHash: 'legacy-cfg',
       patchedSize: 0,
       patchedSha256: 'does-not-match',
-      backupPath: join(workDir, 'nonexistent.orig'),
-      baselineSha256: 'irrelevant',
+      backupPath,
+      baselineSha256: sha256(baselineContent),
       patchedAt: '2026-07-01T00:00:00.000Z',
     };
 
-    const result = await migrateLegacyStateIfVerified(installation, fixtureRuntime, legacy);
+    const result = await migrateLegacyStateIfVerified({ installation, runtime: fixtureRuntime, legacy });
     expect(result.migrated).toBe(false);
-    expect(result.reason).toMatch(/does not match the live target exactly/);
+    expect(result.reason).toMatch(/not recognizably injected/);
   });
 });
 

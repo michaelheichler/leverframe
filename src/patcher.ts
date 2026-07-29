@@ -22,7 +22,7 @@ import type { ClaudeInstallation } from './claude-installation.js';
 /**
  * Shape of the pre-V2 single global patch-state manifest. Retained only for
  * conservative one-way migration: `readPatchManifest` lets
- * `migrateLegacyStateIfVerified` (src/patch-reconcile.ts) and
+ * `migrateLegacyStateIfVerified` (src/patch-legacy-recovery.ts) and
  * `diagnosePatchV2` (src/patch-diagnostics.ts) recognize and verify an
  * existing legacy manifest before adopting it into the per-target V2 state
  * (src/patch-state.ts, src/patch-transaction.ts). Nothing writes this shape

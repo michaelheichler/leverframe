@@ -159,13 +159,21 @@ export const defaultPatchRuntime: PatchRuntime = {
 };
 
 /** Read-only structural check: do the required patch sites still verify against this content? */
+/**
+ * Verify that applying the current transform would be byte-idempotent.
+ * A transform result of `OK` means a site still needed modification and is
+ * therefore stale; only unchanged output with no failed sites is current.
+ */
 export function verifyPatchSites(
   content: string,
   config: PatchScriptModelConfig,
 ): { complete: boolean; results: PatchSiteResult[] } {
   try {
-    const { results } = applyLeverframePatches(content, config);
-    return { complete: results.every(r => r.status !== 'FAIL'), results };
+    const patched = applyLeverframePatches(content, config);
+    return {
+      complete: patched.content === content && patched.results.every(result => result.status !== 'FAIL'),
+      results: patched.results,
+    };
   } catch (err) {
     if (err instanceof PatchApplyError) return { complete: false, results: err.results };
     return { complete: false, results: [] };
@@ -183,12 +191,53 @@ export interface ApplyOutcome {
   detailLines?: string[];
 }
 
+export interface VerifiedRecoveryBaseline {
+  /** Verified pristine source; the transaction revalidates it before use. */
+  sourcePath: string;
+  sha256: string;
+  version: string;
+  provenance: Extract<BaselineProvenance, 'legacy-migrated'>;
+}
+
 export interface ApplyPatchInput {
   installation: ClaudeInstallation;
   desiredConfig: PatchScriptModelConfig;
   configHash: string;
   manifest: PatchManifestV2 | null;
+  /**
+   * Allows an injected target with missing V2 state to be rebuilt from a
+   * separately verified pristine baseline, never from its injected live bytes.
+   */
+  recoveryBaseline?: VerifiedRecoveryBaseline;
   trace: boolean;
+}
+
+interface BaselineCandidate {
+  sourcePath: string;
+  sha256: string;
+  provenance: BaselineProvenance;
+}
+
+/**
+ * Revalidate a purported pristine baseline immediately before a transaction.
+ * This closes the gap between read-only recovery inspection and the first
+ * write: a missing, replaced, injected, or hash-mismatched baseline is rejected.
+ */
+async function validatePristineBaseline(input: {
+  candidate: BaselineCandidate;
+  version: string;
+  runtime: PatchRuntime;
+}): Promise<string | null> {
+  const { candidate, version, runtime } = input;
+  if (!existsSync(candidate.sourcePath)) return 'The verified recovery baseline is missing.';
+  const inspected = await runtime.inspect(candidate.sourcePath);
+  if (!inspected.readable || inspected.version !== version || inspected.injection.state !== 'absent') {
+    return 'The recovery baseline is unreadable, version-mismatched, or injected.';
+  }
+  if (inspected.sha256 !== candidate.sha256) {
+    return 'The recovery baseline hash changed after verification.';
+  }
+  return null;
 }
 
 /**
@@ -204,7 +253,7 @@ export async function applyPatchTransactionV2(
   input: ApplyPatchInput,
   runtime: PatchRuntime = defaultPatchRuntime,
 ): Promise<ApplyOutcome> {
-  const { installation, desiredConfig, configHash, manifest, trace } = input;
+  const { installation, desiredConfig, configHash, manifest, recoveryBaseline, trace } = input;
   const { identity, canonicalPath, version } = installation;
   const now = () => new Date().toISOString();
 
@@ -222,17 +271,32 @@ export async function applyPatchTransactionV2(
   let baselineSourcePath = canonicalPath;
   let provenance: BaselineProvenance = 'live';
   if (live.injection.state === 'present') {
-    if (!manifest) return { ok: false, message: 'Injected claude has no patch manifest for this target.' };
-    if (!existsSync(manifest.baselinePath)) return { ok: false, message: 'The saved baseline is missing.' };
-    const backup = await runtime.inspect(manifest.baselinePath);
-    if (!backup.readable || backup.version !== version || backup.injection.state !== 'absent') {
-      return { ok: false, message: 'The saved baseline is unreadable, version-mismatched, or injected.' };
+    const candidate: BaselineCandidate | null = manifest
+      ? {
+          sourcePath: manifest.baselinePath,
+          sha256: manifest.baselineSha256,
+          provenance: 'backup',
+        }
+      : recoveryBaseline
+        ? {
+            sourcePath: recoveryBaseline.sourcePath,
+            sha256: recoveryBaseline.sha256,
+            provenance: recoveryBaseline.provenance,
+          }
+        : null;
+    if (!candidate) {
+      return {
+        ok: false,
+        message: 'Injected claude has no patch manifest or verified pristine recovery baseline for this target.',
+      };
     }
-    if (backup.sha256 !== manifest.baselineSha256) {
-      return { ok: false, message: 'The saved baseline hash does not match the patch manifest.' };
+    if (recoveryBaseline && recoveryBaseline.version !== version) {
+      return { ok: false, message: 'The verified recovery baseline version does not match the live target.' };
     }
-    baselineSourcePath = manifest.baselinePath;
-    provenance = 'backup';
+    const baselineError = await validatePristineBaseline({ candidate, version, runtime });
+    if (baselineError) return { ok: false, message: baselineError };
+    baselineSourcePath = candidate.sourcePath;
+    provenance = candidate.provenance;
   }
 
   const generation = (manifest?.generation ?? 0) + 1;

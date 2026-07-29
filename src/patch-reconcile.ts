@@ -9,8 +9,7 @@
 // and the stale journal is discarded without touching it
 // (docs/stabilization-and-upstream-plan.md sections 4.1 and 5.5).
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { statSync } from 'node:fs';
 import { resolveClaudeInstallation, type ClaudeInstallation } from './claude-installation.js';
 import { withPatchTargetLock } from './patch-lock.js';
 import { clackPatchPresenter, type PatchPresenter } from './patch-presenter.js';
@@ -26,19 +25,21 @@ import {
   type PatchRuntime,
 } from './patch-transaction.js';
 import {
-  ensureBaselineStored,
   readManifestV2,
   writeManifestV2,
-  currentTransformVersion,
   type PatchManifestV2,
 } from './patch-state.js';
 import { evaluatePatchStateV2, describePatchStateV2, type PatchStateV2 } from './patch-classify.js';
-import { readPatchManifest as readLegacyManifest, type PatchManifest as LegacyPatchManifest } from './patcher.js';
+import {
+  inspectLegacyPatchRecovery,
+  migrateLegacyStateIfVerified,
+  type LegacyPatchRecoveryInspection,
+} from './patch-legacy-recovery.js';
 import { buildDesiredPatchConfig, computePatchConfigHash, type DesiredPatchConfig } from './patcher.js';
 
-function sha256File(path: string): string {
-  return createHash('sha256').update(readFileSync(path)).digest('hex');
-}
+// Compatibility export for callers that historically imported migration from
+// patch-reconcile; implementation ownership now lives in the recovery module.
+export { migrateLegacyStateIfVerified } from './patch-legacy-recovery.js';
 
 /**
  * Inspect a possibly-interrupted transaction journal against the live
@@ -124,86 +125,14 @@ export async function reconcilePatchTransaction(
   return { action: 'completed', detail: 'Completed an interrupted transaction at its final phase.' };
 }
 
-export interface LegacyMigrationResult {
-  migrated: boolean;
-  reason?: string;
-}
-
-/**
- * Conservative one-way adoption of the pre-per-target global manifest
- * (docs/stabilization-and-upstream-plan.md section 13). Every check must pass
- * exactly; on any failure this stops without adopting the target as pristine,
- * and the legacy state file is left untouched either way.
- */
-export async function migrateLegacyStateIfVerified(
-  installation: ClaudeInstallation,
-  runtime: PatchRuntime = defaultPatchRuntime,
-  legacy: LegacyPatchManifest | null = readLegacyManifest(),
-): Promise<LegacyMigrationResult> {
-  if (readManifestV2(installation.identity)) return { migrated: false, reason: 'V2 state already exists.' };
-  if (!legacy) return { migrated: false, reason: 'No legacy manifest found.' };
-  if (legacy.binaryPath !== installation.canonicalPath) {
-    return { migrated: false, reason: 'Legacy manifest target does not match the live canonical target.' };
-  }
-  if (!existsSync(installation.canonicalPath)) return { migrated: false, reason: 'Live target does not exist.' };
-  const liveSha256 = sha256File(installation.canonicalPath);
-  if (liveSha256 !== legacy.patchedSha256) {
-    return { migrated: false, reason: 'Legacy patched hash does not match the live target exactly.' };
-  }
-  if (!legacy.backupPath || !existsSync(legacy.backupPath)) {
-    return { migrated: false, reason: 'Legacy backup is missing.' };
-  }
-  const backup = await runtime.inspect(legacy.backupPath);
-  if (!backup.readable || backup.version !== legacy.claudeVersion) {
-    return { migrated: false, reason: 'Legacy backup is unreadable or version-mismatched.' };
-  }
-  if (backup.injection.state !== 'absent') {
-    return { migrated: false, reason: 'Legacy backup carries Leverframe injection markers; refusing to adopt it as pristine.' };
-  }
-  if (!legacy.baselineSha256 || backup.sha256 !== legacy.baselineSha256) {
-    return { migrated: false, reason: 'Legacy backup hash does not match the recorded baseline hash.' };
-  }
-
-  const baselinePath = ensureBaselineStored({
-    identity: installation.identity,
-    version: legacy.claudeVersion,
-    baselineSha256: legacy.baselineSha256,
-    sourcePath: legacy.backupPath,
-  });
-
-  const live = await runtime.inspect(installation.canonicalPath, legacy.patchedSha256);
-  const desired = buildDesiredPatchConfig();
-  const semantic = verifyPatchSites(await runtime.readContent(installation.canonicalPath), desired.config);
-
-  writeManifestV2(installation.identity, {
-    schemaVersion: 2,
-    transformVersion: currentTransformVersion(),
-    generation: 1,
-    logicalPath: installation.logicalPath,
-    canonicalPath: installation.canonicalPath,
-    installationKind: installation.installationKind,
-    claudeVersion: legacy.claudeVersion,
-    baselineSha256: legacy.baselineSha256,
-    baselinePath,
-    patchedSha256: live.sha256 ?? legacy.patchedSha256,
-    patchedSize: legacy.patchedSize,
-    // computeSemanticFingerprint hashes the result list (even an empty one,
-    // e.g. no favorites configured yet) rather than joining names, so the
-    // manifest never fails schema validation on an empty-string fingerprint.
-    semanticFingerprint: computeSemanticFingerprint(semantic.results),
-    configHash: legacy.configHash,
-    provenance: 'legacy-migrated',
-    completedAt: new Date().toISOString(),
-  });
-  return { migrated: true };
-}
-
 export interface CheckResult {
   installation: ClaudeInstallation | null;
   manifest: PatchManifestV2 | null;
   state: PatchStateV2 | null;
   desired: DesiredPatchConfig;
   configHash: string;
+  /** Verified read-only legacy recovery plan when V2 state is still absent. */
+  legacyRecovery: LegacyPatchRecoveryInspection | null;
 }
 
 /** Reconcile, migrate, and classify one already-resolved installation without rediscovery. */
@@ -215,12 +144,24 @@ export async function checkResolvedPatchState(
   const configHash = computePatchConfigHash(desired.config);
 
   await reconcilePatchTransaction(installation, runtime);
-  await migrateLegacyStateIfVerified(installation, runtime).catch(() => undefined);
+  const legacyInspection = await inspectLegacyPatchRecovery({ installation, runtime });
+  if (legacyInspection.kind === 'exact-adoption') {
+    await migrateLegacyStateIfVerified({
+      installation,
+      runtime,
+      inspection: legacyInspection,
+    }).catch(() => undefined);
+  }
 
   const manifest = readManifestV2(installation.identity);
   const live = await runtime.inspect(installation.canonicalPath, manifest?.patchedSha256);
   let semanticSitesComplete: boolean | undefined;
-  if (manifest && live.readable && live.sha256 && live.sha256 !== manifest.patchedSha256 && live.injection.state === 'present') {
+  if (
+    live.readable
+    && live.sha256
+    && live.injection.state === 'present'
+    && (!manifest || live.sha256 !== manifest.patchedSha256)
+  ) {
     try {
       const content = await runtime.readContent(installation.canonicalPath);
       semanticSitesComplete = verifyPatchSites(content, desired.config).complete;
@@ -236,7 +177,14 @@ export async function checkResolvedPatchState(
     desiredConfigHash: configHash,
     semanticSitesComplete,
   });
-  return { installation, manifest, state, desired, configHash };
+  return {
+    installation,
+    manifest,
+    state,
+    desired,
+    configHash,
+    legacyRecovery: manifest ? null : legacyInspection,
+  };
 }
 
 /** Resolve once for standalone patch commands, then delegate to the no-rediscovery path. */
@@ -254,14 +202,28 @@ export async function checkPatchState(
     state: null,
     desired,
     configHash: computePatchConfigHash(desired.config),
+    legacyRecovery: null,
   };
 }
 
+export interface RunPatchCommandV2Options {
+  restore?: boolean;
+  trace?: boolean;
+  target?: string;
+  /** Internal no-rediscovery seam used by launch and fixture tests. */
+  installation?: ClaudeInstallation;
+  runtime?: PatchRuntime;
+}
+
 export async function runPatchCommandV2(
-  opts: { restore?: boolean; trace?: boolean; target?: string } = {},
+  opts: RunPatchCommandV2Options = {},
   presenter: PatchPresenter = clackPatchPresenter,
 ): Promise<number> {
-  const { installation, manifest, state, desired } = await checkPatchState(opts.target);
+  const runtime = opts.runtime ?? defaultPatchRuntime;
+  const checked = opts.installation
+    ? await checkResolvedPatchState(opts.installation, runtime)
+    : await checkPatchState(opts.target, runtime);
+  const { installation, manifest, state, desired, legacyRecovery } = checked;
   if (!installation) {
     presenter.error('claude binary not found. Install Claude Code, set TWEAKCC_CC_INSTALLATION_PATH, or pass --target.');
     return 1;
@@ -269,7 +231,7 @@ export async function runPatchCommandV2(
 
   return withPatchTargetLock(installation.identity, async () => {
     if (opts.restore) {
-      const outcome = await restorePatchTransactionV2({ installation, manifest });
+      const outcome = await restorePatchTransactionV2({ installation, manifest }, runtime);
       return reportOutcome(outcome, false, presenter);
     }
 
@@ -285,13 +247,17 @@ export async function runPatchCommandV2(
       return 0;
     }
     const configHash = computePatchConfigHash(desired.config);
+    const recoveryBaseline = !manifest && legacyRecovery && legacyRecovery.kind !== 'unavailable'
+      ? legacyRecovery.baseline
+      : undefined;
     const outcome = await applyPatchTransactionV2({
       installation,
       desiredConfig: desired.config,
       configHash,
       manifest,
+      recoveryBaseline,
       trace: opts.trace ?? false,
-    });
+    }, runtime);
     return reportOutcome(outcome, opts.trace ?? false, presenter);
   }, { waitMs: 500 }).catch((err: unknown) => {
     presenter.warn(`Another leverframe process is patching the claude binary right now. Skipped. (${err instanceof Error ? err.message : String(err)})`);
@@ -326,7 +292,7 @@ export async function runLaunchPatchCheckV2(
     const checked = opts.installation
       ? await checkResolvedPatchState(opts.installation, runtime)
       : await checkPatchState(undefined, runtime);
-    const { installation, state, desired } = checked;
+    const { installation, state, desired, legacyRecovery } = checked;
     if (!installation) return;
     if (Object.keys(desired.config).length === 0) return;
     if (state === 'patched') return;
@@ -340,12 +306,24 @@ export async function runLaunchPatchCheckV2(
       return;
     }
 
-    const message = state === 'unpatched' || state === 'state_missing'
-      ? 'Claude Code is not patched for your leverframe favorites. Patch now?'
-      : 'The Claude Code patch is stale (config or claude version changed). Re-patch now?';
+    if (state === 'state_missing' && (!legacyRecovery || legacyRecovery.kind === 'unavailable')) {
+      const reason = legacyRecovery?.kind === 'unavailable'
+        ? ` (${legacyRecovery.reason})`
+        : '';
+      presenter.notice(
+        `leverframe: injected claude has no V2 patch state and cannot be recovered safely${reason} Run \`leverframe patch --diagnose\`.`,
+      );
+      return;
+    }
+
+    const message = state === 'state_missing'
+      ? 'Claude Code is injected but missing V2 state. Rebuild it from the verified pristine legacy backup now?'
+      : state === 'unpatched'
+        ? 'Claude Code is not patched for your leverframe favorites. Patch now?'
+        : 'The Claude Code patch is stale (config or claude version changed). Re-patch now?';
     if (!await presenter.confirm(message)) return;
 
-    await runPatchCommandV2({}, presenter);
+    await runPatchCommandV2({ installation, runtime }, presenter);
   } catch (err) {
     presenter.notice(`leverframe: patch check skipped (${err instanceof Error ? err.message : String(err)})`);
   }
