@@ -2,7 +2,8 @@
 
 import { fetchAnthropicModels } from './custom-endpoint.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
-import { loadRegistry, saveRegistry } from './io.js';
+import { loadRegistry, updateRegistry } from './io.js';
+import { reconcilePendingCredentialDeletes } from './credential-lifecycle.js';
 import { resolveModelSource } from './model-source.js';
 import { validateCustomEndpointUrl } from './url-security.js';
 import {
@@ -299,7 +300,7 @@ function updateProviderCache(
   };
 }
 
-export async function refreshProviderModels(
+async function refreshProviderModelsInner(
   providerId: string,
   apiKey: string | null,
   registry = loadRegistry(),
@@ -410,8 +411,9 @@ export async function refreshProviderModels(
     const platform = pricingPlatformForProvider(provider.templateId, provider.id);
     const enriched = enrichModelsWithPricing(models, buildPricingIndex(pricingCache), platform);
 
-    updateProviderCache(registry, providerId, enriched, baseUrl);
-    saveRegistry(registry);
+    updateRegistry(current => {
+      updateProviderCache(current, providerId, enriched, baseUrl);
+    });
     enrichPricingAsync();
 
     return {
@@ -429,6 +431,18 @@ export async function refreshProviderModels(
       ok: false,
       reason: err instanceof Error ? err.message : String(err),
     };
+  }
+}
+
+export async function refreshProviderModels(
+  providerId: string,
+  apiKey: string | null,
+  registry = loadRegistry(),
+): Promise<RefreshProviderResult> {
+  try {
+    return await refreshProviderModelsInner(providerId, apiKey, registry);
+  } finally {
+    await reconcilePendingCredentialDeletes();
   }
 }
 

@@ -120,13 +120,17 @@ Use any API key for a local-only endpoint. Network listen mode requires the conf
 ```text
 leverframe claude [options] [claude-flags]
 leverframe server [options]
-leverframe patch [--restore]
+leverframe patch [--restore] [--target <path>]
+leverframe patch --diagnose [--json] [--target <path>]
 leverframe models
 leverframe favorites
 leverframe providers [add|auth|list|remove|refresh-models]
+leverframe executions [list|show|reconcile]
 ```
 
-`leverframe patch` makes favorites and aliases first-class Claude Code models. It updates model validation, the `/model` picker, aliases, and context-window metadata. Re-run it after a Claude Code update.
+`leverframe patch` makes favorites and aliases first-class Claude Code models. It updates model validation, the `/model` picker, aliases, and context-window metadata. Re-run it after a Claude Code update. `leverframe patch --diagnose` prints a read-only, network-free report of the resolved installation, patch/manifest state, and any pending transaction, without mutating anything; `--target` pins discovery to one binary for both patching and diagnostics.
+
+`leverframe executions` inspects interrupted or ambiguous provider executions recorded under `~/.leverframe/state/executions`. `leverframe executions list` and `show <scope-hash> <execution-id>` are read-only; `leverframe executions reconcile <scope-hash> <execution-id> --tool-call <id>|--all --executed|--not-executed` records a human-confirmed outcome for a tool call whose client-side execution status is ambiguous (Leverframe never executes tools itself and never guesses this outcome automatically). Reconciled and expired executions are also reported — but never auto-resolved — on every proxy/server startup.
 
 For agents view and background-agent setup, see [docs/background-agents.md](docs/background-agents.md).
 

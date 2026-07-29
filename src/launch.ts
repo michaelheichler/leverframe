@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getAppPathOverride } from './config.js';
 import { findBinaryOnPath } from './binary-lookup.js';
+import type { ClaudeInstallation } from './claude-installation.js';
 
 const isWindows = process.platform === 'win32';
 const CMD_PATH_METACHARACTERS = /[\r\n"&|<>^()%!]/;
@@ -73,13 +74,17 @@ export function buildClaudeArgs(model: string | undefined, extraArgs: string[]):
   return model ? ['--model', model, ...extraArgs] : [...extraArgs];
 }
 
-export function launchClaude(
-  env: NodeJS.ProcessEnv,
-  model: string | undefined,
-  extraArgs: string[],
-): Promise<number> {
+export interface LaunchClaudeOptions {
+  installation: ClaudeInstallation;
+  env: NodeJS.ProcessEnv;
+  model: string | undefined;
+  extraArgs: string[];
+}
+
+export function launchClaude(options: LaunchClaudeOptions): Promise<number> {
+  const { installation, env, model, extraArgs } = options;
   return new Promise((resolve) => {
-    const claudePath = findClaudeBinary()!;
+    const claudePath = installation.canonicalPath;
     const args = buildClaudeArgs(model, extraArgs);
 
     const debugFileIdx = extraArgs.indexOf('--debug-file');
@@ -88,10 +93,13 @@ export function launchClaude(
     const originalStdoutWrite = process.stdout.write;
     const originalStderrWrite = process.stderr.write;
 
-    const muteWrite = (chunk: string | Uint8Array, encoding?: any, callback?: any) => {
-      if (typeof encoding === 'function') {
-        callback = encoding;
-      }
+    type WriteCallback = (error?: Error | null) => void;
+    const muteWrite = (
+      chunk: string | Uint8Array,
+      encodingOrCallback?: BufferEncoding | WriteCallback,
+      callback?: WriteCallback,
+    ): boolean => {
+      const done = typeof encodingOrCallback === 'function' ? encodingOrCallback : callback;
       if (debugLogPath) {
         try {
           const str = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
@@ -100,12 +108,12 @@ export function launchClaude(
           // ignore
         }
       }
-      if (callback) callback();
+      done?.();
       return true;
     };
 
-    process.stdout.write = muteWrite as any;
-    process.stderr.write = muteWrite as any;
+    process.stdout.write = muteWrite as typeof process.stdout.write;
+    process.stderr.write = muteWrite as typeof process.stderr.write;
 
     const restore = () => {
       process.stdout.write = originalStdoutWrite;
@@ -130,7 +138,7 @@ export function launchClaude(
       resolve(code ?? 0);
     });
 
-    child.on('error', (err) => {
+    child.on('error', () => {
       restore();
       resolve(1);
     });

@@ -5,6 +5,7 @@ import { resolveContextWindow } from './context-window.js';
 import {
   oauthCredentialToKeychainJson,
   parseStoredOAuthCredential,
+  type StoredOAuthCredential,
 } from './oauth/types.js';
 import { refreshStoredOAuthCredential, oauthCredentialShouldRefresh } from './oauth/refresh.js';
 import type { ConflictInfo } from './types.js';
@@ -13,6 +14,7 @@ import {
   readStoredCredential,
   writeStoredCredential,
 } from './credential-store.js';
+import { withCredentialMutationLock } from './registry/lock.js';
 
 export { classifyKeyringError } from './credential-store.js';
 
@@ -141,10 +143,12 @@ const oauthRefreshInflight = new Map<string, Promise<string | null>>();
 
 export type ParsedAuthRef =
   | { kind: 'keyring'; account: string }
-  | { kind: 'env'; varName: string };
+  | { kind: 'env'; varName: string }
+  | { kind: 'none' };
 
 /** Parse registry authRef strings like `keyring:provider:openai` or `env:OPENAI_API_KEY`. */
 export function parseAuthRef(authRef: string): ParsedAuthRef | null {
+  if (authRef === 'none:anonymous') return { kind: 'none' };
   if (authRef.startsWith('keyring:')) {
     const account = authRef.slice('keyring:'.length);
     return account ? { kind: 'keyring', account } : null;
@@ -183,23 +187,30 @@ async function deleteKeyringAccount(account: string, diag?: (msg: string) => voi
   return deleteStoredCredential(account, diag);
 }
 
+export interface ResolveCredentialOptions {
+  /** Access token rejected by an upstream 401; it must never be returned again. */
+  rejectedAccessToken?: string;
+}
+
 /** Resolve a provider secret from authRef (env → keyring). */
 export async function resolveProviderCredential(
   providerId: string,
   authRef: string,
   diag?: (msg: string) => void,
+  options: ResolveCredentialOptions = {},
 ): Promise<string | null> {
-  const namespaced = readEnvCredential(leverframeKeyEnvVar(providerId));
-  if (namespaced) return namespaced;
-
   const parsed = parseAuthRef(authRef);
-  if (!parsed) return null;
+  if (!parsed || parsed.kind === 'none') return null;
+
+  const namespaced = readEnvCredential(leverframeKeyEnvVar(providerId));
+  if (namespaced && namespaced !== options.rejectedAccessToken) return namespaced;
 
   if (parsed.kind === 'env') {
-    return readEnvCredential(parsed.varName);
+    const value = readEnvCredential(parsed.varName);
+    return value === options.rejectedAccessToken ? null : value;
   }
 
-  return readProviderSecret(parsed.account, diag);
+  return readProviderSecret(parsed.account, diag, options.rejectedAccessToken);
 }
 
 /** Read OAuth metadata retained alongside the access token. */
@@ -242,46 +253,77 @@ function decodeProviderSecret(raw: string | null): string | null {
 async function refreshOAuthKeyringAccount(
   account: string,
   providerId: string,
-  raw: string,
+  initialRaw: string,
   diag?: (msg: string) => void,
+  rejectedAccessToken?: string,
 ): Promise<string | null> {
-  const existing = oauthRefreshInflight.get(account);
+  const inflightKey = `${account}\0${rejectedAccessToken ?? ''}`;
+  const existing = oauthRefreshInflight.get(inflightKey);
   if (existing) return existing;
 
-  const work = (async (): Promise<string | null> => {
-    const cred = parseStoredOAuthCredential(raw);
-    if (!cred || !oauthCredentialShouldRefresh(cred, providerId)) {
-      return decodeProviderSecret(raw);
-    }
-    try {
-      const refreshed = await refreshStoredOAuthCredential(providerId, cred);
-      const json = oauthCredentialToKeychainJson(refreshed);
-      await writeKeyringAccount(account, json, diag);
-      return refreshed.access;
-    } catch (err) {
-      diag?.(err instanceof Error ? err.message : String(err));
-      if (cred.access && cred.expires > Date.now()) return cred.access;
-      throw err;
-    }
-  })();
+  const work = withCredentialMutationLock(`keyring:${account}`, async (): Promise<string | null> => {
+    let raw = initialRaw;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const latestRaw = await readKeyringAccount(account, diag);
+      if (!latestRaw) return null;
+      raw = latestRaw;
+      const credential = parseStoredOAuthCredential(raw);
+      if (!credential) {
+        const decoded = decodeProviderSecret(raw);
+        return decoded === rejectedAccessToken ? null : decoded;
+      }
+      const forceRefresh = credential.access === rejectedAccessToken || credential.accessRejected === true;
+      if (!forceRefresh && !oauthCredentialShouldRefresh(credential, providerId)) return credential.access;
 
-  oauthRefreshInflight.set(account, work);
+      let refreshed: StoredOAuthCredential;
+      try {
+        refreshed = await refreshStoredOAuthCredential(providerId, credential);
+      } catch (error) {
+        diag?.(error instanceof Error ? error.message : String(error));
+        if (!forceRefresh && credential.access && credential.expires > Date.now()) return credential.access;
+        throw error;
+      }
+
+      // Compare-and-swap: never overwrite another process's newer credential.
+      if (await readKeyringAccount(account, diag) !== raw) continue;
+      const accessRejected = refreshed.access === rejectedAccessToken
+        || (credential.accessRejected === true && refreshed.access === credential.access);
+      const replacement: StoredOAuthCredential = accessRejected
+        ? { ...refreshed, accessRejected: true }
+        : refreshed;
+      const saved = await writeKeyringAccount(
+        account,
+        oauthCredentialToKeychainJson(replacement),
+        diag,
+      );
+      if (!saved) throw new Error('Could not persist refreshed OAuth credential');
+      return accessRejected ? null : refreshed.access;
+    }
+    throw new Error('OAuth credential changed repeatedly while refresh was in progress');
+  });
+
+  oauthRefreshInflight.set(inflightKey, work);
   try {
     return await work;
   } finally {
-    oauthRefreshInflight.delete(account);
+    if (oauthRefreshInflight.get(inflightKey) === work) oauthRefreshInflight.delete(inflightKey);
   }
 }
 
-async function readProviderSecret(account: string, diag?: (msg: string) => void): Promise<string | null> {
+async function readProviderSecret(
+  account: string,
+  diag?: (msg: string) => void,
+  rejectedAccessToken?: string,
+): Promise<string | null> {
   const raw = await readKeyringAccount(account, diag);
   if (!raw) return null;
 
   const oauthProviderId = oauthProviderIdFromAccount(account);
   if (oauthProviderId && raw.trim().startsWith('{')) {
-    return refreshOAuthKeyringAccount(account, oauthProviderId, raw, diag);
+    return refreshOAuthKeyringAccount(account, oauthProviderId, raw, diag, rejectedAccessToken);
   }
-  return decodeProviderSecret(raw);
+  const decoded = decodeProviderSecret(raw);
+  return decoded === rejectedAccessToken ? null : decoded;
 }
 
 export async function saveProviderCredential(

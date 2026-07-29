@@ -9,10 +9,17 @@
 !/pnpm-workspace.yaml
 !/tsconfig.json
 !/tsup.config.ts
+!/vitest.config.ts
 !/docs/
 !/docs/**
 !/src/
 !/src/**
+!/scripts/
+!/scripts/**
+!/.github/
+!/.github/**
+!/tests/
+!/tests/**
 !/dist/
 /dist/*
 !/dist/*.js

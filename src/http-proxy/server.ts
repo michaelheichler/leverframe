@@ -1,8 +1,8 @@
 import * as http from 'node:http';
 import * as https from 'node:https';
 import * as net from 'node:net';
-import type { Socket } from 'node:net';
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import type { AddressInfo, Socket } from 'node:net';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { URL } from 'node:url';
 import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib';
 import type { ProxyHandle, ProxyRoute } from '../proxy.js';
@@ -10,15 +10,11 @@ import { startProxyCatalog } from '../proxy.js';
 import { ensureHttpProxyCertificates } from './ca.js';
 import { routeLookupIds } from '../context-model-id.js';
 import type { ResolvedHttpProxyAlias } from './routes.js';
-import { anthropicEffortFromRequest, extractClaudeSessionId, type AnthropicRequest } from '../sdk-adapter.js';
-import { anthropicMessagesEndpoint } from '../anthropic-endpoints.js';
+import { listenTcpServer } from '../listener-ready.js';
+import { decideHttpProxyRoute } from './routing-decision.js';
 import {
-  getLatestMessagePreview,
-  INFERENCE_PROGRESS_INTERVAL_MS,
-  writeInferenceRequestLog,
   writeInferenceResponseLifecycleLog,
   writeInferenceResponseErrorLog,
-  writeWebSocketDiagnosticRequestLog,
   type InferenceResponsePhase,
 } from '../trace-log.js';
 
@@ -153,6 +149,8 @@ export interface HttpProxyOptions {
   anthropicRejectUnauthorized?: boolean;
   /** Test hook for observing relay-route isolation without calling an AI provider. */
   adapterHandle?: ProxyHandle;
+  /** Test hook for verifying adapter connection-pool ownership. */
+  adapterRequest?: typeof http.request;
   /** Test hook. Production emits a progress record every 30 seconds. */
   responseProgressIntervalMs?: number;
   /**
@@ -512,6 +510,8 @@ function forwardToAdapter(
   res: http.ServerResponse,
   rawBody: Buffer,
   adapter: ProxyHandle,
+  adapterRequest: typeof http.request,
+  adapterAgent: http.Agent,
   lifecycle?: {
     logPath: string;
     requestId: string;
@@ -626,11 +626,12 @@ function forwardToAdapter(
       resolve();
     };
 
-    upstream = http.request({
+    upstream = adapterRequest({
       hostname: '127.0.0.1',
       port: adapter.port,
       method: 'POST',
       path: req.url,
+      agent: adapterAgent,
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': String(rawBody.length),
@@ -755,6 +756,7 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
       options.modelAliases,
     );
   }
+  const adapterAgent = new http.Agent({ keepAlive: true });
 
   const mitmServer = https.createServer({
     key: certificates.serverKey,
@@ -770,114 +772,82 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
       return;
     }
 
-    const messagesEndpoint = anthropicMessagesEndpoint(req.url);
-    if (req.method === 'POST' && messagesEndpoint) {
-      const requestId = randomUUID();
-      let parsed: AnthropicRequest | null = null;
-      let route: ProxyRoute | undefined;
-      try {
-        parsed = JSON.parse(rawBody.toString('utf8')) as AnthropicRequest;
-        if (typeof parsed.model === 'string') route = routesById.get(parsed.model);
-      } catch {
-        // Fail safe: an unreadable body is Anthropic traffic, never a relay route.
-      }
-      const claudeSessionIdHeader = Array.isArray(req.headers['x-claude-code-session-id'])
-        ? req.headers['x-claude-code-session-id'][0]
-        : req.headers['x-claude-code-session-id'];
-      const claudeSessionId = parsed
-        ? extractClaudeSessionId(parsed, claudeSessionIdHeader)
-        : undefined;
+    const decision = decideHttpProxyRoute({
+      method: req.method,
+      url: req.url,
+      headers: req.headers,
+      rawBody,
+      routesById,
+      hasAdapter: adapter !== null,
+      inferenceLogPath: options.inferenceLogPath,
+      webSocketDiagnosticsLogPath: options.webSocketDiagnosticsLogPath,
+      responseProgressIntervalMs: options.responseProgressIntervalMs,
+    });
 
-      if (messagesEndpoint === 'messages' && options.inferenceLogPath) {
-        const provider = route
-          ? (route.providerId ?? route.aliasId.split(':')[1] ?? 'unknown')
-          : 'anthropic';
-        writeInferenceRequestLog(options.inferenceLogPath, {
-          requestId,
-          claudeSessionId,
-          modelId: typeof parsed?.model === 'string' ? parsed.model : 'unknown',
-          effort: parsed ? anthropicEffortFromRequest(parsed) : undefined,
-          provider,
-          route: route ? 'translated' : 'passthrough',
-          stream: Boolean(parsed?.stream),
-          requestPreview: getLatestMessagePreview(parsed?.messages, parsed?.system),
-        });
-      }
-
-      if (messagesEndpoint === 'messages' && options.webSocketDiagnosticsLogPath) {
-        const provider = route
-          ? (route.providerId ?? route.aliasId.split(':')[1] ?? 'unknown')
-          : 'anthropic';
-        writeWebSocketDiagnosticRequestLog(options.webSocketDiagnosticsLogPath, {
-          requestId,
-          claudeSessionId,
-          provider,
-          route: route ? 'translated' : 'passthrough',
-          headers: req.headers,
-          body: parsed ? parsed as unknown as Record<string, unknown> : {},
-        });
-      }
-
-      if (route && adapter) {
+    switch (decision.action) {
+      case 'translated': {
+        if (!adapter) {
+          // decideHttpProxyRoute only returns 'translated' when hasAdapter was true.
+          throw new Error('HTTP proxy route decision selected an adapter that is no longer running');
+        }
         // Adapter resolves aliases itself and must echo the request model id.
-        await forwardToAdapter(req, res, rawBody, adapter, messagesEndpoint === 'messages' && options.inferenceLogPath
-          ? {
-              logPath: options.inferenceLogPath,
-              requestId,
-              modelId: typeof parsed?.model === 'string' ? parsed.model : 'unknown',
-              provider: route.providerId ?? route.aliasId.split(':')[1] ?? 'unknown',
-              progressIntervalMs: options.responseProgressIntervalMs ?? INFERENCE_PROGRESS_INTERVAL_MS,
-            }
-          : undefined);
+        await forwardToAdapter(
+          req,
+          res,
+          rawBody,
+          adapter,
+          options.adapterRequest ?? http.request,
+          adapterAgent,
+          decision.lifecycle,
+        );
         return;
       }
-
-      await forwardRawAnthropicRequest(
-        req,
-        res,
-        rawBody,
-        anthropicOrigin,
-        options.anthropicRejectUnauthorized ?? true,
-        messagesEndpoint === 'messages' && options.inferenceLogPath
-          ? (statusCode, errorContent) => writeInferenceResponseErrorLog(options.inferenceLogPath!, {
-              requestId,
-              modelId: typeof parsed?.model === 'string' ? parsed.model : 'unknown',
-              provider: 'anthropic',
-              route: 'passthrough',
-              statusCode,
-              errorContent,
-            })
-          : undefined,
-        messagesEndpoint === 'messages' && options.inferenceLogPath
-          ? usage => writeInferenceResponseLifecycleLog(options.inferenceLogPath!, {
-              event: 'response_usage',
-              requestId,
-              modelId: typeof parsed?.model === 'string' ? parsed.model : 'unknown',
-              provider: 'anthropic',
-              route: 'passthrough',
-              ...usage,
-            })
-          : undefined,
-        messagesEndpoint === 'messages' && options.inferenceLogPath
-          ? {
-              logPath: options.inferenceLogPath,
-              requestId,
-              modelId: typeof parsed?.model === 'string' ? parsed.model : 'unknown',
-              provider: 'anthropic',
-              progressIntervalMs: options.responseProgressIntervalMs ?? INFERENCE_PROGRESS_INTERVAL_MS,
-            }
-          : undefined,
-      );
-      return;
+      case 'passthrough-messages': {
+        const lifecycle = decision.lifecycle;
+        await forwardRawAnthropicRequest(
+          req,
+          res,
+          rawBody,
+          anthropicOrigin,
+          options.anthropicRejectUnauthorized ?? true,
+          lifecycle
+            ? (statusCode, errorContent) => writeInferenceResponseErrorLog(lifecycle.logPath, {
+                requestId: decision.requestId,
+                modelId: decision.modelId,
+                provider: 'anthropic',
+                route: 'passthrough',
+                statusCode,
+                errorContent,
+              })
+            : undefined,
+          lifecycle
+            ? usage => writeInferenceResponseLifecycleLog(lifecycle.logPath, {
+                event: 'response_usage',
+                requestId: decision.requestId,
+                modelId: decision.modelId,
+                provider: 'anthropic',
+                route: 'passthrough',
+                ...usage,
+              })
+            : undefined,
+          lifecycle,
+        );
+        return;
+      }
+      case 'raw':
+        await forwardRawAnthropicRequest(
+          req,
+          res,
+          rawBody,
+          anthropicOrigin,
+          options.anthropicRejectUnauthorized ?? true,
+        );
+        return;
+      default: {
+        const exhaustive: never = decision;
+        throw new Error(`Unhandled HTTP proxy route decision: ${JSON.stringify(exhaustive)}`);
+      }
     }
-
-    await forwardRawAnthropicRequest(
-      req,
-      res,
-      rawBody,
-      anthropicOrigin,
-      options.anthropicRejectUnauthorized ?? true,
-    );
   });
 
   const sockets = new Set<Socket>();
@@ -944,33 +914,21 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
     });
   });
 
+  let address: AddressInfo;
   try {
-    await new Promise<void>((resolve, reject) => {
-      proxyServer.once('error', reject);
-      proxyServer.listen(options.port ?? 0, options.host ?? '127.0.0.1', () => {
-        proxyServer.off('error', reject);
-        resolve();
-      });
-    });
+    address = await listenTcpServer(
+      proxyServer,
+      options.port ?? 0,
+      options.host ?? '127.0.0.1',
+    );
   } catch (err) {
-    // Bind failed: no listener owned by this attempt may survive the rejection.
-    if (proxyServer.listening) {
-      await new Promise<void>(resolve => proxyServer.close(() => resolve()));
-    }
+    // Bind/readiness failed: no listener or private adapter resource may survive.
+    adapterAgent.destroy();
     if (mitmServer.listening) {
       await new Promise<void>(resolve => mitmServer.close(() => resolve()));
     }
     await closeAdapter();
     throw err;
-  }
-
-  const address = proxyServer.address();
-  if (!address || typeof address === 'string') {
-    if (proxyServer.listening) {
-      await new Promise<void>(resolve => proxyServer.close(() => resolve()));
-    }
-    await closeAdapter();
-    throw new Error('HTTP proxy did not bind to a TCP port');
   }
 
   return {
@@ -985,7 +943,9 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
     inferenceLogPath: options.inferenceLogPath,
     webSocketDiagnosticsLogPath: options.webSocketDiagnosticsLogPath,
     close: async () => {
+      adapterAgent.destroy();
       for (const socket of sockets) socket.destroy();
+      adapterAgent.destroy();
       await new Promise<void>(resolve => proxyServer.close(() => resolve()));
       mitmServer.close();
       await closeAdapter();

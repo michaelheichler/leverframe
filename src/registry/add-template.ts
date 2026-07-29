@@ -5,7 +5,9 @@ import { isSdkMigratedNpm } from '../provider-factory.js';
 import type { ProviderTemplate } from '../provider-templates.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
-import { loadRegistry, saveRegistry } from './io.js';
+import { loadRegistryStrict, updateRegistry } from './io.js';
+import { journalCredentialWrite, reconcilePendingCredentialDeletes } from './credential-lifecycle.js';
+import { withProviderMutationLock } from './lock.js';
 import {
   buildPricingIndex,
   enrichModelsWithPricing,
@@ -86,18 +88,16 @@ function buildRegistryEntry(
   };
 }
 
-function persistEntry(registry: ReturnType<typeof loadRegistry>, entry: RegistryProvider, existing: RegistryProvider | undefined): void {
-  if (existing) {
-    const idx = registry.providers.findIndex(p => p.id === entry.id);
-    registry.providers[idx] = entry;
-  } else {
-    registry.providers.push(entry);
-  }
-  saveRegistry(registry);
+function persistEntry(entry: RegistryProvider): void {
+  updateRegistry(registry => {
+    const index = registry.providers.findIndex(provider => provider.id === entry.id);
+    if (index >= 0) registry.providers[index] = entry;
+    else registry.providers.push(entry);
+  });
 }
 
 /** Persist credential + registry entry. Returns whether the upstream API key was actually validated. */
-export async function addProviderFromTemplate(
+async function addProviderFromTemplateLocked(
   template: ProviderTemplate,
   apiKey: string,
   opts?: { replaceExisting?: boolean; baseUrl?: string },
@@ -112,7 +112,7 @@ export async function addProviderFromTemplate(
     return { added: false, error: 'API key cannot be empty.' };
   }
 
-  const registry = loadRegistry();
+  const registry = loadRegistryStrict();
   const existing = registry.providers.find(p => p.id === template.id);
   if (existing && !opts?.replaceExisting) {
     return {
@@ -141,7 +141,8 @@ export async function addProviderFromTemplate(
     };
   }
 
-  const authRef = `keyring:provider:${template.id}`;
+  const authRef = trimmedKey ? `keyring:provider:${template.id}` : 'none:anonymous';
+  if (trimmedKey) await journalCredentialWrite(authRef);
   const saved = trimmedKey ? await saveProviderCredential(authRef, trimmedKey) : true;
   if (!saved) {
     return {
@@ -159,7 +160,7 @@ export async function addProviderFromTemplate(
     platform,
   );
   const entry = buildRegistryEntry(template, fetched, pricedModels, authRef, existing);
-  persistEntry(registry, entry, existing);
+  persistEntry(entry);
   enrichPricingAsync();
 
   const keyVerified = !template.skipKeyVerification && !fetched.usedStaticFallback;
@@ -174,4 +175,18 @@ export async function addProviderFromTemplate(
         ? `Live model listing for ${template.name} was unavailable. leverframe stored the API key and the documented static model list, but did not verify the key. The first request will validate it.`
         : 'API key stored in leverframe credential storage. leverframe did not verify it against an upstream endpoint, so a bad key will only surface on the first request.',
   };
+}
+
+export function addProviderFromTemplate(
+  template: ProviderTemplate,
+  apiKey: string,
+  opts?: { replaceExisting?: boolean; baseUrl?: string },
+): Promise<AddTemplateResult> {
+  return withProviderMutationLock(template.id, async () => {
+    try {
+      return await addProviderFromTemplateLocked(template, apiKey, opts);
+    } finally {
+      await reconcilePendingCredentialDeletes();
+    }
+  });
 }

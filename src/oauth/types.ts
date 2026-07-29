@@ -8,6 +8,8 @@ export interface StoredOAuthCredential {
   expires: number;
   accountId?: string;
   providerData?: Record<string, unknown>;
+  /** Persisted when a forced refresh returned the same rejected access token. */
+  accessRejected?: true;
 }
 
 /** Serialize a stored OAuth credential for the keychain. */
@@ -45,7 +47,8 @@ export function parseStoredOAuthCredential(raw: string | null): StoredOAuthCrede
     if (parsed.type === 'oauth'
       && typeof parsed.access === 'string'
       && typeof parsed.refresh === 'string'
-      && typeof parsed.expires === 'number') {
+      && typeof parsed.expires === 'number'
+      && (parsed.accessRejected === undefined || parsed.accessRejected === true)) {
       return parsed;
     }
   } catch {

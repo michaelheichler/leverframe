@@ -4,7 +4,7 @@ import type { FreeStatus } from './free-models.js';
 
 export type ModelFormat = 'anthropic' | 'openai' | 'unsupported';
 
-export type StarterCommand = 'root' | 'claude' | 'server' | 'models' | 'providers' | 'patch';
+export type StarterCommand = 'root' | 'claude' | 'server' | 'models' | 'providers' | 'patch' | 'executions';
 
 export interface ModelCost {
   input: number;
@@ -140,6 +140,12 @@ export interface ParsedArgs {
   favoritesUnalias?: string;
   /** leverframe patch: restore the pristine Claude Code binary. */
   patchRestore?: boolean;
+  /** leverframe patch --diagnose: read-only, network-free installation/state report. */
+  patchDiagnose?: boolean;
+  /** leverframe patch --diagnose --json: print the diagnostics report as ANSI-free JSON. */
+  patchJson?: boolean;
+  /** leverframe patch --target <path>: pin an explicit Claude Code installation path. */
+  patchTarget?: string;
   error?: string;
 }
 

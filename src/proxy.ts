@@ -2,6 +2,7 @@
 // Adapted from cucoleadan/opencode-cowork-proxy (MIT)
 import { createServer } from 'node:http';
 import type { ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { appendFileSync, openSync, writeSync, closeSync } from 'node:fs';
 import { readBody, extractApiKey, sendJson } from './http-utils.js';
 import { formatAnthropicModelEntry, formatAnthropicModelList } from './server/models.js';
@@ -15,7 +16,7 @@ import {
   writeInferenceResponseErrorLog,
   writeWebSocketDiagnosticLog,
 } from './trace-log.js';
-import { fetchWithOAuthRetry, relayAnthropicMessages, UpstreamUnreachableError } from './upstream-forward.js';
+import { relayAnthropicMessages, UpstreamUnreachableError } from './upstream-forward.js';
 import { revalidateCustomEndpointUrl } from './registry/url-security.js';
 import {
   CLAUDE_CODE_CLI_VERSION,
@@ -32,12 +33,14 @@ import {
   extractClaudeSessionId,
   sdkTranslationErrorSignature,
   silenceSdkWarnings,
+  type AnthropicRequest,
 } from './sdk-adapter.js';
 import {
   anthropicErrorType,
   formatUpstreamError,
   isContextLengthExceededError,
   sdkUpstreamErrorDetails,
+  sdkUpstreamResponseHeaders,
   upstreamHttpStatus,
 } from './upstream-error.js';
 import {
@@ -45,16 +48,107 @@ import {
   anthropicPromptTooLongMessage,
   estimateAnthropicInputTokens,
 } from './anthropic-endpoints.js';
-import { withResponsesWebSocketDiagnosticContext } from './oauth/responses-websocket.js';
+import type { LanguageModel } from 'ai';
+import {
+  evictResponsesWebSocketConnectionsForAccessToken,
+  withResponsesWebSocketDiagnosticContext,
+} from './oauth/responses-websocket.js';
+import { ProviderRuntimeCache } from './provider-runtime-cache.js';
 import { resolveContextWindow } from './context-window.js';
+import { listenTcpServer } from './listener-ready.js';
+import {
+  beginExecutionTracking,
+  reconcileExecutionsAtStartup,
+  reconcileIncomingToolResults,
+  ExecutionRecoveryBlockedError,
+  EXECUTION_ID_HEADER,
+  type ExecutionTrackingHandle,
+} from './execution-tracking.js';
+import { resolveExecutionSessionKey } from './execution-session-key.js';
+import { buildProviderCapabilities } from './provider-capabilities.js';
+import { createRequestExecutionContext, cancelAllActiveRequestExecutions } from './request-execution-context.js';
+import type { LifecycleDeadlines } from './request-lifecycle.js';
 
 type ProxyLog = (message: string | (() => string)) => void;
+
+const INTERNAL_ADAPTER_KEEPALIVE_TIMEOUT_MS = 60_000;
+
+function proxyExecutionMessages(body: unknown): Array<{ role: string; content: unknown }> {
+  if (!body || typeof body !== 'object') return [];
+  const messages = (body as Record<string, unknown>).messages;
+  if (!Array.isArray(messages)) return [];
+  return messages.flatMap(value => {
+    if (!value || typeof value !== 'object') return [];
+    const message = value as Record<string, unknown>;
+    return typeof message.role === 'string' ? [{ role: message.role, content: message.content }] : [];
+  });
+}
+
+function proxyToolResults(body: unknown): Array<{ toolUseId: string; content: string }> {
+  if (!body || typeof body !== 'object') return [];
+  const messages = (body as Record<string, unknown>).messages;
+  if (!Array.isArray(messages)) return [];
+  const results: Array<{ toolUseId: string; content: string }> = [];
+  for (const value of messages) {
+    if (!value || typeof value !== 'object') continue;
+    const content = (value as Record<string, unknown>).content;
+    if (!Array.isArray(content)) continue;
+    for (const blockValue of content) {
+      if (!blockValue || typeof blockValue !== 'object') continue;
+      const block = blockValue as Record<string, unknown>;
+      if (block.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue;
+      results.push({
+        toolUseId: block.tool_use_id,
+        content: typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? ''),
+      });
+    }
+  }
+  return results;
+}
+
+function applyProxyExecutionHeaders(res: ServerResponse, tracking: ExecutionTrackingHandle): void {
+  if (res.headersSent) return;
+  for (const [name, value] of Object.entries(tracking.headers)) res.setHeader(name, value);
+}
 
 async function revalidateUpstreamUrl(rawUrl: string): Promise<boolean> {
   if (!rawUrl) return true;
   const allowInsecureLocal = rawUrl.trim().toLowerCase().startsWith('http://');
   const result = await revalidateCustomEndpointUrl(rawUrl, { allowInsecureLocal });
   return result.ok;
+}
+
+type ProxyAnthropicRequestBody = Partial<AnthropicRequest> & Record<string, unknown>;
+
+type ParsedAnthropicRequest =
+  | { ok: true; body: ProxyAnthropicRequestBody }
+  | { ok: false; status: number; message: string };
+
+/**
+ * Parses and validates the raw wire body for /v1/messages (and its
+ * count_tokens sibling). `model` stays optional here on purpose — Claude
+ * Code's token-counting and health-probe requests omit it, and the caller
+ * falls back to the default route. Beyond the type check on `model`, this
+ * intentionally validates nothing else about the body's shape (e.g. a
+ * non-array `messages`) — that stays the translation/relay layer's job, so
+ * its existing error taxonomy (400 vs 502, retryability, etc.) for a
+ * malformed-but-present field is unchanged by this refactor.
+ */
+function parseAnthropicRequest(raw: string): ParsedAnthropicRequest {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, status: 400, message: 'Invalid JSON body' };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, status: 400, message: 'Request body must be a JSON object' };
+  }
+  const body = parsed as ProxyAnthropicRequestBody;
+  if (body.model !== undefined && typeof body.model !== 'string') {
+    return { ok: false, status: 400, message: `'model' must be a string when present, got ${typeof body.model}` };
+  }
+  return { ok: true, body };
 }
 
 function createTranslationLifecycle(
@@ -217,7 +311,7 @@ export interface ProxyRoute {
   oauthAccountId?: string;
   providerData?: Record<string, unknown>;
   /** Called once on upstream HTTP 401 to get a refreshed OAuth token. Retry happens only if token differs from current apiKey. */
-  refreshToken?: () => Promise<string | null>;
+  refreshToken?: (rejectedToken: string) => Promise<string | null>;
   supportedParameters?: string[];
   reasoning?: boolean;
   interleavedReasoningField?: string;
@@ -227,6 +321,8 @@ export interface ProxyRoute {
   preferWebSockets?: boolean;
   /** Static headers sent on every upstream request (e.g. a plan/auth-tracking header a custom endpoint requires). */
   headers?: Record<string, string>;
+  /** Test-only: overrides RequestLifecycle's production deadline defaults for this route's requests. */
+  requestDeadlines?: LifecycleDeadlines;
 }
 
 /**
@@ -256,8 +352,19 @@ export interface ProxyModelAlias {
   routeId: string;
 }
 
+function proxyRuntimeRouteKey(route: ProxyRoute): string {
+  return [
+    route.providerId ?? route.aliasId,
+    route.oauthAccountId ?? '',
+    route.aliasId,
+    route.realModelId,
+    route.npm ?? '@native-anthropic',
+    route.baseURL ?? route.upstreamUrl,
+  ].join('\x1f');
+}
+
 /** Multi-model proxy: routes each request by body.model to the correct upstream. */
-export function startProxyCatalog(
+export async function startProxyCatalog(
   routes: ProxyRoute[],
   defaultAliasId: string,
   debug = false,
@@ -268,6 +375,11 @@ export function startProxyCatalog(
 ): Promise<ProxyHandle> {
   const proxyToken = randomUUID();
   silenceSdkWarnings();
+  const providerRuntimeCache = new ProviderRuntimeCache<LanguageModel>({
+    onCredentialRotated: previous => {
+      evictResponsesWebSocketConnectionsForAccessToken(previous.credential);
+    },
+  });
 
   if (routes.length === 0) {
     return Promise.reject(new Error('Proxy catalog requires at least one route'));
@@ -281,6 +393,10 @@ export function startProxyCatalog(
   const defaultRoute = byAlias.get(defaultAliasId) ?? routes[0]!;
 
   const plog = makeProxyLog(debug, debugLogPath);
+  const startupRecovery = reconcileExecutionsAtStartup();
+  if (startupRecovery.length > 0) {
+    plog(() => `execution reconciliation: ${startupRecovery.length} execution(s) require confirmation or expiry handling`);
+  }
 
   const onRejection = (reason: unknown) => {
     plog(() => `Unhandled Rejection: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}`);
@@ -347,32 +463,48 @@ export function startProxyCatalog(
         if (!res.writableFinished) abortForClientDisconnect();
       });
 
-      let anthropicBody: any;
-      try {
-        const raw = await readBody(req);
-        anthropicBody = JSON.parse(raw);
-      } catch {
-        anthropicError(res, 400, 'Invalid JSON body');
+      const raw = await readBody(req);
+      const parsedRequest = parseAnthropicRequest(raw);
+      if (!parsedRequest.ok) {
+        anthropicError(res, parsedRequest.status, parsedRequest.message);
         return;
       }
-
-      if (!anthropicBody || typeof anthropicBody !== 'object' || Array.isArray(anthropicBody)) {
-        anthropicError(res, 400, 'Request body must be a JSON object');
-        return;
-      }
+      const anthropicBody = parsedRequest.body;
 
       const originalModel = anthropicBody.model;
-      if (originalModel !== undefined && typeof originalModel !== 'string') {
-        anthropicError(res, 400, `'model' must be a string when present, got ${typeof originalModel}`);
-        return;
-      }
       const clientWantsStream = Boolean(anthropicBody.stream);
       const relayRequestIdRaw = req.headers['x-relay-request-id'];
       const relayRequestId = Array.isArray(relayRequestIdRaw) ? relayRequestIdRaw[0] : relayRequestIdRaw;
 
-      const route = (typeof originalModel === 'string' ? lookupRoute(byAlias, originalModel) : undefined) ?? defaultRoute;
-      const apiKey = route.apiKey;
+      // A missing `model` field falls back to the default route (Claude Code's
+      // token-counting and health-probe requests omit it). A *present* but
+      // unrecognized model id must never silently reroute to a different
+      // provider's route — that would send the request, and its credentials,
+      // to a provider the caller did not select (stabilization plan §9.2,
+      // upstream 383f464: configured routes must not bypass to another
+      // provider). Reject it explicitly instead.
+      const resolvedRoute = typeof originalModel === 'string' ? lookupRoute(byAlias, originalModel) : undefined;
+      if (typeof originalModel === 'string' && !resolvedRoute) {
+        anthropicError(res, 404, `Unknown model: ${originalModel}`);
+        return;
+      }
+      const route = resolvedRoute ?? defaultRoute;
+      const credentialRouteKey = proxyRuntimeRouteKey(route);
+      let credential = providerRuntimeCache.snapshot(credentialRouteKey, route.apiKey);
+      if (route.authType !== 'oauth' && credential.credential !== route.apiKey) {
+        credential = await providerRuntimeCache.adopt(
+          credentialRouteKey,
+          credential.credential,
+          route.apiKey,
+        );
+      }
+      const apiKey = credential.credential;
       const upstreamUrl = route.upstreamUrl;
+      const providerId = route.providerId ?? route.aliasId.split(':')[1] ?? 'unknown';
+      // The client-facing model id: the validated `model` field when present,
+      // else the alias the default route was matched under (Claude Code's
+      // token-counting/health-probe requests omit `model` entirely).
+      const clientModelId = originalModel ?? route.aliasId;
 
       plog(() =>
         `POST /v1/messages - alias=${originalModel} route=${route.realModelId} format=${route.modelFormat} key=${apiKey ? `len:${apiKey.length}` : 'MISSING'}`,
@@ -380,11 +512,38 @@ export function startProxyCatalog(
 
       const usesSdkAdapter = isSdkMigratedNpm(route.npm);
 
+      // Owns accepted/validated/dispatched/first-output/terminal transitions,
+      // the four deadline classes, and downstream-disconnect cancellation for
+      // this request; `clientAbort` (wired above) doubles as its local-shutdown
+      // signal. Every branch below drives it through its narrow observer
+      // surface and disposes it exactly once on the way out.
+      const requestExecution = createRequestExecutionContext({
+        requestId: relayRequestId ?? randomUUID(),
+        provider: providerId,
+        model: typeof originalModel === 'string' ? originalModel : route.aliasId,
+        correlationId: relayRequestId,
+        signal: clientAbort.signal,
+        deadlines: route.requestDeadlines,
+      });
+      // Every response path below ends in exactly one of res 'finish' (sent)
+      // or 'close' (torn down before finishing); either one is this
+      // request's single terminal-disposal point regardless of which early
+      // return produced it.
+      res.once('finish', () => requestExecution.dispose());
+      res.once('close', () => requestExecution.dispose());
+
       if (messagesEndpoint === 'count_tokens') {
         if (route.modelFormat !== 'anthropic') {
           const inputTokens = estimateAnthropicInputTokens(anthropicBody);
           plog(() => `token-count: local estimate model=${originalModel} input_tokens=${inputTokens}`);
           res.setHeader('x-relay-token-count-source', 'local-estimate');
+          // Local estimate never touches the upstream/SDK, so no phase call
+          // has moved the lifecycle past `resolving` yet; `complete()` is
+          // only a legal transition from `streaming`/`headers`, so advance
+          // through those phases here rather than relaxing that invariant.
+          requestExecution.markStreamActivity();
+          requestExecution.markOutputEmitted();
+          requestExecution.complete();
           sendJson(res, 200, { input_tokens: inputTokens });
           return;
         }
@@ -411,11 +570,15 @@ export function startProxyCatalog(
             log: message => plog(message),
             extraHeaders: route.headers,
             refreshToken: route.refreshToken,
-            onTokenRefreshed: refreshed => { route.apiKey = refreshed; },
+            onTokenRefreshed: async refreshed => {
+              await providerRuntimeCache.adopt(credentialRouteKey, apiKey, refreshed);
+            },
             signal: clientAbort.signal,
+            lifecycle: requestExecution,
           });
         } catch (err) {
           if (clientAbort.signal.aborted) return;
+          requestExecution.fail(err);
           const message = err instanceof UpstreamUnreachableError ? err.message : String(err);
           plog(() => `anthropic token-count error: ${message}`);
           anthropicError(res, 502, message);
@@ -423,10 +586,58 @@ export function startProxyCatalog(
         return;
       }
 
+      const sessionHeaderValue = req.headers['x-claude-code-session-id'];
+      const sessionHeader = Array.isArray(sessionHeaderValue) ? sessionHeaderValue[0] : sessionHeaderValue;
+      const claudeSessionId = extractClaudeSessionId(anthropicBody, sessionHeader);
+      const executionSessionKey = resolveExecutionSessionKey({
+        claudeSessionId,
+        provider: providerId,
+        model: route.realModelId,
+      });
+      reconcileIncomingToolResults({ sessionKey: executionSessionKey, toolResults: proxyToolResults(anthropicBody) });
+      const executionHeader = req.headers[EXECUTION_ID_HEADER];
+      const requestedExecutionId = Array.isArray(executionHeader) ? executionHeader[0] : executionHeader;
+      const trackedRequestId = relayRequestId ?? randomUUID();
+      // Provider capabilities are consulted once, at this operation boundary,
+      // and drive both execution tracking and the request-lifecycle deadline
+      // classes below (RequestLifecycle only arms the idle deadline once a
+      // response actually starts streaming, so a non-streaming-capable route
+      // never pays an idle-timeout cost it cannot trigger).
+      const providerCapabilities = buildProviderCapabilities({
+        providerId,
+        supportedParameters: route.supportedParameters,
+        streaming: true,
+        tools: Array.isArray(anthropicBody.tools),
+        reasoning: route.reasoning,
+        websocket: route.preferWebSockets,
+        clientManagedState: true,
+      });
+      let tracking: ExecutionTrackingHandle;
+      try {
+        tracking = beginExecutionTracking({
+          sessionKey: executionSessionKey,
+          executionId: requestedExecutionId,
+          requestId: trackedRequestId,
+          provider: providerId,
+          model: typeof originalModel === 'string' ? originalModel : route.aliasId,
+          route: route.modelFormat === 'anthropic' ? 'passthrough' : 'translated',
+          messages: proxyExecutionMessages(anthropicBody),
+          capabilities: providerCapabilities,
+        });
+      } catch (error) {
+        if (error instanceof ExecutionRecoveryBlockedError) {
+          anthropicError(res, error.statusCode, error.message);
+          return;
+        }
+        throw error;
+      }
+
       if (!apiKey && !usesSdkAdapter) {
         anthropicError(res, 401, 'Missing API key');
         return;
       }
+
+      requestExecution.startResolving();
 
       // ── Anthropic passthrough ───────────────────────────────────────
       // Forward raw Anthropic body (with real model id) directly to the upstream.
@@ -458,6 +669,7 @@ export function startProxyCatalog(
         }
 
         try {
+          applyProxyExecutionHeaders(res, tracking);
           await relayAnthropicMessages(res, targetUrl, forwardBody, apiKey, clientWantsStream, {
             inboundBeta: effectiveBeta,
             authType: isOAuth ? 'oauth' : 'api',
@@ -465,21 +677,36 @@ export function startProxyCatalog(
             claudeCodeSessionId,
             extraHeaders: route.headers,
             refreshToken: route.refreshToken,
-            onTokenRefreshed: refreshed => { route.apiKey = refreshed; },
+            onTokenRefreshed: async refreshed => {
+              await providerRuntimeCache.adopt(credentialRouteKey, apiKey, refreshed);
+            },
             signal: clientAbort.signal,
             responseModelId: originalModel,
+            onObservedText: text => {
+              if (clientWantsStream) {
+                tracking.observeAnthropicSseText(text);
+                return;
+              }
+              try {
+                tracking.observeNonStreamAnthropic(JSON.parse(text));
+              } catch {
+                // Invalid/error bodies do not contain observable tool calls.
+              }
+            },
             onUpstreamError: inferenceLogPath
               ? (statusCode, errorContent) => writeInferenceResponseErrorLog(inferenceLogPath, {
-                  modelId: originalModel,
+                  modelId: clientModelId,
                   provider: route.providerId ?? route.aliasId.split(':')[1] ?? 'unknown',
                   route: 'passthrough',
                   statusCode,
                   errorContent,
                 })
               : undefined,
+            lifecycle: requestExecution,
           });
         } catch (err) {
           if (clientAbort.signal.aborted) return;
+          requestExecution.fail(err);
           const message = err instanceof UpstreamUnreachableError ? err.message : String(err);
           plog(() => `anthropic-passthrough error: ${message}`);
           anthropicError(res, 502, message);
@@ -499,7 +726,7 @@ export function startProxyCatalog(
         const translationLifecycle = createTranslationLifecycle(
           inferenceLogPath,
           relayRequestId,
-          originalModel,
+          clientModelId,
           route.providerId ?? route.aliasId.split(':')[1] ?? 'unknown',
         );
         try {
@@ -507,7 +734,10 @@ export function startProxyCatalog(
             ? req.headers['x-claude-code-session-id'][0]
             : req.headers['x-claude-code-session-id'];
           const claudeSessionId = extractClaudeSessionId(anthropicBody, claudeSessionIdHeader);
-          const params = sdkTranslateRequest(anthropicBody, route.npm!, {
+          // Validated DTO: `sdkTranslateRequest` requires `model: string`, but
+          // the raw wire body's `model` is optional (see `clientModelId`).
+          const sdkRequestBody: AnthropicRequest = { ...anthropicBody, model: clientModelId, messages: anthropicBody.messages ?? [] };
+          const params = sdkTranslateRequest(sdkRequestBody, route.npm!, {
             openAiOAuth,
             claudeSessionId,
             maxTools: maxToolsForNpm(route.npm),
@@ -524,28 +754,34 @@ export function startProxyCatalog(
             `sdk: npm=${route.npm} model=${route.realModelId}, stream=${clientWantsStream}, ` +
             `tools=${anthropicBody.tools?.length ?? 0}, msgs=${params.messages.length}`,
           );
-          const model = await createLanguageModel({
-            npm: route.npm!,
-            modelId: route.realModelId,
-            apiKey,
-            baseURL: route.baseURL,
-            providerId: route.providerId ?? route.aliasId,
-            authType: route.authType,
-            oauthAccountId: route.oauthAccountId,
-            providerData: route.providerData,
-            headers: route.headers,
-            useResponsesLite: route.useResponsesLite,
-            preferWebSockets: route.preferWebSockets,
-            onDebug: (msg: string) => plog(() => msg),
-            onWebSocketDiagnostic: webSocketDiagnosticsLogPath
-              ? event => writeWebSocketDiagnosticLog(webSocketDiagnosticsLogPath, event)
-              : undefined,
-          });
+          const model = await providerRuntimeCache.getHandle(
+            credentialRouteKey,
+            credential,
+            handleCredential => createLanguageModel({
+              npm: route.npm!,
+              modelId: route.realModelId,
+              apiKey: handleCredential.credential,
+              baseURL: route.baseURL,
+              providerId: route.providerId ?? route.aliasId,
+              authType: route.authType,
+              oauthAccountId: route.oauthAccountId,
+              providerData: route.providerData,
+              headers: route.headers,
+              useResponsesLite: route.useResponsesLite,
+              preferWebSockets: route.preferWebSockets,
+              onDebug: (msg: string) => plog(() => msg),
+              onWebSocketDiagnostic: webSocketDiagnosticsLogPath
+                ? event => writeWebSocketDiagnosticLog(webSocketDiagnosticsLogPath, event)
+                : undefined,
+            }),
+          );
           translationLifecycle?.dispatched();
           if (clientWantsStream) {
             const writeStreamChunk = (chunk: string) => {
               translationLifecycle?.onOutput(chunk);
+              tracking.observeAnthropicSseText(chunk);
               if (!res.headersSent) {
+                applyProxyExecutionHeaders(res, tracking);
                 res.writeHead(200, {
                   'Content-Type': 'text/event-stream',
                   'Cache-Control': 'no-cache',
@@ -559,17 +795,24 @@ export function startProxyCatalog(
               () => streamAnthropicResponse(
                 model,
                 params,
-                originalModel,
+                clientModelId,
                 writeStreamChunk,
                 plog,
                 {
                   onPart: partType => translationLifecycle?.onPart(partType),
                   initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
                   abortSignal: clientAbort.signal,
+                  lifecycle: requestExecution,
                 },
               ),
             );
             translationLifecycle?.complete();
+            // Defensive: production streams already drive markStreamActivity
+            // per SDK part (sdk-adapter.ts), but complete() only accepts a
+            // legal predecessor state, so guarantee one here too rather than
+            // depending on the adapter having emitted at least one part.
+            requestExecution.markStreamActivity();
+            requestExecution.complete();
             if (!res.headersSent) writeStreamChunk('');
             res.end();
           } else {
@@ -581,16 +824,22 @@ export function startProxyCatalog(
               () => generateAnthropicResponse(
                 model,
                 params,
-                originalModel,
+                clientModelId,
                 {
                   forceStream: openAiOAuth,
                   abortSignal: clientAbort.signal,
                   onPart: partType => translationLifecycle?.onPart(partType),
+                  lifecycle: requestExecution,
                 },
               ),
             );
             translationLifecycle?.onOutput(JSON.stringify(anthropicResponse));
             translationLifecycle?.complete();
+            requestExecution.markStreamActivity();
+            requestExecution.markOutputEmitted();
+            requestExecution.complete();
+            tracking.observeNonStreamAnthropic(anthropicResponse);
+            applyProxyExecutionHeaders(res, tracking);
             sendJson(res, 200, anthropicResponse);
           }
         } catch (err) {
@@ -598,6 +847,8 @@ export function startProxyCatalog(
             translationLifecycle?.cancel();
             return;
           }
+          requestExecution.fail(err);
+          tracking.fail(undefined);
           translationLifecycle?.fail(
             err instanceof Error ? err.name : 'UpstreamError',
             sdkTranslationErrorSignature(err),
@@ -617,7 +868,7 @@ export function startProxyCatalog(
           if (inferenceLogPath && upstreamStatus >= 400) {
             writeInferenceResponseErrorLog(inferenceLogPath, {
               ...(relayRequestId ? { requestId: relayRequestId } : {}),
-              modelId: originalModel,
+              modelId: clientModelId,
               provider: route.providerId ?? route.aliasId.split(':')[1] ?? 'unknown',
               route: 'translated',
               statusCode: upstreamStatus,
@@ -627,6 +878,9 @@ export function startProxyCatalog(
             });
           }
           if (!res.headersSent) {
+            for (const [name, value] of Object.entries(sdkUpstreamResponseHeaders(details))) {
+              res.setHeader(name, value);
+            }
             anthropicError(
               res,
               upstreamStatus === 500 ? 502 : upstreamStatus,
@@ -671,41 +925,30 @@ export function startProxyCatalog(
     }
   });
 
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const cleanupListeners = () => {
-      process.off('unhandledRejection', onRejection);
-      process.off('uncaughtException', onException);
-    };
-    server.on('error', err => {
-      if (settled) return;
-      settled = true;
+  server.keepAliveTimeout = INTERNAL_ADAPTER_KEEPALIVE_TIMEOUT_MS;
+  const cleanupListeners = () => {
+    process.off('unhandledRejection', onRejection);
+    process.off('uncaughtException', onException);
+  };
+  let address: AddressInfo;
+  try {
+    address = await listenTcpServer(server, 0, '127.0.0.1');
+  } catch (error) {
+    cleanupListeners();
+    throw error;
+  }
+  plog(() => `started on port ${address.port}, catalog=${routes.length} model(s), default=${defaultRoute.aliasId}`);
+  return {
+    port: address.port,
+    token: proxyToken,
+    close: () => new Promise<void>(resolve => {
       cleanupListeners();
-      try { server.close(); } catch { /* already closing */ }
-      reject(err);
-    });
-    server.listen(0, '127.0.0.1', () => {
-      if (settled) return;
-      const addr = server.address();
-      if (!addr || typeof addr === 'string') {
-        settled = true;
-        cleanupListeners();
-        try { server.close(); } catch { /* already closing */ }
-        reject(new Error('Failed to bind proxy'));
-        return;
-      }
-      settled = true;
-      plog(() => `started on port ${addr.port}, catalog=${routes.length} model(s), default=${defaultRoute.aliasId}`);
-      resolve({
-        port: addr.port,
-        token: proxyToken,
-        close: () => new Promise<void>(closeResolve => {
-          cleanupListeners();
-          server.close(() => closeResolve());
-        }),
-      });
-    });
-  });
+      // Local shutdown: settle every in-flight request to a `cancelled`
+      // terminal outcome instead of abandoning it mid-stream.
+      cancelAllActiveRequestExecutions();
+      server.close(() => resolve());
+    }),
+  };
 }
 
 /** Single-model proxy — backward-compatible wrapper around startProxyCatalog. */

@@ -21,8 +21,10 @@ import { resolveUpstreamTools } from './tool-search.js';
 import type { AnthropicRequestMessage, AnthropicToolDefinition } from './proxy-types.js';
 import { anthropicErrorType, upstreamHttpStatus } from './upstream-error.js';
 import { CLAUDE_CODE_BILLING_HEADER_PREFIX } from './oauth/claude-identity.js';
+import { ToolResultImageError } from './provider-error.js';
+import type { RequestExecutionObserver } from './request-execution-context.js';
 
-export { silenceSdkWarnings };
+export { silenceSdkWarnings, ToolResultImageError };
 
 export type SdkTranslationErrorSignature =
   | 'reasoning_part_not_found'
@@ -170,6 +172,7 @@ export interface SdkCallParams {
   toolChoice?: 'auto' | 'none' | 'required' | { type: 'tool'; toolName: string };
   maxOutputTokens?: number;
   temperature?: number;
+  maxRetries?: number;
   providerOptions?: Record<string, Record<string, unknown>>;
 }
 
@@ -223,11 +226,66 @@ function translateTopLevelSystemForOpenAi(
 }
 
 // ── images ───────────────────────────────────────────────────────────────────
-function imagePart(block: AnthropicBlock): {
+const SUPPORTED_TOOL_RESULT_IMAGE_MEDIA_TYPES = new Set([
+  'image/gif',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+]);
+
+function strictBase64Data(data: string): Uint8Array {
+  if (
+    !data
+    || data.length % 4 !== 0
+    || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)
+  ) {
+    throw new ToolResultImageError('malformed_base64');
+  }
+  const decoded = Buffer.from(data, 'base64');
+  if (decoded.toString('base64') !== data) {
+    throw new ToolResultImageError('malformed_base64');
+  }
+  return decoded;
+}
+
+function toolResultImagePart(block: AnthropicBlock): SdkImagePart {
+  const source = block.source;
+  if (!source) throw new ToolResultImageError('missing_source');
+  const mediaType = source.media_type?.toLowerCase();
+  if (!mediaType || !SUPPORTED_TOOL_RESULT_IMAGE_MEDIA_TYPES.has(mediaType)) {
+    throw new ToolResultImageError('unsupported_media_type');
+  }
+  if (source.type === 'base64') {
+    if (typeof source.data !== 'string') throw new ToolResultImageError('malformed_base64');
+    return {
+      type: 'file',
+      data: { type: 'data', data: strictBase64Data(source.data) },
+      mediaType,
+    };
+  }
+  if (source.type === 'url') {
+    if (typeof source.url !== 'string') throw new ToolResultImageError('invalid_url');
+    let url: URL;
+    try {
+      url = new URL(source.url);
+    } catch {
+      throw new ToolResultImageError('invalid_url');
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new ToolResultImageError('invalid_url');
+    }
+    return { type: 'file', data: { type: 'url', url }, mediaType };
+  }
+  throw new ToolResultImageError('missing_source');
+}
+
+type SdkImagePart = Record<string, unknown> & {
   type: 'file';
   data: { type: 'data'; data: Uint8Array } | { type: 'url'; url: URL };
   mediaType: string;
-} | null {
+};
+
+function imagePart(block: AnthropicBlock): SdkImagePart | null {
   const src = block.source;
   if (!src) return null;
   if (src.type === 'base64' && src.data) {
@@ -245,6 +303,31 @@ function imagePart(block: AnthropicBlock): {
     };
   }
   return null;
+}
+
+/**
+ * Serialize a tool_result for the text-only function-output channel, lifting
+ * image blocks out into user-message parts (the caller pushes them right after
+ * the tool message). Left inline, an image's base64 payload would be
+ * JSON.stringify'd into the output text and tokenized as text at ~1.5 chars
+ * per token — a single screenshot can cost 200k+ tokens upstream.
+ */
+function serializeToolResultForModel(
+  tr: AnthropicBlock,
+  imageParts: Array<Record<string, unknown>>,
+): string {
+  if (!Array.isArray(tr.content)) return serializeToolResultContent(tr.content);
+  const rawId = splitToolUseId(tr.tool_use_id ?? '').rawId;
+  let imageIndex = 0;
+  const blocks = (tr.content as AnthropicBlock[]).map(block => {
+    if (!block || block.type !== 'image') return block;
+    const part = toolResultImagePart(block);
+    imageIndex += 1;
+    const label = `image ${imageIndex} of tool call ${rawId}`;
+    imageParts.push({ type: 'text', text: `The following image is ${label}:` }, part);
+    return { type: 'image', note: `attached to the next user message as ${label}` };
+  });
+  return JSON.stringify(blocks);
 }
 
 // ── tool_result name resolution (tool messages need the tool name) ────────────
@@ -336,6 +419,7 @@ export function translateMessages(
           }
         }
       }
+      const toolResultImageParts: Array<Record<string, unknown>> = [];
       if (toolResults.length) {
         out.push({
           role: 'tool',
@@ -343,14 +427,15 @@ export function translateMessages(
             type: 'tool-result',
             toolCallId: splitToolUseId(tr.tool_use_id ?? '').rawId,
             toolName: tr._name ?? 'unknown',
-            output: { type: 'text', value: serializeToolResultContent(tr.content) },
+            output: { type: 'text', value: serializeToolResultForModel(tr, toolResultImageParts) },
             ...(openAiCacheBreakpoint(tr, openAiPromptCacheBreakpoints)
               ? { providerOptions: openAiCacheBreakpoint(tr, openAiPromptCacheBreakpoints) }
               : {}),
           })),
         } as unknown as ModelMessage);
       }
-      if (parts.length) out.push({ role: 'user', content: parts } as unknown as ModelMessage);
+      const userParts = [...toolResultImageParts, ...parts];
+      if (userParts.length) out.push({ role: 'user', content: userParts } as unknown as ModelMessage);
     } else if (msg.role === 'assistant') {
       const parts: Array<Record<string, unknown>> = [];
       for (const b of blocks) {
@@ -385,26 +470,71 @@ export function translateMessages(
  * removed here. Required properties keep their empty arrays — there an empty
  * array is an intentional value (e.g. TodoWrite's `todos: []` clears the list).
  */
+interface ToolInputRules {
+  required: ReadonlySet<string>;
+  properties: Readonly<Record<string, unknown>>;
+  omitEmptyArrays: ReadonlySet<string>;
+}
+
+const EMPTY_ARRAY_OMISSION_POLICY: Readonly<Record<string, ReadonlySet<string>>> = {
+  WebSearch: new Set(['allowed_domains', 'blocked_domains']),
+};
+
+function schemaAllowsNull(schema: unknown): boolean {
+  if (!schema || typeof schema !== 'object') return true;
+  const record = schema as Record<string, unknown>;
+  const type = record.type;
+  if (type === 'null' || (Array.isArray(type) && type.includes('null'))) return true;
+  for (const keyword of ['anyOf', 'oneOf'] as const) {
+    const alternatives = record[keyword];
+    if (Array.isArray(alternatives) && alternatives.some(schemaAllowsNull)) return true;
+  }
+  return false;
+}
+
+function schemaRequiresNonEmptyArray(schema: unknown): boolean {
+  if (!schema || typeof schema !== 'object') return false;
+  const minItems = (schema as Record<string, unknown>).minItems;
+  return typeof minItems === 'number' && Number.isFinite(minItems) && minItems >= 1;
+}
+
 function sanitizeToolInput(
   input: Record<string, unknown>,
-  requiredProps?: ReadonlySet<string>,
+  rules?: ToolInputRules,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(input)) {
-    if (v === null) continue;
-    if (Array.isArray(v) && v.length === 0 && !requiredProps?.has(k)) continue;
-    out[k] = v;
+  for (const [key, value] of Object.entries(input)) {
+    const schema = rules?.properties[key];
+    const required = rules?.required.has(key) ?? false;
+    if (!required && schema !== undefined) {
+      if (value === null && !schemaAllowsNull(schema)) continue;
+      if (
+        Array.isArray(value)
+        && value.length === 0
+        && (schemaRequiresNonEmptyArray(schema) || rules?.omitEmptyArrays.has(key))
+      ) continue;
+    }
+    out[key] = value;
   }
   return out;
 }
 
-/** Per-tool `required` property sets, read back out of the translated tool schemas. */
-function toolRequiredProps(tools?: SdkCallParams['tools']): Map<string, ReadonlySet<string>> {
-  const map = new Map<string, ReadonlySet<string>>();
-  for (const [name, t] of Object.entries(tools ?? {})) {
-    const schema = (t as { inputSchema?: { jsonSchema?: { required?: unknown } } }).inputSchema?.jsonSchema;
+/** Per-tool sanitization rules, read back out of the translated tool schemas. */
+function toolInputRules(tools?: SdkCallParams['tools']): Map<string, ToolInputRules> {
+  const map = new Map<string, ToolInputRules>();
+  for (const [name, toolDefinition] of Object.entries(tools ?? {})) {
+    const schema = (toolDefinition as {
+      inputSchema?: { jsonSchema?: { required?: unknown; properties?: unknown } };
+    }).inputSchema?.jsonSchema;
     const required = Array.isArray(schema?.required) ? schema.required : [];
-    map.set(name, new Set(required.filter((r): r is string => typeof r === 'string')));
+    const properties = schema?.properties && typeof schema.properties === 'object'
+      ? schema.properties as Record<string, unknown>
+      : {};
+    map.set(name, {
+      required: new Set(required.filter((item): item is string => typeof item === 'string')),
+      properties,
+      omitEmptyArrays: EMPTY_ARRAY_OMISSION_POLICY[name] ?? new Set(),
+    });
   }
   return map;
 }
@@ -531,6 +661,7 @@ export function translateRequest(
     toolChoice: compactRequest ? 'none' : translateToolChoice(body.tool_choice),
     maxOutputTokens: options?.openAiOAuth ? undefined : body.max_tokens,
     temperature: body.temperature,
+    maxRetries: options?.openAiOAuth ? 0 : undefined,
     providerOptions,
   };
 }
@@ -551,19 +682,27 @@ interface AnthropicUsage {
 }
 
 /**
- * Map SDK usage → Anthropic usage. SDK providers report the cache-hit subset in
- * `inputTokenDetails`, counted WITHIN the prompt total. The Anthropic schema
- * expects cache reads and writes in separate fields, so subtract both subsets
- * from input_tokens to avoid double-counting. GPT-5.6+ reports cache writes;
- * older models generally report reads only.
+ * Normalize SDK usage into disjoint Anthropic buckets. `input_tokens` contains
+ * uncached input only. Cache reads and writes occupy their dedicated fields.
+ * AI SDK providers normally include cache subsets in `inputTokens`; when the
+ * cache buckets exceed that value, the provider is reporting uncached input and
+ * cache usage separately, so the input value is retained instead of subtracted.
  */
 function toAnthropicUsage(u?: SdkUsage): AnthropicUsage {
-  const total = u?.inputTokens ?? 0;
-  const cacheRead = u?.inputTokenDetails?.cacheReadTokens ?? u?.cachedInputTokens ?? 0;
-  const cacheWrite = u?.inputTokenDetails?.cacheWriteTokens ?? 0;
+  const tokenCount = (value: unknown): number => (
+    typeof value === 'number' && Number.isFinite(value) && value >= 0
+      ? Math.floor(value)
+      : 0
+  );
+  const total = tokenCount(u?.inputTokens);
+  const cacheRead = tokenCount(
+    u?.inputTokenDetails?.cacheReadTokens ?? u?.cachedInputTokens,
+  );
+  const cacheWrite = tokenCount(u?.inputTokenDetails?.cacheWriteTokens);
+  const cacheTotal = cacheRead + cacheWrite;
   return {
-    input_tokens: Math.max(0, total - cacheRead - cacheWrite),
-    output_tokens: u?.outputTokens ?? 0,
+    input_tokens: total >= cacheTotal ? total - cacheTotal : total,
+    output_tokens: tokenCount(u?.outputTokens),
     cache_creation_input_tokens: cacheWrite,
     cache_read_input_tokens: cacheRead,
   };
@@ -577,11 +716,20 @@ type LogFn = (msg: () => string) => void;
 export interface AnthropicStreamObserver {
   /** Called for every AI SDK fullStream part before Relay translates it. */
   onPart?: (partType: string) => void;
-  /** Local estimate used until the provider reports actual usage at stream completion. */
+  /** Local fallback used when the provider omits usage at stream completion. */
   initialInputTokens?: number;
   abortSignal?: AbortSignal;
   /** Abort if the provider produces no stream event for this long. */
   idleTimeoutMs?: number;
+  /**
+   * Request execution context/observer: driven for phase (stream
+   * activity/first-output/tool-call) transitions on every SDK part. Its
+   * `abortSignal` — already composed from the caller's cancellation signal
+   * plus the connect/header/idle/total deadline classes — takes priority
+   * over `abortSignal` above when present. Terminal transitions
+   * (`complete`/`fail`) stay owned by the caller, not this module.
+   */
+  lifecycle?: RequestExecutionObserver;
 }
 
 const SDK_STREAM_IDLE_TIMEOUT_MS = 120_000;
@@ -623,7 +771,7 @@ export async function writeAnthropicStream(
   tools?: SdkCallParams['tools'],
 ): Promise<void> {
   const messageId = 'msg_' + Date.now();
-  const requiredProps = toolRequiredProps(tools);
+  const inputRules = toolInputRules(tools);
   let blockIndex = -1;
   let started = false;
   let openType: 'text' | 'thinking' | 'tool' | null = null;
@@ -636,7 +784,7 @@ export async function writeAnthropicStream(
   let openToolId: string | null = null;
   let finishReason = 'end_turn';
   let usage: AnthropicUsage = {
-    input_tokens: 0,
+    input_tokens: observer?.initialInputTokens ?? 0,
     output_tokens: 0,
     cache_creation_input_tokens: 0,
     cache_read_input_tokens: 0,
@@ -651,7 +799,7 @@ export async function writeAnthropicStream(
         id: messageId, type: 'message', role: 'assistant', content: [],
         model: modelId, stop_reason: null, stop_sequence: null,
         usage: {
-          input_tokens: observer?.initialInputTokens ?? 0,
+          input_tokens: 0,
           output_tokens: 0,
           cache_creation_input_tokens: 0,
           cache_read_input_tokens: 0,
@@ -691,6 +839,7 @@ export async function writeAnthropicStream(
 
   for await (const part of stream) {
     observer?.onPart?.(part.type);
+    observer?.lifecycle?.markStreamActivity();
     if (observer?.abortSignal?.aborted) throw streamAbortError(observer.abortSignal);
     switch (part.type) {
       // The SDK emits start before it knows whether the provider accepted the
@@ -730,6 +879,7 @@ export async function writeAnthropicStream(
           type: 'content_block_delta', index: blockIndex,
           delta: { type: 'text_delta', text: part.text ?? '' },
         });
+        observer?.lifecycle?.markOutputEmitted();
         break;
       case 'text-end': break;
 
@@ -740,6 +890,10 @@ export async function writeAnthropicStream(
         });
         idToBlock.set(part.id ?? '', blockIndex);
         openToolId = part.id ?? '';
+        // The tool_use content block is now externally visible on the wire —
+        // this permanently closes the automatic-replay barrier even though
+        // the tool's input is still streaming.
+        observer?.lifecycle?.markToolCallEmitted();
         break;
       }
       case 'tool-input-delta': {
@@ -751,13 +905,14 @@ export async function writeAnthropicStream(
 
       case 'tool-call': {
         finishReason = 'tool_use';
+        observer?.lifecycle?.markToolCallEmitted();
         const id = part.toolCallId ?? '';
         if (idToBlock.has(id)) {
           // Streamed input: emit the sanitized complete input as one delta,
           // falling back to the buffered raw JSON if the SDK gave no parsed input.
           if (!flushedTools.has(id)) {
             const json = part.input !== undefined && part.input !== null
-              ? JSON.stringify(sanitizeToolInput(part.input as Record<string, unknown>, requiredProps.get(part.toolName ?? '')))
+              ? JSON.stringify(sanitizeToolInput(part.input as Record<string, unknown>, inputRules.get(part.toolName ?? '')))
               : (toolJsonBuffer.get(id) ?? '');
             if (json) {
               emit('content_block_delta', {
@@ -775,7 +930,7 @@ export async function writeAnthropicStream(
           });
           emit('content_block_delta', {
             type: 'content_block_delta', index: blockIndex,
-            delta: { type: 'input_json_delta', partial_json: JSON.stringify(sanitizeToolInput(part.input as Record<string, unknown> ?? {}, requiredProps.get(part.toolName ?? ''))) },
+            delta: { type: 'input_json_delta', partial_json: JSON.stringify(sanitizeToolInput(part.input as Record<string, unknown> ?? {}, inputRules.get(part.toolName ?? ''))) },
           });
           flushedTools.add(id);
         }
@@ -784,7 +939,13 @@ export async function writeAnthropicStream(
 
       case 'finish':
         if (part.totalUsage) {
-          usage = toAnthropicUsage(part.totalUsage);
+          const finalUsage = toAnthropicUsage(part.totalUsage);
+          const hasFinalInputUsage = finalUsage.input_tokens
+            + finalUsage.cache_creation_input_tokens
+            + finalUsage.cache_read_input_tokens > 0;
+          usage = hasFinalInputUsage
+            ? finalUsage
+            : { ...usage, output_tokens: finalUsage.output_tokens };
         }
         if (part.finishReason === 'tool-calls') finishReason = 'tool_use';
         else if (part.finishReason === 'length') finishReason = 'max_tokens';
@@ -827,7 +988,8 @@ export async function streamAnthropicResponse(
 ): Promise<void> {
   const idleTimeoutMs = observer?.idleTimeoutMs ?? SDK_STREAM_IDLE_TIMEOUT_MS;
   const idleAbort = new AbortController();
-  const stopForwardingAbort = forwardAbortSignal(observer?.abortSignal, idleAbort);
+  const externalAbort = observer?.lifecycle?.abortSignal ?? observer?.abortSignal; // lifecycle composes deadlines
+  const stopForwardingAbort = forwardAbortSignal(externalAbort, idleAbort);
   const abortSignal = idleAbort.signal;
   let idleTimer = setTimeout(
     () => idleAbort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1000)}s`)),
@@ -884,6 +1046,8 @@ export async function generateAnthropicResponse(
     abortSignal?: AbortSignal;
     onPart?: (partType: string) => void;
     idleTimeoutMs?: number;
+    /** See {@link AnthropicStreamObserver.lifecycle}. */
+    lifecycle?: RequestExecutionObserver;
   },
 ): Promise<Record<string, unknown>> {
   let text: string;
@@ -896,7 +1060,7 @@ export async function generateAnthropicResponse(
     // outright. Request a real stream from the SDK and collect it into one
     // response instead of forwarding the client's non-streaming request upstream.
     const forceAbort = new AbortController();
-    const stopForwardingAbort = forwardAbortSignal(options.abortSignal, forceAbort);
+    const stopForwardingAbort = forwardAbortSignal(options.lifecycle?.abortSignal ?? options.abortSignal, forceAbort);
     const abortSignal = forceAbort.signal;
     const idleTimeoutMs = options.idleTimeoutMs ?? SDK_STREAM_IDLE_TIMEOUT_MS;
     let idleTimer = setTimeout(
@@ -927,16 +1091,25 @@ export async function generateAnthropicResponse(
           idleTimeoutMs,
         );
         options.onPart?.(part.type);
+        options.lifecycle?.markStreamActivity();
         if (abortSignal.aborted || part.type === 'abort') {
           throw streamAbortError(abortSignal);
         }
-        if (part.type === 'text-delta') streamedText.push(part.text ?? '');
-        else if (part.type === 'tool-call') {
+        if (part.type === 'error') {
+          throw part.error instanceof Error || (part.error && typeof part.error === 'object')
+            ? part.error
+            : new Error(typeof part.error === 'string' ? part.error : 'Upstream stream failed');
+        }
+        if (part.type === 'text-delta') {
+          streamedText.push(part.text ?? '');
+          options.lifecycle?.markOutputEmitted();
+        } else if (part.type === 'tool-call') {
           streamedToolCalls.push({
             toolCallId: part.toolCallId ?? '',
             toolName: part.toolName ?? '',
             input: part.input,
           });
+          options.lifecycle?.markToolCallEmitted();
         } else if (part.type === 'finish') {
           streamedFinishReason = part.finishReason ?? streamedFinishReason;
           streamedUsage = part.totalUsage;
@@ -957,17 +1130,21 @@ export async function generateAnthropicResponse(
     usage = streamedUsage;
   } else {
     const generateAbort = new AbortController();
-    const stopForwardingAbort = forwardAbortSignal(options?.abortSignal, generateAbort);
+    const stopForwardingAbort = forwardAbortSignal(options?.lifecycle?.abortSignal ?? options?.abortSignal, generateAbort);
     const totalTimer = setTimeout(
       () => generateAbort.abort(new Error(`provider request exceeded ${Math.round(SDK_TOTAL_TIMEOUT_MS / 1000)}s`)),
       SDK_TOTAL_TIMEOUT_MS,
     );
     try {
+      options?.lifecycle?.startConnecting();
       const r = await generateText({
         model,
         ...params,
         abortSignal: generateAbort.signal,
       } as Parameters<typeof generateText>[0]);
+      options?.lifecycle?.markHeadersReceived();
+      if (r.text) options?.lifecycle?.markOutputEmitted();
+      if (r.toolCalls?.length) options?.lifecycle?.markToolCallEmitted();
       ({ text, toolCalls, finishReason, usage } = r);
     } finally {
       stopForwardingAbort();
@@ -976,7 +1153,7 @@ export async function generateAnthropicResponse(
     }
   }
 
-  const requiredProps = toolRequiredProps(params.tools);
+  const inputRules = toolInputRules(params.tools);
   return {
     id: 'msg_' + Date.now(), type: 'message', role: 'assistant', model: modelId,
     content: [
@@ -985,7 +1162,7 @@ export async function generateAnthropicResponse(
         type: 'tool_use',
         id: encodeToolUseId(tc.toolCallId, grabRoundTripSignature(tc as FullStreamPart)),
         name: tc.toolName,
-        input: sanitizeToolInput(tc.input as Record<string, unknown> ?? {}, requiredProps.get(tc.toolName)),
+        input: sanitizeToolInput(tc.input as Record<string, unknown> ?? {}, inputRules.get(tc.toolName)),
       })),
     ],
     stop_reason: finishReason === 'tool-calls' ? 'tool_use' : 'end_turn',

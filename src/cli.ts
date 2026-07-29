@@ -1,10 +1,11 @@
 // src/cli.ts
 import pc from 'picocolors';
-import { leverframeIntro, leverframeOutro, providerSelectOption, modelSelectOption, fmtModel, fmtEnabledStar, formatModelLabel } from './ui.js';
+import { leverframeIntro, leverframeOutro, providerSelectOption, modelSelectOption, fmtModel, fmtEnabledStar } from './ui.js';
 import * as p from '@clack/prompts';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { findClaudeBinary, launchClaude } from './launch.js';
+import { launchClaude } from './launch.js';
+import { resolveClaudeInstallation, type ClaudeInstallation } from './claude-installation.js';
 import { detectConflicts, buildChildEnv, buildHttpProxyChildEnv } from './env.js';
 import { claudeCodeClientModelId } from './context-model-id.js';
 import { needsFirstRunSetup, runFirstRunWizard } from './first-run.js';
@@ -54,6 +55,7 @@ import {
 } from './http-proxy/index.js';
 import { runPatchCommand, runLaunchPatchCheck } from './patcher.js';
 import { installOutboundProxyDispatcher } from './outbound-proxy.js';
+import { runExecutionsCommand } from './executions-command.js';
 const STARTER_CLAUDE_FLAGS = new Set(['--dry-run', '--trace', '--endpoint', '--proxy', '--save-mode', '--help', '-h', '--version', '-v']);
 const LEVERFRAME_LAUNCH_FLAGS = new Set(['--provider', '--model']);
 
@@ -270,14 +272,34 @@ export function parseArgs(args: string[]): ParsedArgs {
     return parsed;
   }
 
+  if (first === 'executions') {
+    const parsed = emptyParsed('executions');
+    parsed.claudeArgs = rest;
+    if (rest.includes('--help') || rest.includes('-h')) parsed.showHelp = true;
+    if (rest.includes('--version') || rest.includes('-v')) parsed.showVersion = true;
+    return parsed;
+  }
+
   if (first === 'patch') {
     const parsed = emptyParsed('patch');
-    for (const arg of rest) {
+    for (let i = 0; i < rest.length; i += 1) {
+      const arg = rest[i]!;
       if (arg === '--help' || arg === '-h') parsed.showHelp = true;
       else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
       else if (arg === '--restore') parsed.patchRestore = true;
       else if (arg === '--trace') parsed.trace = true;
+      else if (arg === '--diagnose') parsed.patchDiagnose = true;
+      else if (arg === '--json') parsed.patchJson = true;
+      else if (arg === '--target' || arg.startsWith('--target=')) {
+        const consumed = consumeServerOptionValue(arg, rest, i, '--target', parsed);
+        if (!consumed) return parsed;
+        parsed.patchTarget = consumed.value;
+        i = consumed.next;
+      }
       else if (!parsed.error) parsed.error = `Unknown patch option: ${arg}`;
+    }
+    if (parsed.patchJson && !parsed.patchDiagnose && !parsed.error) {
+      parsed.error = '--json only applies to `leverframe patch --diagnose --json`';
     }
     return parsed;
   }
@@ -332,6 +354,7 @@ ${pc.bold('Usage:')}
   leverframe models
   leverframe favorites
   leverframe providers
+  leverframe executions <list|show|reconcile>
   leverframe --help
   leverframe --version
 
@@ -346,6 +369,7 @@ ${pc.bold('Commands:')}
   models      Manage favorite models and aliases (max ${MAX_MODEL_CATALOG})
   favorites   Alias for models
   providers   Add or sign in to supported providers
+  executions  Inspect and reconcile interrupted executions
 
 ${pc.bold('Bridge modes (claude and server):')}
   --endpoint   Local Anthropic-format gateway; Claude Code launches with
@@ -549,18 +573,31 @@ real ids, and reporting the correct context window.
 ${pc.bold('Usage:')}
   leverframe patch
   leverframe patch --restore
+  leverframe patch --diagnose
+  leverframe patch --diagnose --json
+  leverframe patch --target <path>
   leverframe patch --help
 
 ${pc.bold('Options:')}
-  --restore    Restore the pristine (unpatched) Claude Code binary
-  --trace      Show per-patch-site results (OK/SKIP/FAIL)
+  --restore     Restore the pristine (unpatched) Claude Code binary
+  --trace       Show per-patch-site results (OK/SKIP/FAIL)
+  --diagnose    Read-only, network-free report: resolved installation, patch
+                state, baseline, drift, pending transaction, lock, and legacy
+                migration eligibility. Never modifies anything.
+  --json        With --diagnose, print the report as ANSI-free JSON
+  --target <path>
+                Pin an explicit Claude Code installation instead of the usual
+                discovery order (applies to patch, --restore, and --diagnose)
 
 ${pc.bold('Behavior:')}
   The patch map is built automatically from your leverframe favorites and aliases
-  (leverframe models); context windows come from provider metadata. A pristine
-  per-version backup is kept, and a manifest (~/.leverframe/patch-state.json)
-  makes re-runs no-ops until your config or Claude Code version changes —
-  then the binary is restored first and re-patched fresh.
+  (leverframe models); context windows come from provider metadata. Patch state
+  is per installation, keyed by its canonical path, under
+  ~/.leverframe/state/patches/<identity>/. A content-addressed, immutable
+  pristine baseline is kept per Claude Code version; re-runs are no-ops until
+  your config or Claude Code version changes — then the binary is restored
+  first and re-patched fresh. Every patch and restore is journaled so an
+  interrupted run is reconciled automatically on the next leverframe patch run.
   Run leverframe patch again after every claude update.`;
 }
 
@@ -568,13 +605,17 @@ function printHelp(text: string): void {
   console.log(`\n${text}\n`);
 }
 
-async function launchClaudeViaCatalog(
-  catalogRoutes: ProxyRoute[],
-  startingRoute: ProxyRoute,
-  contextWindow: number | undefined,
-  trace: boolean,
-  claudeArgs: string[],
-): Promise<number> {
+interface CatalogLaunchOptions {
+  installation: ClaudeInstallation;
+  catalogRoutes: ProxyRoute[];
+  startingRoute: ProxyRoute;
+  contextWindow: number | undefined;
+  trace: boolean;
+  claudeArgs: string[];
+}
+
+async function launchClaudeViaCatalog(options: CatalogLaunchOptions): Promise<number> {
+  const { installation, catalogRoutes, startingRoute, contextWindow, trace, claudeArgs } = options;
   let proxyHandle: ProxyHandle;
   try {
     proxyHandle = await startProxyCatalog(catalogRoutes, startingRoute.aliasId, trace);
@@ -601,11 +642,12 @@ async function launchClaudeViaCatalog(
   if (trace) p.log.info(`Debug log: ${debugLogPath}`);
 
   try {
-    const exitCode = await launchClaude(
-      childEnv,
-      claudeCodeClientModelId(startingRoute.aliasId, contextWindow),
-      [...traceArgs, ...claudeArgs],
-    );
+    const exitCode = await launchClaude({
+      installation,
+      env: childEnv,
+      model: claudeCodeClientModelId(startingRoute.aliasId, contextWindow),
+      extraArgs: [...traceArgs, ...claudeArgs],
+    });
     return exitCode;
   } finally {
     proxyHandle.close();
@@ -885,11 +927,15 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
   return 0;
 }
 
-async function runClaudeHttpProxyCommand(
-  parsed: ParsedArgs,
-  claudeArgs: string[],
-  agentStdout: boolean,
-): Promise<number> {
+interface HttpProxyLaunchOptions {
+  installation: ClaudeInstallation;
+  parsed: ParsedArgs;
+  claudeArgs: string[];
+  agentStdout: boolean;
+}
+
+async function runClaudeHttpProxyCommand(options: HttpProxyLaunchOptions): Promise<number> {
+  const { installation, parsed, claudeArgs, agentStdout } = options;
   if (parsed.launchProvider || parsed.launchModel) {
     p.log.error('--provider/--model select endpoint-mode routes and cannot be combined with --proxy.');
     p.log.info('Use `-- --model leverframe:<provider-id>:<model-id>` to start on a listed proxy-mode favorite.');
@@ -983,7 +1029,12 @@ async function runClaudeHttpProxyCommand(
   }
 
   try {
-    const exitCode = await launchClaude(childEnv, undefined, [...traceArgs, ...claudeArgs]);
+    const exitCode = await launchClaude({
+      installation,
+      env: childEnv,
+      model: undefined,
+      extraArgs: [...traceArgs, ...claudeArgs],
+    });
     if (debugLogPath) printTraceLog(debugLogPath);
     return exitCode;
   } finally {
@@ -1012,9 +1063,11 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   const agentStdout = wantsCleanAgentStdout('claude', claudeArgs);
   setAgentStdoutMode(agentStdout);
 
-  // Prerequisite: claude binary
-  const claudePath = findClaudeBinary();
-  if (!claudePath) {
+  // Resolve exactly once. Patch verification and every launch branch receive
+  // this same installation object, so a concurrent PATH/config change cannot
+  // make us verify one Claude Code binary and spawn another.
+  const installation = resolveClaudeInstallation();
+  if (!installation) {
     console.error(pc.red('\nError: claude binary not found on PATH.\n'));
     console.error('Install Claude Code:');
     console.error('  npm install -g @anthropic-ai/claude-code\n');
@@ -1026,10 +1079,10 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   });
 
   // Launch-time patch check: prompt on TTY, notice otherwise. Never blocks the launch.
-  await runLaunchPatchCheck({ agentStdout, dryRun });
+  await runLaunchPatchCheck({ agentStdout, dryRun, installation });
 
   if (bridgeMode === 'proxy') {
-    return runClaudeHttpProxyCommand(parsed, claudeArgs, agentStdout);
+    return runClaudeHttpProxyCommand({ parsed, claudeArgs, agentStdout, installation });
   }
 
   const prefs = dryRun ? {} as ReturnType<typeof loadPreferences> : loadPreferences();
@@ -1220,13 +1273,14 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       return 0;
     }
 
-    return launchClaudeViaCatalog(
+    return launchClaudeViaCatalog({
+      installation,
       catalogRoutes,
       startingRoute,
-      selectedModel.contextWindow,
+      contextWindow: selectedModel.contextWindow,
       trace,
       claudeArgs,
-    );
+    });
   }
 
   // ── Single-model path ──
@@ -1351,11 +1405,12 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   const traceArgs = trace ? ['--debug-file', debugLogPath] : [];
   if (trace) p.log.info(`Debug log: ${debugLogPath}`);
 
-  const exitCode = await launchClaude(
-    childEnv,
-    claudeCodeClientModelId(selectedModel.id, selectedModel.contextWindow),
-    [...traceArgs, ...claudeArgs],
-  );
+  const exitCode = await launchClaude({
+    installation,
+    env: childEnv,
+    model: claudeCodeClientModelId(selectedModel.id, selectedModel.contextWindow),
+    extraArgs: [...traceArgs, ...claudeArgs],
+  });
   proxyHandle?.close();
   if (trace) printTraceLog(debugLogPath);
   return exitCode;
@@ -1365,6 +1420,12 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
   // Honor HTTP_PROXY/HTTPS_PROXY/NO_PROXY for leverframe's own outbound calls
   // (no-op when no proxy env var is set; never throws).
   await installOutboundProxyDispatcher();
+
+  // Bypasses the ParsedArgs pipeline below deliberately: `executions` is a
+  // small, self-contained subcommand group (see src/executions-command.ts).
+  if (args[0] === 'executions') {
+    return runExecutionsCommand(args.slice(1));
+  }
 
   const parsed = parseArgs(args);
 
@@ -1444,6 +1505,14 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
     return runProvidersCommand(parsed.claudeArgs);
   }
 
+  if (parsed.command === 'executions') {
+    if (parsed.showVersion) {
+      console.log(VERSION);
+      return 0;
+    }
+    return runExecutionsCommand(parsed.claudeArgs);
+  }
+
   if (parsed.command === 'patch') {
     if (parsed.showVersion) {
       console.log(VERSION);
@@ -1453,7 +1522,13 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
       printHelp(patchHelpText());
       return 0;
     }
-    return runPatchCommand({ restore: parsed.patchRestore, trace: parsed.trace });
+    return runPatchCommand({
+      restore: parsed.patchRestore,
+      trace: parsed.trace,
+      target: parsed.patchTarget,
+      diagnose: parsed.patchDiagnose,
+      json: parsed.patchJson,
+    });
   }
 
   if (parsed.showVersion) {

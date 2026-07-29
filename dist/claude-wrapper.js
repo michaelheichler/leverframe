@@ -4,7 +4,7 @@ import {
   findClaudeBinary,
   orderWrapperServerCandidates,
   readLiveServerRuntimeStates
-} from "./chunk-RL5WO4HB.js";
+} from "./chunk-WBWH7H64.js";
 
 // src/claude-wrapper.ts
 import { spawn } from "child_process";
@@ -54,6 +54,14 @@ function looksLikeWrapperContractPath(arg) {
   const base = arg.toLowerCase();
   return base === "claude" || base.startsWith("claude.");
 }
+function execIntoClaude(file, args, env) {
+  if (isWindows || typeof process.execve !== "function") return;
+  if (!isExecutableFile(file)) return;
+  try {
+    process.execve(file, [file, ...args], env);
+  } catch {
+  }
+}
 function portIsOpen(port, timeoutMs = 100) {
   return new Promise((resolve) => {
     const socket = connect({ host: "127.0.0.1", port });
@@ -89,6 +97,7 @@ async function main() {
     }
   }
   const env = computeWrapperEnv(process.env, state);
+  execIntoClaude(claudePath, claudeArgs, env);
   const child = spawn(claudePath, claudeArgs, {
     stdio: "inherit",
     env,
@@ -122,6 +131,7 @@ if (isClaudeWrapperEntryPoint()) {
   void main();
 }
 export {
+  execIntoClaude,
   looksLikeWrapperContractPath
 };
 //# sourceMappingURL=claude-wrapper.js.map

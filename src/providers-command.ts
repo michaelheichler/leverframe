@@ -19,6 +19,7 @@ import {
   toggleProviderEnabled,
 } from './registry/crud.js';
 import { loadRegistry } from './registry/io.js';
+import { reconcilePendingCredentialDeletes } from './registry/credential-lifecycle.js';
 import { refreshAllProviderModels, refreshProviderModels } from './registry/refresh-models.js';
 import { resolveRefreshCredential } from './registry/refresh-credentials.js';
 import { authenticateProvider, providerAuthHelpText, type ProviderAuthMethod } from './registry/provider-auth.js';
@@ -446,11 +447,15 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed'> {
   }
 
   if (action === 'toggle') {
-    const result = toggleProviderEnabled(id);
-    if (result.toggled) {
-      p.log.success(`${provider.name} ${result.enabled ? 'enabled' : 'disabled'}.`);
+    try {
+      const result = toggleProviderEnabled(id);
+      if (result.toggled) {
+        p.log.success(`${provider.name} ${result.enabled ? 'enabled' : 'disabled'}.`);
+      }
+      return 'back';
+    } finally {
+      await reconcilePendingCredentialDeletes(message => p.log.warn(message));
     }
-    return 'back';
   }
 
   const code = await runProvidersRemove(id, true);
@@ -510,7 +515,7 @@ export async function runProvidersHub(): Promise<number> {
   }
 }
 
-export async function runProvidersCommand(args: string[]): Promise<number> {
+async function runProvidersCommandInner(args: string[]): Promise<number> {
   const parsed = parseProvidersArgs(args);
   if (parsed.error) {
     p.log.error(parsed.error);
@@ -535,4 +540,12 @@ export async function runProvidersCommand(args: string[]): Promise<number> {
 
   leverframeIntro('Your providers');
   return runProvidersHub();
+}
+
+export async function runProvidersCommand(args: string[]): Promise<number> {
+  try {
+    return await runProvidersCommandInner(args);
+  } finally {
+    await reconcilePendingCredentialDeletes(message => p.log.warn(message));
+  }
 }

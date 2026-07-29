@@ -1,7 +1,12 @@
-// src/registry/crud.ts — add/remove providers in the native registry
+// src/registry/crud.ts — serialized provider mutations with crash-safe credential cleanup
 
-import { parseAuthRef, deleteProviderCredential } from '../env.js';
-import { loadRegistry, saveRegistry } from './io.js';
+import { parseAuthRef } from '../env.js';
+import {
+  credentialIsReferenced,
+  journalCredentialWrite,
+  reconcilePendingCredentialDeletes,
+} from './credential-lifecycle.js';
+import { updateRegistry, updateRegistryAsync } from './io.js';
 import type { RegistryProvider } from './types.js';
 
 export interface RemoveProviderResult {
@@ -12,46 +17,64 @@ export interface RemoveProviderResult {
   error?: string;
 }
 
-function credentialStillReferenced(authRef: string, remaining: RegistryProvider[]): boolean {
-  return remaining.some(p => p.authRef === authRef);
+function storedRef(provider: RegistryProvider): string | null {
+  const parsed = parseAuthRef(provider.authRef);
+  return parsed?.kind === 'keyring' ? provider.authRef : null;
 }
 
-/** Remove a provider from the registry; delete per-provider keychain entry when safe. */
+/** Queue before orphaning, commit under lock, then reconcile outside it. */
 export async function removeProviderFromRegistry(
   id: string,
   opts?: { deleteCredential?: boolean },
 ): Promise<RemoveProviderResult> {
-  const registry = loadRegistry();
-  const index = registry.providers.findIndex(p => p.id === id);
-  if (index < 0) {
+  let removedProvider: RegistryProvider | undefined;
+  let queuedRef: string | null = null;
+  let mutation = false;
+  let cleanup: Awaited<ReturnType<typeof reconcilePendingCredentialDeletes>>;
+  try {
+    mutation = await updateRegistryAsync(async registry => {
+      const index = registry.providers.findIndex(provider => provider.id === id);
+      if (index < 0) return false;
+      removedProvider = registry.providers[index];
+      if (opts?.deleteCredential !== false) {
+        const candidate = storedRef(removedProvider);
+        const remaining = registry.providers.filter((_, candidateIndex) => candidateIndex !== index);
+        if (candidate && !credentialIsReferenced({ ...registry, providers: remaining }, candidate)) {
+          await journalCredentialWrite(candidate);
+          queuedRef = candidate;
+        }
+      }
+      registry.providers.splice(index, 1);
+      return true;
+    });
+  } finally {
+    // A failed registry publication leaves the queued reference active; the
+    // strict re-read in reconciliation cancels it rather than deleting it.
+    cleanup = await reconcilePendingCredentialDeletes();
+  }
+  if (!mutation || !removedProvider) {
     return { removed: false, id, credentialDeleted: false, error: `Provider not found: ${id}` };
   }
 
-  const [removedProvider] = registry.providers.splice(index, 1);
-  saveRegistry(registry);
-
-  let credentialDeleted = false;
-  if (opts?.deleteCredential !== false) {
-    const parsed = parseAuthRef(removedProvider.authRef);
-    const shouldDelete = !credentialStillReferenced(removedProvider.authRef, registry.providers);
-    if (shouldDelete && parsed?.kind === 'keyring') {
-      credentialDeleted = await deleteProviderCredential(removedProvider.authRef);
-    }
-  }
 
   return {
     removed: true,
     id,
     name: removedProvider.name,
-    credentialDeleted,
+    credentialDeleted: queuedRef !== null && cleanup.deleted.includes(queuedRef),
+    ...(cleanup.persistenceError ? { error: cleanup.persistenceError } : {}),
   };
 }
 
 export function toggleProviderEnabled(id: string): { toggled: boolean; enabled?: boolean; error?: string } {
-  const registry = loadRegistry();
-  const provider = registry.providers.find(p => p.id === id);
-  if (!provider) return { toggled: false, error: `Provider not found: ${id}` };
-  provider.enabled = !provider.enabled;
-  saveRegistry(registry);
-  return { toggled: true, enabled: provider.enabled };
+  try {
+    return updateRegistry(registry => {
+      const provider = registry.providers.find(candidate => candidate.id === id);
+      if (!provider) return { toggled: false, error: `Provider not found: ${id}` };
+      provider.enabled = !provider.enabled;
+      return { toggled: true, enabled: provider.enabled };
+    });
+  } finally {
+    void reconcilePendingCredentialDeletes();
+  }
 }

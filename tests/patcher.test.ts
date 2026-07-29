@@ -1,18 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  buildDesiredPatchConfig,
   buildPatchModelConfig,
   computePatchConfigHash,
-  evaluatePatchState,
-  getPristineBackupPath,
-  resolveClaudeBinaryForPatch,
-  summarizePatchResults,
-  tryAcquirePatchLock,
-  type PatchManifest,
+  reasoningEffortForPatch,
 } from '../src/patcher.js';
-import { applyLeverframePatches, PatchApplyError } from '../src/patch-transforms.js';
+import { applyLeverframePatches, PatchApplyError, PATCH_TRANSFORMS_VERSION, projectNativeEffort } from '../src/patch-transforms.js';
+import type { CachedModel, RegistryProvider } from '../src/registry/types.js';
 
 describe('buildPatchModelConfig', () => {
   const favorites = [
@@ -81,6 +78,168 @@ describe('buildPatchModelConfig', () => {
     });
     expect(unknownWindows).toEqual([]);
   });
+
+  it('projects a GPT-5.6-shaped effort ladder onto the native picker with a high default', () => {
+    const { config } = buildPatchModelConfig(
+      [{ providerId: 'openai-oauth', modelId: 'gpt-5.6-sol' }],
+      [{ name: 'sol', providerId: 'openai-oauth', modelId: 'gpt-5.6-sol' }],
+      () => ({
+        contextWindow: 272_000,
+        displayName: 'GPT-5.6 Sol (OpenAI (ChatGPT))',
+        // Mirrors getReasoningCapabilities('@ai-sdk/openai', 'gpt-5.6-sol', ...):
+        // OPENAI_EFFORT_LEVELS with a "medium" provider default.
+        effort: { levels: ['low', 'medium', 'high', 'xhigh'], defaultLevel: 'medium' },
+      }),
+    );
+    expect(config['leverframe:openai-oauth:gpt-5.6-sol']?.effort).toEqual({
+      levels: ['low', 'medium', 'high', 'xhigh'],
+      defaultLevel: 'high',
+    });
+  });
+
+  it.each([
+    { name: 'an incomplete base (no low/medium)', levels: ['high', 'xhigh'], defaultLevel: 'high' },
+    { name: 'a default outside the native ladder', levels: ['none', 'low', 'medium', 'high'], defaultLevel: 'none' },
+  ])('silently omits client effort metadata for $name rather than throwing', ({ levels, defaultLevel }) => {
+    const { config } = buildPatchModelConfig(
+      [{ providerId: 'openai', modelId: 'reasoning-model' }],
+      [],
+      () => ({ contextWindow: 200_000, effort: { levels, defaultLevel } }),
+    );
+    expect(config['leverframe:openai:reasoning-model']).toEqual({});
+  });
+});
+
+describe('projectNativeEffort', () => {
+  it('accepts a full native-plus ladder and pins the default to high', () => {
+    expect(projectNativeEffort({ levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'], defaultLevel: 'low' }))
+      .toEqual({ levels: ['low', 'medium', 'high', 'xhigh', 'max'], defaultLevel: 'high' });
+  });
+
+  it('rejects a ladder missing the low/medium/high base', () => {
+    expect(projectNativeEffort({ levels: ['high', 'xhigh'], defaultLevel: 'high' })).toBeUndefined();
+  });
+
+  it('rejects a default outside the projected native levels', () => {
+    expect(projectNativeEffort({ levels: ['low', 'medium', 'high'], defaultLevel: 'max' })).toBeUndefined();
+  });
+
+  it('rejects undefined and malformed input', () => {
+    expect(projectNativeEffort(undefined)).toBeUndefined();
+    expect(projectNativeEffort({ levels: 'high' as unknown as string[], defaultLevel: 'high' })).toBeUndefined();
+  });
+});
+
+describe('reasoningEffortForPatch', () => {
+  const provider: RegistryProvider = {
+    id: 'openai-oauth',
+    templateId: 'openai',
+    name: 'OpenAI (ChatGPT)',
+    enabled: true,
+    authRef: 'oauth:openai',
+    api: { npm: '@ai-sdk/openai' },
+    addedAt: '2026-07-27T00:00:00.000Z',
+  };
+  const baseModel: CachedModel = {
+    id: 'gpt-5.6-sol',
+    name: 'GPT-5.6 Sol',
+    upstreamModelId: 'gpt-5.6-sol',
+    modelFormat: 'openai',
+  };
+
+  it('derives the same GPT-5.6 ladder the proxy-side wiring uses', () => {
+    expect(reasoningEffortForPatch(provider, baseModel)).toEqual({
+      levels: ['low', 'medium', 'high', 'xhigh'],
+      defaultLevel: 'medium',
+    });
+  });
+
+  it('returns undefined for a non-openai model format', () => {
+    expect(reasoningEffortForPatch(provider, { ...baseModel, modelFormat: 'anthropic' })).toBeUndefined();
+  });
+
+  it('returns undefined when neither the model nor the provider declares an npm package', () => {
+    expect(reasoningEffortForPatch({ ...provider, api: {} }, baseModel)).toBeUndefined();
+  });
+
+  it('strips a [1m] suffix before resolving reasoning capabilities', () => {
+    expect(reasoningEffortForPatch(provider, { ...baseModel, id: 'gpt-5.6-sol[1m]', upstreamModelId: 'gpt-5.6-sol[1m]' }))
+      .toEqual({ levels: ['low', 'medium', 'high', 'xhigh'], defaultLevel: 'medium' });
+  });
+
+  it('returns undefined for a model with no reasoning capability at all', () => {
+    expect(reasoningEffortForPatch(provider, { ...baseModel, id: 'gpt-4o', upstreamModelId: 'gpt-4o' })).toBeUndefined();
+  });
+});
+
+describe('buildDesiredPatchConfig', () => {
+  let home: string;
+  const previousHome = process.env['LEVERFRAME_HOME'];
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'leverframe-desired-patch-'));
+    process.env['LEVERFRAME_HOME'] = home;
+  });
+
+  afterEach(() => {
+    if (previousHome === undefined) delete process.env['LEVERFRAME_HOME'];
+    else process.env['LEVERFRAME_HOME'] = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  function writeInputs(model: Record<string, unknown>): void {
+    writeFileSync(
+      join(home, 'config.json'),
+      JSON.stringify({ favoriteModels: [{ providerId: 'openai-oauth', modelId: model['id'] }] }),
+    );
+    writeFileSync(
+      join(home, 'providers.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        providers: [{
+          id: 'openai-oauth',
+          templateId: 'openai',
+          name: 'OpenAI (ChatGPT)',
+          enabled: true,
+          authRef: 'oauth:openai',
+          api: { npm: '@ai-sdk/openai' },
+          modelsCache: { fetchedAt: '2026-07-27T00:00:00.000Z', models: [model] },
+          addedAt: '2026-07-27T00:00:00.000Z',
+        }],
+      }),
+    );
+  }
+
+  it('wires the projected effort ladder end to end for a favorited GPT-5.6 model', () => {
+    writeInputs({
+      id: 'gpt-5.6-sol',
+      upstreamModelId: 'gpt-5.6-sol',
+      name: 'GPT-5.6 Sol',
+      contextWindow: 272_000,
+      modelFormat: 'openai',
+    });
+
+    const desired = buildDesiredPatchConfig();
+
+    expect(desired.config['leverframe:openai-oauth:gpt-5.6-sol']?.effort).toEqual({
+      levels: ['low', 'medium', 'high', 'xhigh'],
+      defaultLevel: 'high',
+    });
+  });
+
+  it('omits effort for a favorited model with no reasoning capability', () => {
+    writeInputs({
+      id: 'gpt-4o',
+      upstreamModelId: 'gpt-4o',
+      name: 'GPT-4o',
+      contextWindow: 128_000,
+      modelFormat: 'openai',
+    });
+
+    const desired = buildDesiredPatchConfig();
+
+    expect(desired.config['leverframe:openai-oauth:gpt-4o']?.effort).toBeUndefined();
+  });
 });
 
 describe('computePatchConfigHash', () => {
@@ -96,6 +255,11 @@ describe('computePatchConfigHash', () => {
     );
   });
 
+  it('changes when the patch transform implementation version changes', () => {
+    const config = { 'leverframe:p:m1': { alias: 'x', context: 1000 } };
+    expect(computePatchConfigHash(config, 1)).not.toBe(computePatchConfigHash(config, 2));
+  });
+
   it('changes when only the display label changes (so an old patch reads as stale)', () => {
     const base = { 'leverframe:p:m1': { alias: 'x', context: 1000 } };
     expect(computePatchConfigHash(base)).not.toBe(
@@ -105,146 +269,31 @@ describe('computePatchConfigHash', () => {
       computePatchConfigHash({ 'leverframe:p:m1': { alias: 'x', context: 1000, display: 'M One (Q)' } }),
     );
   });
-});
 
-describe('evaluatePatchState', () => {
-  const manifest: PatchManifest = {
-    binaryPath: '/opt/claude/claude',
-    claudeVersion: '2.1.183',
-    configHash: 'hash-1',
-    patchedSize: 1234,
-    patchedSha256: 'sha',
-    backupPath: '/backups/claude-2.1.183.orig',
-    patchedAt: '2026-07-19T00:00:00.000Z',
-  };
-
-  it('reports unpatched without a manifest or for a different binary', () => {
-    expect(evaluatePatchState(null, { binaryPath: '/opt/claude/claude', claudeVersion: '2.1.183', configHash: 'hash-1' })).toBe('unpatched');
-    expect(evaluatePatchState(manifest, { binaryPath: '/other/claude', claudeVersion: '2.1.183', configHash: 'hash-1' })).toBe('unpatched');
+  it('changes when only the effort levels change', () => {
+    const base = { 'leverframe:p:m1': { effort: { levels: ['low', 'medium', 'high'], defaultLevel: 'high' } } };
+    expect(computePatchConfigHash(base)).not.toBe(
+      computePatchConfigHash({
+        'leverframe:p:m1': { effort: { levels: ['low', 'medium', 'high', 'xhigh'], defaultLevel: 'high' } },
+      }),
+    );
   });
 
-  it('reports current when version, size, and config hash match', () => {
-    expect(evaluatePatchState(manifest, {
-      binaryPath: '/opt/claude/claude',
-      claudeVersion: '2.1.183',
-      configHash: 'hash-1',
-      binarySize: 1234,
-    })).toBe('current');
+  it('changes when only the effort default level changes', () => {
+    const base = { 'leverframe:p:m1': { effort: { levels: ['low', 'medium', 'high'], defaultLevel: 'high' } } };
+    // The projected default is always "high" in practice, but the hash must
+    // still distinguish any distinct effort payload structurally.
+    expect(computePatchConfigHash(base)).not.toBe(
+      computePatchConfigHash({
+        'leverframe:p:m1': { effort: { levels: ['low', 'medium', 'high'], defaultLevel: 'medium' } },
+      }),
+    );
   });
 
-  it('reports stale-config when the desired config hash changed', () => {
-    expect(evaluatePatchState(manifest, {
-      binaryPath: '/opt/claude/claude',
-      claudeVersion: '2.1.183',
-      configHash: 'hash-2',
-      binarySize: 1234,
-    })).toBe('stale-config');
-  });
-
-  it('reports stale-binary when claude was updated or replaced', () => {
-    expect(evaluatePatchState(manifest, {
-      binaryPath: '/opt/claude/claude',
-      claudeVersion: '2.2.0',
-      configHash: 'hash-1',
-    })).toBe('stale-binary');
-    expect(evaluatePatchState(manifest, {
-      binaryPath: '/opt/claude/claude',
-      claudeVersion: '2.1.183',
-      configHash: 'hash-1',
-      binarySize: 9999,
-    })).toBe('stale-binary');
-  });
-});
-
-describe('resolveClaudeBinaryForPatch', () => {
-  it('probes the resolved patch target instead of independently rediscovering claude', () => {
-    const previousTweakTarget = process.env['TWEAKCC_CC_INSTALLATION_PATH'];
-    const previousClaudeTarget = process.env['LEVERFRAME_CLAUDE_PATH'];
-    process.env['TWEAKCC_CC_INSTALLATION_PATH'] = process.execPath;
-    process.env['LEVERFRAME_CLAUDE_PATH'] = join(tmpdir(), 'missing-different-claude');
-    try {
-      const resolved = resolveClaudeBinaryForPatch();
-      expect(resolved?.binaryPath).toBe(process.execPath);
-      expect(resolved?.version).toBe(process.versions.node);
-    } finally {
-      if (previousTweakTarget === undefined) delete process.env['TWEAKCC_CC_INSTALLATION_PATH'];
-      else process.env['TWEAKCC_CC_INSTALLATION_PATH'] = previousTweakTarget;
-      if (previousClaudeTarget === undefined) delete process.env['LEVERFRAME_CLAUDE_PATH'];
-      else process.env['LEVERFRAME_CLAUDE_PATH'] = previousClaudeTarget;
-    }
-  });
-});
-
-describe('Claude patch backup and restore', () => {
-  it('keeps the baseline under Leverframe ownership', () => {
-    const previousHome = process.env['LEVERFRAME_HOME'];
-    const previousTweakDir = process.env['TWEAKCC_CONFIG_DIR'];
-    const appHome = join(tmpdir(), 'leverframe-test-home');
-    process.env['LEVERFRAME_HOME'] = appHome;
-    process.env['TWEAKCC_CONFIG_DIR'] = join(tmpdir(), 'tweakcc-test-home');
-    try {
-      expect(getPristineBackupPath('2.1.220', '/opt/claude/2.1.220')).toBe(
-        join(appHome, 'backups', 'claude-2.1.220.orig'),
-      );
-    } finally {
-      if (previousHome === undefined) delete process.env['LEVERFRAME_HOME'];
-      else process.env['LEVERFRAME_HOME'] = previousHome;
-      if (previousTweakDir === undefined) delete process.env['TWEAKCC_CONFIG_DIR'];
-      else process.env['TWEAKCC_CONFIG_DIR'] = previousTweakDir;
-    }
-  });
-
-});
-
-describe('tryAcquirePatchLock', () => {
-  let dir: string;
-  let lockPath: string;
-
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'leverframe-patch-lock-'));
-    lockPath = join(dir, 'patch.lock');
-  });
-
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it('acquires and releases the lock', () => {
-    const release = tryAcquirePatchLock(lockPath);
-    expect(release).not.toBeNull();
-    expect(existsSync(lockPath)).toBe(true);
-    const content = JSON.parse(readFileSync(lockPath, 'utf8'));
-    expect(content.pid).toBe(process.pid);
-    release!();
-    expect(existsSync(lockPath)).toBe(false);
-  });
-
-  it('refuses the lock while a live process holds it', () => {
-    const release = tryAcquirePatchLock(lockPath, { isAlive: () => true });
-    expect(release).not.toBeNull();
-    expect(tryAcquirePatchLock(lockPath, { isAlive: () => true })).toBeNull();
-    release!();
-  });
-
-  it('steals a lock left by a dead process', () => {
-    writeFileSync(lockPath, JSON.stringify({ pid: 999999, startedAt: Date.now() }));
-    const release = tryAcquirePatchLock(lockPath, { isAlive: () => false });
-    expect(release).not.toBeNull();
-    release!();
-  });
-
-  it('steals a stale lock older than the timeout even when the pid is alive', () => {
-    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: Date.now() - 11 * 60 * 1000 }));
-    const release = tryAcquirePatchLock(lockPath, { isAlive: () => true });
-    expect(release).not.toBeNull();
-    release!();
-  });
-
-  it('steals an unreadable lock file', () => {
-    writeFileSync(lockPath, 'not-json');
-    const release = tryAcquirePatchLock(lockPath, { isAlive: () => true });
-    expect(release).not.toBeNull();
-    release!();
+  it('is unaffected by adding effort: undefined explicitly', () => {
+    const withoutKey = { 'leverframe:p:m1': { alias: 'x' } };
+    const withUndefined = { 'leverframe:p:m1': { alias: 'x', effort: undefined } };
+    expect(computePatchConfigHash(withoutKey)).toBe(computePatchConfigHash(withUndefined));
   });
 });
 
@@ -280,33 +329,68 @@ describe('applyLeverframePatches input validation', () => {
   });
 });
 
-describe('summarizePatchResults', () => {
-  it('formats per-site lines plus the applied/skipped/failed summary', () => {
-    expect(summarizePatchResults([
-      { status: 'OK', name: 'PATCH 1: Agent tool model enum' },
-      { status: 'SKIP', name: 'PATCH 6: alias resolver switch', extra: 'no aliases configured' },
-      { status: 'FAIL', name: 'PATCH 5: model picker options', extra: 'anchor not found' },
-    ])).toEqual([
-      '  OK   PATCH 1: Agent tool model enum',
-      '  SKIP PATCH 6: alias resolver switch \u2014 no aliases configured',
-      '  FAIL PATCH 5: model picker options \u2014 anchor not found',
-      'leverframe patch: 1 applied, 1 skipped, 1 failed',
-      'leverframe patch: FAILED patches: PATCH 5: model picker options',
-    ]);
-  });
-});
-
 const CLAUDE_FIXTURE = [
   '.enum(["sonnet","opus","haiku","fable"]).optional().describe(`Optional model override for this agent. Defaults to inherit.`)',
   'var KNOWN=["sonnet","opus","haiku","fable","opusplan"];',
   'function rz(x){switch(x){case"best":{return "opus"}default:return null}}',
   'function opts(e,t,r){let n=cur(),o=(n==="opus")?[n,r]:[r];for(let i of o)Dlh(e,i,t);return e}',
   'function RS(e,t){let r=FAc();if(r!==void 0)return r;if(EHi(e,t))return Dve;return $Ac(e,t)}',
+  // Three capability gates and a default-effort resolver — the wildcarded
+  // anchors PATCH 8a/8b/8c/9 key on. Each gate denies a denylisted identity
+  // first, then falls through to a native/provider capability check.
+  'function OI(e){if(SNr(e))return!1;let t=Ede(e,"effort");if(t!==void 0)return t;return!1}',
+  'function IXe(e){if(SNr(e))return!1;let t=Ede(e,"xhigh_effort");if(t!==void 0)return t;return!1}',
+  'function eqe(e){if(SNr(e))return!1;let t=Ede(e,"max_effort");if(t!==void 0)return t;return!1}',
+  'function ait(e){return ww(lo(e))?.default_effort??"high"}',
 ].join('\n');
 
 function runPatchScript(config: Parameters<typeof applyLeverframePatches>[1], source = CLAUDE_FIXTURE): string {
   return applyLeverframePatches(source, config).content;
 }
+
+type CapabilityFunctionName = 'OI' | 'IXe' | 'eqe';
+
+/** Extract and execute one capability-gate function from patched fixture output. */
+function executeCapability(
+  source: string,
+  functionName: CapabilityFunctionName,
+  modelId: string,
+  nativeFallback: boolean,
+  denied = false,
+): boolean {
+  const declaration = source.split('\n').find(line => line.startsWith(`function ${functionName}(`));
+  expect(declaration).toBeDefined();
+  const capability = Function(
+    'SNr',
+    'Ede',
+    `${declaration};return ${functionName};`,
+  )(
+    () => denied,
+    () => (nativeFallback ? true : undefined),
+  ) as (id: string) => boolean;
+  return capability(modelId);
+}
+
+/** Extract and execute the default-effort resolver from patched fixture output. */
+function executeDefaultEffort(source: string, modelId: string, nativeDefault: string): string {
+  const declaration = source.split('\n').find(line => line.startsWith('function ait('));
+  expect(declaration).toBeDefined();
+  const defaultEffort = Function(
+    'lo',
+    'ww',
+    `${declaration};return ait;`,
+  )(
+    (id: string) => id,
+    () => ({ default_effort: nativeDefault }),
+  ) as (id: string) => string;
+  return defaultEffort(modelId);
+}
+
+const CAPABILITY_GATES: Array<{ name: string; functionName: CapabilityFunctionName }> = [
+  { name: 'base effort', functionName: 'OI' },
+  { name: 'xhigh effort', functionName: 'IXe' },
+  { name: 'max effort', functionName: 'eqe' },
+];
 
 describe('patch script identity naming', () => {
   const config = {
@@ -402,5 +486,186 @@ describe('patch script identity naming', () => {
     const parsed = JSON.parse(table!) as Record<string, number>;
     expect(parsed['leverframe:openai:mystery']).toBe(131_072);
     expect(parsed['sol']).toBe(272_000);
+  });
+});
+
+describe('PATCH 8/9 effort capability gates', () => {
+  const capabilityConfig = {
+    'leverframe:openai:gpt-5.5': {
+      alias: 'standard',
+      effort: { levels: ['low', 'medium', 'high'], defaultLevel: 'high' },
+    },
+    'leverframe:openai-oauth:gpt-5.6-sol': {
+      alias: 'extended',
+      effort: { levels: ['low', 'medium', 'high', 'xhigh', 'max'], defaultLevel: 'medium' },
+    },
+    'leverframe:openai:no-effort': {
+      alias: 'disabled',
+    },
+  };
+
+  function runCapabilityPatch(): string {
+    return runPatchScript(capabilityConfig);
+  }
+
+  it('injects all four effort markers and bakes the projected high default for GPT-5.6', () => {
+    const out = runCapabilityPatch();
+    expect(out).toContain('/*ccpatch:effort*/');
+    expect(out).toContain('/*ccpatch:xhigh-effort*/');
+    expect(out).toContain('/*ccpatch:max-effort*/');
+    expect(out).toContain('/*ccpatch:default-effort*/');
+    // Native contract: the projected default is always "high" regardless of
+    // the supplier's own default (here "medium"), never invented per-model.
+    expect(out).toContain('"extended":"high"');
+  });
+
+  it.each(CAPABILITY_GATES)('grants configured $name to the extended (GPT-5.6) identity, bare and [1m]', ({ functionName }) => {
+    const out = runCapabilityPatch();
+    expect(executeCapability(out, functionName, 'extended', false)).toBe(true);
+    expect(executeCapability(out, functionName, 'extended[1m]', false)).toBe(true);
+  });
+
+  it('grants base effort but denies xhigh/max for the standard (GPT-5.5-shaped) identity', () => {
+    const out = runCapabilityPatch();
+    expect(executeCapability(out, 'OI', 'standard', false)).toBe(true);
+    expect(executeCapability(out, 'IXe', 'standard', true)).toBe(false);
+    expect(executeCapability(out, 'eqe', 'standard', true)).toBe(false);
+  });
+
+  it.each(CAPABILITY_GATES)('denies $name for a configured model with no effort ladder (explicit false, not fallthrough)', ({ functionName }) => {
+    const out = runCapabilityPatch();
+    expect(executeCapability(out, functionName, 'disabled', true)).toBe(false);
+    expect(executeCapability(out, functionName, 'leverframe:openai:no-effort', true)).toBe(false);
+    expect(executeCapability(out, functionName, 'leverframe:openai:no-effort[1m]', true)).toBe(false);
+  });
+
+  it.each(CAPABILITY_GATES)('falls through to the native/provider check only for a genuinely unconfigured $name identity', ({ functionName }) => {
+    const out = runCapabilityPatch();
+    expect(executeCapability(out, functionName, 'unconfigured-model', false)).toBe(false);
+    expect(executeCapability(out, functionName, 'unconfigured-model', true)).toBe(true);
+  });
+
+  it.each(CAPABILITY_GATES)('keeps the native denylist ahead of a configured $name verdict', ({ functionName }) => {
+    const out = runCapabilityPatch();
+    expect(executeCapability(out, functionName, 'extended', false, /* denied */ true)).toBe(false);
+  });
+
+  it.each(['constructor', 'toString', '__proto__'])(
+    'treats prototype-name identity %s as unconfigured (Object.create(null) safety)',
+    modelId => {
+      const out = runCapabilityPatch();
+      for (const { functionName } of CAPABILITY_GATES) {
+        expect(executeCapability(out, functionName, modelId, false)).toBe(false);
+        expect(executeCapability(out, functionName, modelId, true)).toBe(true);
+      }
+      expect(executeDefaultEffort(out, modelId, 'medium')).toBe('medium');
+    },
+  );
+
+  it.each(['extended', 'extended[1m]', 'leverframe:openai-oauth:gpt-5.6-sol', 'leverframe:openai-oauth:gpt-5.6-sol[1m]'])(
+    'returns the projected native "high" default for configured key %s, overriding a native medium',
+    modelId => {
+      expect(executeDefaultEffort(runCapabilityPatch(), modelId, 'medium')).toBe('high');
+    },
+  );
+
+  it('falls through to the native default for an unconfigured identity', () => {
+    expect(executeDefaultEffort(runCapabilityPatch(), 'unconfigured-model', 'medium')).toBe('medium');
+  });
+
+  it('rejects a custom alias that shadows a reserved built-in identity', () => {
+    expect(() => applyLeverframePatches(CLAUDE_FIXTURE, {
+      'leverframe:openai:model': { alias: 'opus' },
+    })).toThrow(/reserved alias/);
+  });
+
+  it.each([
+    { levels: ['low', 'high'], defaultLevel: 'high' },
+    { levels: ['low', 'medium', 'high'], defaultLevel: 'max' },
+  ])('rejects effort metadata that cannot project onto the native ladder', effort => {
+    expect(() => applyLeverframePatches(CLAUDE_FIXTURE, {
+      'leverframe:openai:model': { effort },
+    })).toThrow(/must declare at least low\/medium\/high with a declared default level/);
+  });
+
+  it('skips PATCH 8/9 entirely when no configured model declares an effort ladder', () => {
+    const fresh = applyLeverframePatches(CLAUDE_FIXTURE, {
+      'leverframe:openai:model': { alias: 'plain' },
+    });
+    expect(fresh.results.some(r => r.name.startsWith('PATCH 8') || r.name.startsWith('PATCH 9'))).toBe(false);
+    expect(fresh.content).not.toContain('ccpatch:effort');
+    expect(fresh.content).not.toContain('ccpatch:default-effort');
+  });
+
+  it('aborts publication (throws) when a required PATCH 8/9 anchor is missing from the binary', () => {
+    const brokenFixture = CLAUDE_FIXTURE.split('\n').filter(line => !line.startsWith('function OI(')).join('\n');
+    let caught: unknown;
+    try {
+      applyLeverframePatches(brokenFixture, capabilityConfig);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(PatchApplyError);
+    expect((caught as Error).message).toContain('required patch failed: PATCH 8a: effort capability');
+    // Nothing after the missing anchor should have run either — the whole
+    // patch aborts rather than publishing a half-applied binary.
+    const results = (caught as PatchApplyError).results;
+    expect(results.find(r => r.name === 'PATCH 8a: effort capability')).toEqual({
+      status: 'FAIL',
+      name: 'PATCH 8a: effort capability',
+      extra: 'anchor not found',
+    });
+  });
+
+  it('is idempotent when re-running the same effort-bearing patch (refresh path)', () => {
+    const once = runCapabilityPatch();
+    const rerun = applyLeverframePatches(once, capabilityConfig);
+    expect(rerun.results.filter(r => r.name.startsWith('PATCH 8') || r.name.startsWith('PATCH 9')))
+      .toEqual([
+        { status: 'SKIP', name: 'PATCH 8a: effort capability (refresh)', extra: 'already patched' },
+        { status: 'SKIP', name: 'PATCH 8b: xhigh effort capability (refresh)', extra: 'already patched' },
+        { status: 'SKIP', name: 'PATCH 8c: max effort capability (refresh)', extra: 'already patched' },
+        { status: 'SKIP', name: 'PATCH 9: default effort (refresh)', extra: 'already patched' },
+      ]);
+    expect(rerun.content).toBe(once);
+  });
+
+  it('refreshes the baked verdicts in place when the config changes (removal takes effect)', () => {
+    const once = runCapabilityPatch();
+    const { 'leverframe:openai-oauth:gpt-5.6-sol': _removed, ...withoutExtended } = capabilityConfig;
+    const updated = applyLeverframePatches(once, withoutExtended).content;
+    expect(executeCapability(updated, 'IXe', 'extended', true)).toBe(true); // no longer configured -> native fallback
+    expect(executeCapability(updated, 'OI', 'standard', false)).toBe(true); // untouched entry still wins
+  });
+
+  it('does not grant effort capabilities the supplier ladder does not declare (base-only levels)', () => {
+    const out = runPatchScript({
+      'leverframe:openai:reasoning-model': {
+        effort: { levels: ['low', 'medium', 'high'], defaultLevel: 'high' },
+      },
+    });
+    const xhighVerdicts = out.match(
+      /\/\*ccpatch:xhigh-effort\*\/var _ccv=Object\.assign\(Object\.create\(null\),(\{[^{}]*\})\)/,
+    )?.[1];
+    const maxVerdicts = out.match(
+      /\/\*ccpatch:max-effort\*\/var _ccv=Object\.assign\(Object\.create\(null\),(\{[^{}]*\})\)/,
+    )?.[1];
+    expect(JSON.parse(xhighVerdicts!)).toEqual({
+      'leverframe:openai:reasoning-model': false,
+      'leverframe:openai:reasoning-model[1m]': false,
+    });
+    expect(JSON.parse(maxVerdicts!)).toEqual({
+      'leverframe:openai:reasoning-model': false,
+      'leverframe:openai:reasoning-model[1m]': false,
+    });
+  });
+});
+
+describe('PATCH_TRANSFORMS_VERSION', () => {
+  it('is bumped so PATCH 8/9 capability wiring reconciles existing installs (config_stale)', () => {
+    // Bumping this without a corresponding version constant change would
+    // leave already-patched installs silently stale forever — patch-state.ts
+    // reads PATCH_TRANSFORMS_VERSION directly (see currentTransformVersion()).
+    expect(PATCH_TRANSFORMS_VERSION).toBe(2);
   });
 });

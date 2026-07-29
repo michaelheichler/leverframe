@@ -3,21 +3,19 @@ import { randomUUID } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
-  chmodSync,
   closeSync,
   existsSync,
   lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
-  renameSync,
-  rmSync,
   unlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { ensureLegacyAppHomeMigrated, getAppHome, getConfigPath } from './paths.js';
 import { classifyKeyringError, runIsolatedKeyringOperation } from './credential-store.js';
+import { durableAtomicWrite } from './durable-io.js';
 
 const CONFIG_FILE_MODE = 0o600;
 const CONFIG_DIR_MODE = 0o700;
@@ -317,20 +315,11 @@ function readConfig(): UserPreferences {
  * world-readable or torn config.json.
  */
 function writeConfig(config: UserPreferences): void {
-  const configPath = getConfigPath();
-  mkdirSync(dirname(configPath), { recursive: true, mode: CONFIG_DIR_MODE });
-  const tmpPath = `${configPath}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    writeFileSync(tmpPath, `${JSON.stringify(config, null, 2)}\n`, {
-      encoding: 'utf8',
-      mode: CONFIG_FILE_MODE,
-    });
-    try { chmodSync(tmpPath, CONFIG_FILE_MODE); } catch { /* best-effort on restrictive filesystems */ }
-    renameSync(tmpPath, configPath);
-    try { chmodSync(configPath, CONFIG_FILE_MODE); } catch { /* best-effort on restrictive filesystems */ }
-  } finally {
-    try { rmSync(tmpPath, { force: true }); } catch { /* ensure temp never lingers */ }
-  }
+  durableAtomicWrite(
+    getConfigPath(),
+    `${JSON.stringify(config, null, 2)}\n`,
+    { mode: CONFIG_FILE_MODE, directoryMode: CONFIG_DIR_MODE },
+  );
 }
 
 export function loadPreferences(): UserPreferences {

@@ -8,6 +8,7 @@ export function oauthCredentialShouldRefresh(
   cred: StoredOAuthCredential,
   providerId: string,
 ): boolean {
+  if (cred.accessRejected === true) return true;
   if (oauthCredentialNeedsRefresh(cred)) return true;
   // All native OAuth providers use short-lived access tokens — check expiry proactively
   if ((NATIVE_OAUTH_PROVIDER_IDS as readonly string[]).includes(providerId) && accessTokenIsExpiring(cred.access)) return true;

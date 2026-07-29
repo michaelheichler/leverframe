@@ -8,10 +8,12 @@
 
 import { createHash } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import type { Agent as HttpAgent, IncomingHttpHeaders, IncomingMessage } from 'node:http';
 import type { FetchFunction } from '@ai-sdk/provider-utils';
 import type { RawData, WebSocket as WsWebSocket } from 'ws';
 import { CODEX_RESPONSES_WEBSOCKETS_BETA } from '../constants.js';
 import { outboundWsProxyAgent } from '../outbound-proxy.js';
+import { ProviderTransportError, parseRetryAfter } from '../provider-error.js';
 
 const RESPONSES_LITE_HEADER = 'x-openai-internal-codex-responses-lite';
 const TERMINAL_EVENT_TYPES = new Set(['response.completed', 'response.failed', 'response.incomplete']);
@@ -32,6 +34,12 @@ export interface ResponsesWebSocketFetchOptions {
   nurseryIdleTtlMs?: number;
   maxConnections?: number;
   maxNurseryConnections?: number;
+  maxTransportRetries?: 0 | 1;
+  handshakeTimeoutMs?: number;
+  retryBaseDelayMs?: number;
+  retryMaxDelayMs?: number;
+  random?: () => number;
+  eagerResponseForTests?: boolean;
   now?: () => number;
   /** Opt-in structured transport diagnostics; never receives conversation content. */
   onDiagnostic?: (event: ResponsesWebSocketDiagnosticEvent) => void;
@@ -81,6 +89,15 @@ interface RequestContext {
   responseId?: string;
   pendingEvents: unknown[];
   emittedModelData: boolean;
+  transportRetryCount: number;
+  transportRetryPending: boolean;
+  retryTimer?: ReturnType<typeof setTimeout>;
+  signal?: AbortSignal;
+  provider: string;
+  model?: string;
+  handshakeSettled: boolean;
+  resolveHandshake?: () => void;
+  rejectHandshake?: (reason: unknown) => void;
   outputByIndex: Map<number, OutputAccumulator>;
   outputIndexByItemId: Map<string, number>;
   reasoningPartsByItemId: Map<string, Map<number, ReasoningPartState>>;
@@ -97,6 +114,8 @@ type ReasoningPartState = 'active' | 'can_conclude' | 'concluded';
 interface ConnectionEntry {
   debugId: number;
   key?: string;
+  credentialScopeKey?: string;
+  credentialFingerprint?: string;
   socket: WsWebSocket;
   persistent: boolean;
   generation: 'nursery' | 'established' | 'isolated';
@@ -112,7 +131,12 @@ interface ConnectionEntry {
   responseId?: string;
   requestInput?: unknown[];
   expectedAssistant?: unknown[];
-  options: Required<Pick<ResponsesWebSocketFetchOptions, 'hardTtlMs' | 'idleTtlMs' | 'nurseryIdleTtlMs' | 'maxConnections' | 'now'>>;
+  options: Required<Pick<
+    ResponsesWebSocketFetchOptions,
+    'hardTtlMs' | 'idleTtlMs' | 'nurseryIdleTtlMs' | 'maxConnections'
+    | 'maxTransportRetries' | 'handshakeTimeoutMs' | 'retryBaseDelayMs' | 'retryMaxDelayMs'
+    | 'random' | 'now'
+  >> & { awaitOpen: boolean };
   debug: (message: string) => void;
 }
 
@@ -124,6 +148,7 @@ interface ConnectionEntry {
 // established heads therefore never consume nursery capacity, and one-shot
 // nursery traffic never consumes the established LRU's 32 reserved slots.
 const connections = new Map<string, Set<ConnectionEntry>>();
+const activeContexts = new Set<RequestContext>();
 let nextConnectionDebugId = 1;
 
 function connectionEntries(key?: string): ConnectionEntry[] {
@@ -181,11 +206,33 @@ function emitDiagnostic(
 
 /** Test-only cleanup, also useful for preventing leaked fake sockets. */
 export function resetResponsesWebSocketConnectionsForTests(): void {
+  for (const ctx of activeContexts) {
+    cancelContext(ctx, new DOMException('Transport reset', 'AbortError'));
+  }
   for (const entry of connectionEntries()) {
     try { entry.socket.close(); } catch { /* ignore */ }
   }
+  activeContexts.clear();
   connections.clear();
   nextConnectionDebugId = 1;
+}
+
+/** Close every pooled socket that was authenticated with a superseded token. */
+export function evictResponsesWebSocketConnectionsForAccessToken(accessToken: string): number {
+  const fingerprint = authorizationFingerprint({ authorization: `Bearer ${accessToken}` });
+  if (!fingerprint) return 0;
+  let evicted = 0;
+  for (const entry of connectionEntries()) {
+    if (entry.credentialFingerprint !== fingerprint) continue;
+    const ctx = entry.current;
+    if (ctx && !ctx.closed) {
+      cancelContext(ctx, new DOMException('Credential rotated', 'AbortError'));
+    } else {
+      deleteEntry(entry);
+    }
+    evicted += 1;
+  }
+  return evicted;
 }
 
 /** Normalize the SDK's HeadersInit into a plain record for `ws`. */
@@ -206,6 +253,14 @@ function hasResponsesLiteHeader(headers: Record<string, string>): boolean {
   return Object.entries(headers).some(
     ([key, value]) => key.toLowerCase() === RESPONSES_LITE_HEADER && value.toLowerCase() === 'true',
   );
+}
+
+function authorizationFingerprint(headers: Record<string, string>): string {
+  const authorization = Object.entries(headers)
+    .find(([key]) => key.toLowerCase() === 'authorization')?.[1];
+  return authorization
+    ? createHash('sha256').update(authorization).digest('hex')
+    : '';
 }
 
 function bodyToString(body: BodyInit | null | undefined): string {
@@ -296,6 +351,7 @@ export function responsesWebSocketPartitionKey(
   wsUrl: string,
   payload: JsonObject,
   options: Pick<ResponsesWebSocketFetchOptions, 'providerId' | 'accountId'> = {},
+  credentialFingerprint = '',
 ): string | undefined {
   const promptCacheKey = payload.prompt_cache_key;
   const model = payload.model;
@@ -311,6 +367,7 @@ export function responsesWebSocketPartitionKey(
     model,
     effort,
     promptCacheKey,
+    credentialFingerprint,
   ].join('\x1f');
   return createHash('sha256').update(material).digest('hex');
 }
@@ -433,6 +490,24 @@ function responseErrorCode(event: unknown): string | undefined {
   const response = record.response && typeof record.response === 'object' ? record.response as JsonObject : undefined;
   const responseError = response?.error && typeof response.error === 'object' ? response.error as JsonObject : undefined;
   return typeof responseError?.code === 'string' ? responseError.code : undefined;
+}
+
+function responseRetryAfterMs(event: unknown): number | undefined {
+  if (!event || typeof event !== 'object') return undefined;
+  const record = event as JsonObject;
+  const response = record.response && typeof record.response === 'object'
+    ? record.response as JsonObject
+    : undefined;
+  for (const candidate of [record, record.error, response?.error]) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const error = candidate as JsonObject;
+    const value = error.retry_after_seconds ?? error.retry_after;
+    if (typeof value === 'number' && Number.isFinite(value)) return value * 1_000;
+    if (typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value.trim())) {
+      return Number(value) * 1_000;
+    }
+  }
+  return undefined;
 }
 
 function boundedDiagnosticIdentifier(value: unknown): string | undefined {
@@ -780,11 +855,41 @@ function flushPending(ctx: RequestContext): void {
   ctx.pendingEvents = [];
 }
 
+function settleHandshakeSuccess(ctx: RequestContext): void {
+  if (ctx.handshakeSettled) return;
+  ctx.handshakeSettled = true;
+  ctx.resolveHandshake?.();
+}
+
+function settleHandshakeFailure(ctx: RequestContext, reason: unknown): void {
+  if (ctx.handshakeSettled) return;
+  ctx.handshakeSettled = true;
+  ctx.rejectHandshake?.(reason);
+}
+
+function clearContextRuntime(ctx: RequestContext): void {
+  if (ctx.retryTimer !== undefined) {
+    clearTimeout(ctx.retryTimer);
+    ctx.retryTimer = undefined;
+  }
+  ctx.abortCleanup?.();
+  ctx.abortCleanup = undefined;
+  activeContexts.delete(ctx);
+}
+
 function closeContext(ctx: RequestContext): void {
   if (ctx.closed) return;
   ctx.closed = true;
-  ctx.abortCleanup?.();
+  clearContextRuntime(ctx);
   try { ctx.controller.close(); } catch { /* already closed */ }
+}
+
+function errorContext(ctx: RequestContext, error: ProviderTransportError): void {
+  if (ctx.closed) return;
+  ctx.closed = true;
+  clearContextRuntime(ctx);
+  settleHandshakeFailure(ctx, error);
+  try { ctx.controller.error(error); } catch { /* already closed */ }
 }
 
 function deleteEntry(entry: ConnectionEntry, closeSocket = true): void {
@@ -796,22 +901,327 @@ function deleteEntry(entry: ConnectionEntry, closeSocket = true): void {
   }
 }
 
+function cancelContext(ctx: RequestContext, reason: unknown): void {
+  if (ctx.closed) return;
+  if (ctx.entry) deleteEntry(ctx.entry);
+  settleHandshakeFailure(ctx, reason);
+  closeContext(ctx);
+}
+
 function failContext(
   entry: ConnectionEntry,
   ctx: RequestContext,
-  message: string,
+  error: ProviderTransportError,
   diagnosticDetails: Record<string, unknown>,
 ): void {
-  if (ctx.closed || entry.current !== ctx) return;
-  entry.debug(`fail: ${message}`);
+  if (ctx.closed || ctx.entry !== entry) return;
+  entry.debug(`fail: ${error.safeMessage}`);
   emitResponseErrorDiagnostic(entry, ctx, {
     ...diagnosticDetails,
-    ...diagnosticTextFingerprint('errorMessage', message),
+    failurePhase: error.phase,
+    httpStatusCode: diagnosticDetails['httpStatusCode'] ?? error.httpStatus,
+    providerRequestId: error.providerRequestId,
+    retryAfterMs: error.retryAfterMs,
+    retryable: error.retryable,
+    retriesExhausted: error.retriesExhausted,
+    attemptCount: error.attemptCount,
+    outputEmitted: error.outputEmitted,
   });
   flushPending(ctx);
-  encodeSse(ctx, { type: 'error', error: { message } });
   deleteEntry(entry);
-  closeContext(ctx);
+  errorContext(ctx, error);
+}
+
+const RETRYABLE_UPGRADE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504, 529]);
+const DEFAULT_THROTTLE_RETRY_AFTER_MS = 5_000;
+const MAX_THROTTLE_RETRY_AFTER_MS = 60_000;
+
+function boundedThrottleRetryAfterMs(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value < 0) {
+    return DEFAULT_THROTTLE_RETRY_AFTER_MS;
+  }
+  return Math.min(Math.round(value), MAX_THROTTLE_RETRY_AFTER_MS);
+}
+
+function numericRetryAfterMs(value: string | undefined): number | undefined {
+  if (typeof value !== 'string' || !/^\d+$/.test(value.trim())) return undefined;
+  const seconds = Number(value.trim());
+  return Number.isSafeInteger(seconds) && seconds <= Number.MAX_SAFE_INTEGER / 1_000
+    ? seconds * 1_000
+    : undefined;
+}
+const RETRYABLE_SOCKET_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTUNREACH',
+  'ENETDOWN',
+  'ENETUNREACH',
+  'EPIPE',
+  'ETIMEDOUT',
+]);
+const RETRYABLE_CLOSE_CODES = new Set([1006, 1011, 1012, 1013, 1014]);
+const SAFE_RESPONSE_HEADERS = [
+  'retry-after',
+  'x-request-id',
+  'request-id',
+  'openai-request-id',
+  'x-openai-request-id',
+] as const;
+const MAX_REJECTED_BODY_PREFIX_BYTES = 4_096;
+const MAX_REJECTED_BODY_BYTES = 64 * 1_024;
+
+function headerValue(
+  headers: IncomingHttpHeaders,
+  name: string,
+): string | undefined {
+  const value = headers[name];
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
+
+function safeResponseHeaders(
+  headers: IncomingHttpHeaders,
+): Record<string, string> {
+  const safe: Record<string, string> = {};
+  for (const name of SAFE_RESPONSE_HEADERS) {
+    const value = headerValue(headers, name);
+    if (value !== undefined) safe[name] = value;
+  }
+  return safe;
+}
+
+function providerRequestId(headers: IncomingHttpHeaders): string | undefined {
+  for (const name of SAFE_RESPONSE_HEADERS) {
+    if (!name.includes('request-id')) continue;
+    const value = headerValue(headers, name)?.trim();
+    if (value) return value.slice(0, 256);
+  }
+  return undefined;
+}
+
+function observeRejectedResponseBody(
+  response: IncomingMessage,
+  emit: (summary: Record<string, unknown>) => void,
+): void {
+  let bytesObserved = 0;
+  let prefixBytes = 0;
+  let completed = false;
+  let truncated = false;
+  const hash = createHash('sha256');
+  const finish = () => {
+    if (completed) return;
+    completed = true;
+    emit({
+      bodyBytesObserved: bytesObserved,
+      bodyPrefixSha256: prefixBytes > 0 ? hash.digest('hex').slice(0, 16) : undefined,
+      bodyTruncated: truncated,
+    });
+  };
+  response.on('data', chunk => {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+    bytesObserved += bytes.length;
+    const remaining = MAX_REJECTED_BODY_PREFIX_BYTES - prefixBytes;
+    if (remaining > 0) {
+      const prefix = bytes.subarray(0, remaining);
+      hash.update(prefix);
+      prefixBytes += prefix.length;
+    }
+    if (bytesObserved > MAX_REJECTED_BODY_BYTES) {
+      truncated = true;
+      response.destroy();
+    }
+  });
+  response.once('end', finish);
+  response.once('close', finish);
+  response.once('error', finish);
+  response.resume();
+}
+
+function socketFailureIsRetryable(error: Error): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code && RETRYABLE_SOCKET_CODES.has(code)) return true;
+  return /connection reset|socket hang up|timed? ?out|network unreachable|handshake.*timed out/i
+    .test(error.message);
+}
+
+function transportErrorWithAttempt(
+  error: ProviderTransportError,
+  attemptCount: number,
+  retriesExhausted: boolean,
+  outputEmitted: boolean,
+): ProviderTransportError {
+  return new ProviderTransportError({
+    provider: error.provider,
+    model: error.model,
+    phase: error.phase,
+    // Preserve the original classification. Omitting this made the
+    // reconstructed error re-derive category from phase/httpStatus alone
+    // (via classifyProviderErrorCategory), silently discarding any explicit
+    // override — e.g. a bodyless-403-throttle reclassified to 'rate_limit'
+    // would re-collapse to the terminal 'permission' category here, which
+    // then forced retryable back to false downstream.
+    category: error.category,
+    httpStatus: error.httpStatus,
+    providerRequestId: error.providerRequestId,
+    retryAfterMs: error.retryAfterMs,
+    retryable: error.retryable,
+    retriesExhausted,
+    outputEmitted,
+    cause: error.cause,
+    safeMessage: error.safeMessage,
+    responseHeaders: error.responseHeaders,
+    attemptCount,
+  });
+}
+
+function retryBudgetExhausted(
+  entry: ConnectionEntry,
+  ctx: RequestContext,
+  error: ProviderTransportError,
+): boolean {
+  return ctx.transportRetryCount >= entry.options.maxTransportRetries
+    || (error.retryAfterMs !== undefined && error.retryAfterMs > entry.options.retryMaxDelayMs);
+}
+
+function retryDelayMs(entry: ConnectionEntry, ctx: RequestContext, error: ProviderTransportError): number {
+  const exponent = Math.max(0, ctx.transportRetryCount);
+  const jitter = 0.5 + Math.max(0, Math.min(1, entry.options.random()));
+  const backoff = Math.min(
+    entry.options.retryMaxDelayMs,
+    Math.round(entry.options.retryBaseDelayMs * (2 ** exponent) * jitter),
+  );
+  return Math.max(backoff, error.retryAfterMs ?? 0);
+}
+
+function retryTransportFailure(
+  entry: ConnectionEntry,
+  ctx: RequestContext,
+  error: ProviderTransportError,
+  diagnosticDetails: Record<string, unknown>,
+  preOutputFrameAllowance = 0,
+): boolean {
+  if (
+    ctx.closed
+    || ctx.entry !== entry
+    || !error.retryable
+    || retryBudgetExhausted(entry, ctx, error)
+    || ctx.frameCount > preOutputFrameAllowance
+    || ctx.emittedModelData
+    || ctx.signal?.aborted
+  ) return false;
+
+  const delayMs = retryDelayMs(entry, ctx, error);
+
+  ctx.transportRetryCount += 1;
+  ctx.transportRetryPending = true;
+  entry.debug(`transport failed before output; retrying in ${delayMs}ms`);
+  emitContextDiagnostic(entry, ctx, {
+    event: 'ws_transport_retry',
+    outcome: 'started',
+    attemptNumber: ctx.transportRetryCount + 1,
+    delayMs,
+    failurePhase: error.phase,
+    httpStatusCode: error.httpStatus,
+    providerRequestId: error.providerRequestId,
+    ...diagnosticDetails,
+  });
+  deleteEntry(entry);
+  ctx.retryTimer = setTimeout(() => {
+    ctx.retryTimer = undefined;
+    if (ctx.closed || ctx.signal?.aborted) {
+      ctx.transportRetryPending = false;
+      emitContextDiagnostic(entry, ctx, {
+        event: 'ws_transport_retry',
+        outcome: 'cancelled',
+        attemptNumber: ctx.transportRetryCount + 1,
+      });
+      return;
+    }
+    resetContextForRetry(ctx);
+    let replacement: ConnectionEntry;
+    try {
+      replacement = ctx.createReplacement();
+    } catch (cause) {
+      const connectionError = new ProviderTransportError({
+        provider: ctx.provider,
+        model: ctx.model,
+        phase: 'connect',
+        retryable: false,
+        outputEmitted: false,
+        cause,
+        safeMessage: 'Provider WebSocket connection could not be created.',
+        attemptCount: ctx.transportRetryCount + 1,
+      });
+      ctx.transportRetryPending = false;
+      failContext(entry, ctx, connectionError, { source: 'connection_constructor' });
+      return;
+    }
+    if (ctx.closed || ctx.signal?.aborted) {
+      ctx.transportRetryPending = false;
+      deleteEntry(replacement);
+      return;
+    }
+    dispatchContext(replacement, ctx);
+    if (replacement.open) settleHandshakeSuccess(ctx);
+  }, delayMs);
+  ctx.retryTimer.unref?.();
+  return true;
+}
+
+function handleTransportFailure(
+  entry: ConnectionEntry,
+  ctx: RequestContext,
+  error: ProviderTransportError,
+  diagnosticDetails: Record<string, unknown>,
+  preOutputFrameAllowance = 0,
+): void {
+  if (retryTransportFailure(entry, ctx, error, diagnosticDetails, preOutputFrameAllowance)) return;
+  if (ctx.closed || ctx.entry !== entry) return;
+  const retriesExhausted = error.retryable
+    && ctx.frameCount <= preOutputFrameAllowance
+    && !ctx.emittedModelData
+    && retryBudgetExhausted(entry, ctx, error);
+  const finalError = transportErrorWithAttempt(
+    error,
+    ctx.transportRetryCount + 1,
+    retriesExhausted,
+    ctx.emittedModelData,
+  );
+  if (ctx.transportRetryPending) {
+    ctx.transportRetryPending = false;
+    emitContextDiagnostic(entry, ctx, {
+      event: 'ws_transport_retry',
+      outcome: 'exhausted',
+      attemptNumber: finalError.attemptCount,
+      failurePhase: finalError.phase,
+      httpStatusCode: finalError.httpStatus,
+      ...diagnosticDetails,
+    });
+  }
+  failContext(entry, ctx, finalError, diagnosticDetails);
+}
+
+function evictStaleCredentialConnections(
+  credentialScopeKey: string | undefined,
+  credentialFingerprint: string,
+): Array<Record<string, unknown>> {
+  if (!credentialScopeKey) return [];
+  const evictions: Array<Record<string, unknown>> = [];
+  for (const entry of connectionEntries()) {
+    if (
+      entry.inFlight
+      || entry.credentialScopeKey !== credentialScopeKey
+      || entry.credentialFingerprint === credentialFingerprint
+    ) continue;
+    evictions.push({
+      connectionId: entry.debugId,
+      partitionKey: entry.key,
+      generation: entry.generation,
+      reason: 'credential_rotated',
+    });
+    deleteEntry(entry);
+  }
+  return evictions;
 }
 
 function cleanupExpiredConnections(now: number): Array<Record<string, unknown>> {
@@ -876,7 +1286,11 @@ function outgoingPayload(payload: JsonObject): string {
 
 type WebSocketConstructor = new (
   url: string,
-  options: { headers: Record<string, string>; agent?: import('node:http').Agent },
+  options: {
+    headers: Record<string, string>;
+    agent?: HttpAgent;
+    handshakeTimeout: number;
+  },
 ) => WsWebSocket;
 
 function sendContext(entry: ConnectionEntry, ctx: RequestContext): void {
@@ -885,7 +1299,43 @@ function sendContext(entry: ConnectionEntry, ctx: RequestContext): void {
     `connection=${entry.debugId} key=${debugKey(entry.key)} sending ${outgoing.length}B payload`
     + (ctx.continued ? ' (continuation)' : ''),
   );
-  entry.socket.send(outgoing);
+  try {
+    entry.socket.send(outgoing, error => {
+      if (!error) return;
+      const transportError = new ProviderTransportError({
+        provider: ctx.provider,
+        model: ctx.model,
+        phase: 'stream',
+        retryable: socketFailureIsRetryable(error),
+        outputEmitted: ctx.emittedModelData,
+        cause: error,
+        safeMessage: 'Provider WebSocket request could not be sent.',
+      });
+      handleTransportFailure(entry, ctx, transportError, {
+        source: 'socket_send',
+        failureMode: 'callback',
+        socketErrorName: boundedDiagnosticIdentifier(error.name),
+        socketErrorCode: boundedDiagnosticIdentifier((error as NodeJS.ErrnoException).code),
+      });
+    });
+  } catch (cause) {
+    const error = cause instanceof Error ? cause : new Error('WebSocket send failed');
+    const transportError = new ProviderTransportError({
+      provider: ctx.provider,
+      model: ctx.model,
+      phase: 'stream',
+      retryable: socketFailureIsRetryable(error),
+      outputEmitted: ctx.emittedModelData,
+      cause,
+      safeMessage: 'Provider WebSocket request could not be sent.',
+    });
+    handleTransportFailure(entry, ctx, transportError, {
+      source: 'socket_send',
+      failureMode: 'synchronous',
+      socketErrorName: boundedDiagnosticIdentifier(error.name),
+      socketErrorCode: boundedDiagnosticIdentifier((error as NodeJS.ErrnoException).code),
+    });
+  }
 }
 
 function dispatchContext(entry: ConnectionEntry, ctx: RequestContext): void {
@@ -894,7 +1344,10 @@ function dispatchContext(entry: ConnectionEntry, ctx: RequestContext): void {
   entry.inFlightStartedAt = now;
   entry.current = ctx;
   ctx.entry = entry;
-  if (entry.open) sendContext(entry, ctx);
+  if (entry.open) {
+    settleHandshakeSuccess(ctx);
+    sendContext(entry, ctx);
+  }
 }
 
 function finishInFlightPeriod(entry: ConnectionEntry, now: number): void {
@@ -908,6 +1361,7 @@ function resetContextForRetry(ctx: RequestContext): void {
   ctx.continued = false;
   ctx.sendPayload = ctx.originalPayload;
   ctx.pendingEvents = [];
+  ctx.frameCount = 0;
   ctx.emittedModelData = false;
   ctx.responseId = undefined;
   ctx.outputByIndex.clear();
@@ -922,6 +1376,14 @@ function handleSocketMessage(entry: ConnectionEntry, data: RawData): void {
   if (!ctx || ctx.closed) return;
   const text = Array.isArray(data) ? Buffer.concat(data).toString('utf8') : data.toString('utf8');
   ctx.frameCount += 1;
+  if (ctx.transportRetryPending) {
+    ctx.transportRetryPending = false;
+    emitContextDiagnostic(entry, ctx, {
+      event: 'ws_transport_retry',
+      outcome: 'recovered',
+      attemptNumber: ctx.transportRetryCount + 1,
+    });
+  }
   let event: unknown;
   try {
     event = JSON.parse(text);
@@ -950,8 +1412,32 @@ function handleSocketMessage(entry: ConnectionEntry, data: RawData): void {
   }
   if (isModelDataEvent(type)) ctx.emittedModelData = true;
 
-  const previousMissing = responseErrorCode(event) === 'previous_response_not_found';
+  const errorCode = responseErrorCode(event);
+  const previousMissing = errorCode === 'previous_response_not_found';
   const willRetry = previousMissing && ctx.continued && !ctx.retried && !ctx.emittedModelData;
+  if (errorCode === 'websocket_connection_limit_reached' && !ctx.emittedModelData) {
+    const retryAfterMs = boundedThrottleRetryAfterMs(responseRetryAfterMs(event));
+    const retryAfterSeconds = retryAfterMs / 1_000;
+    const error = new ProviderTransportError({
+      provider: ctx.provider,
+      model: ctx.model,
+      phase: 'stream',
+      category: 'rate_limit',
+      httpStatus: 429,
+      retryAfterMs,
+      retryable: true,
+      outputEmitted: false,
+      safeMessage: 'OpenAI reported the Responses WebSocket connection limit was reached; '
+        + `retry after ${retryAfterSeconds}s.`,
+    });
+    handleTransportFailure(entry, ctx, error, {
+      source: 'error_frame',
+      errorCode,
+      mappedStatusCode: 429,
+      retryAfterMs,
+    }, 1);
+    return;
+  }
   if (FAILURE_EVENT_TYPES.has(type ?? '')) {
     emitResponseErrorDiagnostic(entry, ctx, {
       source: 'response_event',
@@ -1004,16 +1490,24 @@ function createConnection(
   headers: Record<string, string>,
   persistent: boolean,
   key: string | undefined,
+  credentialScopeKey: string | undefined,
+  credentialFingerprint: string,
   options: ConnectionEntry['options'],
   debug: ConnectionEntry['debug'],
   /** Optional HTTP(S)_PROXY CONNECT-tunnel agent (see src/outbound-proxy.ts). */
-  agent?: import('node:http').Agent,
+  agent?: HttpAgent,
 ): ConnectionEntry {
   const now = options.now();
-  const socket = new WebSocket(wsUrl, agent ? { headers, agent } : { headers });
+  const socket = new WebSocket(wsUrl, {
+    headers,
+    handshakeTimeout: options.handshakeTimeoutMs,
+    ...(agent ? { agent } : {}),
+  });
   const entry: ConnectionEntry = {
     debugId: nextConnectionDebugId++,
     key: persistent ? key : undefined,
+    credentialScopeKey: persistent ? credentialScopeKey : undefined,
+    credentialFingerprint: persistent ? credentialFingerprint : undefined,
     socket,
     persistent,
     generation: persistent ? 'nursery' : 'isolated',
@@ -1033,30 +1527,102 @@ function createConnection(
   socket.on('open', () => {
     entry.open = true;
     debug(`connection=${entry.debugId} opened`);
-    // Persistent cache sockets must not keep a finished leverframe CLI process alive.
     (socket as unknown as { _socket?: { unref?: () => void } })._socket?.unref?.();
     const ctx = entry.current;
-    if (ctx && !ctx.closed) sendContext(entry, ctx);
-  });
-  socket.on('unexpected-response', (_request, response) => {
-    debug(`unexpected-response status=${response.statusCode}`);
-    const ctx = entry.current;
     if (ctx && !ctx.closed) {
-      emitResponseErrorDiagnostic(entry, ctx, {
-        source: 'unexpected_response',
-        httpStatusCode: response.statusCode,
-      });
+      settleHandshakeSuccess(ctx);
+      sendContext(entry, ctx);
     }
   });
-  socket.on('message', (data: RawData) => handleSocketMessage(entry, data));
-  socket.on('error', (error: Error) => {
+  socket.on('unexpected-response', (_request, response) => {
+    const statusCode = response.statusCode ?? 502;
+    const responseHeaders = safeResponseHeaders(response.headers);
+    const parsedRetryAfterMs = statusCode === 403
+      ? numericRetryAfterMs(responseHeaders['retry-after'])
+      : parseRetryAfter(responseHeaders['retry-after'], entry.options.now());
+    const retryAfterMs = statusCode === 403
+      ? boundedThrottleRetryAfterMs(parsedRetryAfterMs)
+      : parsedRetryAfterMs;
+    const mappedStatusCode = statusCode === 403 ? 429 : statusCode;
+    const requestId = providerRequestId(response.headers);
+    debug(`unexpected-response status=${statusCode}`);
     const ctx = entry.current;
-    if (ctx) failContext(entry, ctx, error.message, {
-      source: 'socket_error',
-      socketErrorName: boundedDiagnosticIdentifier(error.name),
-      socketErrorCode: boundedDiagnosticIdentifier((error as NodeJS.ErrnoException).code),
+    if (!ctx || ctx.closed) {
+      response.resume();
+      deleteEntry(entry);
+      return;
+    }
+
+    // OpenAI's edge/WAF rejects the Responses WebSocket upgrade with HTTP 403
+    // when the account's concurrency/usage throttle trips — before the
+    // request reaches the application. Per OpenAI's documented error codes
+    // and the official codex client, terminal conditions are 401 (re-auth) or
+    // a 429 with a JSON body; the only application-level 403 is a geo
+    // restriction, and codex retries ALL 403s. So every 403 upgrade
+    // rejection is classified retryable, synchronously and without reading
+    // the body (stabilization plan §9.2, upstream 303db6e/32c1f7b) —
+    // matching a real, unread body would be pointless since the rejection is
+    // classified by status alone, and staying synchronous means this closes
+    // the context before any later socket error/close event fires, so the
+    // separate socket-level transport-retry path below cannot double-handle
+    // the same failure.
+    const retryableUpgradeStatus = RETRYABLE_UPGRADE_STATUSES.has(statusCode) || statusCode === 403;
+    const error = new ProviderTransportError({
+      provider: ctx.provider,
+      model: ctx.model,
+      phase: 'websocket_upgrade',
+      // classifyProviderErrorCategory maps httpStatus 403 to the terminal
+      // 'permission' category by default, which would force retryable back
+      // to false regardless of what is passed below; reclassify to
+      // 'rate_limit' so the edge throttle actually stays retryable.
+      category: statusCode === 403 ? 'rate_limit' : undefined,
+      httpStatus: mappedStatusCode,
+      providerRequestId: requestId,
+      retryAfterMs,
+      retryable: retryableUpgradeStatus,
+      outputEmitted: false,
+      safeMessage: statusCode === 403
+        ? 'OpenAI edge throttled the Responses WebSocket upgrade (HTTP 403); '
+          + `retry after ${(retryAfterMs ?? DEFAULT_THROTTLE_RETRY_AFTER_MS) / 1_000}s.`
+        : `Provider WebSocket upgrade was rejected with HTTP ${statusCode}.`,
+      responseHeaders,
     });
-    else deleteEntry(entry);
+    handleTransportFailure(entry, ctx, error, {
+      source: 'unexpected_response',
+      httpStatusCode: statusCode,
+      mappedStatusCode,
+      providerRequestId: requestId,
+      retryAfterMs,
+    });
+
+    observeRejectedResponseBody(response, summary => emitContextDiagnostic(entry, ctx, {
+      event: 'ws_upgrade_response_body',
+      httpStatusCode: statusCode,
+      ...summary,
+    }));
+  });
+  socket.on('message', (data: RawData) => handleSocketMessage(entry, data));
+  socket.on('error', (cause: Error) => {
+    const ctx = entry.current;
+    if (ctx) {
+      const phase = entry.open ? 'stream' : 'connect';
+      const error = new ProviderTransportError({
+        provider: ctx.provider,
+        model: ctx.model,
+        phase,
+        retryable: socketFailureIsRetryable(cause),
+        outputEmitted: ctx.emittedModelData,
+        cause,
+        safeMessage: phase === 'connect'
+          ? 'Provider WebSocket connection failed.'
+          : 'Provider WebSocket stream failed.',
+      });
+      handleTransportFailure(entry, ctx, error, {
+        source: 'socket_error',
+        socketErrorName: boundedDiagnosticIdentifier(cause.name),
+        socketErrorCode: boundedDiagnosticIdentifier((cause as NodeJS.ErrnoException).code),
+      });
+    } else deleteEntry(entry);
   });
   socket.on('close', (code: number, reason: Buffer) => {
     entry.open = false;
@@ -1064,8 +1630,16 @@ function createConnection(
     debug(`connection=${entry.debugId} closed code=${code} in_flight=${Boolean(ctx && !ctx.closed)}`);
     if (ctx && !ctx.closed) {
       const reasonText = reason?.length ? reason.toString('utf8') : '';
-      const suffix = reasonText ? `: ${reasonText}` : '';
-      failContext(entry, ctx, `WebSocket closed (${code})${suffix}`, {
+      const error = new ProviderTransportError({
+        provider: ctx.provider,
+        model: ctx.model,
+        phase: ctx.frameCount === 0 ? 'connect' : 'stream',
+        retryable: RETRYABLE_CLOSE_CODES.has(code),
+        outputEmitted: ctx.emittedModelData,
+        cause: new Error(`WebSocket closed with code ${code}`),
+        safeMessage: 'Provider WebSocket closed before completion.',
+      });
+      handleTransportFailure(entry, ctx, error, {
         source: 'socket_close',
         closeCode: code,
         ...diagnosticTextFingerprint('closeReason', reasonText),
@@ -1094,6 +1668,12 @@ export function createResponsesWebSocketFetch(
       ?? Math.min(RESPONSES_WS_NURSERY_IDLE_TTL_MS, options.idleTtlMs ?? RESPONSES_WS_IDLE_TTL_MS),
     maxConnections: options.maxConnections ?? RESPONSES_WS_MAX_CONNECTIONS,
     maxNurseryConnections: options.maxNurseryConnections ?? RESPONSES_WS_MAX_NURSERY_CONNECTIONS,
+    maxTransportRetries: options.maxTransportRetries ?? 1,
+    handshakeTimeoutMs: Math.max(1, options.handshakeTimeoutMs ?? 30_000),
+    retryBaseDelayMs: Math.max(0, options.retryBaseDelayMs ?? 100),
+    retryMaxDelayMs: Math.max(0, options.retryMaxDelayMs ?? 60_000),
+    random: options.random ?? Math.random,
+    awaitOpen: !(process.env['VITEST'] && options.eagerResponseForTests === true),
     now: options.now ?? Date.now,
   };
 
@@ -1113,13 +1693,23 @@ export function createResponsesWebSocketFetch(
     }
     if (hasResponsesLiteHeader(headers)) payload = applyResponsesLiteShape(payload);
 
-    const partitionKey = responsesWebSocketPartitionKey(wsUrl, payload, options);
+    const credentialFingerprint = authorizationFingerprint(headers);
+    const credentialScopeKey = responsesWebSocketPartitionKey(wsUrl, payload, options);
+    const partitionKey = responsesWebSocketPartitionKey(
+      wsUrl,
+      payload,
+      options,
+      credentialFingerprint,
+    );
     const promptFingerprint = responsesWebSocketPromptFingerprint(payload);
     const promptFieldHashes = responsesWebSocketPromptFieldHashes(payload);
     const instructionsSnapshot = instructionsFromPayload(payload);
     const diagnosticCorrelation = diagnosticContext.getStore();
     const now = resolvedOptions.now();
-    const evictions = cleanupExpiredConnections(now);
+    const evictions = [
+      ...evictStaleCredentialConnections(credentialScopeKey, credentialFingerprint),
+      ...cleanupExpiredConnections(now),
+    ];
 
     const candidates = partitionKey ? connectionEntries(partitionKey) : [];
     const idleCandidates = candidates.filter(entry => !entry.inFlight);
@@ -1252,9 +1842,18 @@ export function createResponsesWebSocketFetch(
       evictions,
     }, diagnosticCorrelation);
 
+    let resolveHandshake: (() => void) | undefined;
+    let rejectHandshake: ((reason: unknown) => void) | undefined;
+    const handshake = resolvedOptions.awaitOpen
+      ? new Promise<void>((resolve, reject) => {
+          resolveHandshake = resolve;
+          rejectHandshake = reject;
+        })
+      : undefined;
     let activeContext: RequestContext | undefined;
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
+        const signal = init?.signal;
         const ctx: RequestContext = {
           controller,
           encoder: new TextEncoder(),
@@ -1268,6 +1867,14 @@ export function createResponsesWebSocketFetch(
           frameCount: 0,
           pendingEvents: [],
           emittedModelData: false,
+          transportRetryCount: 0,
+          transportRetryPending: false,
+          signal: signal ?? undefined,
+          provider: options.providerId ?? 'openai',
+          model: typeof payload.model === 'string' ? payload.model : undefined,
+          handshakeSettled: !resolvedOptions.awaitOpen,
+          resolveHandshake,
+          rejectHandshake,
           outputByIndex: new Map(),
           outputIndexByItemId: new Map(),
           reasoningPartsByItemId: new Map(),
@@ -1280,51 +1887,68 @@ export function createResponsesWebSocketFetch(
             WebSocket as unknown as WebSocketConstructor,
             wsUrl,
             headers,
-            Boolean(partitionKey),
+            persistent,
             partitionKey,
+            credentialScopeKey,
+            credentialFingerprint,
             resolvedOptions,
             debug,
             proxyAgent,
           ),
         };
         activeContext = ctx;
+        activeContexts.add(ctx);
 
-        const entry = selected ?? createConnection(
-          WebSocket as unknown as WebSocketConstructor,
-          wsUrl,
-          headers,
-          persistent,
-          partitionKey,
-          resolvedOptions,
-          debug,
-          proxyAgent,
-        );
-        dispatchContext(entry, ctx);
-
-        const signal = init?.signal;
+        const abort = () => {
+          const reason = signal?.reason ?? new DOMException('Request aborted', 'AbortError');
+          cancelContext(ctx, reason);
+        };
         if (signal) {
-          const abort = () => {
-            if (ctx.closed) return;
-            if (ctx.entry) deleteEntry(ctx.entry);
-            closeContext(ctx);
-          };
-          if (signal.aborted) abort();
-          else {
-            signal.addEventListener('abort', abort, { once: true });
-            ctx.abortCleanup = () => signal.removeEventListener('abort', abort);
+          if (signal.aborted) {
+            abort();
+            return;
           }
+          signal.addEventListener('abort', abort, { once: true });
+          ctx.abortCleanup = () => signal.removeEventListener('abort', abort);
         }
+
+        let entry: ConnectionEntry;
+        try {
+          entry = selected ?? createConnection(
+            WebSocket as unknown as WebSocketConstructor,
+            wsUrl,
+            headers,
+            persistent,
+            partitionKey,
+            credentialScopeKey,
+            credentialFingerprint,
+            resolvedOptions,
+            debug,
+            proxyAgent,
+          );
+        } catch (cause) {
+          const error = new ProviderTransportError({
+            provider: ctx.provider,
+            model: ctx.model,
+            phase: 'connect',
+            retryable: false,
+            outputEmitted: false,
+            cause,
+            safeMessage: 'Provider WebSocket connection could not be created.',
+          });
+          errorContext(ctx, error);
+          return;
+        }
+        dispatchContext(entry, ctx);
       },
-      cancel() {
-        // The SDK cancelling the synthetic response invalidates any in-flight
-        // connection-local state; the AbortSignal path normally runs first.
+      cancel(reason) {
         const ctx = activeContext;
         if (!ctx || ctx.closed) return;
-        if (ctx.entry) deleteEntry(ctx.entry);
-        closeContext(ctx);
+        cancelContext(ctx, reason ?? new DOMException('Response cancelled', 'AbortError'));
       },
     });
 
+    if (handshake) await handshake;
     return new Response(stream, {
       status: 200,
       headers: { 'content-type': 'text/event-stream; charset=utf-8' },

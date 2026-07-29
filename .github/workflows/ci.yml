@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: '22'
+            artifacts: false
+          - os: ubuntu-latest
+            node: '24'
+            artifacts: true
+          - os: macos-latest
+            node: '24'
+            artifacts: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          pnpm --version
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+
+      - name: Build runtime files
+        if: matrix.artifacts
+        run: pnpm build
+
+      - name: Verify committed runtime files
+        if: matrix.artifacts
+        run: git diff --exit-code dist
+
+      - name: Verify deterministic second build
+        if: matrix.artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          find dist -maxdepth 1 -type f -name '*.js' -print0 | sort -z | xargs -0 sha256sum > "$RUNNER_TEMP/dist-first.sha256"
+          pnpm build
+          find dist -maxdepth 1 -type f -name '*.js' -print0 | sort -z | xargs -0 sha256sum > "$RUNNER_TEMP/dist-second.sha256"
+          diff -u "$RUNNER_TEMP/dist-first.sha256" "$RUNNER_TEMP/dist-second.sha256"
+
+      - name: Verify CLI entry points
+        if: matrix.artifacts
+        run: |
+          node dist/cli.js --version
+          node dist/cli.js --help >/dev/null
+          node dist/cli.js patch --help >/dev/null
+
+      - name: Verify package contents
+        if: matrix.artifacts
+        run: pnpm check:package
+
+      - name: Reject secrets and machine-specific files
+        if: matrix.artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -nIE \
+            -e 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY' \
+            -e '(^|[^[:alnum:]])sk-[[:alnum:]_-]{20,}' \
+            -e '/Users/[^$<]' \
+            -e '/private/tmp/' \
+            -- . ':(exclude).github/workflows/ci.yml' ':(exclude)tests/**'; then
+            echo 'Tracked files contain a credential or machine-specific path.' >&2
+            exit 1
+          fi
+          if git ls-files | grep -E '(^|/)(checkpoint\.json|credentials-fallback\.json|patch-state\.json|server-runtime\.json|manifest\.json|transaction\.json|tool-call-ledger\.json|credential-cleanup-journal\.json|[^/]+\.tmp)$'; then
+            echo 'Tracked files contain runtime state or temporary output.' >&2
+            exit 1
+          fi

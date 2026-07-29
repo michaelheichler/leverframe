@@ -23,8 +23,9 @@
     "leverframe-claude": "dist/claude-wrapper.js"
   },
   "files": [
-    "dist",
-    "docs",
+    "dist/*.js",
+    "docs/background-agents.md",
+    "docs/model-picker.png",
     "README.md"
   ],
   "engines": {
@@ -32,10 +33,11 @@
   },
   "scripts": {
     "build": "tsup",
+    "check:package": "node scripts/verify-package-contents.mjs",
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tests/tsconfig.json",
     "prepare": "test ! -d .husky || husky"
   },
   "dependencies": {
@@ -48,6 +50,7 @@
     "https-proxy-agent": "9.1.0",
     "ipaddr.js": "2.4.0",
     "node-forge": "1.4.0",
+    "node-gyp-build": "4.8.4",
     "open": "11.0.0",
     "picocolors": "1.1.1",
     "tweakcc": "4.3.0",

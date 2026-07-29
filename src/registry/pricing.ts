@@ -21,7 +21,8 @@ import { dirname, join } from 'node:path';
 import bundledPricing from '../data/pricing-cache.json';
 import { getAppHome } from '../paths.js';
 import type { CachedModel } from './types.js';
-import { loadRegistry, saveRegistry } from './io.js';
+import { updateRegistry } from './io.js';
+import { reconcilePendingCredentialDeletes } from './credential-lifecycle.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 
 export const PRICING_API_URL = 'https://ai-model-pricing.com/api/v1/pricing.json';
@@ -244,22 +245,25 @@ export function applyPricingToRegistryProviders(
 
 /** Apply bundled or on-disk pricing cache synchronously (non-blocking enrich baseline). */
 export function applyCachedPricing(): boolean {
-  const registry = loadRegistry();
-  const cache = loadPricingCache();
-  const changed = applyPricingToRegistryProviders(registry, cache);
-  if (changed) saveRegistry(registry);
-  return changed;
+  try {
+    const cache = loadPricingCache();
+    return updateRegistry(registry => applyPricingToRegistryProviders(registry, cache));
+  } finally {
+    void reconcilePendingCredentialDeletes();
+  }
 }
 
 /** Fetch latest pricing in the background; updates registry when complete. */
 export function enrichPricingAsync(onComplete?: (updated: boolean) => void): void {
   void (async () => {
-    const fetched = await fetchPricingCache();
-    const cache = fetched ?? loadPricingCache();
-    const registry = loadRegistry();
-    const changed = applyPricingToRegistryProviders(registry, cache);
-    if (changed) saveRegistry(registry);
-    onComplete?.(changed);
+    try {
+      const fetched = await fetchPricingCache();
+      const cache = fetched ?? loadPricingCache();
+      const changed = updateRegistry(registry => applyPricingToRegistryProviders(registry, cache));
+      onComplete?.(changed);
+    } finally {
+      await reconcilePendingCredentialDeletes();
+    }
   })();
 }
 

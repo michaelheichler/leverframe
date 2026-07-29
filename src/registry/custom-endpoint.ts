@@ -4,7 +4,9 @@ import { saveProviderCredential } from '../env.js';
 import { deriveBrand } from '../models.js';
 import { resolveContextWindow } from '../context-window.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
-import { loadRegistry, saveRegistry } from './io.js';
+import { loadRegistryStrict, updateRegistry } from './io.js';
+import { journalCredentialWrite, reconcilePendingCredentialDeletes } from './credential-lifecycle.js';
+import { withProviderMutationLock } from './lock.js';
 import type { CachedModel, RegistryProvider } from './types.js';
 import { customProviderId, isValidProviderId, slugifyProviderId } from './validate.js';
 import { revalidateCustomEndpointUrl, validateCustomEndpointUrl } from './url-security.js';
@@ -73,7 +75,7 @@ export async function fetchAnthropicModels(
 
     let logTrace: ((msg: string) => void) | undefined;
     if (process.env.LEVERFRAME_TRACE === '1') {
-      logTrace = makeTraceLogger(getProviderDebugLogPath());
+      logTrace = makeTraceLogger(getProviderDebugLogPath(), [apiKey]);
     }
 
     const rawBodyText = await response.text().catch(() => '');
@@ -148,7 +150,7 @@ function uniqueProviderId(displayName: string, registry: { providers: RegistryPr
   return `${base}-${Date.now()}`;
 }
 
-export async function addCustomEndpointProvider(input: AddCustomEndpointInput): Promise<AddCustomEndpointResult> {
+async function addCustomEndpointProviderLocked(input: AddCustomEndpointInput): Promise<AddCustomEndpointResult> {
   const urlCheck = await validateCustomEndpointUrl(input.baseUrl, {
     allowInsecureLocal: input.allowInsecureLocal,
   });
@@ -156,10 +158,11 @@ export async function addCustomEndpointProvider(input: AddCustomEndpointInput): 
     return { added: false, error: urlCheck.error, hint: urlCheck.hint };
   }
 
-  const registry = loadRegistry();
+  const registry = loadRegistryStrict();
   const providerId = uniqueProviderId(input.displayName.trim(), registry);
   const npm = npmForKind(input.kind);
-  const apiKey = input.apiKey.trim() || 'local';
+  const apiKey = input.apiKey.trim();
+  const anonymous = apiKey.length === 0;
 
   const headers = input.headers && Object.keys(input.headers).length > 0 ? input.headers : undefined;
 
@@ -171,7 +174,7 @@ export async function addCustomEndpointProvider(input: AddCustomEndpointInput): 
       {
         id: providerId,
         name: input.displayName,
-        authType: apiKey === 'local' ? 'none' : 'api',
+        authType: anonymous ? 'none' : 'api',
         npm,
         defaultBaseUrl: urlCheck.normalizedUrl,
         modelSource: 'api-list',
@@ -187,8 +190,10 @@ export async function addCustomEndpointProvider(input: AddCustomEndpointInput): 
     return { added: false, error: fetched.error ?? 'No models returned.', hint: fetched.hint };
   }
 
+  const authRef = anonymous ? 'none:anonymous' : `keyring:provider:${providerId}`;
   if (apiKey !== 'local') {
-    const saved = await saveProviderCredential(`keyring:provider:${providerId}`, apiKey);
+    await journalCredentialWrite(authRef);
+    const saved = await saveProviderCredential(authRef, apiKey);
     if (!saved) {
       return { added: false, error: 'Could not save API key to credential storage.', hint: 'Check Keychain access and leverframe home permissions, then try again.' };
     }
@@ -200,7 +205,8 @@ export async function addCustomEndpointProvider(input: AddCustomEndpointInput): 
     templateId: input.kind === 'anthropic' ? 'custom-anthropic' : 'custom-openai',
     name: input.displayName.trim(),
     enabled: true,
-    authRef: apiKey === 'local' ? `keyring:provider:${providerId}` : `keyring:provider:${providerId}`,
+    authRef,
+    authType: anonymous ? 'none' : 'api',
     api: { npm, url: fetched.baseUrl, ...(headers ? { headers } : {}) },
     addedAt: now,
     refreshedAt: now,
@@ -215,12 +221,24 @@ export async function addCustomEndpointProvider(input: AddCustomEndpointInput): 
     },
   };
 
-  if (apiKey === 'local') {
-    await saveProviderCredential(entry.authRef, 'local');
-  }
-
-  registry.providers.push(entry);
-  saveRegistry(registry);
+  updateRegistry(current => {
+    if (current.providers.some(provider => provider.id === entry.id)) {
+      throw new Error(`Provider id became active while adding endpoint: ${entry.id}`);
+    }
+    current.providers.push(entry);
+  });
 
   return { added: true, provider: entry, modelCount: fetched.models.length };
+}
+
+export async function addCustomEndpointProvider(input: AddCustomEndpointInput): Promise<AddCustomEndpointResult> {
+  const providerSlot = customProviderId(input.displayName.trim());
+  try {
+    return await withProviderMutationLock(
+      providerSlot,
+      () => addCustomEndpointProviderLocked(input),
+    );
+  } finally {
+    await reconcilePendingCredentialDeletes();
+  }
 }

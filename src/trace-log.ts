@@ -525,10 +525,18 @@ export function prepareProviderTraceLog(): string {
   return path;
 }
 
-/** Reset log file and return a writer that redacts secrets. */
-export function makeTraceLogger(logPath: string): (message: string) => void {
+/** Reset log file and return a writer that redacts caller-resolved secrets. */
+export function makeTraceLogger(
+  logPath: string,
+  secrets: Iterable<string> = [],
+): (message: string) => void {
   resetTraceLog(logPath);
-  return (message: string) => writeSecureLogLine(logPath, `${new Date().toISOString()} ${message}`);
+  const safeSecrets = [...new Set([...secrets].filter(secret => secret.length >= 8))];
+  return (message: string) => writeSecureLogLine(
+    logPath,
+    `${new Date().toISOString()} ${message}`,
+    safeSecrets,
+  );
 }
 
 /** Remove prior session log so --trace shows only the latest run. */
@@ -560,21 +568,34 @@ const REDACTION_PATTERNS: Array<(line: string) => string> = [
   line => line.replace(/\bgsk_[A-Za-z0-9]{20,}\b/g, 'gsk_[REDACTED]'),
 ];
 
-export function redactTraceLine(line: string): string {
+export function redactTraceLine(
+  line: string,
+  secrets: Iterable<string> = [],
+): string {
   let out = line;
+  for (const secret of secrets) {
+    if (secret.length >= 8) out = out.split(secret).join('[REDACTED]');
+  }
   for (const apply of REDACTION_PATTERNS) {
     out = apply(out);
   }
   return out;
 }
 
-export function redactTraceLog(content: string): string {
-  return content.split('\n').map(redactTraceLine).join('\n');
+export function redactTraceLog(
+  content: string,
+  secrets: Iterable<string> = [],
+): string {
+  return content.split('\n').map(line => redactTraceLine(line, secrets)).join('\n');
 }
 
-export function writeSecureLogLine(path: string, line: string): void {
+export function writeSecureLogLine(
+  path: string,
+  line: string,
+  secrets: Iterable<string> = [],
+): void {
   ensureLogsDir();
-  const redacted = redactTraceLine(line);
+  const redacted = redactTraceLine(line, secrets);
   try {
     writeFileSync(path, `${redacted}\n`, { flag: 'a', mode: FILE_MODE });
     chmodSync(path, FILE_MODE);

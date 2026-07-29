@@ -61,6 +61,27 @@ export function looksLikeWrapperContractPath(arg: string): boolean {
   return base === 'claude' || base.startsWith('claude.');
 }
 
+/**
+ * Replace the wrapper process with Claude when Node and the platform support
+ * execve. Keeping the original PID and process-group identity lets background
+ * PTY resize signals reach Claude. The caller retains the spawn fallback when
+ * execve is unavailable, validation fails, or the executable changed while the
+ * wrapper was probing the server.
+ */
+export function execIntoClaude(
+  file: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+): void {
+  if (isWindows || typeof process.execve !== 'function') return;
+  if (!isExecutableFile(file)) return;
+  try {
+    process.execve(file, [file, ...args], env);
+  } catch {
+    // Pre-syscall validation failed. The spawn path reports launch failures.
+  }
+}
+
 /** Fast TCP probe — the state file can outlive a SIGKILLed listener. Never hangs. */
 function portIsOpen(port: number, timeoutMs = 100): Promise<boolean> {
   return new Promise(resolve => {
@@ -107,6 +128,8 @@ async function main(): Promise<void> {
     }
   }
   const env = computeWrapperEnv(process.env, state);
+
+  execIntoClaude(claudePath, claudeArgs, env);
 
   const child = spawn(claudePath, claudeArgs, {
     stdio: 'inherit',

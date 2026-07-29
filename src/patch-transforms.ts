@@ -20,15 +20,68 @@
 // as the identity (they still join the enum, validator, and context table, but
 // skip the resolver and /model picker patches).
 
+export const PATCH_TRANSFORMS_VERSION = 2;
+
 export interface PatchScriptModelEntry {
   alias?: string;
   context?: number;
   /** Human label for the /model picker, e.g. `GPT-5.6 Sol (OpenAI (ChatGPT))`. */
   display?: string;
+  /**
+   * Supplier-authoritative reasoning-effort ladder for this model (see
+   * `getReasoningCapabilities` in provider-factory.ts). Not a literal port of
+   * upstream's hard-coded per-model effort table — Leverframe derives it from
+   * the same provider capability data that drives the proxy-side effort
+   * wiring, so the binary-side gates and the proxy request path can never
+   * disagree about which levels a model actually supports.
+   */
+  effort?: PatchScriptEffort;
+}
+
+export interface PatchScriptEffort {
+  levels: string[];
+  defaultLevel: string;
 }
 
 /** Real model id (e.g. `leverframe:openai-oauth:gpt-5.6-sol`) → alias/context. */
 export type PatchScriptModelConfig = Record<string, PatchScriptModelEntry>;
+
+/**
+ * Built-in Claude Code identities (PATCH 1/PATCH 3 anchors) that a custom
+ * alias must never shadow — reassigning one would make the model picker,
+ * the Agent-tool enum, and the alias resolver disagree about what e.g.
+ * "opus" means.
+ */
+const RESERVED_MODEL_ALIASES = new Set(['sonnet', 'opus', 'haiku', 'fable', 'opusplan', 'best', 'default']);
+
+/** Claude Code's own native effort ladder, most to least conservative gate. */
+const NATIVE_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+/** Every native identity must offer at least these three to gate cleanly. */
+const BASE_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
+
+/**
+ * Project a supplier's reasoning-capability ladder onto Claude Code's native
+ * effort levels. Returns `undefined` (skip PATCH 8/9 for this model) unless
+ * the supplier declares at least the low/medium/high base ladder with a
+ * default that is itself one of the declared levels — a partial ladder (e.g.
+ * GLM-5.2's `high`/`xhigh`-only levels) cannot be projected onto the native
+ * picker without inventing levels the supplier never offered, so it is left
+ * alone rather than guessed. The native client's own custom-identity default
+ * is `high`, so the projected default is pinned to `high` regardless of the
+ * supplier default (matching the picker/description projection everywhere
+ * else in this file), never to a level the supplier did not declare.
+ */
+export function projectNativeEffort(effort: PatchScriptEffort | undefined): PatchScriptEffort | undefined {
+  if (!effort || !Array.isArray(effort.levels) || typeof effort.defaultLevel !== 'string') return undefined;
+  const declared = new Set(effort.levels);
+  if (!BASE_EFFORT_LEVELS.every(level => declared.has(level))) return undefined;
+  const levels = NATIVE_EFFORT_LEVELS.filter(level => declared.has(level));
+  // The default must itself be one of the levels actually exposed to the
+  // native picker — a supplier default outside the native ladder (e.g. an
+  // OpenRouter "none"/transport-only default) cannot be projected either.
+  if (!levels.some(level => level === effort.defaultLevel)) return undefined;
+  return { levels, defaultLevel: 'high' };
+}
 
 export type PatchSiteStatus = 'OK' | 'SKIP' | 'FAIL';
 
@@ -87,10 +140,28 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
   const DISPLAY_BY_IDENTITY: Record<string, string> = {};
   // lowercased alias AND id -> context-window tokens (only for models that set it)
   const CONTEXT_BY_KEY: Record<string, number> = {};
+  // lowercased alias AND id (bare and [1m]-suffixed) for every configured
+  // model. Capability verdicts (PATCH 8) must distinguish "configured
+  // without effort" (explicit false) from "not configured at all" (absent
+  // from the map — falls through to the native built-in/provider check).
+  const CONFIGURED_CAPABILITY_KEYS = new Set<string>();
+  // lowercased alias AND id (bare and [1m]-suffixed) -> effort metadata for
+  // Claude Code's native effort-capability gates (PATCH 8/9). Object.create(null)
+  // so a model id/alias that happens to spell a prototype name — "constructor",
+  // "toString", "__proto__" — is stored as a normal own property instead of
+  // silently reassigning the object's prototype or hitting an inherited method.
+  const EFFORT_BY_KEY: Record<string, PatchScriptEffort> = Object.create(null) as Record<string, PatchScriptEffort>;
 
   const report: PatchSiteResult[] = [];
   const fail = (message: string): never => {
     throw new PatchApplyError(message, report);
+  };
+
+  /** Both the bare and `[1m]`-suffixed form of a lowercased identity key. */
+  const capabilityKeys = (value: string): string[] => {
+    const normalized = String(value).trim().toLowerCase();
+    const bare = normalized.replace(/\[1m\]$/i, '');
+    return [...new Set([bare, bare + '[1m]'])];
   };
 
   for (const [id, value] of Object.entries(MODEL_CONFIG)) {
@@ -100,12 +171,21 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
       if (!/^[a-z0-9][a-z0-9._-]*(\[1m\])?$/.test(a)) {
         fail('leverframe patch: alias "' + spec.alias + '" is not a safe lowercase alias');
       }
+      if (RESERVED_MODEL_ALIASES.has(a.replace(/\[1m\]$/i, ''))) {
+        fail('leverframe patch: reserved alias "' + a + '" cannot be reassigned');
+      }
       ALIAS_TO_ID[a] = String(id);
       IDENTITIES.push(a);
       if (spec.display) DISPLAY_BY_IDENTITY[a] = String(spec.display);
     } else {
       IDENTITIES.push(String(id));
       if (spec.display) DISPLAY_BY_IDENTITY[String(id)] = String(spec.display);
+    }
+    for (const key of capabilityKeys(spec.alias !== undefined ? String(spec.alias) : String(id))) {
+      CONFIGURED_CAPABILITY_KEYS.add(key);
+    }
+    for (const key of capabilityKeys(String(id))) {
+      CONFIGURED_CAPABILITY_KEYS.add(key);
     }
 
     if (spec.context !== undefined) {
@@ -123,6 +203,27 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
       }
       if (spec.alias !== undefined) CONTEXT_BY_KEY[String(spec.alias).trim().toLowerCase()] = n;
       CONTEXT_BY_KEY[String(id).trim().toLowerCase()] = n;
+    }
+
+    if (spec.effort !== undefined) {
+      const projected = projectNativeEffort(spec.effort);
+      if (!projected) {
+        return fail(
+          'leverframe patch: effort for "' + id + '" must declare at least low/medium/high with a declared default level'
+        );
+      }
+      // [1m]-suffixed identities keep their own context/media-cap contract
+      // (see the context check above); extending effort onto the suffixed
+      // key too keeps the gate consistent whichever form the binary echoes.
+      const keys = capabilityKeys(spec.alias !== undefined ? String(spec.alias) : String(id));
+      for (const key of keys) {
+        EFFORT_BY_KEY[key] = projected;
+      }
+      if (spec.alias !== undefined) {
+        for (const key of capabilityKeys(String(id))) {
+          EFFORT_BY_KEY[key] = projected;
+        }
+      }
     }
   }
   const ALIASES = Object.keys(ALIAS_TO_ID);
@@ -349,5 +450,134 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // PATCH 8 — per-model effort capability gates.
+  //
+  // Claude Code checks three separate resolvers before it exposes effort at
+  // all, includes xhigh/max in the /model picker, and emits effort.level in
+  // status hooks. Each resolver has the same wildcarded shape: a guard
+  // returning `!1` (false) for a denylisted identity, then a native
+  // capability lookup. We inject a baked verdict table right after the
+  // denylist guard, so a configured model wins over the native fallback but
+  // a denylisted identity is never reached (the guard already returned).
+  //
+  // Only attempted when at least one configured model declares a supplier
+  // effort ladder that projects onto the native levels (`EFFORT_BY_KEY`) —
+  // otherwise there is nothing binary-side to gate and the site is skipped
+  // entirely rather than injecting an always-empty table. When it does run,
+  // the site is required: an unmatched anchor means this build's obfuscated
+  // shape no longer matches what was verified, and publishing a binary where
+  // the proxy advertises xhigh/max but the client silently can't select them
+  // is worse than refusing to patch.
+  // ---------------------------------------------------------------------------
+  if (Object.keys(EFFORT_BY_KEY).length) {
+    patchEffortCapabilitySite(
+      'effort',
+      '/*ccpatch:effort*/',
+      'PATCH 8a: effort capability',
+      /(function [\w$]+\(([\w$]+)\)\{if\([\w$]+\(\2\)\)return!1;)(let [\w$]+=[\w$]+\(\2,"effort"\);)/,
+    );
+    patchEffortCapabilitySite(
+      'xhigh_effort',
+      '/*ccpatch:xhigh-effort*/',
+      'PATCH 8b: xhigh effort capability',
+      /(function [\w$]+\(([\w$]+)\)\{if\([\w$]+\(\2\)\)return!1;)(let [\w$]+=[\w$]+\(\2,"xhigh_effort"\);)/,
+    );
+    patchEffortCapabilitySite(
+      'max_effort',
+      '/*ccpatch:max-effort*/',
+      'PATCH 8c: max effort capability',
+      /(function [\w$]+\(([\w$]+)\)\{if\([\w$]+\(\2\)\)return!1;)(let [\w$]+=[\w$]+\(\2,"max_effort"\);)/,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // PATCH 9 — per-model default effort.
+  //
+  // Same conditional gate as PATCH 8: only runs when a configured model has
+  // a projected effort ladder, and required when it does.
+  // ---------------------------------------------------------------------------
+  if (Object.keys(EFFORT_BY_KEY).length) {
+    const DEFAULT_EFFORT_MARKER = '/*ccpatch:default-effort*/';
+    const defaults = Object.fromEntries(
+      Object.entries(EFFORT_BY_KEY).map(([key, effort]) => [key, effort.defaultLevel]),
+    );
+    const snippet = (arg: string) =>
+      DEFAULT_EFFORT_MARKER
+      + 'var _cce=Object.assign(Object.create(null),' + JSON.stringify(defaults)
+      + ')[String(' + arg + '||"").trim().toLowerCase()];'
+      + 'if(_cce!==void 0)return _cce;';
+
+    if (js.includes(DEFAULT_EFFORT_MARKER)) {
+      applyOnce(
+        'PATCH 9: default effort (refresh)',
+        /\/\*ccpatch:default-effort\*\/var _cce=Object\.assign\(Object\.create\(null\),\{[^{}]*\}\)\[String\(([\w$]+)\|\|""\)\.trim\(\)\.toLowerCase\(\)\];if\(_cce!==void 0\)return _cce;/,
+        (_m, arg) => snippet(arg!),
+        { required: true, noopIsSkip: true },
+      );
+    } else {
+      applyOnce(
+        'PATCH 9: default effort',
+        /(function [\w$]+\(([\w$]+)\)\{)(return [\w$]+\([\w$]+\(\2\)\)\?\.default_effort\?\?"high"\})/,
+        (_m, head, arg, body) => head! + snippet(arg!) + body!,
+        { required: true },
+      );
+    }
+  }
+
   return { content: js, results: report };
+
+  /**
+   * Inject (or refresh) a baked capability-verdict table for one of the
+   * three effort gates. `CONFIGURED_CAPABILITY_KEYS` seeds every configured
+   * identity with an explicit verdict (true/false) so a configured-but-
+   * effort-less model is denied the capability rather than falling through
+   * to a native/provider heuristic; an identity absent from the map (never
+   * configured) is left out of the table entirely, so the native fallback
+   * still runs for it.
+   */
+  function patchEffortCapabilitySite(
+    capability: 'effort' | 'xhigh_effort' | 'max_effort',
+    marker: string,
+    name: string,
+    anchor: RegExp,
+  ): void {
+    const verdicts = Object.fromEntries(
+      [...CONFIGURED_CAPABILITY_KEYS].map(key => {
+        const effort = EFFORT_BY_KEY[key];
+        const grants = effort !== undefined && (
+          capability === 'effort'
+          || effort.levels.includes(capability === 'xhigh_effort' ? 'xhigh' : 'max')
+        );
+        return [key, grants];
+      }),
+    );
+    const snippet = (arg: string) =>
+      marker
+      + 'var _ccv=Object.assign(Object.create(null),' + JSON.stringify(verdicts)
+      + ')[String(' + arg + '||"").trim().toLowerCase()];'
+      + 'if(_ccv!==void 0)return _ccv;';
+
+    if (js.includes(marker)) {
+      applyOnce(
+        name + ' (refresh)',
+        new RegExp(
+          reEsc(marker)
+          + 'var _ccv=Object\\.assign\\(Object\\.create\\(null\\),\\{[^{}]*\\}\\)'
+          + '\\[String\\(([\\w$]+)\\|\\|""\\)\\.trim\\(\\)\\.toLowerCase\\(\\)\\];'
+          + 'if\\(_ccv!==void 0\\)return _ccv;',
+        ),
+        (_m, arg) => snippet(arg!),
+        { required: true, noopIsSkip: true },
+      );
+      return;
+    }
+
+    applyOnce(
+      name,
+      anchor,
+      (_m, head, arg, body) => head! + snippet(arg!) + body!,
+      { required: true },
+    );
+  }
 }

@@ -274,7 +274,7 @@ export async function fetchTemplateModels(
 
     let logTrace: ((msg: string) => void) | undefined;
     if (process.env.LEVERFRAME_TRACE === '1') {
-      logTrace = makeTraceLogger(getProviderDebugLogPath());
+      logTrace = makeTraceLogger(getProviderDebugLogPath(), [trimmedApiKey]);
     }
 
     if (!response.ok) {

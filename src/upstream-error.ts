@@ -1,6 +1,11 @@
 // Short user-facing messages from SDK/upstream failures — no stack traces in Codex TUI.
 
 import { APICallError, RetryError } from 'ai';
+import {
+  ProviderTransportError,
+  ToolResultImageError,
+  type ProviderFailurePhase,
+} from './provider-error.js';
 
 interface ApiCallLike {
   message?: string;
@@ -15,13 +20,37 @@ export interface SdkUpstreamErrorDetails {
   statusCode?: number;
   errorContent: string;
   isRetryable: boolean;
+  retriesExhausted?: boolean;
   attemptCount: number;
+  retryAfterMs?: number;
+  providerRequestId?: string;
+  failurePhase?: ProviderFailurePhase;
 }
 
 /** Extract the real HTTP failure from an AI SDK retry wrapper without relying on instanceof. */
 export function sdkUpstreamErrorDetails(err: unknown): SdkUpstreamErrorDetails | undefined {
   const retry = RetryError.isInstance(err) ? err : undefined;
   const inner = retry?.lastError ?? err;
+  if (ProviderTransportError.isInstance(inner)) {
+    return {
+      statusCode: inner.httpStatus,
+      errorContent: inner.safeMessage,
+      isRetryable: inner.retryable && !inner.retriesExhausted,
+      retriesExhausted: inner.retriesExhausted,
+      attemptCount: inner.attemptCount,
+      retryAfterMs: inner.retryAfterMs,
+      providerRequestId: inner.providerRequestId,
+      failurePhase: inner.phase,
+    };
+  }
+  if (ToolResultImageError.isInstance(inner)) {
+    return {
+      statusCode: 400,
+      errorContent: inner.safeMessage,
+      isRetryable: false,
+      attemptCount: 1,
+    };
+  }
   if (!APICallError.isInstance(inner)) return undefined;
 
   let errorContent = inner.responseBody;
@@ -39,6 +68,19 @@ export function sdkUpstreamErrorDetails(err: unknown): SdkUpstreamErrorDetails |
     isRetryable: inner.isRetryable,
     attemptCount: retry?.errors.length ?? 1,
   };
+}
+
+export function sdkUpstreamResponseHeaders(
+  details: SdkUpstreamErrorDetails | undefined,
+): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (details?.retryAfterMs !== undefined) {
+    headers['Retry-After'] = String(Math.ceil(details.retryAfterMs / 1_000));
+  }
+  if (details?.providerRequestId) {
+    headers['X-Provider-Request-Id'] = details.providerRequestId;
+  }
+  return headers;
 }
 
 /** True when an upstream SDK/provider error says the model context was exceeded. */
@@ -66,6 +108,13 @@ export function isContextLengthExceededError(err: unknown, formattedMessage = ''
 
 export function formatUpstreamError(err: unknown): string {
   if (!err || typeof err !== 'object') return 'Upstream model request failed.';
+
+  const details = sdkUpstreamErrorDetails(err);
+  if (details?.failurePhase) {
+    return details.statusCode
+      ? `${details.errorContent} (HTTP ${details.statusCode})`
+      : details.errorContent;
+  }
 
   const rec = err as ApiCallLike;
 
@@ -109,6 +158,8 @@ export function formatUpstreamError(err: unknown): string {
 
 /** Real upstream HTTP status from an SDK error, falling back to sniffing the formatted message. */
 export function upstreamHttpStatus(err: unknown, message: string): number {
+  const details = sdkUpstreamErrorDetails(err);
+  if (details?.statusCode !== undefined) return details.statusCode;
   if (err && typeof err === 'object' && 'statusCode' in err) {
     const code = (err as { statusCode?: number }).statusCode;
     if (typeof code === 'number' && code >= 400 && code <= 599) return code;
