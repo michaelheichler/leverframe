@@ -20,6 +20,7 @@ import { readManifestV2 } from '../src/patch-state.js';
 import {
   checkResolvedPatchState,
   runLaunchPatchCheckV2,
+  runPatchCommandV2,
 } from '../src/patch-reconcile.js';
 import type { PatchPresenter } from '../src/patch-presenter.js';
 import {
@@ -57,7 +58,7 @@ function sha256(content: string): string {
 }
 
 /** Fixture runtime that mirrors tweakcc inspection and patching using UTF-8 files. */
-function fakeRuntime(options: { failPatch?: boolean } = {}): PatchRuntime {
+function fakeRuntime(options: { failPatch?: boolean; patchCalls?: string[] } = {}): PatchRuntime {
   return {
     async inspect(path, knownPatchedSha256) {
       try {
@@ -81,6 +82,7 @@ function fakeRuntime(options: { failPatch?: boolean } = {}): PatchRuntime {
       }
     },
     async patch(path, config) {
+      options.patchCalls?.push(path);
       if (options.failPatch) throw new Error('synthetic patch failure');
       const patched = applyLeverframePatches(readFileSync(path, 'utf8'), config);
       writeFileSync(path, addLeverframeInjectionMarker(patched.content));
@@ -233,6 +235,30 @@ function recordingPresenter(): {
       },
     },
   };
+}
+
+/** Temporarily make launch checks interactive inside this isolated test worker. */
+async function resignedPatchedFixture(name: string): Promise<{
+  f: ReturnType<typeof fixture>;
+  runtime: PatchRuntime;
+  patchCalls: string[];
+}> {
+  const f = fixture(name);
+  seedCommandInputs(f);
+  writeFileSync(f.livePath, BASELINE, { mode: 0o755 });
+  const patchCalls: string[] = [];
+  const runtime = fakeRuntime({ patchCalls });
+  const outcome = await applyPatchTransactionV2({
+    installation: f.installation,
+    desiredConfig: CURRENT_CONFIG,
+    configHash: 'current-config-hash',
+    manifest: null,
+    trace: false,
+  }, runtime);
+  expect(outcome.ok).toBe(true);
+  writeFileSync(f.livePath, `${readFileSync(f.livePath, 'utf8')}\n// deterministic post-publication rewrite`);
+  expect((await checkResolvedPatchState(f.installation, runtime)).state).toBe('modified_but_injected');
+  return { f, runtime, patchCalls };
 }
 
 /** Temporarily make launch checks interactive inside this isolated test worker. */
@@ -412,6 +438,33 @@ describe('legacy recovery refusal', () => {
     expectUnavailable(inspection);
     expect(inspection.reason).toMatch(/injection/i);
     expect(readFileSync(f.livePath, 'utf8')).toBe(f.liveContent);
+  });
+});
+
+describe('semantically complete post-publication drift', () => {
+  it('does not re-patch when exact bytes drift but all current sites remain complete', async () => {
+    const { f, runtime, patchCalls } = await resignedPatchedFixture('resigned-direct');
+    const output = recordingPresenter();
+
+    const exitCode = await runPatchCommandV2({ installation: f.installation, runtime }, output.presenter);
+
+    expect(exitCode).toBe(0);
+    expect(patchCalls).toHaveLength(1);
+    expect(output.successes.some(message => message.includes('already patched'))).toBe(true);
+  });
+
+  it('does not prompt during launch when exact bytes drift but all current sites remain complete', async () => {
+    const { f, runtime, patchCalls } = await resignedPatchedFixture('resigned-launch');
+    const output = recordingPresenter();
+    const restoreTty = setInteractiveTty();
+
+    try {
+      await runLaunchPatchCheckV2({ installation: f.installation, runtime }, output.presenter);
+      expect(output.confirmations).toEqual([]);
+      expect(patchCalls).toHaveLength(1);
+    } finally {
+      restoreTty();
+    }
   });
 });
 

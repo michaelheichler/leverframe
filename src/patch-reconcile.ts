@@ -29,7 +29,12 @@ import {
   writeManifestV2,
   type PatchManifestV2,
 } from './patch-state.js';
-import { evaluatePatchStateV2, describePatchStateV2, type PatchStateV2 } from './patch-classify.js';
+import {
+  describePatchStateV2,
+  evaluatePatchStateV2,
+  isCurrentPatchState,
+  type PatchStateV2,
+} from './patch-classify.js';
 import {
   inspectLegacyPatchRecovery,
   migrateLegacyStateIfVerified,
@@ -242,8 +247,11 @@ export async function runPatchCommandV2(
     for (const id of desired.unknownWindows) {
       presenter.warn(`No context window metadata for ${id}. Claude Code will assume the 200k default.`);
     }
-    if (state === 'patched') {
-      presenter.success(`claude ${installation.version} is already patched with the current model config. Nothing to do.`);
+    if (isCurrentPatchState(state)) {
+      const detail = state === 'modified_but_injected'
+        ? ' Exact bytes changed after publication, but all current semantic sites verify.'
+        : '';
+      presenter.success(`claude ${installation.version} is already patched with the current model config.${detail} Nothing to do.`);
       return 0;
     }
     const configHash = computePatchConfigHash(desired.config);
@@ -295,7 +303,7 @@ export async function runLaunchPatchCheckV2(
     const { installation, state, desired, legacyRecovery } = checked;
     if (!installation) return;
     if (Object.keys(desired.config).length === 0) return;
-    if (state === 'patched') return;
+    if (isCurrentPatchState(state)) return;
 
     const interactive = !opts.dryRun && !opts.agentStdout
       && process.stdin.isTTY === true && process.stdout.isTTY === true;

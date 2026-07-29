@@ -1145,6 +1145,7 @@ The fix keeps the fail-closed boundary while making the verified path actionable
 - `src/patch-reconcile.ts` threads the same resolved installation and runtime through launch confirmation and patching. A recoverable state gets a precise rebuild prompt; an unverifiable state produces a fail-closed notice instead of a confirmation that must fail.
 - `src/patch-diagnostics.ts` now reports `exact-adoption`, `baseline-recovery`, or the concrete unavailable reason. It also performs semantic verification for missing-manifest injected targets.
 - `verifyPatchSites` now means byte-idempotent under the current transform. A transform result that would still modify a site is stale, not semantically complete; this prevents older PATCH 1–7 binaries from being reported current when PATCH 8/9 remains unapplied.
+- A post-publication byte rewrite whose current semantic sites remain complete is a current state, not a re-patch trigger. Both explicit patch and launch checks now no-op for `modified_but_injected`, matching diagnostics and preventing repeated patching when executable metadata or signing bytes normalize after publication.
 
 Regression coverage in `tests/patch-legacy-recovery.test.ts`, `tests/patch-v2.test.ts`, and `tests/patch-lifecycle-fixture.test.ts` covers successful one-time launch recovery, no repeat prompt, exact adoption marked transform-stale when appropriate, corrupt/injected/missing backup refusal, post-inspection backup replacement, patch failure before publication, immutable live-byte preservation on every refusal, honest read-only diagnostics, and corrected semantic verification. All tests use temporary fixture installations and sandboxed Leverframe homes; the real Claude installation remains unchanged pending separate explicit recovery approval.
 
@@ -1153,5 +1154,5 @@ Validation after the fix:
 ```bash
 node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json          # clean
 node node_modules/typescript/bin/tsc --noEmit -p tests/tsconfig.json    # clean
-HOME=<sandbox> LEVERFRAME_HOME=<sandbox> npx vitest run                  # 67 files, 965 passed, 8 skipped, 0 failed
+HOME=<sandbox> LEVERFRAME_HOME=<sandbox> npx vitest run                  # 67 files, 967 passed, 8 skipped, 0 failed
 ```

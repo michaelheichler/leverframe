@@ -67,6 +67,11 @@ export function evaluatePatchStateV2(input: EvaluateStateInput): PatchStateV2 {
   return 'patched';
 }
 
+/** Exact-byte matches and verified post-publication rewrites are both current. */
+export function isCurrentPatchState(state: PatchStateV2 | null): boolean {
+  return state === 'patched' || state === 'modified_but_injected';
+}
+
 export function describePatchStateV2(state: PatchStateV2 | null): string {
   switch (state) {
     case 'unpatched': return 'not patched';

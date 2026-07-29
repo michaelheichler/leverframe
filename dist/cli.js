@@ -15054,6 +15054,9 @@ function evaluatePatchStateV2(input) {
   }
   return "patched";
 }
+function isCurrentPatchState(state) {
+  return state === "patched" || state === "modified_but_injected";
+}
 function describePatchStateV2(state) {
   switch (state) {
     case "unpatched":
@@ -15297,8 +15300,9 @@ async function runPatchCommandV2(opts = {}, presenter = clackPatchPresenter) {
     for (const id of desired.unknownWindows) {
       presenter.warn(`No context window metadata for ${id}. Claude Code will assume the 200k default.`);
     }
-    if (state === "patched") {
-      presenter.success(`claude ${installation.version} is already patched with the current model config. Nothing to do.`);
+    if (isCurrentPatchState(state)) {
+      const detail = state === "modified_but_injected" ? " Exact bytes changed after publication, but all current semantic sites verify." : "";
+      presenter.success(`claude ${installation.version} is already patched with the current model config.${detail} Nothing to do.`);
       return 0;
     }
     const configHash = computePatchConfigHash(desired.config);
@@ -15336,7 +15340,7 @@ async function runLaunchPatchCheckV2(opts = {}, presenter = clackPatchPresenter)
     const { installation, state, desired, legacyRecovery } = checked;
     if (!installation) return;
     if (Object.keys(desired.config).length === 0) return;
-    if (state === "patched") return;
+    if (isCurrentPatchState(state)) return;
     const interactive = !opts.dryRun && !opts.agentStdout && process.stdin.isTTY === true && process.stdout.isTTY === true;
     if (!interactive) {
       if (!opts.agentStdout) {
