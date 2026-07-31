@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { aliasModelId, startProxyCatalog, type ProxyRoute } from '../src/proxy.js';
 import { getProxyDebugLogPath } from '../src/trace-log.js';
+import { buildClaudeCodeBillingSystemLine } from '../src/oauth/claude-identity.js';
 import { anthropicMessagesEndpoint, estimateAnthropicInputTokens } from '../src/anthropic-endpoints.js';
 
 vi.mock('../src/registry/url-security.js', async importOriginal => {
@@ -989,7 +990,8 @@ describe('anthropic passthrough debug logging', () => {
     handle.close();
     const [, init] = vi.mocked(fetch).mock.calls[0]!;
     const body = JSON.parse(String(init?.body)) as { system?: Array<{ type: string; text: string }> };
-    expect(body.system?.[0]?.text).toBe('x-anthropic-billing-header: cc_version=2.1.195.0; cc_entrypoint=cli;');
+    expect(body.system?.[0]?.text).toBe(buildClaudeCodeBillingSystemLine());
+    expect(body.system?.[0]?.text).toMatch(/^x-anthropic-billing-header: cc_version=2\.1\.195\.0; cc_entrypoint=[\w-]+;$/);
     expect(body.system?.[1]?.text).toBe('You are helpful.');
   });
 });
