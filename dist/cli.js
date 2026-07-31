@@ -67,7 +67,7 @@ import {
   withProviderMutationLock,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-SWDLQKF7.js";
+} from "./chunk-KVOUUEN4.js";
 
 // src/cli.ts
 import pc14 from "picocolors";
@@ -13298,6 +13298,7 @@ async function startHttpProxy(options) {
     socket.once("close", () => sockets.delete(socket));
   });
   proxyServer.on("connect", (req, clientSocket, head) => {
+    clientSocket.on("error", () => clientSocket.destroy());
     const presented = extractProxyPassword(req.headers);
     if (!presented || !constantTimeEquals(presented, proxyAuthToken)) {
       sendConnectProxyAuthRequired(clientSocket);

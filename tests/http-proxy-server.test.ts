@@ -150,6 +150,47 @@ describe('selective HTTP proxy', () => {
     }
   });
 
+  it('survives a client RST on an established passthrough tunnel', async () => {
+    const upstream = net.createServer(socket => {
+      socket.on('error', () => {});
+      const flood = setInterval(() => socket.write('x'.repeat(16384)), 1);
+      socket.once('close', () => clearInterval(flood));
+    });
+    const upstreamPort = await listen(upstream);
+    const proxy = await startHttpProxy({ routes: [] });
+    const authHeader = `Proxy-Authorization: Basic ${Buffer.from(`leverframe:${proxy.token}`).toString('base64')}\r\n`;
+    const connectRequest = `CONNECT 127.0.0.1:${upstreamPort} HTTP/1.1\r\nHost: 127.0.0.1:${upstreamPort}\r\n${authHeader}\r\n`;
+
+    try {
+      const client = net.connect(proxy.port, '127.0.0.1');
+      client.on('error', () => {});
+      await once(client, 'connect');
+      client.write(connectRequest);
+      const [firstChunk] = await once(client, 'data') as [Buffer];
+      expect(firstChunk.toString()).toContain('200 Connection Established');
+      // The lone listener added by pipe() rethrows, so a guard must coexist.
+      const tunnelSocket = activeProxySockets(proxy.port).find(
+        candidate => candidate.remotePort === client.localPort,
+      );
+      expect(tunnelSocket?.listenerCount('error')).toBeGreaterThanOrEqual(2);
+      // Reset mid-flood so proxy writes land on the dead socket.
+      client.resetAndDestroy();
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // The proxy process survived the RST iff a fresh tunnel still completes.
+      const probe = net.connect(proxy.port, '127.0.0.1');
+      probe.on('error', () => {});
+      await once(probe, 'connect');
+      probe.write(connectRequest);
+      const [established] = await once(probe, 'data') as [Buffer];
+      expect(established.toString()).toContain('200 Connection Established');
+      probe.destroy();
+    } finally {
+      await proxy.close();
+      await new Promise<void>(resolve => upstream.close(() => resolve()));
+    }
+  });
+
   it('forwards first-party request bytes and auth unchanged', async () => {
     const certificates = ensureHttpProxyCertificates();
     const inferenceLogPath = join(testHome, 'anthropic-inference.jsonl');

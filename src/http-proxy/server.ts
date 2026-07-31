@@ -870,6 +870,8 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
     socket.once('close', () => sockets.delete(socket));
   });
   proxyServer.on('connect', (req, clientSocket, head) => {
+    // Client RSTs are routine. Unlistened, they crash the whole process.
+    clientSocket.on('error', () => clientSocket.destroy());
     const presented = extractProxyPassword(req.headers);
     if (!presented || !constantTimeEquals(presented, proxyAuthToken)) {
       sendConnectProxyAuthRequired(clientSocket);
