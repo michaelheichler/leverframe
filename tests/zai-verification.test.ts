@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { getTemplateById } from '../src/provider-templates.js';
 import { addProviderFromTemplate } from '../src/registry/add-template.js';
 import * as env from '../src/env.js';
@@ -14,6 +17,10 @@ vi.mock('../src/env.js', async importOriginal => {
   };
 });
 vi.mock('../src/provider-factory.js', () => ({ isSdkMigratedNpm: vi.fn(() => true) }));
+vi.mock('../src/registry/credential-lifecycle.js', () => ({
+  journalCredentialWrite: vi.fn(),
+  reconcilePendingCredentialDeletes: vi.fn(async () => ({ deleted: [], pending: [] })),
+}));
 vi.mock('../src/registry/io.js', () => ({
   loadRegistry: vi.fn(),
   loadRegistryStrict: vi.fn(),
@@ -32,6 +39,8 @@ vi.mock('../src/registry/pricing.js', () => ({
 }));
 
 const zai = () => getTemplateById('zai')!;
+
+process.env['LEVERFRAME_HOME'] = join(mkdtempSync(join(tmpdir(), 'leverframe-zai-')), 'home');
 
 describe('z.ai Coding Plan live key verification', () => {
   beforeEach(() => {

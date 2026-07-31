@@ -11,7 +11,8 @@ import { withCredentialMutationLock, withRegistryWriteLockSync } from './registr
 
 const KEYRING_SERVICE = 'leverframe';
 const LEGACY_KEYRING_SERVICES = ['clodex', 'relay-ai'] as const;
-const KEYRING_TIMEOUT_MS = 3_000;
+/** 45s off Linux because killing the helper while a macOS/Windows approval prompt is open corrupts the in-flight journal transaction. */
+export const KEYRING_TIMEOUT_MS = process.platform === 'linux' ? 3_000 : 45_000;
 const FALLBACK_FILE_NAME = 'credentials-fallback.json';
 const FALLBACK_WARNING = 'Using plaintext credential fallback storage (permissions 0600 in a 0700 directory); no at-rest encryption is available';
 const MAX_FALLBACK_BYTES = 16 * 1024 * 1024;
@@ -255,7 +256,18 @@ try {
     }
     if (journal?.mode === 'active') {
       if (!descriptorMatches(journal.active, current)) {
-        throw integrity('published keyring credential does not match its journal');
+        if (current === null) throw integrity('published keyring credential does not match its journal');
+        const adopted = descriptorFor(current);
+        const adoptedKey = adopted.kind === 'chunks' ? markerKey(adopted.marker) : null;
+        const stale = [journal.active, ...journal.retired]
+          .filter(item => item?.kind === 'chunks' && markerKey(item.marker) !== adoptedKey)
+          .slice(0, MAX_JOURNAL_CHUNKS);
+        writeJournal({ schemaVersion: 1, mode: 'active', active: adopted, retired: stale });
+        for (const descriptor of stale) {
+          if (!deleteDescriptor(descriptor)) throw new Error('keyring credential cleanup is incomplete');
+        }
+        writeJournal(finalJournal(adopted));
+        return { active: adopted, adopted: true };
       }
       if (journal.active?.kind === 'chunks') readMarker(input.account, journal.active.marker);
       for (const descriptor of journal.retired) {
@@ -362,10 +374,26 @@ try {
     return true;
   };
 
+  const repairCredential = () => {
+    try { return readCredential(); }
+    catch {
+      remove(JOURNAL_SERVICE, input.account);
+      try { return readCredential(); }
+      catch {
+        remove(input.service, input.account);
+        remove(DELETED_SERVICE, input.account);
+        remove(JOURNAL_SERVICE, input.account);
+        try { for (const item of inventoryChunks()) remove(item.service, item.account); } catch {}
+        return null;
+      }
+    }
+  };
+
   let value = null;
   if (input.operation === 'read') value = readCredential();
   else if (input.operation === 'write') publish(input.value);
   else if (input.operation === 'delete') deleteCredential();
+  else if (input.operation === 'repair') value = repairCredential();
   else throw new Error('Unsupported keyring operation');
   const deleted = input.operation === 'read' && raw(DELETED_SERVICE, input.account) !== null;
   process.stdout.write(JSON.stringify({ ok: true, value, ...(deleted ? { deleted: true } : {}) }));
@@ -379,7 +407,8 @@ try {
 export type KeyringOperation =
   | { operation: 'read'; service: string; account: string }
   | { operation: 'write'; service: string; account: string; value: string }
-  | { operation: 'delete'; service: string; account: string };
+  | { operation: 'delete'; service: string; account: string }
+  | { operation: 'repair'; service: string; account: string };
 
 export type KeyringResult =
   | { ok: true; value: string | null; deleted?: true }
@@ -616,8 +645,11 @@ export async function readStoredCredential(account: string, diag?: (msg: string)
     if (primary.ok && primary.deleted) return null;
     if (primary.ok && primary.value !== null) return primary.value;
     if (!primary.ok) {
+      if (isIntegrityError(primary.error)) {
+        reportWarning(diag, `${classifyKeyringError(primary.error)} (account ${account}); run \`leverframe keyring repair\` to rebuild the journal`);
+        return null;
+      }
       reportWarning(diag, classifyKeyringError(primary.error));
-      if (isIntegrityError(primary.error)) return null;
     }
 
     for (const service of LEGACY_KEYRING_SERVICES) {
@@ -680,6 +712,18 @@ export function deleteStoredCredential(account: string, diag?: (msg: string) => 
     }
     return result.ok && fallbackAbsent;
   });
+}
+
+/**
+ * Repair a corrupted keyring transaction journal for one account. Retains the
+ * published credential when it is readable and clears every leverframe entry
+ * for the account when it is not, so the user can re-add it cleanly.
+ */
+export function repairStoredCredential(account: string): Promise<KeyringResult> {
+  return withCredentialMutationLock(
+    `keyring:${account}`,
+    () => _credentialStoreInternals.keyringOperation({ operation: 'repair', service: KEYRING_SERVICE, account }),
+  );
 }
 
 export async function diagnoseCredentialStorage(env: NodeJS.ProcessEnv = process.env): Promise<CredentialDiagnostic[]> {

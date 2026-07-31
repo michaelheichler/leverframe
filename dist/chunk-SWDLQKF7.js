@@ -1160,7 +1160,7 @@ function withProviderMutationLock(providerSlot, operation) {
 // src/credential-store.ts
 var KEYRING_SERVICE = "leverframe";
 var LEGACY_KEYRING_SERVICES = ["clodex", "relay-ai"];
-var KEYRING_TIMEOUT_MS = 3e3;
+var KEYRING_TIMEOUT_MS = process.platform === "linux" ? 3e3 : 45e3;
 var FALLBACK_FILE_NAME = "credentials-fallback.json";
 var FALLBACK_WARNING = "Using plaintext credential fallback storage (permissions 0600 in a 0700 directory); no at-rest encryption is available";
 var MAX_FALLBACK_BYTES = 16 * 1024 * 1024;
@@ -1398,7 +1398,18 @@ try {
     }
     if (journal?.mode === 'active') {
       if (!descriptorMatches(journal.active, current)) {
-        throw integrity('published keyring credential does not match its journal');
+        if (current === null) throw integrity('published keyring credential does not match its journal');
+        const adopted = descriptorFor(current);
+        const adoptedKey = adopted.kind === 'chunks' ? markerKey(adopted.marker) : null;
+        const stale = [journal.active, ...journal.retired]
+          .filter(item => item?.kind === 'chunks' && markerKey(item.marker) !== adoptedKey)
+          .slice(0, MAX_JOURNAL_CHUNKS);
+        writeJournal({ schemaVersion: 1, mode: 'active', active: adopted, retired: stale });
+        for (const descriptor of stale) {
+          if (!deleteDescriptor(descriptor)) throw new Error('keyring credential cleanup is incomplete');
+        }
+        writeJournal(finalJournal(adopted));
+        return { active: adopted, adopted: true };
       }
       if (journal.active?.kind === 'chunks') readMarker(input.account, journal.active.marker);
       for (const descriptor of journal.retired) {
@@ -1505,10 +1516,26 @@ try {
     return true;
   };
 
+  const repairCredential = () => {
+    try { return readCredential(); }
+    catch {
+      remove(JOURNAL_SERVICE, input.account);
+      try { return readCredential(); }
+      catch {
+        remove(input.service, input.account);
+        remove(DELETED_SERVICE, input.account);
+        remove(JOURNAL_SERVICE, input.account);
+        try { for (const item of inventoryChunks()) remove(item.service, item.account); } catch {}
+        return null;
+      }
+    }
+  };
+
   let value = null;
   if (input.operation === 'read') value = readCredential();
   else if (input.operation === 'write') publish(input.value);
   else if (input.operation === 'delete') deleteCredential();
+  else if (input.operation === 'repair') value = repairCredential();
   else throw new Error('Unsupported keyring operation');
   const deleted = input.operation === 'read' && raw(DELETED_SERVICE, input.account) !== null;
   process.stdout.write(JSON.stringify({ ok: true, value, ...(deleted ? { deleted: true } : {}) }));
@@ -1732,8 +1759,11 @@ async function readStoredCredential(account, diag) {
     if (primary.ok && primary.deleted) return null;
     if (primary.ok && primary.value !== null) return primary.value;
     if (!primary.ok) {
+      if (isIntegrityError(primary.error)) {
+        reportWarning(diag, `${classifyKeyringError(primary.error)} (account ${account}); run \`leverframe keyring repair\` to rebuild the journal`);
+        return null;
+      }
       reportWarning(diag, classifyKeyringError(primary.error));
-      if (isIntegrityError(primary.error)) return null;
     }
     for (const service of LEGACY_KEYRING_SERVICES) {
       const legacy = await readKeyringService(service, account);
@@ -1791,6 +1821,12 @@ function deleteStoredCredential(account, diag) {
     }
     return result.ok && fallbackAbsent;
   });
+}
+function repairStoredCredential(account) {
+  return withCredentialMutationLock(
+    `keyring:${account}`,
+    () => _credentialStoreInternals.keyringOperation({ operation: "repair", service: KEYRING_SERVICE, account })
+  );
 }
 async function diagnoseCredentialStorage(env = process.env) {
   if (process.platform !== "linux") return [];
@@ -1867,6 +1903,9 @@ function buildHttpProxyChildEnv(proxyPort, caCertPath, proxyToken) {
   env["http_proxy"] = proxyUrl;
   env["NODE_EXTRA_CA_CERTS"] = caCertPath;
   return env;
+}
+function oauthProviderKeyringAccount(providerId) {
+  return `oauth:provider:${providerId}`;
 }
 function oauthProviderIdFromAccount(account) {
   const prefix = "oauth:provider:";
@@ -2624,11 +2663,14 @@ export {
   withRegistryWriteLockSync,
   withCredentialMutationLock,
   withProviderMutationLock,
+  classifyKeyringError,
+  repairStoredCredential,
   diagnoseCredentialStorage,
   detectConflicts,
   buildChildEnv,
   applyAnthropicProxyEnvNormalization,
   buildHttpProxyChildEnv,
+  oauthProviderKeyringAccount,
   parseAuthRef,
   resolveProviderCredential,
   resolveProviderOAuthAccountId,
@@ -2655,4 +2697,4 @@ export {
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-WBWH7H64.js.map
+//# sourceMappingURL=chunk-SWDLQKF7.js.map

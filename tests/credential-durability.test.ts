@@ -163,6 +163,59 @@ describe('generational keyring durability', () => {
     expect(Object.keys(deleted['leverframe-chunks'] ?? {})).toEqual([]);
   });
 
+  it('self-heals an active journal that no longer matches the published credential', async () => {
+    const fake = fakeKeyring();
+    const account = 'provider:healed';
+    saveState(fake.statePath, {
+      leverframe: { [account]: 'live-secret' },
+      'leverframe-journal': {
+        [account]: JSON.stringify({
+          schemaVersion: 1,
+          mode: 'active',
+          active: { kind: 'short', digest: createHash('sha256').update('stale-secret').digest('hex') },
+          retired: [],
+        }),
+      },
+    });
+
+    await expect(operation(fake.moduleUrl, {
+      operation: 'read', service: 'leverframe', account,
+    })).resolves.toEqual({ ok: true, value: 'live-secret' });
+    const journal = JSON.parse(state(fake.statePath)['leverframe-journal']![account]!) as { mode: string; active: { digest: string } };
+    expect(journal.mode).toBe('active');
+    expect(journal.active.digest).toBe(createHash('sha256').update('live-secret').digest('hex'));
+  });
+
+  it('repair rebuilds a corrupt journal while keeping a readable credential', async () => {
+    const fake = fakeKeyring();
+    const account = 'provider:repairable';
+    saveState(fake.statePath, {
+      leverframe: { [account]: 'kept-secret' },
+      'leverframe-journal': { [account]: '{not json' },
+    });
+
+    await expect(operation(fake.moduleUrl, {
+      operation: 'repair', service: 'leverframe', account,
+    })).resolves.toEqual({ ok: true, value: 'kept-secret' });
+    expect(JSON.parse(state(fake.statePath)['leverframe-journal']![account]!)).toMatchObject({ mode: 'active' });
+  });
+
+  it('repair clears all entries for an account whose credential is unreadable', async () => {
+    const fake = fakeKeyring();
+    const account = 'provider:lost';
+    saveState(fake.statePath, {
+      leverframe: { [account]: '__relay_chunked__:v3:12345678-1234-4123-8123-123456789abc:2:' + 'a'.repeat(64) },
+      'leverframe-journal': { [account]: '{not json' },
+    });
+
+    await expect(operation(fake.moduleUrl, {
+      operation: 'repair', service: 'leverframe', account,
+    })).resolves.toEqual({ ok: true, value: null });
+    const cleared = state(fake.statePath);
+    expect(cleared.leverframe?.[account]).toBeUndefined();
+    expect(cleared['leverframe-journal']?.[account]).toBeUndefined();
+  });
+
   it('retains a pending deletion when the backend cannot verify inventory', async () => {
     const fake = fakeKeyring({ enumerable: false });
     const account = 'provider:no-inventory';

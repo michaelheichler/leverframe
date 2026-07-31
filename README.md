@@ -145,6 +145,16 @@ For agents view and background-agent setup, see [docs/background-agents.md](docs
 
 On the first normal run, if `~/.leverframe` does not exist, Leverframe copies persisted state from legacy `~/.clodex` without changing or deleting the source. It can also read older relay-ai state. Credential lookup checks the `leverframe` keychain service, then legacy `clodex`, then `relay-ai`, and copies the first legacy hit into `leverframe`.
 
+### Keychain prompts or integrity errors on macOS
+
+Keychain approval prompts bind to the node binary, so a node upgrade makes macOS re-ask for every leverframe Keychain item once. Choose "Always Allow" on each prompt. If startup reports `keyring integrity error` or favorites show as missing credentials afterward, run:
+
+```bash
+leverframe keyring repair
+```
+
+It rebuilds each account's credential journal from the published credential and only clears entries whose credential is genuinely unreadable, telling you which ones to re-add.
+
 ## Known limitations
 
 - Claude Code applies its own pricing table, so its displayed cost can be inaccurate for non-Anthropic models.

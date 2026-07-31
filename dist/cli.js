@@ -13,6 +13,7 @@ import {
   buildChildEnv,
   buildClaudeVersionProbe,
   buildHttpProxyChildEnv,
+  classifyKeyringError,
   claudeCodeClientModelId,
   deleteProviderCredential,
   detectConflicts,
@@ -38,10 +39,12 @@ import {
   launchClaude,
   loadPreferences,
   oauthCredentialToKeychainJson,
+  oauthProviderKeyringAccount,
   parseAuthRef,
   readFileStrict,
   recordLaunchSelection,
   registerServerRuntimeState,
+  repairStoredCredential,
   resolveBridgeMode,
   resolveContextWindow,
   resolveProviderCredential,
@@ -64,10 +67,10 @@ import {
   withProviderMutationLock,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-WBWH7H64.js";
+} from "./chunk-SWDLQKF7.js";
 
 // src/cli.ts
-import pc13 from "picocolors";
+import pc14 from "picocolors";
 
 // src/ui.ts
 import pc from "picocolors";
@@ -14168,6 +14171,60 @@ function planLaunchWizard(opts) {
   return { skip: false, target: null };
 }
 
+// src/keyring-command.ts
+import pc12 from "picocolors";
+function keyringHelpText() {
+  return `${pc12.bold("leverframe keyring")} v${VERSION}
+Inspect and repair the OS keyring entries that hold provider credentials.
+
+${pc12.bold("Usage:")}
+  leverframe keyring repair
+  leverframe keyring repair --account provider:<id>
+  leverframe keyring --help
+
+${pc12.bold("Behavior:")}
+  repair reconciles each account's credential against its transaction journal.
+  A stale journal (for example after a keyring helper was killed mid-write) is
+  rebuilt from the published credential. Only when the credential itself is
+  unreadable are the account's keyring entries cleared so it can be re-added.
+
+${pc12.bold("macOS note:")}
+  Keychain approval prompts bind to the node binary. After a node upgrade,
+  every leverframe Keychain item asks for approval once more. Answer with
+  "Always Allow" so subsequent runs stay silent.`;
+}
+function registryKeyringAccounts() {
+  const accounts = /* @__PURE__ */ new Set();
+  for (const provider of loadRegistry().providers) {
+    if (!provider.authRef.startsWith("keyring:")) continue;
+    accounts.add(provider.authRef.slice("keyring:".length));
+    if (provider.authType === "oauth") accounts.add(oauthProviderKeyringAccount(provider.id));
+  }
+  return [...accounts];
+}
+async function runKeyringRepairCommand(accountFilter) {
+  const accounts = accountFilter ? [accountFilter] : registryKeyringAccounts();
+  if (accounts.length === 0) {
+    console.log("No keyring-backed provider credentials are registered.");
+    return 0;
+  }
+  let failures = 0;
+  for (const account of accounts) {
+    const result = await repairStoredCredential(account);
+    if (!result.ok) {
+      failures += 1;
+      console.error(`${pc12.red("\u2717")} ${account}: ${classifyKeyringError(result.error)}`);
+      continue;
+    }
+    if (result.value !== null) console.log(`${pc12.green("\u2713")} ${account}: credential intact, journal verified`);
+    else console.log(`${pc12.yellow("\u2022")} ${account}: no readable credential remains. Re-add it via \`leverframe providers\` if this provider needs one.`);
+  }
+  if (process.platform === "darwin") {
+    console.log(pc12.dim('If macOS shows Keychain prompts, choose "Always Allow". A node upgrade invalidates prior approvals.'));
+  }
+  return failures === 0 ? 0 : 1;
+}
+
 // src/patcher.ts
 import { createHash as createHash11 } from "crypto";
 import { readFileSync as readFileSync7 } from "fs";
@@ -14677,7 +14734,7 @@ function withPatchTargetLock(identity, operation, options = {}) {
 }
 
 // src/patch-presenter.ts
-import pc12 from "picocolors";
+import pc13 from "picocolors";
 import * as p11 from "@clack/prompts";
 var clackPatchPresenter = {
   error(message2) {
@@ -14690,10 +14747,10 @@ var clackPatchPresenter = {
     p11.log.success(message2);
   },
   detail(message2) {
-    p11.log.info(pc12.dim(message2));
+    p11.log.info(pc13.dim(message2));
   },
   notice(message2) {
-    console.error(pc12.dim(message2));
+    console.error(pc13.dim(message2));
   },
   async confirm(message2) {
     const answer = await p11.confirm({ message: message2, initialValue: false });
@@ -15974,6 +16031,32 @@ function parseArgs(args) {
     if (rest.includes("--version") || rest.includes("-v")) parsed2.showVersion = true;
     return parsed2;
   }
+  if (first === "keyring") {
+    const parsed2 = emptyParsed("keyring");
+    const action = rest[0];
+    if (rest.includes("--help") || rest.includes("-h")) {
+      parsed2.showHelp = true;
+      return parsed2;
+    }
+    if (rest.includes("--version") || rest.includes("-v")) {
+      parsed2.showVersion = true;
+      return parsed2;
+    }
+    if (action !== "repair") {
+      parsed2.error = action ? `Unknown keyring action: ${action}` : "Usage: leverframe keyring repair [--account <account>]";
+      return parsed2;
+    }
+    for (let i = 1; i < rest.length; i += 1) {
+      const arg = rest[i];
+      if (arg === "--account" || arg.startsWith("--account=")) {
+        const consumed = consumeServerOptionValue(arg, rest, i, "--account", parsed2);
+        if (!consumed) return parsed2;
+        parsed2.keyringRepairAccount = consumed.value;
+        i = consumed.next;
+      } else if (!parsed2.error) parsed2.error = `Unknown keyring option: ${arg}`;
+    }
+    return parsed2;
+  }
   if (first === "patch") {
     const parsed2 = emptyParsed("patch");
     for (let i = 0; i < rest.length; i += 1) {
@@ -16030,10 +16113,10 @@ function parseArgs(args) {
   return parsed;
 }
 function rootHelpText() {
-  return `${pc13.bold("leverframe")} v${VERSION}
+  return `${pc14.bold("leverframe")} v${VERSION}
 Bridge Claude Code to supported OpenAI-compatible providers.
 
-${pc13.bold("Usage:")}
+${pc14.bold("Usage:")}
   leverframe claude [options] [claude-flags]
   leverframe server [options]
   leverframe patch [--restore]
@@ -16044,11 +16127,11 @@ ${pc13.bold("Usage:")}
   leverframe --help
   leverframe --version
 
-${pc13.bold("Root options:")}
+${pc14.bold("Root options:")}
   -h, --help       Show this help
   -v, --version    Show version
 
-${pc13.bold("Commands:")}
+${pc14.bold("Commands:")}
   claude      Launch Claude Code bridged to supported providers
   server      Run a foreground gateway (endpoint or proxy mode)
   patch       Patch the Claude Code binary so leverframe models are first-class
@@ -16057,7 +16140,7 @@ ${pc13.bold("Commands:")}
   providers   Add or sign in to supported providers
   executions  Inspect and reconcile interrupted executions
 
-${pc13.bold("Bridge modes (claude and server):")}
+${pc14.bold("Bridge modes (claude and server):")}
   --endpoint   Local Anthropic-format gateway; Claude Code launches with
                ANTHROPIC_BASE_URL pointed at it
   --proxy      Selective MITM of api.anthropic.com; Claude Code keeps its
@@ -16067,7 +16150,7 @@ ${pc13.bold("Bridge modes (claude and server):")}
                command's default. Without --save-mode a mode flag applies
                to that run only.
 
-${pc13.bold("Examples:")}
+${pc14.bold("Examples:")}
   leverframe claude
   leverframe claude --proxy
   leverframe models
@@ -16077,15 +16160,15 @@ ${pc13.bold("Examples:")}
   leverframe claude -- --print "hello"`;
 }
 function claudeHelpText() {
-  return `${pc13.bold("leverframe claude")} v${VERSION}
+  return `${pc14.bold("leverframe claude")} v${VERSION}
 Launch Claude Code bridged to supported OpenAI-compatible providers.
 
-${pc13.bold("Usage:")}
+${pc14.bold("Usage:")}
   leverframe claude [options] [claude-flags]
   leverframe claude --help
   leverframe claude --version
 
-${pc13.bold("Options:")}
+${pc14.bold("Options:")}
   --endpoint   Endpoint bridge mode for this run: local gateway + ANTHROPIC_BASE_URL
   --proxy      Proxy bridge mode for this run: keep Claude Code's Anthropic auth;
                route leverframe: models to supported providers (default when nothing is saved)
@@ -16097,20 +16180,20 @@ ${pc13.bold("Options:")}
   --help       Show this command help
   --version    Show version
 
-${pc13.bold("Providers:")}
+${pc14.bold("Providers:")}
   openai         OpenAI API key (platform.openai.com)
   openai-oauth   ChatGPT/Codex plan OAuth \u2014 sign in with leverframe providers auth openai
   kimi           Kimi Coding Plan membership key
   moonshot       Moonshot pay-as-you-go API key
   zai            z.ai Coding Plan API key
 
-${pc13.bold("Model switching:")}
+${pc14.bold("Model switching:")}
   Run leverframe models to save favorites (max ${MAX_MODEL_CATALOG}).
   When favorites exist, endpoint mode starts a multi-route proxy and Claude
   Code /model lists your starting model plus favorites for live switching.
   With no favorites, launch uses a single model.
 
-${pc13.bold("Proxy mode:")}
+${pc14.bold("Proxy mode:")}
   leverframe claude --proxy leaves ANTHROPIC_BASE_URL unset and launches
   Claude Code with its normal Anthropic login. Favorite models from supported
   OpenAI-compatible providers are available by typing
@@ -16118,11 +16201,11 @@ ${pc13.bold("Proxy mode:")}
   Save short names with leverframe models --alias, and run --list to print them.
   Run leverframe patch to make those names first-class inside Claude Code.
 
-${pc13.bold("Note:")}
+${pc14.bold("Note:")}
   Claude Code may save the launched model to ~/.claude/settings.json.
   Bare claude later can still show that model \u2014 reset with claude --model sonnet.
 
-${pc13.bold("Examples:")}
+${pc14.bold("Examples:")}
   leverframe claude
   leverframe claude -c
   leverframe claude --resume abc-123
@@ -16135,18 +16218,18 @@ ${pc13.bold("Examples:")}
   leverframe claude -- --dangerously-skip-permissions`;
 }
 function serverHelpText() {
-  return `${pc13.bold("leverframe server")} v${VERSION}
+  return `${pc14.bold("leverframe server")} v${VERSION}
 Run a foreground gateway bridging Anthropic-format requests to supported OpenAI-compatible providers.
-Two modes: ${pc13.bold("endpoint")} (an Anthropic-format HTTP gateway you point clients at) and
-${pc13.bold("proxy")} (a selective api.anthropic.com MITM proxy; clients keep their Anthropic
+Two modes: ${pc14.bold("endpoint")} (an Anthropic-format HTTP gateway you point clients at) and
+${pc14.bold("proxy")} (a selective api.anthropic.com MITM proxy; clients keep their Anthropic
 auth while leverframe: models route to supported providers).
 
-${pc13.bold("Usage:")}
+${pc14.bold("Usage:")}
   leverframe server [--endpoint | --proxy] [options]
   leverframe server --help
   leverframe server --version
 
-${pc13.bold("Common options (both modes):")}
+${pc14.bold("Common options (both modes):")}
   --endpoint                   Endpoint mode for this run
   --proxy                      Proxy mode for this run (default when nothing is
                                saved; local only)
@@ -16161,7 +16244,7 @@ ${pc13.bold("Common options (both modes):")}
                                head decisions
   --help, --version            Help / version
 
-${pc13.bold("Endpoint mode only")} ${pc13.dim("(error if combined with --proxy)")}:
+${pc14.bold("Endpoint mode only")} ${pc14.dim("(error if combined with --proxy)")}:
   --quick, --saved             Start immediately from saved/default settings,
                                skipping the wizard
   --listen local|network       One-run listen mode override
@@ -16173,10 +16256,10 @@ ${pc13.bold("Endpoint mode only")} ${pc13.dim("(error if combined with --proxy)"
                                one-run password, or run 'leverframe server'
                                interactively to enter one hidden
 
-${pc13.bold("Proxy mode only:")}
+${pc14.bold("Proxy mode only:")}
   (no extra options \u2014 proxy mode takes only the common options above)
 
-${pc13.bold("Bare leverframe server:")}
+${pc14.bold("Bare leverframe server:")}
   Uses the saved default mode (proxy if none saved). Proxy mode starts
   immediately. Endpoint mode on a TTY opens a short wizard: start from saved
   settings, or configure \u2014 favorites-only catalog?, which providers to expose,
@@ -16185,7 +16268,7 @@ ${pc13.bold("Bare leverframe server:")}
   prompts and starts from saved settings; network mode then needs a saved
   password or LEVERFRAME_SERVER_PASSWORD.
 
-${pc13.bold("--mask-gateway-ids explained:")}
+${pc14.bold("--mask-gateway-ids explained:")}
   Endpoint-mode discovery ids look like anthropic-openai-oauth__gpt-5.6.
   Some Claude clients validate model names (Claude Desktop / Cowork pickers,
   Claude Code skill/agent "model:" frontmatter) and reject or filter ids that
@@ -16196,16 +16279,16 @@ ${pc13.bold("--mask-gateway-ids explained:")}
   are unreadable, so copy them exactly from the printed catalog. Masking is on
   by default; use --no-mask-gateway-ids for clients that don't need it.
 
-${pc13.bold("Proxy mode env:")}
+${pc14.bold("Proxy mode env:")}
   Start leverframe server --proxy, then export the HTTPS_PROXY, HTTP_PROXY,
   and NODE_EXTRA_CA_CERTS values it prints. Do not set ANTHROPIC_BASE_URL.
 
-${pc13.bold("Gateway endpoints (endpoint mode):")}
+${pc14.bold("Gateway endpoints (endpoint mode):")}
   Anthropic-compatible:  ANTHROPIC_BASE_URL=http://127.0.0.1:17645/anthropic
   OpenAI-compatible:     OPENAI_BASE_URL=http://127.0.0.1:17645/openai/v1
   API key: use anything locally; use the server password in network mode.
 
-${pc13.bold("Examples:")}
+${pc14.bold("Examples:")}
   # Endpoint gateway serving only your favorites, no prompts, for a local client
   leverframe server --endpoint --quick --providers favorites
 
@@ -16213,10 +16296,10 @@ ${pc13.bold("Examples:")}
   leverframe server --proxy`;
 }
 function modelsHelpText() {
-  return `${pc13.bold("leverframe favorites")} v${VERSION}
+  return `${pc14.bold("leverframe favorites")} v${VERSION}
 Manage favorite models for mid-session switching.
 
-${pc13.bold("Usage:")}
+${pc14.bold("Usage:")}
   leverframe favorites
   leverframe models --list
   leverframe models --alias sol=leverframe:openai-oauth:gpt-5.6-sol
@@ -16225,7 +16308,7 @@ ${pc13.bold("Usage:")}
   leverframe favorites --help
   leverframe favorites --version
 
-${pc13.bold("Behavior:")}
+${pc14.bold("Behavior:")}
   Opens an interactive manager to add or remove favorites.
   Search all providers at once (paginated results) or browse one provider at a time.
   Favorites are saved to ~/.leverframe/config.json (max ${MAX_MODEL_CATALOG}).
@@ -16235,24 +16318,24 @@ ${pc13.bold("Behavior:")}
   target is leverframe:<provider-id>:<model-id> (the leverframe: prefix is optional).
   --unalias <name> removes a saved short name.
 
-${pc13.bold("How it works:")}
+${pc14.bold("How it works:")}
   claude and server use the global favorites list.
   Favorites appear in the /model switch menu (endpoint mode) and are routable
   by name in proxy mode. leverframe patch bakes favorites + aliases into the
   Claude Code binary so they pass model validation and report real context.
 
-${pc13.bold("Examples:")}
+${pc14.bold("Examples:")}
   leverframe favorites
   leverframe models --alias sol=leverframe:openai-oauth:gpt-5.6-sol
   leverframe claude    # switch menu active when favorites are set`;
 }
 function patchHelpText() {
-  return `${pc13.bold("leverframe patch")} v${VERSION}
+  return `${pc14.bold("leverframe patch")} v${VERSION}
 Patch the installed Claude Code binary so leverframe favorites and aliases are
 first-class: accepted by the Agent tool, listed in /model, resolved to their
 real ids, and reporting the correct context window.
 
-${pc13.bold("Usage:")}
+${pc14.bold("Usage:")}
   leverframe patch
   leverframe patch --restore
   leverframe patch --diagnose
@@ -16260,7 +16343,7 @@ ${pc13.bold("Usage:")}
   leverframe patch --target <path>
   leverframe patch --help
 
-${pc13.bold("Options:")}
+${pc14.bold("Options:")}
   --restore     Restore the pristine (unpatched) Claude Code binary
   --trace       Show per-patch-site results (OK/SKIP/FAIL)
   --diagnose    Read-only, network-free report: resolved installation, patch
@@ -16271,7 +16354,7 @@ ${pc13.bold("Options:")}
                 Pin an explicit Claude Code installation instead of the usual
                 discovery order (applies to patch, --restore, and --diagnose)
 
-${pc13.bold("Behavior:")}
+${pc14.bold("Behavior:")}
   The patch map is built automatically from your leverframe favorites and aliases
   (leverframe models); context windows come from provider metadata. Patch state
   is per installation, keyed by its canonical path, under
@@ -16293,7 +16376,7 @@ async function launchClaudeViaCatalog(options) {
   try {
     proxyHandle = await startProxyCatalog(catalogRoutes, startingRoute.aliasId, trace);
     p12.log.info(
-      `Switch menu active \u2014 proxy on port ${proxyHandle.port} ` + pc13.dim(`(${catalogRoutes.length} model${catalogRoutes.length !== 1 ? "s" : ""} in /model)`)
+      `Switch menu active \u2014 proxy on port ${proxyHandle.port} ` + pc14.dim(`(${catalogRoutes.length} model${catalogRoutes.length !== 1 ? "s" : ""} in /model)`)
     );
   } catch (err) {
     p12.log.error(`Failed to start proxy: ${err instanceof Error ? err.message : String(err)}`);
@@ -16392,7 +16475,7 @@ async function runModelsCommand(opts = {}) {
   }));
   if (favoriteProviders.length === 0) {
     p12.log.warn("No providers found.");
-    p12.log.info(`${pc13.dim("Add a provider with ")}${pc13.cyan("leverframe providers")}${pc13.dim(".")}`);
+    p12.log.info(`${pc14.dim("Add a provider with ")}${pc14.cyan("leverframe providers")}${pc14.dim(".")}`);
     leverframeOutro("Done");
     return 0;
   }
@@ -16410,13 +16493,13 @@ async function runModelsCommand(opts = {}) {
     for (let i = 0; i < favorites.length; i++) {
       const fav = favorites[i];
       const entry = modelLookup.get(`${fav.providerId}:${fav.modelId}`);
-      const label = entry ? `${fmtEnabledStar(true)} ${fmtModel(entry.modelName)} ${pc13.dim(`(${entry.providerName})`)}` : pc13.dim(`\u2605 ${fav.modelId} \u2014 provider gone`);
+      const label = entry ? `${fmtEnabledStar(true)} ${fmtModel(entry.modelName)} ${pc14.dim(`(${entry.providerName})`)}` : pc14.dim(`\u2605 ${fav.modelId} \u2014 provider gone`);
       options.push({ value: `fav-${i}`, label, hint: "select to remove" });
     }
     const atCap = favorites.length >= maxFavorites;
     options.push({
       value: "__add__",
-      label: atCap ? pc13.dim(`+ Add a model \u2192 (limit of ${maxFavorites} reached)`) : pc13.cyan("+ Add a model \u2192"),
+      label: atCap ? pc14.dim(`+ Add a model \u2192 (limit of ${maxFavorites} reached)`) : pc14.cyan("+ Add a model \u2192"),
       hint: atCap ? "Remove a favorite first to make room" : `${allProviders.length} provider${allProviders.length !== 1 ? "s" : ""} available`
     });
     options.push({ value: "__done__", label: "Done", hint: "" });
@@ -16438,12 +16521,12 @@ async function runModelsCommand(opts = {}) {
         options: [
           {
             value: "global",
-            label: pc13.cyan("Search all providers"),
+            label: pc14.cyan("Search all providers"),
             hint: `${globalCount} models \xB7 ${favoriteProviders.length} provider${favoriteProviders.length !== 1 ? "s" : ""}`
           },
           {
             value: "provider",
-            label: pc13.cyan("Browse by provider \u2192"),
+            label: pc14.cyan("Browse by provider \u2192"),
             hint: "Pick one provider first"
           }
         ]
@@ -16472,10 +16555,10 @@ async function runModelsCommand(opts = {}) {
           provider = favoriteProviders.find((ap) => ap.id === pickedProviderId);
           const options2 = provider.models.map((m) => {
             const favorited = isFavorite(favorites, { providerId: provider.id, modelId: m.id });
-            return modelSelectOption(m, favorited ? pc13.yellow("\u2605 already favorite") : "");
+            return modelSelectOption(m, favorited ? pc14.yellow("\u2605 already favorite") : "");
           });
           const pickedModelIds = await p12.multiselect({
-            message: `Select models to add from ${provider.name} ${pc13.dim("(Space to select, Enter to confirm)")}`,
+            message: `Select models to add from ${provider.name} ${pc14.dim("(Space to select, Enter to confirm)")}`,
             options: options2,
             required: false
           });
@@ -16542,7 +16625,7 @@ async function runModelsCommand(opts = {}) {
   }
   leverframeOutro(
     favorites.length === 0 ? "No favorites saved" : `${favorites.length} favorite${favorites.length !== 1 ? "s" : ""} saved`,
-    favorites.length === 0 ? pc13.dim("Launch uses single-model mode") : pc13.cyan("/model menu ready on next launch")
+    favorites.length === 0 ? pc14.dim("Launch uses single-model mode") : pc14.cyan("/model menu ready on next launch")
   );
   return 0;
 }
@@ -16558,7 +16641,7 @@ async function runClaudeHttpProxyCommand(options) {
     try {
       const loaded2 = await loadHttpProxyRoutes();
       console.log("");
-      console.log(pc13.bold(pc13.cyan("  DRY RUN \u2014 proxy bridge mode")));
+      console.log(pc14.bold(pc14.cyan("  DRY RUN \u2014 proxy bridge mode")));
       console.log("  ANTHROPIC_BASE_URL is not set by leverframe.");
       console.log("  HTTPS_PROXY/HTTP_PROXY=http://127.0.0.1:<random-port>");
       console.log("  NODE_EXTRA_CA_CERTS=~/.leverframe/http-proxy/leverframe-ca.pem");
@@ -16664,7 +16747,7 @@ async function runClaudeCommand(parsed) {
   setAgentStdoutMode(agentStdout);
   const installation = resolveClaudeInstallation();
   if (!installation) {
-    console.error(pc13.red("\nError: claude binary not found on PATH.\n"));
+    console.error(pc14.red("\nError: claude binary not found on PATH.\n"));
     console.error("Install Claude Code:");
     console.error("  npm install -g @anthropic-ai/claude-code\n");
     return 1;
@@ -16686,7 +16769,7 @@ async function runClaudeCommand(parsed) {
     prefs
   });
   if (launchPlan.error) {
-    console.error(pc13.red(`
+    console.error(pc14.red(`
 Error: ${launchPlan.error}
 `));
     return 1;
@@ -16697,7 +16780,7 @@ Error: ${launchPlan.error}
       launchPlan.skip = true;
       launchPlan.target = { providerId: savedPrefs.lastProvider, modelId: savedPrefs.lastModel };
     } else {
-      console.error(pc13.red("\nError: interactive wizard requires a TTY. Pass --provider and --model, or run once interactively.\n"));
+      console.error(pc14.red("\nError: interactive wizard requires a TTY. Pass --provider and --model, or run once interactively.\n"));
       return 1;
     }
   }
@@ -16712,7 +16795,7 @@ Error: ${launchPlan.error}
     try {
       catalog = await fetchProviderCatalog();
     } catch (err) {
-      console.error(pc13.red(String(err instanceof Error ? err.message : err)));
+      console.error(pc14.red(String(err instanceof Error ? err.message : err)));
       return 1;
     }
   } else {
@@ -16722,7 +16805,7 @@ Error: ${launchPlan.error}
       catalog = await fetchProviderCatalog();
     } catch (err) {
       catalogSpinner.stop("");
-      console.error(pc13.red(String(err instanceof Error ? err.message : err)));
+      console.error(pc14.red(String(err instanceof Error ? err.message : err)));
       return 1;
     }
     catalogSpinner.stop("");
@@ -16730,7 +16813,7 @@ Error: ${launchPlan.error}
   const allProviders = providersForTarget(providersForPicker(catalog), "claude");
   if (allProviders.length === 0) {
     p12.log.warn("No providers available.");
-    p12.log.info(pc13.dim("Run leverframe providers to get started."));
+    p12.log.info(pc14.dim("Run leverframe providers to get started."));
     return 0;
   }
   const providerOptions = allProviders.map((lp) => providerSelectOption(lp));
@@ -16834,15 +16917,15 @@ Error: ${launchPlan.error}
     if (dryRun) {
       const endpoint = selectedModel.baseUrl ?? selectedModel.completionsUrl ?? "(unknown)";
       console.log("");
-      console.log(pc13.bold(pc13.cyan("  DRY RUN \u2014 would execute (switch-menu mode):")));
+      console.log(pc14.bold(pc14.cyan("  DRY RUN \u2014 would execute (switch-menu mode):")));
       console.log("");
-      console.log(`  ${pc13.bold("Provider:")}      ${activeProvider.name}`);
-      console.log(`  ${pc13.bold("Starting model:")} ${selectedModel.id}`);
-      console.log(`  ${pc13.bold("Endpoint:")}      ${endpoint}`);
-      console.log(`  ${pc13.bold("/model catalog:")} ${catalogRoutes.length} model(s)`);
-      catalogRoutes.forEach((r) => console.log(`    ${pc13.dim(r.displayName)}`));
+      console.log(`  ${pc14.bold("Provider:")}      ${activeProvider.name}`);
+      console.log(`  ${pc14.bold("Starting model:")} ${selectedModel.id}`);
+      console.log(`  ${pc14.bold("Endpoint:")}      ${endpoint}`);
+      console.log(`  ${pc14.bold("/model catalog:")} ${catalogRoutes.length} model(s)`);
+      catalogRoutes.forEach((r) => console.log(`    ${pc14.dim(r.displayName)}`));
       console.log("");
-      console.log(pc13.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
+      console.log(pc14.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
       console.log("");
       return 0;
     }
@@ -16859,15 +16942,15 @@ Error: ${launchPlan.error}
     const formatDesc = selectedModel.modelFormat === "anthropic" ? "direct passthrough" : "via SDK adapter proxy";
     const endpoint = selectedModel.modelFormat === "anthropic" ? selectedModel.baseUrl ?? "(unknown)" : selectedModel.npm ?? "SDK";
     console.log("");
-    console.log(pc13.bold(pc13.cyan("  DRY RUN \u2014 would execute:")));
+    console.log(pc14.bold(pc14.cyan("  DRY RUN \u2014 would execute:")));
     console.log("");
-    console.log(`  ${pc13.bold("Provider:")}  ${activeProvider.name}`);
-    console.log(`  ${pc13.bold("Model:")}     ${selectedModel.id}`);
-    console.log(`  ${pc13.bold("Format:")}    ${selectedModel.modelFormat} (${formatDesc})`);
-    console.log(`  ${pc13.bold(selectedModel.modelFormat === "anthropic" ? "Endpoint:" : "SDK npm:")} ${endpoint}`);
-    console.log(`  ${pc13.bold("Key:")}       ${activeProvider.name} provider key`);
+    console.log(`  ${pc14.bold("Provider:")}  ${activeProvider.name}`);
+    console.log(`  ${pc14.bold("Model:")}     ${selectedModel.id}`);
+    console.log(`  ${pc14.bold("Format:")}    ${selectedModel.modelFormat} (${formatDesc})`);
+    console.log(`  ${pc14.bold(selectedModel.modelFormat === "anthropic" ? "Endpoint:" : "SDK npm:")} ${endpoint}`);
+    console.log(`  ${pc14.bold("Key:")}       ${activeProvider.name} provider key`);
     console.log("");
-    console.log(pc13.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
+    console.log(pc14.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
     console.log("");
     return 0;
   }
@@ -16941,7 +17024,7 @@ Error: ${launchPlan.error}
       );
       if (!isAgentStdoutMode()) {
         p12.log.info(
-          `SDK adapter proxy started on port ${proxyHandle.port}` + (selectedModel.npm ? pc13.dim(` (${selectedModel.npm})`) : "")
+          `SDK adapter proxy started on port ${proxyHandle.port}` + (selectedModel.npm ? pc14.dim(` (${selectedModel.npm})`) : "")
         );
       }
     } catch (err) {
@@ -16979,7 +17062,7 @@ async function main(args = process.argv.slice(2)) {
   }
   const parsed = parseArgs(args);
   if (parsed.error) {
-    console.error(pc13.red(`
+    console.error(pc14.red(`
 Error: ${parsed.error}
 `));
     printHelp(rootHelpText());
@@ -17057,6 +17140,17 @@ Error: ${parsed.error}
     }
     return runExecutionsCommand(parsed.claudeArgs);
   }
+  if (parsed.command === "keyring") {
+    if (parsed.showVersion) {
+      console.log(VERSION);
+      return 0;
+    }
+    if (parsed.showHelp) {
+      printHelp(keyringHelpText());
+      return 0;
+    }
+    return runKeyringRepairCommand(parsed.keyringRepairAccount);
+  }
   if (parsed.command === "patch") {
     if (parsed.showVersion) {
       console.log(VERSION);
@@ -17099,7 +17193,7 @@ if (isCliEntryPoint()) {
     if (err === /* @__PURE__ */ Symbol.for("clack:cancel")) {
       process.exit(0);
     }
-    console.error(pc13.red("\nUnexpected error:"), err);
+    console.error(pc14.red("\nUnexpected error:"), err);
     process.exit(1);
   });
 }

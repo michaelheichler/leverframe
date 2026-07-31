@@ -53,6 +53,7 @@ import {
   reportSkippedHttpProxyFavorites,
   startConfiguredHttpProxy,
 } from './http-proxy/index.js';
+import { keyringHelpText, runKeyringRepairCommand } from './keyring-command.js';
 import { runPatchCommand, runLaunchPatchCheck } from './patcher.js';
 import { installOutboundProxyDispatcher } from './outbound-proxy.js';
 import { runExecutionsCommand } from './executions-command.js';
@@ -277,6 +278,28 @@ export function parseArgs(args: string[]): ParsedArgs {
     parsed.claudeArgs = rest;
     if (rest.includes('--help') || rest.includes('-h')) parsed.showHelp = true;
     if (rest.includes('--version') || rest.includes('-v')) parsed.showVersion = true;
+    return parsed;
+  }
+
+  if (first === 'keyring') {
+    const parsed = emptyParsed('keyring');
+    const action = rest[0];
+    if (rest.includes('--help') || rest.includes('-h')) { parsed.showHelp = true; return parsed; }
+    if (rest.includes('--version') || rest.includes('-v')) { parsed.showVersion = true; return parsed; }
+    if (action !== 'repair') {
+      parsed.error = action ? `Unknown keyring action: ${action}` : 'Usage: leverframe keyring repair [--account <account>]';
+      return parsed;
+    }
+    for (let i = 1; i < rest.length; i += 1) {
+      const arg = rest[i]!;
+      if (arg === '--account' || arg.startsWith('--account=')) {
+        const consumed = consumeServerOptionValue(arg, rest, i, '--account', parsed);
+        if (!consumed) return parsed;
+        parsed.keyringRepairAccount = consumed.value;
+        i = consumed.next;
+      }
+      else if (!parsed.error) parsed.error = `Unknown keyring option: ${arg}`;
+    }
     return parsed;
   }
 
@@ -1511,6 +1534,18 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
     return runExecutionsCommand(parsed.claudeArgs);
+  }
+
+  if (parsed.command === 'keyring') {
+    if (parsed.showVersion) {
+      console.log(VERSION);
+      return 0;
+    }
+    if (parsed.showHelp) {
+      printHelp(keyringHelpText());
+      return 0;
+    }
+    return runKeyringRepairCommand(parsed.keyringRepairAccount);
   }
 
   if (parsed.command === 'patch') {

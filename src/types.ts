@@ -4,7 +4,7 @@ import type { FreeStatus } from './free-models.js';
 
 export type ModelFormat = 'anthropic' | 'openai' | 'unsupported';
 
-export type StarterCommand = 'root' | 'claude' | 'server' | 'models' | 'providers' | 'patch' | 'executions';
+export type StarterCommand = 'root' | 'claude' | 'server' | 'models' | 'providers' | 'patch' | 'executions' | 'keyring';
 
 export interface ModelCost {
   input: number;
@@ -146,6 +146,8 @@ export interface ParsedArgs {
   patchJson?: boolean;
   /** leverframe patch --target <path>: pin an explicit Claude Code installation path. */
   patchTarget?: string;
+  /** leverframe keyring repair: limit the repair to one keyring account. */
+  keyringRepairAccount?: string;
   error?: string;
 }
 
