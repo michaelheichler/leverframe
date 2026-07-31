@@ -1,0 +1,34 @@
+dist/chunk-KVOUUEN4.js
+  s_c97e9d0ceb98af::t_fb0dc767616137 1-2700
+package.json
+  s_c97e9d0ceb98af::t_fb0dc767616137 3
+dist/cli.js
+  s_c97e9d0ceb98af::t_9a6784b0bea511 13301
+  s_c97e9d0ceb98af::t_fb0dc767616137 70
+src/http-proxy/server.ts
+  s_c97e9d0ceb98af::t_1d06a4169766bf 874
+  s_c97e9d0ceb98af::t_bdb99e55673319 873
+tests/http-proxy-server.test.ts
+  s_c97e9d0ceb98af::t_c71da60f630c77 153-157,159-162,165-170,176-178,180-187,190
+  s_c97e9d0ceb98af::t_903f42c342c718 163-164,179,188-189,191-193
+  s_c97e9d0ceb98af::t_2dab4872d59145 171-175
+  s_c97e9d0ceb98af::t_4da9a024581e05 158
+dist/claude-wrapper.js
+  s_c97e9d0ceb98af::t_fb0dc767616137 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "cadfb1f5f057dbf7809c1a84aba9787db78fa652",
+  "prompts": {},
+  "sessions": {
+    "s_c97e9d0ceb98af": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6c494c1c-8ebd-40bb-a2b3-53bde30528e3",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}
