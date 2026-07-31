@@ -1,0 +1,20 @@
+tests/proxy.test.ts
+  s_08ba2c175a7b6a::t_a2ec28adbd534b 993-994
+  s_08ba2c175a7b6a::t_06dceca02eb537 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "dda9286ddf098705c97ed20f5fc57359d571e357",
+  "prompts": {},
+  "sessions": {
+    "s_08ba2c175a7b6a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ecee24be-049d-42c7-a48c-271be0c67db5",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}
