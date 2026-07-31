@@ -224,7 +224,9 @@ describe('translateRequest', () => {
     expect(params.instructions).toBe('be brief');
     expect(params.maxOutputTokens).toBe(256);
     expect(params.temperature).toBe(0.5);
+    expect(params.maxRetries).toBe(1);
     expect(params.providerOptions).toEqual({ google: { thinkingConfig: { includeThoughts: true } } });
+    expect(params.inputTokensIncludeCache).toBe(false);
   });
 
   it('requests OpenAI encrypted reasoning for Responses API round-trip', () => {
@@ -235,6 +237,19 @@ describe('translateRequest', () => {
     expect(params.providerOptions?.openai).toMatchObject({
       store: false, include: ['reasoning.encrypted_content'],
     });
+    expect(params.inputTokensIncludeCache).toBe(true);
+    expect(translateRequest({
+      model: 'claude-test',
+      messages: [{ role: 'user', content: 'hi' }],
+    }, '@ai-sdk/anthropic').inputTokensIncludeCache).toBe(true);
+    expect(translateRequest({
+      model: 'compatible-test',
+      messages: [{ role: 'user', content: 'hi' }],
+    }, '@ai-sdk/openai-compatible').inputTokensIncludeCache).toBe(true);
+    expect(translateRequest({
+      model: 'vertex-claude-test',
+      messages: [{ role: 'user', content: 'hi' }],
+    }, '@ai-sdk/google-vertex/anthropic').inputTokensIncludeCache).toBe(true);
   });
 
   it('sends instructions via providerOptions and omits system/max_tokens for OpenAI OAuth', () => {
@@ -620,6 +635,7 @@ describe('generateAnthropicResponse', () => {
     const cases = [
       [
         { inputTokens: 100, outputTokens: 5 },
+        false,
         { input_tokens: 100, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
       ],
       [
@@ -628,11 +644,31 @@ describe('generateAnthropicResponse', () => {
           outputTokens: 3,
           inputTokenDetails: { cacheReadTokens: 20, cacheWriteTokens: 80 },
         },
+        true,
         { input_tokens: 20, output_tokens: 3, cache_creation_input_tokens: 80, cache_read_input_tokens: 20 },
       ],
       [
         { inputTokens: 20, outputTokens: 4, inputTokenDetails: { cacheReadTokens: 80 } },
+        false,
         { input_tokens: 20, output_tokens: 4, cache_creation_input_tokens: 0, cache_read_input_tokens: 80 },
+      ],
+      [
+        {
+          inputTokens: 120,
+          outputTokens: 4,
+          inputTokenDetails: { noCacheTokens: 33, cacheReadTokens: 80 },
+        },
+        true,
+        { input_tokens: 33, output_tokens: 4, cache_creation_input_tokens: 0, cache_read_input_tokens: 80 },
+      ],
+      [
+        {
+          inputTokens: 80,
+          outputTokens: 4,
+          inputTokenDetails: { noCacheTokens: 0, cacheReadTokens: 80 },
+        },
+        true,
+        { input_tokens: 0, output_tokens: 4, cache_creation_input_tokens: 0, cache_read_input_tokens: 80 },
       ],
       [
         {
@@ -640,11 +676,12 @@ describe('generateAnthropicResponse', () => {
           outputTokens: -1,
           inputTokenDetails: { cacheReadTokens: -2, cacheWriteTokens: Number.POSITIVE_INFINITY },
         },
+        false,
         { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
       ],
     ] as const;
 
-    for (const [usage, expected] of cases) {
+    for (const [usage, inputTokensIncludeCache, expected] of cases) {
       vi.resetModules();
       vi.doMock('ai', () => ({
         generateText: vi.fn(async (_options: { abortSignal: AbortSignal }) => ({
@@ -659,7 +696,11 @@ describe('generateAnthropicResponse', () => {
       }));
 
       const { generateAnthropicResponse } = await import('../src/sdk-adapter.js');
-      const body = await generateAnthropicResponse({} as never, { messages: [] }, 'test-model');
+      const body = await generateAnthropicResponse(
+        {} as never,
+        { messages: [], inputTokensIncludeCache },
+        'test-model',
+      );
       expect(body.usage).toEqual(expected);
       vi.doUnmock('ai');
     }
@@ -906,7 +947,7 @@ describe('writeAnthropicStream', () => {
           inputTokenDetails: { cacheReadTokens: 173_000 },
         },
       },
-    ], 'm', { initialInputTokens: 61_500 });
+    ], 'm', { initialInputTokens: 61_500, inputTokensIncludeCache: true });
 
     const start = events.find(e => e.event === 'message_start')!.data.message.usage;
     const delta = events.find(e => e.event === 'message_delta')!.data.usage;
@@ -959,7 +1000,7 @@ describe('writeAnthropicStream', () => {
         finishReason: 'stop',
         totalUsage: { inputTokens: 100, outputTokens: 7, inputTokenDetails: { cacheReadTokens: 80 } },
       },
-    ]);
+    ], 'm', { inputTokensIncludeCache: true });
     expect(events.find(e => e.event === 'message_delta')!.data.usage).toEqual({
       input_tokens: 20,
       output_tokens: 7,
@@ -987,6 +1028,41 @@ describe('writeAnthropicStream', () => {
       output_tokens: 4,
       cache_creation_input_tokens: 0,
       cache_read_input_tokens: 80,
+    });
+  });
+
+  it('clamps inclusive input at zero when cache usage exceeds the total', async () => {
+    const onUsage = vi.fn();
+    const { events } = await collect([
+      { type: 'start' },
+      {
+        type: 'finish',
+        finishReason: 'stop',
+        totalUsage: {
+          inputTokens: 20,
+          outputTokens: 4,
+          inputTokenDetails: { cacheReadTokens: 80 },
+        },
+      },
+    ], 'gpt-test', {
+      inputTokensIncludeCache: true,
+      promptCacheKeyHash: '0123456789abcdef',
+      onUsage,
+    });
+
+    expect(events.find(e => e.event === 'message_delta')?.data.usage).toEqual({
+      input_tokens: 0,
+      output_tokens: 4,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 80,
+    });
+    expect(onUsage).toHaveBeenCalledWith({
+      model: 'gpt-test',
+      input_tokens: 0,
+      output_tokens: 4,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 80,
+      promptCacheKeyHash: '0123456789abcdef',
     });
   });
 
@@ -1023,7 +1099,7 @@ describe('writeAnthropicStream', () => {
         finishReason: 'stop',
         totalUsage: { inputTokens: 100, outputTokens: 1, cachedInputTokens: 80 },
       },
-    ]);
+    ], 'm', { inputTokensIncludeCache: true });
     const detailedZero = await collect([
       { type: 'start' },
       {
@@ -1036,7 +1112,7 @@ describe('writeAnthropicStream', () => {
           inputTokenDetails: { cacheReadTokens: 0 },
         },
       },
-    ]);
+    ], 'm', { inputTokensIncludeCache: true });
 
     expect(legacy.events.find(e => e.event === 'message_delta')?.data.usage).toMatchObject({
       input_tokens: 20,
@@ -1060,7 +1136,7 @@ describe('writeAnthropicStream', () => {
           inputTokenDetails: { cacheReadTokens: 20, cacheWriteTokens: 80 },
         },
       },
-    ]);
+    ], 'm', { inputTokensIncludeCache: true });
     expect(events.find(e => e.event === 'message_delta')!.data.usage).toEqual({
       input_tokens: 20,
       output_tokens: 3,

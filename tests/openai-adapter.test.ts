@@ -34,6 +34,27 @@ describe('streamOpenAiResponse', () => {
     expect(output).toContain('partial');
     expect(output).not.toContain('[DONE]');
   });
+
+  it('forwards total usage in the final OpenAI usage chunk', async () => {
+    async function* stream() {
+      yield { type: 'text-delta', text: 'done' };
+      yield { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 12, outputTokens: 4, totalTokens: 16 } };
+    }
+    vi.mocked(streamText).mockReturnValue({ stream: stream() } as never);
+    const chunks: string[] = [];
+
+    await streamOpenAiResponse(
+      {} as never,
+      { messages: [] },
+      'gpt-test',
+      chunk => chunks.push(chunk),
+    );
+
+    const usageChunk = chunks.find(chunk => chunk.includes('"usage":'));
+    expect(usageChunk).toContain('"choices":[]');
+    expect(usageChunk).toContain('"usage":{"prompt_tokens":12,"completion_tokens":4,"total_tokens":16}');
+    expect(chunks.at(-1)).toBe('data: [DONE]\n\n');
+  });
 });
 
 describe('translateOpenAiRequest OAuth shaping', () => {
@@ -180,6 +201,14 @@ describe('collectOpenAiStream', () => {
 
     await expect(collectOpenAiStream(stream())).rejects.toBe(upstreamError);
   });
+
+  it('wraps primitive SDK stream failures as errors', async () => {
+    async function* stream() {
+      yield { type: 'error', error: 'connection closed' };
+    }
+
+    await expect(collectOpenAiStream(stream())).rejects.toThrow('connection closed');
+  });
 });
 
 describe('generateOpenAiResponse with forceStream', () => {
@@ -193,7 +222,7 @@ describe('generateOpenAiResponse with forceStream', () => {
     vi.mocked(generateText).mockClear();
 
     const abort = new AbortController();
-    const response: any = await generateOpenAiResponse(
+    const response = await generateOpenAiResponse(
       {} as never,
       { messages: [] },
       'gpt-test',
@@ -227,10 +256,52 @@ describe('generateOpenAiResponse with forceStream', () => {
       usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
     } as never);
 
-    const response: any = await generateOpenAiResponse({} as never, { messages: [] }, 'gpt-test');
+    const response = await generateOpenAiResponse({} as never, { messages: [] }, 'gpt-test');
 
     expect(streamText).not.toHaveBeenCalled();
     expect(response.choices[0].message.content).toBe('plain');
     expect(response.usage).toEqual({ prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 });
+  });
+});
+
+describe('generateOpenAiResponse usage fallback', () => {
+  it('reports zero usage and warns through the supplied trace logger when upstream usage is absent', async () => {
+    vi.mocked(generateText).mockResolvedValue({
+      text: 'plain',
+      toolCalls: [],
+      finishReason: 'stop',
+    } as never);
+    const onWarning = vi.fn();
+
+    const response = await generateOpenAiResponse(
+      {} as never,
+      { messages: [] },
+      'gpt-test',
+      { onWarning },
+    );
+
+    expect(response.usage).toEqual({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+    expect(onWarning).toHaveBeenCalledOnce();
+    expect(onWarning).toHaveBeenCalledWith(expect.stringContaining('upstream omitted token usage'));
+  });
+
+  it('warns once when upstream returns incomplete usage fields', async () => {
+    vi.mocked(generateText).mockResolvedValue({
+      text: 'plain',
+      toolCalls: [],
+      finishReason: 'stop',
+      usage: { inputTokens: 2, totalTokens: 2 },
+    } as never);
+    const onWarning = vi.fn();
+
+    const response = await generateOpenAiResponse(
+      {} as never,
+      { messages: [] },
+      'gpt-test',
+      { onWarning },
+    );
+
+    expect(response.usage).toEqual({ prompt_tokens: 2, completion_tokens: 0, total_tokens: 2 });
+    expect(onWarning).toHaveBeenCalledOnce();
   });
 });

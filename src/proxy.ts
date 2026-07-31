@@ -67,11 +67,51 @@ import {
 import { resolveExecutionSessionKey } from './execution-session-key.js';
 import { buildProviderCapabilities } from './provider-capabilities.js';
 import { createRequestExecutionContext, cancelAllActiveRequestExecutions } from './request-execution-context.js';
-import type { LifecycleDeadlines } from './request-lifecycle.js';
+import { autoReplayMaxRetries, type LifecycleDeadlines } from './request-lifecycle.js';
 
 type ProxyLog = (message: string | (() => string)) => void;
 
 const INTERNAL_ADAPTER_KEEPALIVE_TIMEOUT_MS = 60_000;
+const TRANSIENT_CONNECTION_CODES = new Set([
+  'ECONNABORTED',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EPIPE',
+  'ETIMEDOUT',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_SOCKET',
+]);
+
+/** Nested SDK wrappers must not hide a transient transport cause or upstream 5xx. */
+function isTransientSdkStreamFailure(error: unknown): boolean {
+  const sdkStatusCode = sdkUpstreamErrorDetails(error)?.statusCode;
+  if (sdkStatusCode !== undefined && sdkStatusCode >= 500 && sdkStatusCode <= 599) return true;
+
+  const pending: unknown[] = [error];
+  const seen = new Set<unknown>();
+  while (pending.length > 0) {
+    const value = pending.shift();
+    if (!value || typeof value !== 'object' || seen.has(value)) continue;
+    seen.add(value);
+    const record = value as {
+      cause?: unknown;
+      code?: unknown;
+      errors?: unknown[];
+      lastError?: unknown;
+      message?: unknown;
+      statusCode?: unknown;
+    };
+    if (typeof record.statusCode === 'number' && record.statusCode >= 500 && record.statusCode <= 599) return true;
+    if (typeof record.code === 'string' && TRANSIENT_CONNECTION_CODES.has(record.code)) return true;
+    if (typeof record.message === 'string'
+      && /connection reset|premature close|socket hang up|terminated/i.test(record.message)) {
+      return true;
+    }
+    pending.push(record.cause, record.lastError);
+    if (Array.isArray(record.errors)) pending.push(...record.errors);
+  }
+  return false;
+}
 
 function proxyExecutionMessages(body: unknown): Array<{ role: string; content: unknown }> {
   if (!body || typeof body !== 'object') return [];
@@ -778,6 +818,7 @@ export async function startProxyCatalog(
           translationLifecycle?.dispatched();
           if (clientWantsStream) {
             const writeStreamChunk = (chunk: string) => {
+              requestExecution.markOutputEmitted();
               translationLifecycle?.onOutput(chunk);
               tracking.observeAnthropicSseText(chunk);
               if (!res.headersSent) {
@@ -790,22 +831,40 @@ export async function startProxyCatalog(
               }
               res.write(chunk);
             };
-            await withResponsesWebSocketDiagnosticContext(
-              { requestId: relayRequestId, claudeSessionId },
-              () => streamAnthropicResponse(
-                model,
-                params,
-                clientModelId,
-                writeStreamChunk,
-                plog,
-                {
-                  onPart: partType => translationLifecycle?.onPart(partType),
-                  initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
-                  abortSignal: clientAbort.signal,
-                  lifecycle: requestExecution,
-                },
-              ),
-            );
+            const maxRetries = autoReplayMaxRetries();
+            let retryCount = 0;
+            while (true) {
+              try {
+                await withResponsesWebSocketDiagnosticContext(
+                  { requestId: relayRequestId, claudeSessionId },
+                  () => streamAnthropicResponse(
+                    model,
+                    params,
+                    clientModelId,
+                    writeStreamChunk,
+                    plog,
+                    {
+                      onPart: partType => translationLifecycle?.onPart(partType),
+                      initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
+                      abortSignal: clientAbort.signal,
+                      lifecycle: requestExecution,
+                    },
+                  ),
+                );
+                break;
+              } catch (error) {
+                if (retryCount >= maxRetries
+                  || !requestExecution.canReplay()
+                  || !isTransientSdkStreamFailure(error)) {
+                  throw error;
+                }
+                retryCount += 1;
+                const reason = sdkTranslationErrorSignature(error);
+                requestExecution.recordRetryAttempt({ attempt: retryCount, reason });
+                tracking.recordRetryAttempt();
+                plog(() => `sdk auto-replay: retry=${retryCount}/${maxRetries} reason=${reason}`);
+              }
+            }
             translationLifecycle?.complete();
             // Defensive: production streams already drive markStreamActivity
             // per SDK part (sdk-adapter.ts), but complete() only accepts a

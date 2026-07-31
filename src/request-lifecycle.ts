@@ -73,6 +73,19 @@ export const DEFAULT_LIFECYCLE_DEADLINES: Readonly<Required<LifecycleDeadlines>>
   totalMs: 10 * 60_000,
 };
 
+export const AUTO_REPLAY_MAX_RETRIES_ENV = 'LEVERFRAME_AUTO_REPLAY_MAX_RETRIES';
+export const DEFAULT_AUTO_REPLAY_MAX_RETRIES = 2;
+const MAX_AUTO_REPLAY_MAX_RETRIES = 10;
+
+/** Invalid values use the safe default. Excessive values are bounded to ten retries. */
+export function autoReplayMaxRetries(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env[AUTO_REPLAY_MAX_RETRIES_ENV]?.trim();
+  if (!raw || !/^\d+$/.test(raw)) return DEFAULT_AUTO_REPLAY_MAX_RETRIES;
+  return Math.min(Number(raw), MAX_AUTO_REPLAY_MAX_RETRIES);
+}
+
 export interface RetryAttemptRecord {
   attempt: number;
   atMs: number;

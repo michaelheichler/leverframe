@@ -370,6 +370,7 @@ describe('createLanguageModel', () => {
       name: 'custom-zai',
       apiKey: 'sk-test',
       baseURL: 'https://api.z.ai/api/coding/paas/v4',
+      includeUsage: true,
       headers: { 'X-Plan': 'coding' },
     });
     vi.doUnmock('@ai-sdk/openai-compatible');
@@ -392,6 +393,7 @@ describe('createLanguageModel', () => {
     expect(createOpenAICompatible).toHaveBeenCalledWith({
       name: 'kilo',
       baseURL: 'https://api.kilo.ai/api/gateway',
+      includeUsage: true,
     });
     vi.doUnmock('@ai-sdk/openai-compatible');
   });
@@ -483,6 +485,7 @@ describe('createLanguageModel', () => {
       name: 'kimi',
       apiKey: 'test-kimi-membership-key',
       baseURL: 'https://api.kimi.com/coding/v1',
+      includeUsage: true,
     });
     expect(factory).toHaveBeenCalledWith('k3');
     vi.doUnmock('@ai-sdk/openai-compatible');
@@ -506,6 +509,7 @@ describe('createLanguageModel', () => {
       name: 'zai',
       apiKey: 'sk-zai',
       baseURL: 'https://api.z.ai/api/coding/paas/v4',
+      includeUsage: true,
     });
     expect(factory).toHaveBeenCalledWith('glm-5.2');
     vi.doUnmock('@ai-sdk/openai-compatible');

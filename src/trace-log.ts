@@ -250,6 +250,7 @@ export interface InferenceResponseLifecycleLogEntry {
   outputTokens?: number;
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
+  promptCacheKeyHash?: string;
   lastPartType?: string;
   errorType?: string;
   errorSignature?: string;
@@ -448,6 +449,9 @@ export function writeInferenceResponseLifecycleLog(
     ...(outputTokens !== undefined ? { outputTokens } : {}),
     ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
     ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
+    ...(entry.promptCacheKeyHash
+      ? { promptCacheKeyHash: compactLogValue(entry.promptCacheKeyHash, 100) }
+      : {}),
     ...(entry.lastPartType ? { lastPartType: compactLogValue(entry.lastPartType, 100) } : {}),
     ...(entry.errorType ? { errorType: compactLogValue(entry.errorType, 200) } : {}),
     ...(entry.errorSignature ? { errorSignature: compactLogValue(entry.errorSignature, 100) } : {}),

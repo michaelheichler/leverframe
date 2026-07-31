@@ -50,6 +50,25 @@ describe('execution-tracking', () => {
     expect(ledger.value?.entries).toEqual([]);
   });
 
+  it('persists each retry attempt and refreshes the generation header', () => {
+    home();
+    const handle = beginExecutionTracking({
+      sessionKey: 'session-retry',
+      requestId: 'req-retry',
+      provider: 'openai',
+      model: 'gpt-x',
+      route: 'translated',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+
+    handle.recordRetryAttempt();
+    handle.recordRetryAttempt();
+
+    const checkpoint = loadCheckpoint(handle.scopeHash, handle.executionId);
+    expect(checkpoint.value?.retryCount).toBe(2);
+    expect(handle.headers[EXECUTION_GENERATION_HEADER]).toBe('3');
+  });
+
   it('records a streamed Anthropic tool_use as emitted and accounts visible text bytes', () => {
     home();
     const handle = beginExecutionTracking({

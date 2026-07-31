@@ -141,6 +141,7 @@ For agents view and background-agent setup, see [docs/background-agents.md](docs
 - `LEVERFRAME_CLAUDE_PATH` overrides Claude Code binary discovery.
 - `LEVERFRAME_NO_DISCOVERY=1` prevents a standalone server from registering in `~/.leverframe/server-runtime.json`.
 - Provider-specific environment keys use `LEVERFRAME_KEY_<PROVIDER_ID>`.
+- `LEVERFRAME_AUTO_REPLAY_MAX_RETRIES` caps automatic replays of streams that fail before any output reached the client (default 2, max 10).
 - Credentials use the OS credential store service `leverframe`.
 
 On the first normal run, if `~/.leverframe` does not exist, Leverframe copies persisted state from legacy `~/.clodex` without changing or deleting the source. It can also read older relay-ai state. Credential lookup checks the `leverframe` keychain service, then legacy `clodex`, then `relay-ai`, and copies the first legacy hit into `leverframe`.

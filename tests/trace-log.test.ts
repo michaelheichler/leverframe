@@ -319,8 +319,21 @@ describe('inference request log', () => {
         errorType: 'Error',
         errorSignature: 'reasoning_part_not_found',
       });
+      writeInferenceResponseLifecycleLog(path, {
+        event: 'response_usage',
+        requestId: 'req-123',
+        modelId: 'leverframe:openai:gpt-test',
+        provider: 'openai',
+        route: 'translated',
+        usageStage: 'message_delta',
+        inputTokens: 20,
+        outputTokens: 4,
+        cacheCreationInputTokens: 10,
+        cacheReadInputTokens: 80,
+        promptCacheKeyHash: '0123456789abcdef',
+      });
 
-      const [entry, failure] = readFileSync(path, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const [entry, failure, usage] = readFileSync(path, 'utf8').trim().split('\n').map(line => JSON.parse(line));
       expect(entry).toMatchObject({
         event: 'translation_progress',
         requestId: 'req-123',
@@ -341,6 +354,15 @@ describe('inference request log', () => {
         event: 'translation_failed',
         errorType: 'Error',
         errorSignature: 'reasoning_part_not_found',
+      });
+      expect(usage).toMatchObject({
+        event: 'response_usage',
+        usageStage: 'message_delta',
+        inputTokens: 20,
+        outputTokens: 4,
+        cacheCreationInputTokens: 10,
+        cacheReadInputTokens: 80,
+        promptCacheKeyHash: '0123456789abcdef',
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });

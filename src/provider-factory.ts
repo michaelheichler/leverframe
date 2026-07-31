@@ -239,6 +239,8 @@ export async function createLanguageModel(spec: ProviderModelSpec): Promise<Lang
     const options = {
       name: spec.providerId ?? 'openai-compatible',
       baseURL: baseURL ?? '',
+      // Needed because, unlike @ai-sdk/openai, openai-compatible omits streamed usage by default.
+      includeUsage: true,
       ...(apiKey.trim() ? { apiKey } : {}),
       ...(spec.headers ? { headers: spec.headers } : {}),
     };

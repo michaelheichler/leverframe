@@ -36,6 +36,7 @@ import {
   getLatestMessagePreview,
   writeInferenceRequestLog,
   writeInferenceResponseErrorLog,
+  writeInferenceResponseLifecycleLog,
   writeSecureLogLine,
   resetTraceLog,
   writeWebSocketDiagnosticLog,
@@ -61,6 +62,7 @@ import {
   anthropicEffortFromRequest,
   extractClaudeSessionId,
   type AnthropicRequest,
+  type AnthropicUsageTrace,
 } from '../sdk-adapter.js';
 import {
   evictResponsesWebSocketConnectionsForAccessToken,
@@ -749,6 +751,22 @@ async function handleAnthropicMessages(
     );
     const clientWantsStream = Boolean(body.stream);
     const responseModelId = getResponseModelId(body.model, model, options);
+    const inferenceLogPath = options.inferenceLogPath;
+    const onUsage = inferenceLogPath
+      ? (usage: AnthropicUsageTrace) => writeInferenceResponseLifecycleLog(inferenceLogPath, {
+          event: 'response_usage',
+          requestId,
+          modelId: usage.model,
+          provider: inferenceProvider(model),
+          route: 'translated',
+          usageStage: 'message_delta',
+          inputTokens: usage.input_tokens,
+          outputTokens: usage.output_tokens,
+          cacheCreationInputTokens: usage.cache_creation_input_tokens,
+          cacheReadInputTokens: usage.cache_read_input_tokens,
+          promptCacheKeyHash: usage.promptCacheKeyHash,
+        })
+      : undefined;
 
     plog(() => `sdk npm=${model.npm} upstream=${upstreamModelId(model)} responseModel=${responseModelId} stream=${clientWantsStream}`);
 
@@ -772,6 +790,7 @@ async function handleAnthropicMessages(
         await withResponsesWebSocketDiagnosticContext(
           { requestId, claudeSessionId },
           () => streamAnthropicResponse(languageModel, params, responseModelId, writeStreamChunk, undefined, {
+            onUsage,
             initialInputTokens: estimateAnthropicInputTokens(body),
             abortSignal: clientAbort.signal,
             lifecycle: requestExecution,
@@ -792,6 +811,7 @@ async function handleAnthropicMessages(
           () => generateAnthropicResponse(languageModel, params, responseModelId, {
             forceStream: openAiOAuth,
             abortSignal: clientAbort.signal,
+            onUsage,
             lifecycle: requestExecution,
           }),
         );
@@ -1047,6 +1067,7 @@ async function handleOpenAIChatCompletions(
         forceStream: openAiOAuth,
         abortSignal: openAiClientAbort.signal,
         lifecycle: openAiExecution,
+        onWarning: plog,
       });
       openAiExecution.markStreamActivity();
       openAiExecution.markOutputEmitted();

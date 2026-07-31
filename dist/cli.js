@@ -67,7 +67,7 @@ import {
   withProviderMutationLock,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-KVOUUEN4.js";
+} from "./chunk-27BJVEUK.js";
 
 // src/cli.ts
 import pc14 from "picocolors";
@@ -4259,6 +4259,8 @@ async function createLanguageModel(spec) {
     const options = {
       name: spec.providerId ?? "openai-compatible",
       baseURL: baseURL ?? "",
+      // Needed because, unlike @ai-sdk/openai, openai-compatible omits streamed usage by default.
+      includeUsage: true,
       ...apiKey.trim() ? { apiKey } : {},
       ...spec.headers ? { headers: spec.headers } : {}
     };
@@ -5007,6 +5009,7 @@ function writeInferenceResponseLifecycleLog(path, entry) {
     ...outputTokens !== void 0 ? { outputTokens } : {},
     ...cacheCreationInputTokens !== void 0 ? { cacheCreationInputTokens } : {},
     ...cacheReadInputTokens !== void 0 ? { cacheReadInputTokens } : {},
+    ...entry.promptCacheKeyHash ? { promptCacheKeyHash: compactLogValue(entry.promptCacheKeyHash, 100) } : {},
     ...entry.lastPartType ? { lastPartType: compactLogValue(entry.lastPartType, 100) } : {},
     ...entry.errorType ? { errorType: compactLogValue(entry.errorType, 200) } : {},
     ...entry.errorSignature ? { errorSignature: compactLogValue(entry.errorSignature, 100) } : {}
@@ -8247,6 +8250,14 @@ function isClaudeCodeStructuredOutputCompactRequest(body) {
   const text3 = typeof finalMessage.content === "string" ? finalMessage.content : finalMessage.content.filter((block) => block.type === "text").map((block) => block.text ?? "").join("\n");
   return text3.includes(COMPACT_TEXT_ONLY_START) && text3.includes(COMPACT_TEXT_ONLY_END);
 }
+var OPENAI_OAUTH_SDK_MAX_RETRIES = 0;
+var SDK_MAX_RETRIES_NON_OAUTH = 1;
+var CACHE_INCLUSIVE_INPUT_NPMS = /* @__PURE__ */ new Set([
+  "@ai-sdk/openai",
+  "@ai-sdk/openai-compatible",
+  "@ai-sdk/anthropic",
+  VERTEX_ANTHROPIC_NPM
+]);
 function translateRequest(body, npm, options) {
   const messages = body.messages ?? [];
   annotateToolNames(messages);
@@ -8292,24 +8303,29 @@ function translateRequest(body, npm, options) {
     toolChoice: compactRequest ? "none" : translateToolChoice(body.tool_choice),
     maxOutputTokens: options?.openAiOAuth ? void 0 : body.max_tokens,
     temperature: body.temperature,
-    maxRetries: options?.openAiOAuth ? 0 : void 0,
-    providerOptions
+    maxRetries: options?.openAiOAuth ? OPENAI_OAUTH_SDK_MAX_RETRIES : SDK_MAX_RETRIES_NON_OAUTH,
+    providerOptions,
+    inputTokensIncludeCache: CACHE_INCLUSIVE_INPUT_NPMS.has(npm)
   };
 }
-function toAnthropicUsage(u) {
+function toAnthropicUsage(u, inputTokensIncludeCache) {
   const tokenCount = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
   const total = tokenCount(u?.inputTokens);
+  const noCache = u?.inputTokenDetails?.noCacheTokens;
   const cacheRead = tokenCount(
     u?.inputTokenDetails?.cacheReadTokens ?? u?.cachedInputTokens
   );
   const cacheWrite = tokenCount(u?.inputTokenDetails?.cacheWriteTokens);
-  const cacheTotal = cacheRead + cacheWrite;
   return {
-    input_tokens: total >= cacheTotal ? total - cacheTotal : total,
+    input_tokens: noCache !== void 0 ? tokenCount(noCache) : inputTokensIncludeCache ? Math.max(total - cacheRead - cacheWrite, 0) : total,
     output_tokens: tokenCount(u?.outputTokens),
     cache_creation_input_tokens: cacheWrite,
     cache_read_input_tokens: cacheRead
   };
+}
+function sdkPromptCacheKeyHash(params) {
+  const key = params.providerOptions?.openai?.promptCacheKey;
+  return typeof key === "string" ? createHash5("sha256").update(key).digest("hex").slice(0, 16) : void 0;
 }
 var SDK_STREAM_IDLE_TIMEOUT_MS = 12e4;
 var SDK_TOTAL_TIMEOUT_MS = 10 * 6e4;
@@ -8508,10 +8524,18 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
       }
       case "finish":
         if (part.totalUsage) {
-          const finalUsage = toAnthropicUsage(part.totalUsage);
+          const finalUsage = toAnthropicUsage(
+            part.totalUsage,
+            observer?.inputTokensIncludeCache ?? false
+          );
           const hasFinalInputUsage = finalUsage.input_tokens + finalUsage.cache_creation_input_tokens + finalUsage.cache_read_input_tokens > 0;
           usage = hasFinalInputUsage ? finalUsage : { ...usage, output_tokens: finalUsage.output_tokens };
         }
+        observer?.onUsage?.({
+          model: modelId,
+          ...usage,
+          ...observer.promptCacheKeyHash ? { promptCacheKeyHash: observer.promptCacheKeyHash } : {}
+        });
         if (part.finishReason === "tool-calls") finishReason = "tool_use";
         else if (part.finishReason === "length") finishReason = "max_tokens";
         else if (part.finishReason === "stop" && finishReason !== "tool_use") finishReason = "end_turn";
@@ -8535,6 +8559,7 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
   emit("message_stop", { type: "message_stop" });
 }
 async function streamAnthropicResponse(model, params, modelId, write, log12, observer) {
+  const { inputTokensIncludeCache = false, ...sdkParams } = params;
   const idleTimeoutMs = observer?.idleTimeoutMs ?? SDK_STREAM_IDLE_TIMEOUT_MS;
   const idleAbort = new AbortController();
   const externalAbort = observer?.lifecycle?.abortSignal ?? observer?.abortSignal;
@@ -8550,7 +8575,7 @@ async function streamAnthropicResponse(model, params, modelId, write, log12, obs
   );
   const result = streamText({
     model,
-    ...params,
+    ...sdkParams,
     abortSignal,
     onError: () => {
     }
@@ -8570,7 +8595,12 @@ async function streamAnthropicResponse(model, params, modelId, write, log12, obs
     }
   })();
   try {
-    await writeAnthropicStream(watchedStream, modelId, write, log12, { ...observer, abortSignal }, params.tools);
+    await writeAnthropicStream(watchedStream, modelId, write, log12, {
+      ...observer,
+      abortSignal,
+      inputTokensIncludeCache,
+      promptCacheKeyHash: sdkPromptCacheKeyHash(params) ?? observer?.promptCacheKeyHash
+    }, params.tools);
   } finally {
     stopForwardingAbort();
     clearTimeout(idleTimer);
@@ -8583,6 +8613,7 @@ async function generateAnthropicResponse(model, params, modelId, options) {
   let toolCalls;
   let finishReason;
   let usage;
+  const { inputTokensIncludeCache = false, ...sdkParams } = params;
   if (options?.forceStream) {
     const forceAbort = new AbortController();
     const stopForwardingAbort = forwardAbortSignal(options.lifecycle?.abortSignal ?? options.abortSignal, forceAbort);
@@ -8598,7 +8629,7 @@ async function generateAnthropicResponse(model, params, modelId, options) {
     );
     const r = streamText({
       model,
-      ...params,
+      ...sdkParams,
       abortSignal,
       onError: () => {
       }
@@ -8659,7 +8690,7 @@ async function generateAnthropicResponse(model, params, modelId, options) {
       options?.lifecycle?.startConnecting();
       const r = await generateText({
         model,
-        ...params,
+        ...sdkParams,
         abortSignal: generateAbort.signal
       });
       options?.lifecycle?.markHeadersReceived();
@@ -8673,6 +8704,13 @@ async function generateAnthropicResponse(model, params, modelId, options) {
     }
   }
   const inputRules = toolInputRules(params.tools);
+  const finalUsage = toAnthropicUsage(usage, inputTokensIncludeCache);
+  const promptCacheKeyHash = sdkPromptCacheKeyHash(params);
+  options?.onUsage?.({
+    model: modelId,
+    ...finalUsage,
+    ...promptCacheKeyHash ? { promptCacheKeyHash } : {}
+  });
   return {
     id: "msg_" + Date.now(),
     type: "message",
@@ -8688,7 +8726,7 @@ async function generateAnthropicResponse(model, params, modelId, options) {
       }))
     ],
     stop_reason: finishReason === "tool-calls" ? "tool_use" : "end_turn",
-    usage: toAnthropicUsage(usage)
+    usage: finalUsage
   };
 }
 
@@ -9731,17 +9769,22 @@ function beginExecutionTracking(input) {
   const callbacks = makeTapCallbacks(checkpoints, ledgers, emitting);
   let anthropicTap;
   let openAiTap;
+  const headers = {
+    [EXECUTION_ID_HEADER]: executionId,
+    [EXECUTION_GENERATION_HEADER]: String(checkpoints.currentGeneration)
+  };
   return {
     scopeHash,
     executionId,
-    headers: {
-      [EXECUTION_ID_HEADER]: executionId,
-      [EXECUTION_GENERATION_HEADER]: String(checkpoints.currentGeneration)
-    },
+    headers,
     observeAnthropicSseText: (chunk) => (anthropicTap ??= createAnthropicSseTap(callbacks)).feed(chunk),
     observeOpenAiSseText: (chunk) => (openAiTap ??= createOpenAiSseTap(callbacks)).feed(chunk),
     observeNonStreamAnthropic: (parsed) => observeNonStreamAnthropicResponse(parsed, callbacks),
     observeNonStreamOpenAi: (parsed) => observeNonStreamOpenAiResponse(parsed, callbacks),
+    recordRetryAttempt: () => {
+      checkpoints.advance({ retryCount: checkpoints.current.retryCount + 1 });
+      headers[EXECUTION_GENERATION_HEADER] = String(checkpoints.currentGeneration);
+    },
     fail: (category) => checkpoints.advance({ failureCategory: category })
   };
 }
@@ -9862,6 +9905,14 @@ var DEFAULT_LIFECYCLE_DEADLINES = {
   idleMs: 12e4,
   totalMs: 10 * 6e4
 };
+var AUTO_REPLAY_MAX_RETRIES_ENV = "LEVERFRAME_AUTO_REPLAY_MAX_RETRIES";
+var DEFAULT_AUTO_REPLAY_MAX_RETRIES = 2;
+var MAX_AUTO_REPLAY_MAX_RETRIES = 10;
+function autoReplayMaxRetries(env = process.env) {
+  const raw = env[AUTO_REPLAY_MAX_RETRIES_ENV]?.trim();
+  if (!raw || !/^\d+$/.test(raw)) return DEFAULT_AUTO_REPLAY_MAX_RETRIES;
+  return Math.min(Number(raw), MAX_AUTO_REPLAY_MAX_RETRIES);
+}
 var RequestLifecycle = class {
   requestId;
   correlationId;
@@ -10184,6 +10235,35 @@ function cancelAllActiveRequestExecutions() {
 
 // src/proxy.ts
 var INTERNAL_ADAPTER_KEEPALIVE_TIMEOUT_MS = 6e4;
+var TRANSIENT_CONNECTION_CODES = /* @__PURE__ */ new Set([
+  "ECONNABORTED",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EPIPE",
+  "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_SOCKET"
+]);
+function isTransientSdkStreamFailure(error) {
+  const sdkStatusCode = sdkUpstreamErrorDetails(error)?.statusCode;
+  if (sdkStatusCode !== void 0 && sdkStatusCode >= 500 && sdkStatusCode <= 599) return true;
+  const pending = [error];
+  const seen = /* @__PURE__ */ new Set();
+  while (pending.length > 0) {
+    const value = pending.shift();
+    if (!value || typeof value !== "object" || seen.has(value)) continue;
+    seen.add(value);
+    const record = value;
+    if (typeof record.statusCode === "number" && record.statusCode >= 500 && record.statusCode <= 599) return true;
+    if (typeof record.code === "string" && TRANSIENT_CONNECTION_CODES.has(record.code)) return true;
+    if (typeof record.message === "string" && /connection reset|premature close|socket hang up|terminated/i.test(record.message)) {
+      return true;
+    }
+    pending.push(record.cause, record.lastError);
+    if (Array.isArray(record.errors)) pending.push(...record.errors);
+  }
+  return false;
+}
 function proxyExecutionMessages(body) {
   if (!body || typeof body !== "object") return [];
   const messages = body.messages;
@@ -10707,6 +10787,7 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
             translationLifecycle?.dispatched();
             if (clientWantsStream) {
               const writeStreamChunk = (chunk) => {
+                requestExecution.markOutputEmitted();
                 translationLifecycle?.onOutput(chunk);
                 tracking.observeAnthropicSseText(chunk);
                 if (!res.headersSent) {
@@ -10719,22 +10800,38 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
                 }
                 res.write(chunk);
               };
-              await withResponsesWebSocketDiagnosticContext(
-                { requestId: relayRequestId, claudeSessionId: claudeSessionId2 },
-                () => streamAnthropicResponse(
-                  model,
-                  params,
-                  clientModelId,
-                  writeStreamChunk,
-                  plog,
-                  {
-                    onPart: (partType) => translationLifecycle?.onPart(partType),
-                    initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
-                    abortSignal: clientAbort.signal,
-                    lifecycle: requestExecution
+              const maxRetries = autoReplayMaxRetries();
+              let retryCount = 0;
+              while (true) {
+                try {
+                  await withResponsesWebSocketDiagnosticContext(
+                    { requestId: relayRequestId, claudeSessionId: claudeSessionId2 },
+                    () => streamAnthropicResponse(
+                      model,
+                      params,
+                      clientModelId,
+                      writeStreamChunk,
+                      plog,
+                      {
+                        onPart: (partType) => translationLifecycle?.onPart(partType),
+                        initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
+                        abortSignal: clientAbort.signal,
+                        lifecycle: requestExecution
+                      }
+                    )
+                  );
+                  break;
+                } catch (error) {
+                  if (retryCount >= maxRetries || !requestExecution.canReplay() || !isTransientSdkStreamFailure(error)) {
+                    throw error;
                   }
-                )
-              );
+                  retryCount += 1;
+                  const reason = sdkTranslationErrorSignature(error);
+                  requestExecution.recordRetryAttempt({ attempt: retryCount, reason });
+                  tracking.recordRetryAttempt();
+                  plog(() => `sdk auto-replay: retry=${retryCount}/${maxRetries} reason=${reason}`);
+                }
+              }
               translationLifecycle?.complete();
               requestExecution.markStreamActivity();
               requestExecution.complete();
@@ -11032,6 +11129,13 @@ import { randomUUID as randomUUID4 } from "crypto";
 
 // src/openai-adapter.ts
 import { tool as tool2, jsonSchema as jsonSchema2, streamText as streamText2, generateText as generateText2 } from "ai";
+
+// src/stream-error.ts
+function toUpstreamStreamError(error) {
+  return error instanceof Error || error !== null && typeof error === "object" ? error : new Error(typeof error === "string" ? error : "Upstream stream failed");
+}
+
+// src/openai-adapter.ts
 function translateOpenAiRequest(body, options) {
   const toolNameById = /* @__PURE__ */ new Map();
   for (const msg of body.messages) {
@@ -11161,7 +11265,7 @@ async function collectOpenAiStream(stream, lifecycle) {
         collected.usage = p13.totalUsage ?? p13.usage ?? collected.usage;
         break;
       case "error":
-        throw p13.error instanceof Error || p13.error && typeof p13.error === "object" ? p13.error : new Error(typeof p13.error === "string" ? p13.error : "Upstream stream failed");
+        throw toUpstreamStreamError(p13.error);
     }
   }
   return collected;
@@ -11187,6 +11291,9 @@ async function generateOpenAiResponse(model, params, responseModelId, options) {
     });
   }
   options?.lifecycle?.markHeadersReceived();
+  if (!result.usage || [result.usage.inputTokens, result.usage.outputTokens, result.usage.totalTokens].some((value) => value === void 0)) {
+    options?.onWarning?.(`warning: OpenAI adapter upstream omitted token usage for model ${responseModelId}; defaulting missing values to zero`);
+  }
   if (result.text) options?.lifecycle?.markOutputEmitted();
   if (result.toolCalls?.length) options?.lifecycle?.markToolCallEmitted();
   const message2 = { role: "assistant", content: result.text || null };
@@ -11227,6 +11334,17 @@ async function streamOpenAiResponse(model, params, responseModelId, onChunk, opt
   const send = (delta, finish_reason = null) => onChunk(`data: ${JSON.stringify({ ...baseData, choices: [{ index: 0, delta, finish_reason }] })}
 
 `);
+  const sendUsage = (usage) => onChunk(`data: ${JSON.stringify({
+    ...baseData,
+    choices: [],
+    usage: {
+      prompt_tokens: usage.inputTokens ?? 0,
+      completion_tokens: usage.outputTokens ?? 0,
+      total_tokens: usage.totalTokens ?? 0
+    }
+  })}
+
+`);
   let headersMarked = false;
   for await (const part of stream) {
     const p13 = part;
@@ -11247,11 +11365,14 @@ async function streamOpenAiResponse(model, params, responseModelId, onChunk, opt
       case "tool-input-delta":
         send({ tool_calls: [{ index: 0, function: { arguments: p13.delta ?? p13.text ?? p13.argsTextDelta ?? "" } }] });
         break;
-      case "finish":
+      case "finish": {
         send({}, p13.finishReason || "stop");
+        const usage = p13.totalUsage ?? p13.usage;
+        if (usage) sendUsage(usage);
         break;
+      }
       case "error":
-        throw p13.error instanceof Error || p13.error && typeof p13.error === "object" ? p13.error : new Error(typeof p13.error === "string" ? p13.error : "Upstream stream failed");
+        throw toUpstreamStreamError(p13.error);
     }
   }
   onChunk("data: [DONE]\n\n");
@@ -11764,6 +11885,20 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
     );
     const clientWantsStream = Boolean(body.stream);
     const responseModelId = getResponseModelId(body.model, model, options);
+    const inferenceLogPath = options.inferenceLogPath;
+    const onUsage = inferenceLogPath ? (usage) => writeInferenceResponseLifecycleLog(inferenceLogPath, {
+      event: "response_usage",
+      requestId,
+      modelId: usage.model,
+      provider: inferenceProvider(model),
+      route: "translated",
+      usageStage: "message_delta",
+      inputTokens: usage.input_tokens,
+      outputTokens: usage.output_tokens,
+      cacheCreationInputTokens: usage.cache_creation_input_tokens,
+      cacheReadInputTokens: usage.cache_read_input_tokens,
+      promptCacheKeyHash: usage.promptCacheKeyHash
+    }) : void 0;
     plog(() => `sdk npm=${model.npm} upstream=${upstreamModelId(model)} responseModel=${responseModelId} stream=${clientWantsStream}`);
     try {
       if (clientWantsStream) {
@@ -11782,6 +11917,7 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
         await withResponsesWebSocketDiagnosticContext(
           { requestId, claudeSessionId },
           () => streamAnthropicResponse(languageModel, params, responseModelId, writeStreamChunk, void 0, {
+            onUsage,
             initialInputTokens: estimateAnthropicInputTokens(body),
             abortSignal: clientAbort.signal,
             lifecycle: requestExecution
@@ -11797,6 +11933,7 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
           () => generateAnthropicResponse(languageModel, params, responseModelId, {
             forceStream: openAiOAuth,
             abortSignal: clientAbort.signal,
+            onUsage,
             lifecycle: requestExecution
           })
         );
@@ -12021,7 +12158,8 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
       const response = await generateOpenAiResponse(languageModel, params, responseModelId, {
         forceStream: openAiOAuth,
         abortSignal: openAiClientAbort.signal,
-        lifecycle: openAiExecution
+        lifecycle: openAiExecution,
+        onWarning: plog
       });
       openAiExecution.markStreamActivity();
       openAiExecution.markOutputEmitted();

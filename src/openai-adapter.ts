@@ -3,6 +3,7 @@ import type { LanguageModel, ModelMessage } from 'ai';
 import { parseToolArguments } from './proxy-shared.js';
 import type { SdkCallParams } from './sdk-adapter.js';
 import type { RequestExecutionObserver } from './request-execution-context.js';
+import { toUpstreamStreamError } from './stream-error.js';
 
 // ── OpenAI request shapes ───────────────────────────────────────────────────
 
@@ -216,9 +217,7 @@ export async function collectOpenAiStream(
         collected.usage = p.totalUsage ?? p.usage ?? collected.usage;
         break;
       case 'error':
-        throw p.error instanceof Error || (p.error && typeof p.error === 'object')
-          ? p.error
-          : new Error(typeof p.error === 'string' ? p.error : 'Upstream stream failed');
+        throw toUpstreamStreamError(p.error);
     }
   }
   return collected;
@@ -227,6 +226,7 @@ export async function collectOpenAiStream(
 export interface OpenAiResponseOptions {
   forceStream?: boolean;
   abortSignal?: AbortSignal;
+  onWarning?: (message: string) => void;
   /**
    * Request execution context/observer: driven for phase (connect/first
    * output/tool-call) transitions. Its `abortSignal` — already composed from
@@ -265,6 +265,9 @@ export async function generateOpenAiResponse(
     } as Parameters<typeof generateText>[0])) as typeof result;
   }
   options?.lifecycle?.markHeadersReceived();
+  if (!result.usage || [result.usage.inputTokens, result.usage.outputTokens, result.usage.totalTokens].some(value => value === undefined)) {
+    options?.onWarning?.(`warning: OpenAI adapter upstream omitted token usage for model ${responseModelId}; defaulting missing values to zero`);
+  }
   if (result.text) options?.lifecycle?.markOutputEmitted();
   if (result.toolCalls?.length) options?.lifecycle?.markToolCallEmitted();
   const message: Record<string, unknown> = { role: 'assistant', content: result.text || null };
@@ -314,6 +317,15 @@ export async function streamOpenAiResponse(
 
   const send = (delta: Record<string, unknown>, finish_reason: string | null = null) =>
     onChunk(`data: ${JSON.stringify({ ...baseData, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
+  const sendUsage = (usage: NonNullable<CollectedOpenAiStream['usage']>) => onChunk(`data: ${JSON.stringify({
+    ...baseData,
+    choices: [],
+    usage: {
+      prompt_tokens: usage.inputTokens ?? 0,
+      completion_tokens: usage.outputTokens ?? 0,
+      total_tokens: usage.totalTokens ?? 0,
+    },
+  })}\n\n`);
 
   let headersMarked = false;
   for await (const part of stream) {
@@ -335,13 +347,14 @@ export async function streamOpenAiResponse(
       case 'tool-input-delta':
         send({ tool_calls: [{ index: 0, function: { arguments: p.delta ?? p.text ?? p.argsTextDelta ?? '' } }] });
         break;
-      case 'finish':
+      case 'finish': {
         send({}, p.finishReason || 'stop');
+        const usage = p.totalUsage ?? p.usage;
+        if (usage) sendUsage(usage);
         break;
+      }
       case 'error':
-        throw p.error instanceof Error || (p.error && typeof p.error === 'object')
-          ? p.error
-          : new Error(typeof p.error === 'string' ? p.error : 'Upstream stream failed');
+        throw toUpstreamStreamError(p.error);
     }
   }
 

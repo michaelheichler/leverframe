@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  AUTO_REPLAY_MAX_RETRIES_ENV,
+  DEFAULT_AUTO_REPLAY_MAX_RETRIES,
   IllegalLifecycleTransitionError,
   RequestLifecycle,
+  autoReplayMaxRetries,
 } from '../src/request-lifecycle.js';
 
 function makeLifecycle(overrides: Partial<ConstructorParameters<typeof RequestLifecycle>[0]> = {}) {
@@ -10,6 +13,26 @@ function makeLifecycle(overrides: Partial<ConstructorParameters<typeof RequestLi
     ...overrides,
   });
 }
+
+describe('autoReplayMaxRetries', () => {
+  it('uses the default when the environment variable is missing', () => {
+    expect(autoReplayMaxRetries({})).toBe(DEFAULT_AUTO_REPLAY_MAX_RETRIES);
+  });
+
+  it('uses the default for malformed values', () => {
+    expect(autoReplayMaxRetries({ [AUTO_REPLAY_MAX_RETRIES_ENV]: '-1' })).toBe(DEFAULT_AUTO_REPLAY_MAX_RETRIES);
+    expect(autoReplayMaxRetries({ [AUTO_REPLAY_MAX_RETRIES_ENV]: 'invalid' })).toBe(DEFAULT_AUTO_REPLAY_MAX_RETRIES);
+  });
+
+  it('accepts valid non-negative integers', () => {
+    expect(autoReplayMaxRetries({ [AUTO_REPLAY_MAX_RETRIES_ENV]: '0' })).toBe(0);
+    expect(autoReplayMaxRetries({ [AUTO_REPLAY_MAX_RETRIES_ENV]: '4' })).toBe(4);
+  });
+
+  it('clamps excessive values', () => {
+    expect(autoReplayMaxRetries({ [AUTO_REPLAY_MAX_RETRIES_ENV]: '99' })).toBe(10);
+  });
+});
 
 describe('RequestLifecycle transitions', () => {
   it('starts accepted and walks the happy path to completed', () => {

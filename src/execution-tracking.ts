@@ -53,6 +53,8 @@ export interface ExecutionTrackingHandle {
   observeNonStreamAnthropic: (parsed: unknown) => void;
   /** Feed the full parsed body of a non-streamed OpenAI response. */
   observeNonStreamOpenAi: (parsed: unknown) => void;
+  /** Throws on CAS failure so replay never proceeds without durable accounting. */
+  recordRetryAttempt: () => void;
   /** Record that the request ended in failure without a clean message_stop. */
   fail: (category: string | undefined) => void;
 }
@@ -216,18 +218,23 @@ export function beginExecutionTracking(input: BeginExecutionTrackingInput): Exec
   const callbacks = makeTapCallbacks(checkpoints, ledgers, emitting);
   let anthropicTap: ToolCallTap | undefined;
   let openAiTap: ToolCallTap | undefined;
+  const headers = {
+    [EXECUTION_ID_HEADER]: executionId,
+    [EXECUTION_GENERATION_HEADER]: String(checkpoints.currentGeneration),
+  };
 
   return {
     scopeHash,
     executionId,
-    headers: {
-      [EXECUTION_ID_HEADER]: executionId,
-      [EXECUTION_GENERATION_HEADER]: String(checkpoints.currentGeneration),
-    },
+    headers,
     observeAnthropicSseText: chunk => (anthropicTap ??= createAnthropicSseTap(callbacks)).feed(chunk),
     observeOpenAiSseText: chunk => (openAiTap ??= createOpenAiSseTap(callbacks)).feed(chunk),
     observeNonStreamAnthropic: parsed => observeNonStreamAnthropicResponse(parsed, callbacks),
     observeNonStreamOpenAi: parsed => observeNonStreamOpenAiResponse(parsed, callbacks),
+    recordRetryAttempt: () => {
+      checkpoints.advance({ retryCount: checkpoints.current.retryCount + 1 });
+      headers[EXECUTION_GENERATION_HEADER] = String(checkpoints.currentGeneration);
+    },
     fail: category => checkpoints.advance({ failureCategory: category as ExecutionCheckpoint['failureCategory'] }),
   };
 }

@@ -23,6 +23,7 @@ import { anthropicErrorType, upstreamHttpStatus } from './upstream-error.js';
 import { CLAUDE_CODE_BILLING_HEADER_PREFIX } from './oauth/claude-identity.js';
 import { ToolResultImageError } from './provider-error.js';
 import type { RequestExecutionObserver } from './request-execution-context.js';
+import { VERTEX_ANTHROPIC_NPM } from './constants.js';
 
 export { silenceSdkWarnings, ToolResultImageError };
 
@@ -174,6 +175,7 @@ export interface SdkCallParams {
   temperature?: number;
   maxRetries?: number;
   providerOptions?: Record<string, Record<string, unknown>>;
+  inputTokensIncludeCache?: boolean;
 }
 
 // ── system ───────────────────────────────────────────────────────────────────
@@ -584,6 +586,21 @@ function isClaudeCodeStructuredOutputCompactRequest(body: AnthropicRequest): boo
   return text.includes(COMPACT_TEXT_ONLY_START) && text.includes(COMPACT_TEXT_ONLY_END);
 }
 
+/**
+ * OAuth uses Relay's outer replay only; nested SDK retries would multiply attempts.
+ * Non-OAuth keeps one inner retry for pre-stream transients with SDK backoff,
+ * while proxy replay handles pre-output stream failures: at most six attempts,
+ * rather than nine from combining both default retry budgets.
+ */
+const OPENAI_OAUTH_SDK_MAX_RETRIES = 0;
+const SDK_MAX_RETRIES_NON_OAUTH = 1;
+const CACHE_INCLUSIVE_INPUT_NPMS = new Set([
+  '@ai-sdk/openai',
+  '@ai-sdk/openai-compatible',
+  '@ai-sdk/anthropic',
+  VERTEX_ANTHROPIC_NPM,
+]);
+
 export function translateRequest(
   body: AnthropicRequest,
   npm: string,
@@ -661,8 +678,11 @@ export function translateRequest(
     toolChoice: compactRequest ? 'none' : translateToolChoice(body.tool_choice),
     maxOutputTokens: options?.openAiOAuth ? undefined : body.max_tokens,
     temperature: body.temperature,
-    maxRetries: options?.openAiOAuth ? 0 : undefined,
+    maxRetries: options?.openAiOAuth
+      ? OPENAI_OAUTH_SDK_MAX_RETRIES
+      : SDK_MAX_RETRIES_NON_OAUTH,
     providerOptions,
+    inputTokensIncludeCache: CACHE_INCLUSIVE_INPUT_NPMS.has(npm),
   };
 }
 
@@ -670,7 +690,11 @@ export function translateRequest(
 interface SdkUsage {
   inputTokens?: number;
   outputTokens?: number;
-  inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
+  inputTokenDetails?: {
+    noCacheTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+  };
   /** AI SDK 6 compatibility for older third-party LanguageModel implementations. */
   cachedInputTokens?: number;
 }
@@ -682,30 +706,47 @@ interface AnthropicUsage {
 }
 
 /**
- * Normalize SDK usage into disjoint Anthropic buckets. `input_tokens` contains
- * uncached input only. Cache reads and writes occupy their dedicated fields.
- * AI SDK providers normally include cache subsets in `inputTokens`; when the
- * cache buckets exceed that value, the provider is reporting uncached input and
- * cache usage separately, so the input value is retained instead of subtracted.
+ * Normalize SDK usage into disjoint Anthropic buckets. The SDK-normalized
+ * `noCacheTokens` value is authoritative when present; provider semantics
+ * control the fallback for implementations that omit that breakdown.
  */
-function toAnthropicUsage(u?: SdkUsage): AnthropicUsage {
+function toAnthropicUsage(
+  u: SdkUsage | undefined,
+  inputTokensIncludeCache: boolean,
+): AnthropicUsage {
   const tokenCount = (value: unknown): number => (
     typeof value === 'number' && Number.isFinite(value) && value >= 0
       ? Math.floor(value)
       : 0
   );
   const total = tokenCount(u?.inputTokens);
+  const noCache = u?.inputTokenDetails?.noCacheTokens;
   const cacheRead = tokenCount(
     u?.inputTokenDetails?.cacheReadTokens ?? u?.cachedInputTokens,
   );
   const cacheWrite = tokenCount(u?.inputTokenDetails?.cacheWriteTokens);
-  const cacheTotal = cacheRead + cacheWrite;
   return {
-    input_tokens: total >= cacheTotal ? total - cacheTotal : total,
+    input_tokens: noCache !== undefined
+      ? tokenCount(noCache)
+      : inputTokensIncludeCache
+        ? Math.max(total - cacheRead - cacheWrite, 0)
+        : total,
     output_tokens: tokenCount(u?.outputTokens),
     cache_creation_input_tokens: cacheWrite,
     cache_read_input_tokens: cacheRead,
   };
+}
+
+export interface AnthropicUsageTrace extends AnthropicUsage {
+  model: string;
+  promptCacheKeyHash?: string;
+}
+
+function sdkPromptCacheKeyHash(params: SdkCallParams): string | undefined {
+  const key = params.providerOptions?.openai?.promptCacheKey;
+  return typeof key === 'string'
+    ? createHash('sha256').update(key).digest('hex').slice(0, 16)
+    : undefined;
 }
 
 // ── response: SDK fullStream → Anthropic SSE ─────────────────────────────────
@@ -718,6 +759,9 @@ export interface AnthropicStreamObserver {
   onPart?: (partType: string) => void;
   /** Local fallback used when the provider omits usage at stream completion. */
   initialInputTokens?: number;
+  inputTokensIncludeCache?: boolean;
+  onUsage?: (usage: AnthropicUsageTrace) => void;
+  promptCacheKeyHash?: string;
   abortSignal?: AbortSignal;
   /** Abort if the provider produces no stream event for this long. */
   idleTimeoutMs?: number;
@@ -939,7 +983,10 @@ export async function writeAnthropicStream(
 
       case 'finish':
         if (part.totalUsage) {
-          const finalUsage = toAnthropicUsage(part.totalUsage);
+          const finalUsage = toAnthropicUsage(
+            part.totalUsage,
+            observer?.inputTokensIncludeCache ?? false,
+          );
           const hasFinalInputUsage = finalUsage.input_tokens
             + finalUsage.cache_creation_input_tokens
             + finalUsage.cache_read_input_tokens > 0;
@@ -947,6 +994,11 @@ export async function writeAnthropicStream(
             ? finalUsage
             : { ...usage, output_tokens: finalUsage.output_tokens };
         }
+        observer?.onUsage?.({
+          model: modelId,
+          ...usage,
+          ...(observer.promptCacheKeyHash ? { promptCacheKeyHash: observer.promptCacheKeyHash } : {}),
+        });
         if (part.finishReason === 'tool-calls') finishReason = 'tool_use';
         else if (part.finishReason === 'length') finishReason = 'max_tokens';
         else if (part.finishReason === 'stop' && finishReason !== 'tool_use') finishReason = 'end_turn';
@@ -986,6 +1038,7 @@ export async function streamAnthropicResponse(
   log?: LogFn,
   observer?: AnthropicStreamObserver,
 ): Promise<void> {
+  const { inputTokensIncludeCache = false, ...sdkParams } = params;
   const idleTimeoutMs = observer?.idleTimeoutMs ?? SDK_STREAM_IDLE_TIMEOUT_MS;
   const idleAbort = new AbortController();
   const externalAbort = observer?.lifecycle?.abortSignal ?? observer?.abortSignal; // lifecycle composes deadlines
@@ -1004,7 +1057,7 @@ export async function streamAnthropicResponse(
   // owns the timers and explicitly settles its controller after consumption.
   const result = streamText({
     model,
-    ...params,
+    ...sdkParams,
     abortSignal,
     onError: () => {},
   } as Parameters<typeof streamText>[0]);
@@ -1025,7 +1078,12 @@ export async function streamAnthropicResponse(
   })();
 
   try {
-    await writeAnthropicStream(watchedStream, modelId, write, log, { ...observer, abortSignal }, params.tools);
+    await writeAnthropicStream(watchedStream, modelId, write, log, {
+      ...observer,
+      abortSignal,
+      inputTokensIncludeCache,
+      promptCacheKeyHash: sdkPromptCacheKeyHash(params) ?? observer?.promptCacheKeyHash,
+    }, params.tools);
   } finally {
     stopForwardingAbort();
     clearTimeout(idleTimer);
@@ -1045,6 +1103,7 @@ export async function generateAnthropicResponse(
     forceStream?: boolean;
     abortSignal?: AbortSignal;
     onPart?: (partType: string) => void;
+    onUsage?: (usage: AnthropicUsageTrace) => void;
     idleTimeoutMs?: number;
     /** See {@link AnthropicStreamObserver.lifecycle}. */
     lifecycle?: RequestExecutionObserver;
@@ -1054,6 +1113,7 @@ export async function generateAnthropicResponse(
   let toolCalls: Array<{ toolCallId: string; toolName: string; input: unknown }>;
   let finishReason: string;
   let usage: SdkUsage | undefined;
+  const { inputTokensIncludeCache = false, ...sdkParams } = params;
 
   if (options?.forceStream) {
     // Some upstreams (e.g. ChatGPT's Codex backend) reject non-streaming requests
@@ -1075,7 +1135,7 @@ export async function generateAnthropicResponse(
     // settles its controller when the stream has been fully reduced.
     const r = streamText({
       model,
-      ...params,
+      ...sdkParams,
       abortSignal,
       onError: () => {},
     } as Parameters<typeof streamText>[0]);
@@ -1139,7 +1199,7 @@ export async function generateAnthropicResponse(
       options?.lifecycle?.startConnecting();
       const r = await generateText({
         model,
-        ...params,
+        ...sdkParams,
         abortSignal: generateAbort.signal,
       } as Parameters<typeof generateText>[0]);
       options?.lifecycle?.markHeadersReceived();
@@ -1154,6 +1214,13 @@ export async function generateAnthropicResponse(
   }
 
   const inputRules = toolInputRules(params.tools);
+  const finalUsage = toAnthropicUsage(usage, inputTokensIncludeCache);
+  const promptCacheKeyHash = sdkPromptCacheKeyHash(params);
+  options?.onUsage?.({
+    model: modelId,
+    ...finalUsage,
+    ...(promptCacheKeyHash ? { promptCacheKeyHash } : {}),
+  });
   return {
     id: 'msg_' + Date.now(), type: 'message', role: 'assistant', model: modelId,
     content: [
@@ -1166,6 +1233,6 @@ export async function generateAnthropicResponse(
       })),
     ],
     stop_reason: finishReason === 'tool-calls' ? 'tool_use' : 'end_turn',
-    usage: toAnthropicUsage(usage),
+    usage: finalUsage,
   };
 }
