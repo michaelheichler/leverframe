@@ -1,0 +1,19 @@
+dist/cli.js
+  s_d8452b69fa898e::t_7b914c5880835a 12984,12993-13000,13003-13009,13011,13014-13020,13024-13027,13039-13049,13138,13141-13148,13155,13158,13160,13203-13206,13272-13276,13306-13318,13376-13379,13415-13427,13501-13504
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.20",
+  "base_commit_sha": "51c71f372142bdcf638abd30b0b296f52340778c",
+  "prompts": {},
+  "sessions": {
+    "s_d8452b69fa898e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26c6c004-3bbc-4b34-b72f-0d9110f1a8a6",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}
