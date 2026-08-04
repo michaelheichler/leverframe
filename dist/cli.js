@@ -67,7 +67,7 @@ import {
   withProviderMutationLock,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-27BJVEUK.js";
+} from "./chunk-HS4KB2ZM.js";
 
 // src/cli.ts
 import pc14 from "picocolors";
@@ -115,8 +115,9 @@ function formatModelCapabilities(model) {
 }
 var bar = pc.gray("\u2502");
 var hline = pc.gray("\u2500");
+var ansiPattern = new RegExp(String.raw`\u001B\[[0-9;]*m`, "gu");
 function stripAnsi(s) {
-  return s.replace(/\u001b\[[0-9;]*m/g, "");
+  return s.replace(ansiPattern, "");
 }
 function panelWidth(lines, title) {
   const maxLine = lines.reduce((max, line) => Math.max(max, stripAnsi(line).length), 0);
@@ -1998,7 +1999,7 @@ function cachedModelToLocal(cached, provider) {
   const endpoint = resolveEndpoint(npm, apiUrl);
   if (endpoint === null) return null;
   const modelsDev = findModelsDevModel(provider.id, cached.id);
-  const { id, upstreamModelId: upstreamModelId2 } = normalizeGoogleModelId(cached.id, npm);
+  const { id, upstreamModelId: _upstreamModelId } = normalizeGoogleModelId(cached.id, npm);
   const normalizedUpstream = normalizeGoogleModelId(cached.upstreamModelId ?? cached.id, npm).upstreamModelId;
   const family = npm === "@ai-sdk/google" ? id.split(/[-/:]/)[0] ?? id : cached.family ?? "";
   return {
@@ -3974,7 +3975,7 @@ function injectClaudeIdentity(body, providerData, seed) {
   const sessionId = getOrCreateSessionId(seed);
   const userId = buildUserIdJson(deviceId, accountUUID, sessionId);
   const existing = body.metadata;
-  body.metadata = { ...existing ?? {}, user_id: userId };
+  body.metadata = { ...existing, user_id: userId };
   return { sessionId, userId };
 }
 
@@ -4739,7 +4740,7 @@ function deepMergeProviderOptions(a, b) {
   const keys = /* @__PURE__ */ new Set([...Object.keys(a), ...Object.keys(b)]);
   const out = {};
   for (const key of keys) {
-    out[key] = { ...a[key] ?? {}, ...b[key] ?? {} };
+    out[key] = { ...a[key], ...b[key] };
   }
   return out;
 }
@@ -8450,8 +8451,18 @@ function sdkPromptCacheKeyHash(params) {
   const key = params.providerOptions?.openai?.promptCacheKey;
   return typeof key === "string" ? createHash5("sha256").update(key).digest("hex").slice(0, 16) : void 0;
 }
-var SDK_STREAM_IDLE_TIMEOUT_MS = 12e4;
-var SDK_TOTAL_TIMEOUT_MS = 10 * 6e4;
+function positiveEnvMs(name, fallback) {
+  const raw = process.env[name]?.trim() ?? "";
+  if (!/^\d+$/.test(raw)) return fallback;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+function sdkStreamIdleTimeoutMs() {
+  return positiveEnvMs("LEVERFRAME_SDK_IDLE_TIMEOUT_MS", 10 * 6e4);
+}
+function nonStreamRequestTimeoutMs() {
+  return positiveEnvMs("LEVERFRAME_SDK_REQUEST_TIMEOUT_MS", 60 * 6e4);
+}
 function streamAbortError(signal) {
   if (signal?.reason instanceof Error) return signal.reason;
   const error = new Error(
@@ -8482,7 +8493,10 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
   let openType = null;
   let pendingThinkingSig;
   const idToBlock = /* @__PURE__ */ new Map();
+  const toolNameById = /* @__PURE__ */ new Map();
   const toolJsonBuffer = /* @__PURE__ */ new Map();
+  const emittedToolLengths = /* @__PURE__ */ new Map();
+  const toolFlushTimers = /* @__PURE__ */ new Map();
   const flushedTools = /* @__PURE__ */ new Set();
   let openToolId = null;
   let finishReason = "end_turn";
@@ -8493,6 +8507,42 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
     cache_read_input_tokens: 0
   };
   const emit = (event, data) => write(sseChunk(event, data));
+  const toolCanFlushEarly = (id) => {
+    const rules = inputRules.get(toolNameById.get(id) ?? "");
+    return rules === void 0 || rules.required.size === 0 && Object.keys(rules.properties).length === 0 && rules.omitEmptyArrays.size === 0;
+  };
+  const clearToolTimer = (id) => {
+    const timer = toolFlushTimers.get(id);
+    if (timer !== void 0) {
+      clearInterval(timer);
+      toolFlushTimers.delete(id);
+    }
+  };
+  const clearToolTimers = () => {
+    for (const id of toolFlushTimers.keys()) clearToolTimer(id);
+  };
+  const emitToolJson = (id, json) => {
+    const emittedLength = emittedToolLengths.get(id) ?? 0;
+    const emittedPrefix = toolJsonBuffer.get(id)?.slice(0, emittedLength) ?? "";
+    let output = json;
+    if (!output.startsWith(emittedPrefix)) {
+      const raw = toolJsonBuffer.get(id) ?? "";
+      if (emittedLength === 0 || !raw.startsWith(emittedPrefix)) return;
+      output = raw;
+    }
+    const suffix = output.slice(emittedLength);
+    if (!suffix) return;
+    emit("content_block_delta", {
+      type: "content_block_delta",
+      index: idToBlock.get(id) ?? blockIndex,
+      delta: { type: "input_json_delta", partial_json: suffix }
+    });
+    emittedToolLengths.set(id, output.length);
+  };
+  const flushToolJson = (id) => {
+    if (!toolCanFlushEarly(id) || flushedTools.has(id)) return;
+    emitToolJson(id, toolJsonBuffer.get(id) ?? "");
+  };
   const ensureStart = () => {
     if (started) return;
     emit("message_start", {
@@ -8525,14 +8575,8 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
       pendingThinkingSig = void 0;
     }
     if (openType === "tool" && openToolId !== null && !flushedTools.has(openToolId)) {
-      const buffered = toolJsonBuffer.get(openToolId);
-      if (buffered) {
-        emit("content_block_delta", {
-          type: "content_block_delta",
-          index: blockIndex,
-          delta: { type: "input_json_delta", partial_json: buffered }
-        });
-      }
+      clearToolTimer(openToolId);
+      emitToolJson(openToolId, toolJsonBuffer.get(openToolId) ?? "");
       flushedTools.add(openToolId);
     }
     if (openType) emit("content_block_stop", { type: "content_block_stop", index: blockIndex });
@@ -8546,144 +8590,175 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
     openType = type;
     emit("content_block_start", { type: "content_block_start", index: blockIndex, content_block: contentBlock });
   };
-  for await (const part of stream) {
-    observer?.onPart?.(part.type);
-    observer?.lifecycle?.markStreamActivity();
-    if (observer?.abortSignal?.aborted) throw streamAbortError(observer.abortSignal);
-    switch (part.type) {
-      // The SDK emits start before it knows whether the provider accepted the
-      // request. Wait for content/finish so a pre-content HTTP failure can still
-      // propagate through the proxy with its real non-2xx status.
-      case "start":
-        break;
-      // An abort is terminal but is not an error part in the AI SDK stream. If
-      // treated like an unknown part, the loop ends and Relay synthesizes a
-      // message_start/message_delta/message_stop after the client disconnected.
-      // Throw so the HTTP layer follows its cancellation path and emits nothing.
-      case "abort":
-        throw streamAbortError(observer?.abortSignal);
-      case "reasoning-start":
-        openBlock("thinking", { type: "thinking", thinking: "", signature: "" });
-        break;
-      case "reasoning-delta":
-        if (openType !== "thinking") openBlock("thinking", { type: "thinking", thinking: "", signature: "" });
-        emit("content_block_delta", {
-          type: "content_block_delta",
-          index: blockIndex,
-          delta: { type: "thinking_delta", thinking: part.text ?? "" }
-        });
-        break;
-      case "reasoning-end": {
-        const sig = grabRoundTripSignature(part);
-        if (sig) pendingThinkingSig = sig;
-        break;
+  const clientStillListening = () => started && observer?.clientAbortSignal !== void 0 && !observer.clientAbortSignal.aborted;
+  const deliverTruncated = () => {
+    if (!clientStillListening()) return false;
+    closeOpen();
+    emit("message_delta", {
+      type: "message_delta",
+      delta: { stop_reason: "max_tokens", stop_sequence: null },
+      usage
+    });
+    emit("message_stop", { type: "message_stop" });
+    return true;
+  };
+  try {
+    for await (const part of stream) {
+      observer?.onPart?.(part.type);
+      observer?.lifecycle?.markStreamActivity();
+      if (observer?.abortSignal?.aborted) {
+        if (deliverTruncated()) return;
+        throw streamAbortError(observer.abortSignal);
       }
-      case "text-start":
-        openBlock("text", { type: "text", text: "" });
-        break;
-      case "text-delta":
-        if (openType !== "text") openBlock("text", { type: "text", text: "" });
-        emit("content_block_delta", {
-          type: "content_block_delta",
-          index: blockIndex,
-          delta: { type: "text_delta", text: part.text ?? "" }
-        });
-        observer?.lifecycle?.markOutputEmitted();
-        break;
-      case "text-end":
-        break;
-      case "tool-input-start": {
-        const sig = grabRoundTripSignature(part);
-        openBlock("tool", {
-          type: "tool_use",
-          id: encodeToolUseId(part.id ?? "", sig),
-          name: part.toolName,
-          input: {}
-        });
-        idToBlock.set(part.id ?? "", blockIndex);
-        openToolId = part.id ?? "";
-        observer?.lifecycle?.markToolCallEmitted();
-        break;
-      }
-      case "tool-input-delta": {
-        const id = part.id ?? "";
-        toolJsonBuffer.set(id, (toolJsonBuffer.get(id) ?? "") + (part.delta ?? part.text ?? ""));
-        break;
-      }
-      case "tool-input-end":
-        break;
-      case "tool-call": {
-        finishReason = "tool_use";
-        observer?.lifecycle?.markToolCallEmitted();
-        const id = part.toolCallId ?? "";
-        if (idToBlock.has(id)) {
-          if (!flushedTools.has(id)) {
-            const json = part.input !== void 0 && part.input !== null ? JSON.stringify(sanitizeToolInput(part.input, inputRules.get(part.toolName ?? ""))) : toolJsonBuffer.get(id) ?? "";
-            if (json) {
-              emit("content_block_delta", {
-                type: "content_block_delta",
-                index: idToBlock.get(id) ?? blockIndex,
-                delta: { type: "input_json_delta", partial_json: json }
-              });
-            }
-            flushedTools.add(id);
-          }
-        } else if (openType !== "tool") {
-          const sig = grabRoundTripSignature(part);
-          openBlock("tool", {
-            type: "tool_use",
-            id: encodeToolUseId(id, sig),
-            name: part.toolName,
-            input: {}
-          });
+      switch (part.type) {
+        // The SDK emits start before it knows whether the provider accepted the
+        // request. Wait for content/finish so a pre-content HTTP failure can still
+        // propagate through the proxy with its real non-2xx status.
+        case "start":
+          break;
+        // An abort is terminal but is not an error part in the AI SDK stream. If
+        // treated like an unknown part, the loop ends and Relay synthesizes a
+        // message_start/message_delta/message_stop after the client disconnected.
+        // Throw so the HTTP layer follows its cancellation path and emits nothing.
+        case "abort":
+          if (deliverTruncated()) return;
+          throw streamAbortError(observer?.abortSignal);
+        case "reasoning-start":
+          openBlock("thinking", { type: "thinking", thinking: "", signature: "" });
+          break;
+        case "reasoning-delta":
+          if (openType !== "thinking") openBlock("thinking", { type: "thinking", thinking: "", signature: "" });
           emit("content_block_delta", {
             type: "content_block_delta",
             index: blockIndex,
-            delta: { type: "input_json_delta", partial_json: JSON.stringify(sanitizeToolInput(part.input ?? {}, inputRules.get(part.toolName ?? ""))) }
+            delta: { type: "thinking_delta", thinking: part.text ?? "" }
           });
-          flushedTools.add(id);
+          break;
+        case "reasoning-end": {
+          const sig = grabRoundTripSignature(part);
+          if (sig) pendingThinkingSig = sig;
+          break;
         }
-        break;
-      }
-      case "finish":
-        if (part.totalUsage) {
-          const finalUsage = toAnthropicUsage(
-            part.totalUsage,
-            observer?.inputTokensIncludeCache ?? false
-          );
-          const hasFinalInputUsage = finalUsage.input_tokens + finalUsage.cache_creation_input_tokens + finalUsage.cache_read_input_tokens > 0;
-          usage = hasFinalInputUsage ? finalUsage : { ...usage, output_tokens: finalUsage.output_tokens };
+        case "text-start":
+          openBlock("text", { type: "text", text: "" });
+          break;
+        case "text-delta":
+          if (openType !== "text") openBlock("text", { type: "text", text: "" });
+          emit("content_block_delta", {
+            type: "content_block_delta",
+            index: blockIndex,
+            delta: { type: "text_delta", text: part.text ?? "" }
+          });
+          observer?.lifecycle?.markOutputEmitted();
+          break;
+        case "text-end":
+          break;
+        case "tool-input-start": {
+          const sig = grabRoundTripSignature(part);
+          openBlock("tool", {
+            type: "tool_use",
+            id: encodeToolUseId(part.id ?? "", sig),
+            name: part.toolName,
+            input: {}
+          });
+          const id = part.id ?? "";
+          idToBlock.set(id, blockIndex);
+          toolNameById.set(id, part.toolName ?? "");
+          toolJsonBuffer.set(id, "");
+          emittedToolLengths.set(id, 0);
+          openToolId = id;
+          if (toolCanFlushEarly(id)) {
+            const timer = setInterval(() => flushToolJson(id), 2e3);
+            timer.unref?.();
+            toolFlushTimers.set(id, timer);
+          }
+          observer?.lifecycle?.markToolCallEmitted();
+          break;
         }
-        observer?.onUsage?.({
-          model: modelId,
-          ...usage,
-          ...observer.promptCacheKeyHash ? { promptCacheKeyHash: observer.promptCacheKeyHash } : {}
-        });
-        if (part.finishReason === "tool-calls") finishReason = "tool_use";
-        else if (part.finishReason === "length") finishReason = "max_tokens";
-        else if (part.finishReason === "stop" && finishReason !== "tool_use") finishReason = "end_turn";
-        break;
-      case "error": {
-        const e = part.error;
-        const errMsg = e?.message || (typeof part.error === "string" ? part.error : JSON.stringify(e?.data ?? part.error));
-        const errorType = anthropicErrorType(upstreamHttpStatus(part.error, errMsg));
-        log12?.(() => `sdk stream error (${errorType}): ${errMsg}`);
-        closeOpen();
-        throw part.error instanceof Error || part.error && typeof part.error === "object" ? part.error : new Error(errMsg);
+        case "tool-input-delta": {
+          const id = part.id ?? "";
+          toolJsonBuffer.set(id, (toolJsonBuffer.get(id) ?? "") + (part.delta ?? part.text ?? ""));
+          break;
+        }
+        case "tool-input-end":
+          break;
+        case "tool-call": {
+          finishReason = "tool_use";
+          observer?.lifecycle?.markToolCallEmitted();
+          const id = part.toolCallId ?? "";
+          if (idToBlock.has(id)) {
+            if (!flushedTools.has(id)) {
+              clearToolTimer(id);
+              const json = part.input !== void 0 && part.input !== null ? JSON.stringify(sanitizeToolInput(part.input, inputRules.get(part.toolName ?? ""))) : toolJsonBuffer.get(id) ?? "";
+              emitToolJson(id, json);
+              flushedTools.add(id);
+            }
+          } else if (openType !== "tool") {
+            const sig = grabRoundTripSignature(part);
+            openBlock("tool", {
+              type: "tool_use",
+              id: encodeToolUseId(id, sig),
+              name: part.toolName,
+              input: {}
+            });
+            idToBlock.set(id, blockIndex);
+            toolNameById.set(id, part.toolName ?? "");
+            toolJsonBuffer.set(id, "");
+            emittedToolLengths.set(id, 0);
+            emitToolJson(
+              id,
+              JSON.stringify(sanitizeToolInput(part.input ?? {}, inputRules.get(part.toolName ?? "")))
+            );
+            flushedTools.add(id);
+          }
+          break;
+        }
+        case "finish":
+          if (part.totalUsage) {
+            const finalUsage = toAnthropicUsage(
+              part.totalUsage,
+              observer?.inputTokensIncludeCache ?? false
+            );
+            const hasFinalInputUsage = finalUsage.input_tokens + finalUsage.cache_creation_input_tokens + finalUsage.cache_read_input_tokens > 0;
+            usage = hasFinalInputUsage ? finalUsage : { ...usage, output_tokens: finalUsage.output_tokens };
+          }
+          observer?.onUsage?.({
+            model: modelId,
+            ...usage,
+            ...observer.promptCacheKeyHash ? { promptCacheKeyHash: observer.promptCacheKeyHash } : {}
+          });
+          if (part.finishReason === "tool-calls") finishReason = "tool_use";
+          else if (part.finishReason === "length") finishReason = "max_tokens";
+          else if (part.finishReason === "stop" && finishReason !== "tool_use") finishReason = "end_turn";
+          break;
+        case "error": {
+          const e = part.error;
+          const errMsg = e?.message || (typeof part.error === "string" ? part.error : JSON.stringify(e?.data ?? part.error));
+          const errorType = anthropicErrorType(upstreamHttpStatus(part.error, errMsg));
+          log12?.(() => `sdk stream error (${errorType}): ${errMsg}`);
+          if (deliverTruncated()) return;
+          closeOpen();
+          throw part.error instanceof Error || part.error && typeof part.error === "object" ? part.error : new Error(errMsg);
+        }
+        default:
+          break;
       }
-      default:
-        break;
     }
+    if (observer?.abortSignal?.aborted) {
+      if (deliverTruncated()) return;
+      throw streamAbortError(observer.abortSignal);
+    }
+    closeOpen();
+    ensureStart();
+    emit("message_delta", { type: "message_delta", delta: { stop_reason: finishReason, stop_sequence: null }, usage });
+    emit("message_stop", { type: "message_stop" });
+  } finally {
+    clearToolTimers();
   }
-  if (observer?.abortSignal?.aborted) throw streamAbortError(observer.abortSignal);
-  closeOpen();
-  ensureStart();
-  emit("message_delta", { type: "message_delta", delta: { stop_reason: finishReason, stop_sequence: null }, usage });
-  emit("message_stop", { type: "message_stop" });
 }
 async function streamAnthropicResponse(model, params, modelId, write, log12, observer) {
   const { inputTokensIncludeCache = false, ...sdkParams } = params;
-  const idleTimeoutMs = observer?.idleTimeoutMs ?? SDK_STREAM_IDLE_TIMEOUT_MS;
+  const idleTimeoutMs = observer?.idleTimeoutMs ?? sdkStreamIdleTimeoutMs();
   const idleAbort = new AbortController();
   const externalAbort = observer?.lifecycle?.abortSignal ?? observer?.abortSignal;
   const stopForwardingAbort = forwardAbortSignal(externalAbort, idleAbort);
@@ -8691,10 +8766,6 @@ async function streamAnthropicResponse(model, params, modelId, write, log12, obs
   let idleTimer = setTimeout(
     () => idleAbort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1e3)}s`)),
     idleTimeoutMs
-  );
-  const totalTimer = setTimeout(
-    () => idleAbort.abort(new Error(`provider stream exceeded ${Math.round(SDK_TOTAL_TIMEOUT_MS / 1e3)}s`)),
-    SDK_TOTAL_TIMEOUT_MS
   );
   const result = streamText({
     model,
@@ -8721,13 +8792,13 @@ async function streamAnthropicResponse(model, params, modelId, write, log12, obs
     await writeAnthropicStream(watchedStream, modelId, write, log12, {
       ...observer,
       abortSignal,
+      clientAbortSignal: observer?.clientAbortSignal,
       inputTokensIncludeCache,
       promptCacheKeyHash: sdkPromptCacheKeyHash(params) ?? observer?.promptCacheKeyHash
     }, params.tools);
   } finally {
     stopForwardingAbort();
     clearTimeout(idleTimer);
-    clearTimeout(totalTimer);
     if (!idleAbort.signal.aborted) idleAbort.abort();
   }
 }
@@ -8741,14 +8812,10 @@ async function generateAnthropicResponse(model, params, modelId, options) {
     const forceAbort = new AbortController();
     const stopForwardingAbort = forwardAbortSignal(options.lifecycle?.abortSignal ?? options.abortSignal, forceAbort);
     const abortSignal = forceAbort.signal;
-    const idleTimeoutMs = options.idleTimeoutMs ?? SDK_STREAM_IDLE_TIMEOUT_MS;
+    const idleTimeoutMs = options.idleTimeoutMs ?? sdkStreamIdleTimeoutMs();
     let idleTimer = setTimeout(
       () => forceAbort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1e3)}s`)),
       idleTimeoutMs
-    );
-    const totalTimer = setTimeout(
-      () => forceAbort.abort(new Error(`provider stream exceeded ${Math.round(SDK_TOTAL_TIMEOUT_MS / 1e3)}s`)),
-      SDK_TOTAL_TIMEOUT_MS
     );
     const r = streamText({
       model,
@@ -8795,7 +8862,6 @@ async function generateAnthropicResponse(model, params, modelId, options) {
     } finally {
       stopForwardingAbort();
       clearTimeout(idleTimer);
-      clearTimeout(totalTimer);
       if (!forceAbort.signal.aborted) forceAbort.abort();
     }
     text3 = streamedText.join("");
@@ -8805,9 +8871,10 @@ async function generateAnthropicResponse(model, params, modelId, options) {
   } else {
     const generateAbort = new AbortController();
     const stopForwardingAbort = forwardAbortSignal(options?.lifecycle?.abortSignal ?? options?.abortSignal, generateAbort);
+    const totalTimeoutMs = nonStreamRequestTimeoutMs();
     const totalTimer = setTimeout(
-      () => generateAbort.abort(new Error(`provider request exceeded ${Math.round(SDK_TOTAL_TIMEOUT_MS / 1e3)}s`)),
-      SDK_TOTAL_TIMEOUT_MS
+      () => generateAbort.abort(new Error(`provider request exceeded ${Math.round(totalTimeoutMs / 1e3)}s`)),
+      totalTimeoutMs
     );
     try {
       options?.lifecycle?.startConnecting();
@@ -9995,7 +10062,7 @@ var DeadlineManager = class {
     }
   }
   clearAll() {
-    for (const kind of [...this.timers.keys()]) this.clear(kind);
+    for (const kind of this.timers.keys()) this.clear(kind);
   }
 };
 
@@ -10022,11 +10089,17 @@ var IllegalLifecycleTransitionError = class extends Error {
   from;
   to;
 };
+function deadlineFromEnv(name, fallback) {
+  const raw = process.env[name]?.trim() ?? "";
+  if (!/^\d+$/.test(raw)) return fallback;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
 var DEFAULT_LIFECYCLE_DEADLINES = {
-  connectMs: 3e4,
-  headerMs: 6e4,
-  idleMs: 12e4,
-  totalMs: 10 * 6e4
+  connectMs: deadlineFromEnv("LEVERFRAME_CONNECT_TIMEOUT_MS", 3e4),
+  headerMs: deadlineFromEnv("LEVERFRAME_HEADER_TIMEOUT_MS", 6e4),
+  idleMs: deadlineFromEnv("LEVERFRAME_IDLE_TIMEOUT_MS", 10 * 6e4),
+  totalMs: deadlineFromEnv("LEVERFRAME_TOTAL_TIMEOUT_MS", 60 * 6e4)
 };
 var AUTO_REPLAY_MAX_RETRIES_ENV = "LEVERFRAME_AUTO_REPLAY_MAX_RETRIES";
 var DEFAULT_AUTO_REPLAY_MAX_RETRIES = 2;
@@ -10267,7 +10340,7 @@ function providerErrorForLifecycleOutcome(outcome, context) {
     return new ProviderTransportError({
       ...base,
       category,
-      retryable: outcome.reason.deadline !== "total",
+      retryable: true,
       safeMessage: `Request exceeded its ${outcome.reason.deadline} deadline.`
     });
   }
@@ -10353,7 +10426,7 @@ function createRequestExecutionContext(options) {
   };
 }
 function cancelAllActiveRequestExecutions() {
-  for (const lifecycle of [...activeLifecycles]) lifecycle.cancel("local");
+  for (const lifecycle of activeLifecycles) lifecycle.cancel("local");
 }
 
 // src/proxy.ts
@@ -10955,6 +11028,7 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
                           onPart: (partType) => translationLifecycle?.onPart(partType),
                           initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
                           abortSignal: clientAbort.signal,
+                          clientAbortSignal: clientAbort.signal,
                           lifecycle: requestExecution
                         }
                       )
@@ -12084,6 +12158,7 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
               onUsage,
               initialInputTokens: estimateAnthropicInputTokens(body),
               abortSignal: clientAbort.signal,
+              clientAbortSignal: clientAbort.signal,
               lifecycle: requestExecution
             })
           );
@@ -12501,7 +12576,6 @@ async function selectServerProviders(available, initial) {
       const id = selected[i];
       const provider = lookup2.get(id);
       const label = provider ? `\u2605 ${provider.name}` : pc8.dim(`\u2605 ${id} \u2014 provider gone`);
-      const hint = provider ? `${provider.modelCount} model${provider.modelCount !== 1 ? "s" : ""}` : "select to remove";
       options.push({ value: `prov-${i}`, label, hint: "select to remove" });
     }
     const unselected = available.filter((provider) => !isSelected(selected, provider.id));
@@ -14728,7 +14802,7 @@ function applyLeverframePatches(source, config) {
   function displayFor(identity, fallbackId) {
     return DISPLAY_BY_IDENTITY[identity] || "Custom model (" + fallbackId + ")";
   }
-  const reEsc = (s) => s.replace(/[.*+?^$\{\}()|[\]\\]/g, "\\$&");
+  const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const q = (s) => JSON.stringify(s);
   function log12(status, name, extra) {
     report.push(extra === void 0 ? { status, name } : { status, name, extra });

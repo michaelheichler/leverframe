@@ -242,7 +242,7 @@ import { join as join3 } from "path";
 // package.json
 var package_default = {
   name: "@michaelheichler/leverframe",
-  version: "0.3.1",
+  version: "0.3.2",
   description: "Bridge Claude Code to OpenAI-compatible providers, including OpenAI, ChatGPT/Codex OAuth, Kimi, Moonshot, and z.ai",
   author: "Michael Heichler",
   license: "MIT",
@@ -277,6 +277,7 @@ var package_default = {
     build: "tsup",
     "check:package": "node scripts/verify-package-contents.mjs",
     dev: "tsup --watch",
+    lint: "oxlint src tests",
     test: "vitest run",
     "test:watch": "vitest",
     typecheck: "tsc --noEmit && tsc --noEmit -p tests/tsconfig.json",
@@ -306,6 +307,7 @@ var package_default = {
     "@types/node-forge": "1.3.14",
     "@types/ws": "8.18.1",
     husky: "9.1.7",
+    oxlint: "^1.75.0",
     tsup: "8.5.1",
     typescript: "5.9.3",
     vitest: "2.1.9"
@@ -833,6 +835,7 @@ function durableAtomicWrite(path, content, options = {}) {
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   let fd;
   let renamed = false;
+  let cleanupError;
   try {
     fd = openSync2(temporary, "wx", mode);
     completeWrite(fd, content);
@@ -851,10 +854,11 @@ function durableAtomicWrite(path, content, options = {}) {
       try {
         unlinkSync2(temporary);
       } catch (error) {
-        if (errorCode(error) !== "ENOENT") throw error;
+        if (errorCode(error) !== "ENOENT") cleanupError = error;
       }
     }
   }
+  if (cleanupError !== void 0) throw cleanupError;
 }
 
 // src/registry/lock.ts
@@ -910,6 +914,8 @@ function createLockRecord(lockPath, owner) {
   const raw = JSON.stringify(owner);
   const temporary = `${lockPath}.${process.pid}.${owner.token}.tmp`;
   let fd;
+  let snapshot = null;
+  let cleanupError;
   try {
     fd = openSync3(temporary, "wx", 384);
     writeFileSync2(fd, raw);
@@ -917,19 +923,20 @@ function createLockRecord(lockPath, owner) {
     const stats = fstatSync2(fd);
     try {
       linkSync(temporary, lockPath);
+      snapshot = { raw, device: stats.dev, inode: stats.ino, modifiedAt: stats.mtimeMs };
     } catch (error) {
-      if (error.code === "EEXIST") return null;
-      throw error;
+      if (error.code !== "EEXIST") throw error;
     }
-    return { raw, device: stats.dev, inode: stats.ino, modifiedAt: stats.mtimeMs };
   } finally {
     if (fd !== void 0) closeSync3(fd);
     try {
       unlinkSync3(temporary);
     } catch (error) {
-      if (error.code !== "ENOENT") throw error;
+      if (error.code !== "ENOENT") cleanupError = error;
     }
   }
+  if (cleanupError !== void 0) throw cleanupError;
+  return snapshot;
 }
 function readSnapshot(lockPath) {
   const pathStats = lstatSync2(lockPath);
@@ -2450,7 +2457,7 @@ function setServerExposedProviders(providerIds) {
   withConfigWriteLock(() => {
     const config = readConfig();
     config.server = {
-      ...config.server ?? {},
+      ...config.server,
       exposedProviders: providerIds
     };
     writeConfig(config);
@@ -2463,7 +2470,7 @@ function setServerMaskGatewayIds(mask) {
   withConfigWriteLock(() => {
     const config = readConfig();
     config.server = {
-      ...config.server ?? {},
+      ...config.server,
       maskGatewayIds: mask
     };
     writeConfig(config);
@@ -2476,7 +2483,7 @@ function setServerFavoritesOnly(favoritesOnly) {
   withConfigWriteLock(() => {
     const config = readConfig();
     config.server = {
-      ...config.server ?? {},
+      ...config.server,
       favoritesOnly
     };
     writeConfig(config);
@@ -2489,7 +2496,7 @@ function setServerListenMode(listenMode) {
   withConfigWriteLock(() => {
     const config = readConfig();
     config.server = {
-      ...config.server ?? {},
+      ...config.server,
       listenMode
     };
     writeConfig(config);
@@ -2697,4 +2704,4 @@ export {
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-27BJVEUK.js.map
+//# sourceMappingURL=chunk-HS4KB2ZM.js.map
