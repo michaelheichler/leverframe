@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
-  createLanguageModel,
   deepMergeProviderOptions,
   effortProviderOptions,
   getReasoningCapabilities,

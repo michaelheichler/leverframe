@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resolveClaudeInstallation, type ClaudeInstallation } from '../src/claude-installation.js';
 import {
   currentTransformVersion,
@@ -92,6 +92,10 @@ function useTempHome(): string {
   process.env['LEVERFRAME_HOME'] = home;
   return home;
 }
+
+beforeEach(() => {
+  previousHome = process.env['LEVERFRAME_HOME'];
+});
 
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });

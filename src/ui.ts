@@ -52,8 +52,10 @@ export function formatModelCapabilities(
 const bar = pc.gray('│');
 const hline = pc.gray('─');
 
+const ansiPattern = new RegExp(String.raw`\u001B\[[0-9;]*m`, 'gu');
+
 function stripAnsi(s: string): string {
-  return s.replace(/\u001b\[[0-9;]*m/g, '');
+  return s.replace(ansiPattern, '');
 }
 
 function panelWidth(lines: string[], title: string): number {

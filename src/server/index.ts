@@ -21,7 +21,6 @@ import {
   localProvidersToServerModels,
 } from '../provider-catalog.js';
 import { providersForTarget } from '../target-compatibility.js';
-import { loadRegistry } from '../registry/io.js';
 import type { ServerModelInfo, GatewayModelOptions } from './models.js';
 import {
   upstreamModelId,

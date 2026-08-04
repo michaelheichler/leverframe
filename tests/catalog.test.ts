@@ -1,7 +1,7 @@
 // tests/catalog.test.ts
 import { describe, it, expect } from 'vitest';
 import { MAX_MODEL_CATALOG } from '../src/constants.js';
-import { buildCatalogRoutes, localModelToRoute, makeRouteResolver } from '../src/catalog.js';
+import { buildCatalogRoutes, localModelToRoute } from '../src/catalog.js';
 import type { FavoriteModel, LocalProvider } from '../src/types.js';
 
 describe('buildCatalogRoutes', () => {

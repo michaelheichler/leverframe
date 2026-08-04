@@ -371,7 +371,7 @@ export function getAppPathOverride(appId: string): string | undefined {
 export function setAppPathOverride(appId: string, path: string | null): Record<string, string> {
   return withConfigWriteLock(() => {
     const config = readConfig();
-    const next = { ...(config.appPathOverrides ?? {}) };
+    const next = { ...config.appPathOverrides };
     const trimmed = path?.trim() ?? '';
     if (trimmed) next[appId] = trimmed;
     else delete next[appId];
@@ -572,7 +572,7 @@ export function setServerExposedProviders(providerIds: string[]): void {
   withConfigWriteLock(() => {
     const config = readConfig();
     config.server = {
-      ...(config.server ?? {}),
+      ...config.server,
       exposedProviders: providerIds,
     };
     writeConfig(config);
@@ -587,7 +587,7 @@ export function setServerMaskGatewayIds(mask: boolean): void {
   withConfigWriteLock(() => {
     const config = readConfig();
     config.server = {
-      ...(config.server ?? {}),
+      ...config.server,
       maskGatewayIds: mask,
     };
     writeConfig(config);
@@ -602,7 +602,7 @@ export function setServerFavoritesOnly(favoritesOnly: boolean): void {
   withConfigWriteLock(() => {
     const config = readConfig();
     config.server = {
-      ...(config.server ?? {}),
+      ...config.server,
       favoritesOnly,
     };
     writeConfig(config);
@@ -617,7 +617,7 @@ export function setServerListenMode(listenMode: 'local' | 'network'): void {
   withConfigWriteLock(() => {
     const config = readConfig();
     config.server = {
-      ...(config.server ?? {}),
+      ...config.server,
       listenMode,
     };
     writeConfig(config);

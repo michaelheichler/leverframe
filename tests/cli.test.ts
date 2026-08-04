@@ -307,7 +307,7 @@ describe('main dispatch', () => {
       const jsonCalls = log.mock.calls.filter(call => String(call[0]).trim().startsWith('{'));
       expect(jsonCalls.length).toBe(1);
       const raw = String(jsonCalls[0]![0]);
-      expect(raw).not.toMatch(/\x1b\[/);
+      expect(raw).not.toMatch(new RegExp(String.raw`\u001B\[`, 'u'));
       const report = JSON.parse(raw);
       expect(report.resolved).toBe(true);
       expect(report.identity.canonicalPath).toBe(process.execPath);

@@ -235,7 +235,7 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     return DISPLAY_BY_IDENTITY[identity] || 'Custom model (' + fallbackId + ')';
   }
 
-  const reEsc = (s: string) => s.replace(/[.*+?^$\{\}()|[\]\\]/g, '\\$&');
+  const reEsc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const q = (s: string) => JSON.stringify(s); // safe JS string literal
 
   // ---- reporting -----------------------------------------------------------

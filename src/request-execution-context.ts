@@ -169,7 +169,7 @@ export function createRequestExecutionContext(
  * being abandoned mid-stream.
  */
 export function cancelAllActiveRequestExecutions(): void {
-  for (const lifecycle of [...activeLifecycles]) lifecycle.cancel('local');
+  for (const lifecycle of activeLifecycles) lifecycle.cancel('local');
 }
 
 /** Test-only: number of lifecycles currently tracked as in flight. */

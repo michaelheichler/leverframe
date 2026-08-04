@@ -8,8 +8,6 @@ import {
   modelSelectOption,
   navOption,
   printEnvConflictPanel,
-  providerSelectOption,
-  leverframeIntro,
   leverframeOutro,
   formatModelLabel,
 } from './ui.js';

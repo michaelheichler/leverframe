@@ -118,7 +118,7 @@ describe('MITM CA rotation policy', () => {
   });
 
   it('issues a server cert with at most 1 year of validity anchored to notBefore', () => {
-    const certs = ensureHttpProxyCertificates();
+    ensureHttpProxyCertificates();
     const server = readCert(join(certDir(), 'api.anthropic.com.pem'));
     const lifetimeDays = (server.validity.notAfter.getTime() - server.validity.notBefore.getTime()) / (24 * 60 * 60 * 1000);
     expect(lifetimeDays).toBeLessThanOrEqual(365);
@@ -173,7 +173,7 @@ describe('MITM CA rotation policy', () => {
   });
 
   it('rotates when stored cert files are missing even if version matches', () => {
-    const certs = ensureHttpProxyCertificates();
+    ensureHttpProxyCertificates();
     const dir = certDir();
     rmSync(join(dir, 'api.anthropic.com.pem'), { force: true });
     const regenerated = ensureHttpProxyCertificates();

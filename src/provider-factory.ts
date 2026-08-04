@@ -889,7 +889,7 @@ export function deepMergeProviderOptions(
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
   const out: Record<string, Record<string, unknown>> = {};
   for (const key of keys) {
-    out[key] = { ...(a[key] ?? {}), ...(b[key] ?? {}) };
+    out[key] = { ...a[key], ...b[key] };
   }
   return out;
 }

@@ -157,6 +157,6 @@ export function injectClaudeIdentity(
   const sessionId = getOrCreateSessionId(seed);
   const userId = buildUserIdJson(deviceId, accountUUID, sessionId);
   const existing = body.metadata as Record<string, unknown> | undefined;
-  body.metadata = { ...(existing ?? {}), user_id: userId };
+  body.metadata = { ...existing, user_id: userId };
   return { sessionId, userId };
 }

@@ -59,7 +59,7 @@ export function cachedModelToLocal(
   if (endpoint === null) return null;
 
   const modelsDev = findModelsDevModel(provider.id, cached.id);
-  const { id, upstreamModelId } = normalizeGoogleModelId(cached.id, npm);
+  const { id, upstreamModelId: _upstreamModelId } = normalizeGoogleModelId(cached.id, npm);
   const normalizedUpstream = normalizeGoogleModelId(cached.upstreamModelId ?? cached.id, npm).upstreamModelId;
   const family = npm === '@ai-sdk/google' ? (id.split(/[-/:]/)[0] ?? id) : (cached.family ?? '');
 

@@ -68,6 +68,6 @@ export class DeadlineManager {
   }
 
   clearAll(): void {
-    for (const kind of [...this.timers.keys()]) this.clear(kind);
+    for (const kind of this.timers.keys()) this.clear(kind);
   }
 }

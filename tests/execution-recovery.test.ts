@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ensureExecutionDir, workspaceOrSessionHash } from '../src/checkpoint-store.js';
-import { createInitialCheckpoint, saveCheckpointCAS, type ExecutionCheckpoint } from '../src/execution-checkpoint.js';
+import { createInitialCheckpoint, type ExecutionCheckpoint } from '../src/execution-checkpoint.js';
 import {
   beginEmitting,
   createEmptyLedger,

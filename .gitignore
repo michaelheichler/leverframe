@@ -1,6 +1,7 @@
 /*
 !/.gitignore
 !/.npmrc
+!/.oxlintrc.json
 !/.nvmrc
 !/LICENSE
 !/README.md

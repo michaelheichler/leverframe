@@ -44,9 +44,6 @@ export async function selectServerProviders(
       const label = provider
         ? `★ ${provider.name}`
         : pc.dim(`★ ${id} — provider gone`);
-      const hint = provider
-        ? `${provider.modelCount} model${provider.modelCount !== 1 ? 's' : ''}`
-        : 'select to remove';
       options.push({ value: `prov-${i}`, label, hint: 'select to remove' });
     }
 
