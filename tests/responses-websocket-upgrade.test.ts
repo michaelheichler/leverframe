@@ -51,7 +51,8 @@ async function startRejectionServer(
   });
   server.on('upgrade', (_request, socket) => {
     attempts += 1;
-    socket.end(responseLines(status, body, headers).join('\r\n'));
+    socket.write(responseLines(status, body, headers).join('\r\n'));
+    setTimeout(() => socket.end(), 10);
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
@@ -234,10 +235,10 @@ describe('Responses WebSocket rejected upgrades', () => {
 
     await expect(result).rejects.not.toThrow(/not-json|xxxx|secret-sentinel/);
     await vi.waitFor(() => {
-      expect(diagnostics).toContainEqual(expect.objectContaining({
-        event: 'ws_upgrade_response_body',
-        bodyBytesObserved: expect.any(Number),
-      }));
+      const bodyDiagnostic = diagnostics.find(event => event.event === 'ws_upgrade_response_body');
+      expect(bodyDiagnostic).toBeDefined();
+      if (body) expect(bodyDiagnostic?.bodyBytesObserved).toBeGreaterThan(0);
+      else expect(bodyDiagnostic?.bodyBytesObserved).toBe(0);
     });
     if (body) expect(JSON.stringify(diagnostics)).not.toContain(body.slice(0, 20));
     expect(JSON.stringify(diagnostics)).not.toContain('secret-sentinel');

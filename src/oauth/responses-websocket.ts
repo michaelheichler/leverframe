@@ -125,6 +125,7 @@ interface ConnectionEntry {
   inFlightStartedAt?: number;
   lastUsedAt: number;
   inFlight: boolean;
+  upgradeResponsePending: boolean;
   current?: RequestContext;
   promptFieldHashes?: Record<string, string>;
   instructionsSnapshot?: string;
@@ -1016,6 +1017,7 @@ function observeRejectedResponseBody(
       bodyPrefixSha256: prefixBytes > 0 ? hash.digest('hex').slice(0, 16) : undefined,
       bodyTruncated: truncated,
     });
+    response.destroy();
   };
   response.on('data', chunk => {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
@@ -1516,6 +1518,7 @@ function createConnection(
     ttlPausedMs: 0,
     lastUsedAt: now,
     inFlight: false,
+    upgradeResponsePending: false,
     options,
     debug,
   };
@@ -1553,19 +1556,9 @@ function createConnection(
       return;
     }
 
-    // OpenAI's edge/WAF rejects the Responses WebSocket upgrade with HTTP 403
-    // when the account's concurrency/usage throttle trips — before the
-    // request reaches the application. Per OpenAI's documented error codes
-    // and the official codex client, terminal conditions are 401 (re-auth) or
-    // a 429 with a JSON body; the only application-level 403 is a geo
-    // restriction, and codex retries ALL 403s. So every 403 upgrade
-    // rejection is classified retryable, synchronously and without reading
-    // the body (stabilization plan §9.2, upstream 303db6e/32c1f7b) —
-    // matching a real, unread body would be pointless since the rejection is
-    // classified by status alone, and staying synchronous means this closes
-    // the context before any later socket error/close event fires, so the
-    // separate socket-level transport-retry path below cannot double-handle
-    // the same failure.
+    // Observe the rejection body before failing on the next tick. Suppress
+    // socket-level errors during that window so the failure is handled once.
+    entry.upgradeResponsePending = true;
     const retryableUpgradeStatus = RETRYABLE_UPGRADE_STATUSES.has(statusCode) || statusCode === 403;
     const error = new ProviderTransportError({
       provider: ctx.provider,
@@ -1587,22 +1580,22 @@ function createConnection(
         : `Provider WebSocket upgrade was rejected with HTTP ${statusCode}.`,
       responseHeaders,
     });
-    handleTransportFailure(entry, ctx, error, {
-      source: 'unexpected_response',
-      httpStatusCode: statusCode,
-      mappedStatusCode,
-      providerRequestId: requestId,
-      retryAfterMs,
-    });
-
     observeRejectedResponseBody(response, summary => emitContextDiagnostic(entry, ctx, {
       event: 'ws_upgrade_response_body',
       httpStatusCode: statusCode,
       ...summary,
     }));
+    setImmediate(() => handleTransportFailure(entry, ctx, error, {
+      source: 'unexpected_response',
+      httpStatusCode: statusCode,
+      mappedStatusCode,
+      providerRequestId: requestId,
+      retryAfterMs,
+    }));
   });
   socket.on('message', (data: RawData) => handleSocketMessage(entry, data));
   socket.on('error', (cause: Error) => {
+    if (entry.upgradeResponsePending) return;
     const ctx = entry.current;
     if (ctx) {
       const phase = entry.open ? 'stream' : 'connect';
@@ -1626,6 +1619,7 @@ function createConnection(
   });
   socket.on('close', (code: number, reason: Buffer) => {
     entry.open = false;
+    if (entry.upgradeResponsePending) return;
     const ctx = entry.current;
     debug(`connection=${entry.debugId} closed code=${code} in_flight=${Boolean(ctx && !ctx.closed)}`);
     if (ctx && !ctx.closed) {

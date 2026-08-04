@@ -318,6 +318,7 @@ describe('createResponsesWebSocketFetch', () => {
       statusCode: 403,
       headers,
       resume: vi.fn(),
+      destroy: vi.fn(),
     });
 
     lastSocket().emit('unexpected-response', {}, response);

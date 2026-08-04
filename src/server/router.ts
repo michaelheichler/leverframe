@@ -85,6 +85,7 @@ import { loadCheckpoint, type DigestableMessage } from '../execution-checkpoint.
 import { loadLedger } from '../tool-call-ledger.js';
 import { reconcileExecution, type ReconcileOutcome } from '../execution-recovery.js';
 import { createRequestExecutionContext, cancelAllActiveRequestExecutions } from '../request-execution-context.js';
+import { createSseHeartbeat, DELAY_FIRST_HEARTBEAT } from '../sse-heartbeat.js';
 
 export interface ServerOptions {
   host: string;
@@ -786,24 +787,40 @@ async function handleAnthropicMessages(
           }
           tracking.observeAnthropicSseText(chunk);
           res.write(chunk);
+          heartbeat.reset();
         };
-        await withResponsesWebSocketDiagnosticContext(
-          { requestId, claudeSessionId },
-          () => streamAnthropicResponse(languageModel, params, responseModelId, writeStreamChunk, undefined, {
-            onUsage,
-            initialInputTokens: estimateAnthropicInputTokens(body),
-            abortSignal: clientAbort.signal,
-            lifecycle: requestExecution,
-          }),
-        );
-        // Defensive: production streams already drive markStreamActivity per
-        // SDK part, but complete() only accepts a legal predecessor state —
-        // guarantee one here too rather than depending on the adapter (or a
-        // test double standing in for it) having emitted at least one part.
-        requestExecution.markStreamActivity();
-        requestExecution.complete();
-        if (!res.headersSent) writeStreamChunk('');
-        res.end();
+        const heartbeat = createSseHeartbeat(() => {
+          if (!res.headersSent) {
+            applyExecutionHeaders(res, tracking);
+            res.writeHead(200, {
+              'Content-Type': 'text/event-stream',
+              'Cache-Control': 'no-cache',
+              'Connection': 'keep-alive',
+            });
+          }
+          res.write('event: ping\ndata: {"type":"ping"}\n\n');
+        }, () => !res.writableEnded && !res.destroyed, DELAY_FIRST_HEARTBEAT);
+        const clearHeartbeat = () => heartbeat.clear();
+        clientAbort.signal.addEventListener('abort', clearHeartbeat, { once: true });
+        heartbeat.arm();
+        try {
+          await withResponsesWebSocketDiagnosticContext(
+            { requestId, claudeSessionId },
+            () => streamAnthropicResponse(languageModel, params, responseModelId, writeStreamChunk, undefined, {
+              onUsage,
+              initialInputTokens: estimateAnthropicInputTokens(body),
+              abortSignal: clientAbort.signal,
+              lifecycle: requestExecution,
+            }),
+          );
+          requestExecution.markStreamActivity();
+          requestExecution.complete();
+          if (!res.headersSent) writeStreamChunk('');
+          res.end();
+        } finally {
+          heartbeat.clear();
+          clientAbort.signal.removeEventListener('abort', clearHeartbeat);
+        }
       } else {
         // ChatGPT/Codex OAuth only answers as SSE, so stream internally.
         const anthropicResponse = await withResponsesWebSocketDiagnosticContext(
@@ -855,7 +872,12 @@ async function handleAnthropicMessages(
         const errorType = anthropicErrorType(status);
         res.write(`event: error\ndata: ${JSON.stringify({
           type: 'error',
-          error: { type: errorType, message: clientMessage },
+          error: {
+            type: errorType,
+            message: clientMessage,
+            status_code: status,
+            ...(details?.retryAfterMs !== undefined ? { retry_after: Math.ceil(details.retryAfterMs / 1_000) } : {}),
+          },
           ...(contextLengthExceeded ? { request_id: requestId } : {}),
         })}\n\n`);
         res.end();
@@ -1048,19 +1070,35 @@ async function handleOpenAIChatCompletions(
         }
         openAiTracking.observeOpenAiSseText(chunk);
         res.write(chunk);
+        heartbeat.reset();
       };
-      await streamOpenAiResponse(languageModel, params, responseModelId, writeStreamChunk, {
-        abortSignal: openAiClientAbort.signal,
-        lifecycle: openAiExecution,
-      });
-      // Defensive: production streams already drive markStreamActivity per
-      // SDK part, but complete() only accepts a legal predecessor state —
-      // guarantee one here too rather than depending on the adapter (or a
-      // test double standing in for it) having emitted at least one part.
-      openAiExecution.markStreamActivity();
-      openAiExecution.complete();
-      if (!res.headersSent) writeStreamChunk('');
-      res.end();
+      const heartbeat = createSseHeartbeat(() => {
+        if (!res.headersSent) {
+          applyExecutionHeaders(res, openAiTracking);
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          });
+        }
+        res.write('event: ping\ndata: {"type":"ping"}\n\n');
+      }, () => !res.writableEnded && !res.destroyed, true);
+      const clearHeartbeat = () => heartbeat.clear();
+      openAiClientAbort.signal.addEventListener('abort', clearHeartbeat, { once: true });
+      heartbeat.arm();
+      try {
+        await streamOpenAiResponse(languageModel, params, responseModelId, writeStreamChunk, {
+          abortSignal: openAiClientAbort.signal,
+          lifecycle: openAiExecution,
+        });
+        openAiExecution.markStreamActivity();
+        openAiExecution.complete();
+        if (!res.headersSent) writeStreamChunk('');
+        res.end();
+      } finally {
+        heartbeat.clear();
+        openAiClientAbort.signal.removeEventListener('abort', clearHeartbeat);
+      }
     } else {
       // ChatGPT/Codex OAuth only answers as SSE, so stream internally.
       const response = await generateOpenAiResponse(languageModel, params, responseModelId, {
@@ -1081,12 +1119,20 @@ async function handleOpenAIChatCompletions(
     openAiExecution.fail(err);
     openAiTracking.fail(undefined);
     const message = formatUpstreamError(err);
+    const details = sdkUpstreamErrorDetails(err);
     const status = auditSdkError(options, body.model, model, err, message);
     plog(`sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message}`);
     if (!res.headersSent) {
       sendJson(res, status === 500 ? 502 : status, { error: { message } });
     } else {
-      res.write(`data: ${JSON.stringify({ error: { message, type: 'upstream_error', code: status } })}\n\n`);
+      res.write(`data: ${JSON.stringify({
+        error: {
+          message,
+          type: 'upstream_error',
+          code: status,
+          ...(details?.retryAfterMs !== undefined ? { retry_after: Math.ceil(details.retryAfterMs / 1_000) } : {}),
+        },
+      })}\n\n`);
       res.end();
     }
   } finally {

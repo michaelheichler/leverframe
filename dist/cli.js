@@ -3083,6 +3083,7 @@ function observeRejectedResponseBody(response, emit) {
       bodyPrefixSha256: prefixBytes > 0 ? hash.digest("hex").slice(0, 16) : void 0,
       bodyTruncated: truncated
     });
+    response.destroy();
   };
   response.on("data", (chunk) => {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
@@ -3485,6 +3486,7 @@ function createConnection(WebSocket, wsUrl, headers, persistent, key, credential
     ttlPausedMs: 0,
     lastUsedAt: now,
     inFlight: false,
+    upgradeResponsePending: false,
     options,
     debug
   };
@@ -3516,6 +3518,7 @@ function createConnection(WebSocket, wsUrl, headers, persistent, key, credential
       deleteEntry(entry);
       return;
     }
+    entry.upgradeResponsePending = true;
     const retryableUpgradeStatus = RETRYABLE_UPGRADE_STATUSES.has(statusCode) || statusCode === 403;
     const error = new ProviderTransportError({
       provider: ctx.provider,
@@ -3534,21 +3537,22 @@ function createConnection(WebSocket, wsUrl, headers, persistent, key, credential
       safeMessage: statusCode === 403 ? `OpenAI edge throttled the Responses WebSocket upgrade (HTTP 403); retry after ${(retryAfterMs ?? DEFAULT_THROTTLE_RETRY_AFTER_MS) / 1e3}s.` : `Provider WebSocket upgrade was rejected with HTTP ${statusCode}.`,
       responseHeaders
     });
-    handleTransportFailure(entry, ctx, error, {
-      source: "unexpected_response",
-      httpStatusCode: statusCode,
-      mappedStatusCode,
-      providerRequestId: requestId,
-      retryAfterMs
-    });
     observeRejectedResponseBody(response, (summary) => emitContextDiagnostic(entry, ctx, {
       event: "ws_upgrade_response_body",
       httpStatusCode: statusCode,
       ...summary
     }));
+    setImmediate(() => handleTransportFailure(entry, ctx, error, {
+      source: "unexpected_response",
+      httpStatusCode: statusCode,
+      mappedStatusCode,
+      providerRequestId: requestId,
+      retryAfterMs
+    }));
   });
   socket.on("message", (data) => handleSocketMessage(entry, data));
   socket.on("error", (cause) => {
+    if (entry.upgradeResponsePending) return;
     const ctx = entry.current;
     if (ctx) {
       const phase = entry.open ? "stream" : "connect";
@@ -3570,6 +3574,7 @@ function createConnection(WebSocket, wsUrl, headers, persistent, key, credential
   });
   socket.on("close", (code, reason) => {
     entry.open = false;
+    if (entry.upgradeResponsePending) return;
     const ctx = entry.current;
     debug(`connection=${entry.debugId} closed code=${code} in_flight=${Boolean(ctx && !ctx.closed)}`);
     if (ctx && !ctx.closed) {
@@ -7364,7 +7369,7 @@ function formatOpenAIModels(models) {
 }
 
 // src/upstream-forward.ts
-import { Readable, Transform } from "stream";
+import { Readable, Transform, Writable } from "stream";
 import { pipeline } from "stream/promises";
 import { StringDecoder } from "string_decoder";
 
@@ -7449,7 +7454,194 @@ function isLocalHostRequestAllowed(req) {
   return isLocalHostHeaderValue(hostValue);
 }
 
+// src/sse-heartbeat.ts
+var DELAY_FIRST_HEARTBEAT = true;
+function createSseHeartbeat(write, canWrite = () => true, delayFirst = false) {
+  const configured = Number.parseInt(process.env["LEVERFRAME_SSE_HEARTBEAT_MS"] ?? "", 10);
+  const intervalMs = Number.isFinite(configured) ? Math.max(0, configured) : 15e3;
+  const firstIntervalMs = delayFirst ? intervalMs * 2 : intervalMs;
+  let timer;
+  let active = false;
+  const clear = () => {
+    active = false;
+    if (timer !== void 0) clearTimeout(timer);
+    timer = void 0;
+  };
+  const schedule = (delay2) => {
+    timer = setTimeout(() => {
+      timer = void 0;
+      if (canWrite()) write();
+      if (active) schedule(intervalMs);
+    }, delay2);
+    timer.unref?.();
+  };
+  const arm = () => {
+    clear();
+    if (intervalMs === 0) return;
+    active = true;
+    schedule(firstIntervalMs);
+  };
+  const reset = () => {
+    clear();
+    if (intervalMs === 0) return;
+    active = true;
+    schedule(intervalMs);
+  };
+  return { arm, reset, clear };
+}
+
+// src/upstream-error.ts
+import { APICallError, RetryError } from "ai";
+function sdkUpstreamErrorDetails(err) {
+  const retry = RetryError.isInstance(err) ? err : void 0;
+  const inner = retry?.lastError ?? err;
+  if (ProviderTransportError.isInstance(inner)) {
+    return {
+      statusCode: inner.httpStatus,
+      errorContent: inner.safeMessage,
+      isRetryable: inner.retryable && !inner.retriesExhausted,
+      retriesExhausted: inner.retriesExhausted,
+      attemptCount: inner.attemptCount,
+      retryAfterMs: inner.retryAfterMs,
+      providerRequestId: inner.providerRequestId,
+      failurePhase: inner.phase
+    };
+  }
+  if (ToolResultImageError.isInstance(inner)) {
+    return {
+      statusCode: 400,
+      errorContent: inner.safeMessage,
+      isRetryable: false,
+      attemptCount: 1
+    };
+  }
+  if (!APICallError.isInstance(inner)) return void 0;
+  let errorContent = inner.responseBody;
+  if (!errorContent && inner.data !== void 0) {
+    try {
+      errorContent = JSON.stringify(inner.data);
+    } catch {
+    }
+  }
+  return {
+    statusCode: inner.statusCode,
+    errorContent: errorContent || inner.message,
+    isRetryable: inner.isRetryable,
+    attemptCount: retry?.errors.length ?? 1
+  };
+}
+function sdkUpstreamResponseHeaders(details) {
+  const headers = {};
+  if (details?.retryAfterMs !== void 0) {
+    headers["Retry-After"] = String(Math.ceil(details.retryAfterMs / 1e3));
+  }
+  if (details?.providerRequestId) {
+    headers["X-Provider-Request-Id"] = details.providerRequestId;
+  }
+  return headers;
+}
+function isContextLengthExceededError(err, formattedMessage = "") {
+  const details = sdkUpstreamErrorDetails(err);
+  const rec = err && typeof err === "object" ? err : void 0;
+  const candidates = [
+    formattedMessage,
+    details?.errorContent,
+    rec?.message,
+    rec?.responseBody,
+    rec?.data?.error?.code,
+    rec?.data?.error?.type,
+    rec?.data?.error?.message,
+    rec?.lastError?.message,
+    ...rec?.errors?.map((error) => error.message) ?? []
+  ].filter((value) => typeof value === "string");
+  return candidates.some((value) => /context_length_exceeded/i.test(value) || /context window/i.test(value) || /maximum context length/i.test(value) || /prompt is too long/i.test(value));
+}
+function formatUpstreamError(err) {
+  if (!err || typeof err !== "object") return "Upstream model request failed.";
+  const details = sdkUpstreamErrorDetails(err);
+  if (details?.failurePhase) {
+    return details.statusCode ? `${details.errorContent} (HTTP ${details.statusCode})` : details.errorContent;
+  }
+  const rec = err;
+  if (rec.data?.error?.message) {
+    const short = sanitizeMessage(rec.data.error.message);
+    return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
+  }
+  if (rec.responseBody) {
+    try {
+      const parsed = JSON.parse(rec.responseBody);
+      if (parsed.error?.message) {
+        const short = sanitizeMessage(parsed.error.message);
+        return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
+      }
+    } catch {
+    }
+  }
+  const last = rec.lastError;
+  if (last?.message) {
+    const code = last.statusCode;
+    const short = sanitizeMessage(last.message);
+    return code ? `${short} (HTTP ${code})` : short;
+  }
+  const fromList = rec.errors?.[rec.errors.length - 1];
+  if (fromList?.message) {
+    const short = sanitizeMessage(fromList.message);
+    return fromList.statusCode ? `${short} (HTTP ${fromList.statusCode})` : short;
+  }
+  if (rec.message) {
+    const short = sanitizeMessage(rec.message);
+    if (short && !short.includes("file://") && !short.includes("APICallError") && short.length < 240) {
+      return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
+    }
+  }
+  return "Upstream model request failed.";
+}
+function upstreamHttpStatus(err, message2) {
+  const details = sdkUpstreamErrorDetails(err);
+  if (details?.statusCode !== void 0) return details.statusCode;
+  if (err && typeof err === "object" && "statusCode" in err) {
+    const code = err.statusCode;
+    if (typeof code === "number" && code >= 400 && code <= 599) return code;
+  }
+  if (message2.includes("HTTP 429") || message2.includes("429")) return 429;
+  if (message2.includes("HTTP 400")) return 400;
+  return 500;
+}
+function anthropicErrorType(status) {
+  switch (status) {
+    case 400:
+      return "invalid_request_error";
+    case 401:
+      return "authentication_error";
+    case 403:
+      return "permission_error";
+    case 404:
+      return "not_found_error";
+    case 429:
+      return "rate_limit_error";
+    default:
+      return "api_error";
+  }
+}
+function sanitizeMessage(message2) {
+  const line = message2.split("\n")[0]?.trim() ?? message2;
+  if (line.startsWith("RetryError") || line.includes("AI_RetryError")) {
+    return "Upstream model request failed after retries.";
+  }
+  return line;
+}
+
 // src/upstream-forward.ts
+function createBoundaryTransform(onWrite) {
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      this.push(buffer);
+      onWrite(buffer);
+      callback();
+    }
+  });
+}
 function anthropicUpstreamHeaders(apiKey, stream = false, inboundBeta, authType, claudeCodeSessionId, extraHeaders) {
   const key = sanitizeCredential(apiKey) ?? apiKey.trim();
   const isOAuth = authType === "oauth";
@@ -7516,7 +7708,7 @@ function rewriteAnthropicSseLines(text3, responseModelId) {
     (_line, spacing, payload, ending) => `data:${spacing}${rewriteAnthropicJsonPayload(payload, responseModelId)}${ending}`
   );
 }
-function createAnthropicModelEchoTransform(responseModelId) {
+function createAnthropicModelEchoTransform(responseModelId, onWrite) {
   const decoder = new StringDecoder("utf8");
   let buffered = "";
   return new Transform({
@@ -7526,16 +7718,29 @@ function createAnthropicModelEchoTransform(responseModelId) {
       if (completeEnd >= 0) {
         const complete = buffered.slice(0, completeEnd + 1);
         buffered = buffered.slice(completeEnd + 1);
-        this.push(rewriteAnthropicSseLines(complete, responseModelId));
+        const rewritten = Buffer.from(rewriteAnthropicSseLines(complete, responseModelId));
+        this.push(rewritten);
+        onWrite(rewritten);
       }
       callback();
     },
     flush(callback) {
       buffered += decoder.end();
-      if (buffered) this.push(rewriteAnthropicSseLines(buffered, responseModelId));
+      if (buffered) {
+        const rewritten = Buffer.from(rewriteAnthropicSseLines(buffered, responseModelId));
+        this.push(rewritten);
+        onWrite(rewritten);
+      }
       callback();
     }
   });
+}
+function updateEventBoundary(tail, chunk) {
+  const nextTail = (tail + chunk.toString("utf8")).slice(-4);
+  return {
+    tail: nextTail,
+    boundary: nextTail.endsWith("\n\n") || nextTail.endsWith("\r\n\r\n")
+  };
 }
 async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWantsStream, options = {}) {
   const lifecycle = options.lifecycle;
@@ -7580,24 +7785,83 @@ async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWant
       "Connection": "keep-alive"
     });
     const upstream = Readable.fromWeb(upstreamRes.body);
+    let outputTail = "";
+    let atEventBoundary = true;
+    const noteWrite = (chunk) => {
+      const state = updateEventBoundary(outputTail, chunk);
+      outputTail = state.tail;
+      atEventBoundary = state.boundary;
+    };
+    const heartbeat = createSseHeartbeat(
+      () => res.write(": ping\n\n"),
+      () => atEventBoundary && !res.writableEnded && !res.destroyed
+    );
+    const clearHeartbeat = () => heartbeat.clear();
+    options.signal?.addEventListener("abort", clearHeartbeat, { once: true });
+    lifecycle?.abortSignal.addEventListener("abort", clearHeartbeat, { once: true });
     upstream.on("data", (chunk) => {
       lifecycle?.markStreamActivity();
       if (chunk.length > 0) lifecycle?.markOutputEmitted();
+      heartbeat.reset();
     });
+    heartbeat.arm();
     if (options.onObservedText) {
       const observe = options.onObservedText;
       const decoder = new StringDecoder("utf8");
       upstream.on("data", (chunk) => observe(decoder.write(chunk)));
     }
+    const sink = new Writable({
+      write(chunk, _encoding, callback) {
+        if (res.writableEnded || res.destroyed) {
+          callback();
+          return;
+        }
+        try {
+          const accepted = res.write(chunk);
+          if (accepted || !res.socket) {
+            callback();
+          } else {
+            const done = () => {
+              res.removeListener("drain", done);
+              res.removeListener("close", done);
+              callback();
+            };
+            res.once("drain", done);
+            res.once("close", done);
+          }
+        } catch (err) {
+          callback(err instanceof Error ? err : new Error(String(err)));
+        }
+      }
+    });
     try {
       if (options.responseModelId) {
-        await pipeline(upstream, createAnthropicModelEchoTransform(options.responseModelId), res);
+        await pipeline(
+          upstream,
+          createAnthropicModelEchoTransform(options.responseModelId, noteWrite),
+          sink
+        );
       } else {
-        await pipeline(upstream, res);
+        await pipeline(upstream, createBoundaryTransform(noteWrite), sink);
       }
+      res.end();
       lifecycle?.complete();
     } catch (err) {
       lifecycle?.fail(err);
+      if (res.headersSent && !res.writableEnded && !res.destroyed) {
+        res.write(`event: error
+data: ${JSON.stringify({
+          type: "error",
+          error: { type: anthropicErrorType(502), message: err instanceof Error ? err.message : String(err) }
+        })}
+
+`);
+        res.end();
+      }
+    } finally {
+      heartbeat.clear();
+      options.signal?.removeEventListener("abort", clearHeartbeat);
+      lifecycle?.abortSignal.removeEventListener("abort", clearHeartbeat);
     }
     return;
   }
@@ -7769,147 +8033,6 @@ function resolveUpstreamTools(tools, messages) {
     upstream.push(tool3);
   }
   return upstream;
-}
-
-// src/upstream-error.ts
-import { APICallError, RetryError } from "ai";
-function sdkUpstreamErrorDetails(err) {
-  const retry = RetryError.isInstance(err) ? err : void 0;
-  const inner = retry?.lastError ?? err;
-  if (ProviderTransportError.isInstance(inner)) {
-    return {
-      statusCode: inner.httpStatus,
-      errorContent: inner.safeMessage,
-      isRetryable: inner.retryable && !inner.retriesExhausted,
-      retriesExhausted: inner.retriesExhausted,
-      attemptCount: inner.attemptCount,
-      retryAfterMs: inner.retryAfterMs,
-      providerRequestId: inner.providerRequestId,
-      failurePhase: inner.phase
-    };
-  }
-  if (ToolResultImageError.isInstance(inner)) {
-    return {
-      statusCode: 400,
-      errorContent: inner.safeMessage,
-      isRetryable: false,
-      attemptCount: 1
-    };
-  }
-  if (!APICallError.isInstance(inner)) return void 0;
-  let errorContent = inner.responseBody;
-  if (!errorContent && inner.data !== void 0) {
-    try {
-      errorContent = JSON.stringify(inner.data);
-    } catch {
-    }
-  }
-  return {
-    statusCode: inner.statusCode,
-    errorContent: errorContent || inner.message,
-    isRetryable: inner.isRetryable,
-    attemptCount: retry?.errors.length ?? 1
-  };
-}
-function sdkUpstreamResponseHeaders(details) {
-  const headers = {};
-  if (details?.retryAfterMs !== void 0) {
-    headers["Retry-After"] = String(Math.ceil(details.retryAfterMs / 1e3));
-  }
-  if (details?.providerRequestId) {
-    headers["X-Provider-Request-Id"] = details.providerRequestId;
-  }
-  return headers;
-}
-function isContextLengthExceededError(err, formattedMessage = "") {
-  const details = sdkUpstreamErrorDetails(err);
-  const rec = err && typeof err === "object" ? err : void 0;
-  const candidates = [
-    formattedMessage,
-    details?.errorContent,
-    rec?.message,
-    rec?.responseBody,
-    rec?.data?.error?.code,
-    rec?.data?.error?.type,
-    rec?.data?.error?.message,
-    rec?.lastError?.message,
-    ...rec?.errors?.map((error) => error.message) ?? []
-  ].filter((value) => typeof value === "string");
-  return candidates.some((value) => /context_length_exceeded/i.test(value) || /context window/i.test(value) || /maximum context length/i.test(value) || /prompt is too long/i.test(value));
-}
-function formatUpstreamError(err) {
-  if (!err || typeof err !== "object") return "Upstream model request failed.";
-  const details = sdkUpstreamErrorDetails(err);
-  if (details?.failurePhase) {
-    return details.statusCode ? `${details.errorContent} (HTTP ${details.statusCode})` : details.errorContent;
-  }
-  const rec = err;
-  if (rec.data?.error?.message) {
-    const short = sanitizeMessage(rec.data.error.message);
-    return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
-  }
-  if (rec.responseBody) {
-    try {
-      const parsed = JSON.parse(rec.responseBody);
-      if (parsed.error?.message) {
-        const short = sanitizeMessage(parsed.error.message);
-        return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
-      }
-    } catch {
-    }
-  }
-  const last = rec.lastError;
-  if (last?.message) {
-    const code = last.statusCode;
-    const short = sanitizeMessage(last.message);
-    return code ? `${short} (HTTP ${code})` : short;
-  }
-  const fromList = rec.errors?.[rec.errors.length - 1];
-  if (fromList?.message) {
-    const short = sanitizeMessage(fromList.message);
-    return fromList.statusCode ? `${short} (HTTP ${fromList.statusCode})` : short;
-  }
-  if (rec.message) {
-    const short = sanitizeMessage(rec.message);
-    if (short && !short.includes("file://") && !short.includes("APICallError") && short.length < 240) {
-      return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
-    }
-  }
-  return "Upstream model request failed.";
-}
-function upstreamHttpStatus(err, message2) {
-  const details = sdkUpstreamErrorDetails(err);
-  if (details?.statusCode !== void 0) return details.statusCode;
-  if (err && typeof err === "object" && "statusCode" in err) {
-    const code = err.statusCode;
-    if (typeof code === "number" && code >= 400 && code <= 599) return code;
-  }
-  if (message2.includes("HTTP 429") || message2.includes("429")) return 429;
-  if (message2.includes("HTTP 400")) return 400;
-  return 500;
-}
-function anthropicErrorType(status) {
-  switch (status) {
-    case 400:
-      return "invalid_request_error";
-    case 401:
-      return "authentication_error";
-    case 403:
-      return "permission_error";
-    case 404:
-      return "not_found_error";
-    case 429:
-      return "rate_limit_error";
-    default:
-      return "api_error";
-  }
-}
-function sanitizeMessage(message2) {
-  const line = message2.split("\n")[0]?.trim() ?? message2;
-  if (line.startsWith("RetryError") || line.includes("AI_RetryError")) {
-    return "Upstream model request failed after retries.";
-  }
-  return line;
 }
 
 // src/sdk-adapter.ts
@@ -10799,44 +10922,64 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
                   });
                 }
                 res.write(chunk);
+                heartbeat.reset();
               };
+              const heartbeat = createSseHeartbeat(() => {
+                if (!res.headersSent) {
+                  applyProxyExecutionHeaders(res, tracking);
+                  res.writeHead(200, {
+                    "Content-Type": "text/event-stream",
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive"
+                  });
+                }
+                res.write('event: ping\ndata: {"type":"ping"}\n\n');
+              }, () => !res.writableEnded && !res.destroyed, DELAY_FIRST_HEARTBEAT);
+              const clearHeartbeat = () => heartbeat.clear();
+              clientAbort.signal.addEventListener("abort", clearHeartbeat, { once: true });
+              heartbeat.arm();
               const maxRetries = autoReplayMaxRetries();
               let retryCount = 0;
-              while (true) {
-                try {
-                  await withResponsesWebSocketDiagnosticContext(
-                    { requestId: relayRequestId, claudeSessionId: claudeSessionId2 },
-                    () => streamAnthropicResponse(
-                      model,
-                      params,
-                      clientModelId,
-                      writeStreamChunk,
-                      plog,
-                      {
-                        onPart: (partType) => translationLifecycle?.onPart(partType),
-                        initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
-                        abortSignal: clientAbort.signal,
-                        lifecycle: requestExecution
-                      }
-                    )
-                  );
-                  break;
-                } catch (error) {
-                  if (retryCount >= maxRetries || !requestExecution.canReplay() || !isTransientSdkStreamFailure(error)) {
-                    throw error;
+              try {
+                while (true) {
+                  try {
+                    await withResponsesWebSocketDiagnosticContext(
+                      { requestId: relayRequestId, claudeSessionId: claudeSessionId2 },
+                      () => streamAnthropicResponse(
+                        model,
+                        params,
+                        clientModelId,
+                        writeStreamChunk,
+                        plog,
+                        {
+                          onPart: (partType) => translationLifecycle?.onPart(partType),
+                          initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
+                          abortSignal: clientAbort.signal,
+                          lifecycle: requestExecution
+                        }
+                      )
+                    );
+                    break;
+                  } catch (error) {
+                    if (retryCount >= maxRetries || !requestExecution.canReplay() || !isTransientSdkStreamFailure(error)) {
+                      throw error;
+                    }
+                    retryCount += 1;
+                    const reason = sdkTranslationErrorSignature(error);
+                    requestExecution.recordRetryAttempt({ attempt: retryCount, reason });
+                    tracking.recordRetryAttempt();
+                    plog(() => `sdk auto-replay: retry=${retryCount}/${maxRetries} reason=${reason}`);
                   }
-                  retryCount += 1;
-                  const reason = sdkTranslationErrorSignature(error);
-                  requestExecution.recordRetryAttempt({ attempt: retryCount, reason });
-                  tracking.recordRetryAttempt();
-                  plog(() => `sdk auto-replay: retry=${retryCount}/${maxRetries} reason=${reason}`);
                 }
+                translationLifecycle?.complete();
+                requestExecution.markStreamActivity();
+                requestExecution.complete();
+                if (!res.headersSent) writeStreamChunk("");
+                res.end();
+              } finally {
+                heartbeat.clear();
+                clientAbort.signal.removeEventListener("abort", clearHeartbeat);
               }
-              translationLifecycle?.complete();
-              requestExecution.markStreamActivity();
-              requestExecution.complete();
-              if (!res.headersSent) writeStreamChunk("");
-              res.end();
             } else {
               const anthropicResponse = await withResponsesWebSocketDiagnosticContext(
                 { requestId: relayRequestId, claudeSessionId: claudeSessionId2 },
@@ -10908,7 +11051,12 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
               res.write(`event: error
 data: ${JSON.stringify({
                 type: "error",
-                error: { type: errorType, message: clientMessage },
+                error: {
+                  type: errorType,
+                  message: clientMessage,
+                  status_code: upstreamStatus,
+                  ...details?.retryAfterMs !== void 0 ? { retry_after: Math.ceil(details.retryAfterMs / 1e3) } : {}
+                },
                 ...contextLengthExceeded ? { request_id: relayRequestId ?? randomUUID3() } : {}
               })}
 
@@ -11913,20 +12061,40 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
           }
           tracking.observeAnthropicSseText(chunk);
           res.write(chunk);
+          heartbeat.reset();
         };
-        await withResponsesWebSocketDiagnosticContext(
-          { requestId, claudeSessionId },
-          () => streamAnthropicResponse(languageModel, params, responseModelId, writeStreamChunk, void 0, {
-            onUsage,
-            initialInputTokens: estimateAnthropicInputTokens(body),
-            abortSignal: clientAbort.signal,
-            lifecycle: requestExecution
-          })
-        );
-        requestExecution.markStreamActivity();
-        requestExecution.complete();
-        if (!res.headersSent) writeStreamChunk("");
-        res.end();
+        const heartbeat = createSseHeartbeat(() => {
+          if (!res.headersSent) {
+            applyExecutionHeaders(res, tracking);
+            res.writeHead(200, {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              "Connection": "keep-alive"
+            });
+          }
+          res.write('event: ping\ndata: {"type":"ping"}\n\n');
+        }, () => !res.writableEnded && !res.destroyed, DELAY_FIRST_HEARTBEAT);
+        const clearHeartbeat = () => heartbeat.clear();
+        clientAbort.signal.addEventListener("abort", clearHeartbeat, { once: true });
+        heartbeat.arm();
+        try {
+          await withResponsesWebSocketDiagnosticContext(
+            { requestId, claudeSessionId },
+            () => streamAnthropicResponse(languageModel, params, responseModelId, writeStreamChunk, void 0, {
+              onUsage,
+              initialInputTokens: estimateAnthropicInputTokens(body),
+              abortSignal: clientAbort.signal,
+              lifecycle: requestExecution
+            })
+          );
+          requestExecution.markStreamActivity();
+          requestExecution.complete();
+          if (!res.headersSent) writeStreamChunk("");
+          res.end();
+        } finally {
+          heartbeat.clear();
+          clientAbort.signal.removeEventListener("abort", clearHeartbeat);
+        }
       } else {
         const anthropicResponse = await withResponsesWebSocketDiagnosticContext(
           { requestId, claudeSessionId },
@@ -11975,7 +12143,12 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
         res.write(`event: error
 data: ${JSON.stringify({
           type: "error",
-          error: { type: errorType, message: clientMessage },
+          error: {
+            type: errorType,
+            message: clientMessage,
+            status_code: status,
+            ...details?.retryAfterMs !== void 0 ? { retry_after: Math.ceil(details.retryAfterMs / 1e3) } : {}
+          },
           ...contextLengthExceeded ? { request_id: requestId } : {}
         })}
 
@@ -12145,15 +12318,35 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
         }
         openAiTracking.observeOpenAiSseText(chunk);
         res.write(chunk);
+        heartbeat.reset();
       };
-      await streamOpenAiResponse(languageModel, params, responseModelId, writeStreamChunk, {
-        abortSignal: openAiClientAbort.signal,
-        lifecycle: openAiExecution
-      });
-      openAiExecution.markStreamActivity();
-      openAiExecution.complete();
-      if (!res.headersSent) writeStreamChunk("");
-      res.end();
+      const heartbeat = createSseHeartbeat(() => {
+        if (!res.headersSent) {
+          applyExecutionHeaders(res, openAiTracking);
+          res.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive"
+          });
+        }
+        res.write('event: ping\ndata: {"type":"ping"}\n\n');
+      }, () => !res.writableEnded && !res.destroyed, true);
+      const clearHeartbeat = () => heartbeat.clear();
+      openAiClientAbort.signal.addEventListener("abort", clearHeartbeat, { once: true });
+      heartbeat.arm();
+      try {
+        await streamOpenAiResponse(languageModel, params, responseModelId, writeStreamChunk, {
+          abortSignal: openAiClientAbort.signal,
+          lifecycle: openAiExecution
+        });
+        openAiExecution.markStreamActivity();
+        openAiExecution.complete();
+        if (!res.headersSent) writeStreamChunk("");
+        res.end();
+      } finally {
+        heartbeat.clear();
+        openAiClientAbort.signal.removeEventListener("abort", clearHeartbeat);
+      }
     } else {
       const response = await generateOpenAiResponse(languageModel, params, responseModelId, {
         forceStream: openAiOAuth,
@@ -12173,12 +12366,20 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
     openAiExecution.fail(err);
     openAiTracking.fail(void 0);
     const message2 = formatUpstreamError(err);
+    const details = sdkUpstreamErrorDetails(err);
     const status = auditSdkError(options, body.model, model, err, message2);
     plog(`sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message2}`);
     if (!res.headersSent) {
       sendJson(res, status === 500 ? 502 : status, { error: { message: message2 } });
     } else {
-      res.write(`data: ${JSON.stringify({ error: { message: message2, type: "upstream_error", code: status } })}
+      res.write(`data: ${JSON.stringify({
+        error: {
+          message: message2,
+          type: "upstream_error",
+          code: status,
+          ...details?.retryAfterMs !== void 0 ? { retry_after: Math.ceil(details.retryAfterMs / 1e3) } : {}
+        }
+      })}
 
 `);
       res.end();

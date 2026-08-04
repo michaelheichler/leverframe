@@ -1,5 +1,33 @@
 import type { ServerResponse } from 'node:http';
-import { describe, it, expect, vi } from 'vitest';
+import { PassThrough } from 'node:stream';
+import type { Writable } from 'node:stream';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const previousHeartbeat = process.env['LEVERFRAME_SSE_HEARTBEAT_MS'];
+afterEach(() => {
+  if (previousHeartbeat === undefined) delete process.env['LEVERFRAME_SSE_HEARTBEAT_MS'];
+  else process.env['LEVERFRAME_SSE_HEARTBEAT_MS'] = previousHeartbeat;
+});
+
+function streamedResponse(): ServerResponse {
+  const response = new PassThrough() as PassThrough & ServerResponse;
+  let headersWereSent = false;
+  Object.defineProperty(response, 'headersSent', { get: () => headersWereSent });
+  response.writeHead = vi.fn(() => {
+    headersWereSent = true;
+    return response;
+  }) as typeof response.writeHead;
+  return response;
+}
+
+function responseBody(response: Writable): Promise<string> {
+  return new Promise(resolve => {
+    const chunks: Buffer[] = [];
+    response.on('data', chunk => chunks.push(Buffer.from(chunk)));
+    response.on('end', () => resolve(Buffer.concat(chunks).toString()));
+  });
+}
+
 import { anthropicUpstreamHeaders, fetchWithOAuthRetry, relayAnthropicMessages } from '../src/upstream-forward.js';
 
 describe('anthropicUpstreamHeaders', () => {
@@ -32,6 +60,71 @@ describe('anthropicUpstreamHeaders', () => {
       'X-Claude-Code-Session-Id': 'session-123',
     });
     expect(headers).not.toHaveProperty('x-api-key');
+  });
+});
+
+describe('relayAnthropicMessages', () => {
+  it('writes an SSE error frame when a stream fails after output', async () => {
+    process.env['LEVERFRAME_SSE_HEARTBEAT_MS'] = '0';
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('event: message_start\ndata: {}\n\n'));
+        setTimeout(() => controller.error(new Error('upstream socket failed')), 5);
+      },
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    }));
+    const response = streamedResponse();
+    const body = responseBody(response);
+
+    try {
+      await relayAnthropicMessages(response, 'https://api.anthropic.test/v1/messages', { model: 'claude-test' }, 'key', true);
+      const text = await body;
+      const errorFrame = text.split('\n\n').find(frame => frame.startsWith('event: error\n'));
+      expect(errorFrame).toBeDefined();
+      const errorData = errorFrame?.split('\n').find(line => line.startsWith('data: '));
+      expect(errorData).toBeDefined();
+      if (!errorData) throw new Error('error data frame missing');
+      expect(JSON.parse(errorData.slice('data: '.length))).toMatchObject({
+        type: 'error',
+        error: { message: 'upstream socket failed' },
+      });
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it('waits for a complete SSE event before injecting a heartbeat', async () => {
+    process.env['LEVERFRAME_SSE_HEARTBEAT_MS'] = '10';
+    const encoder = new TextEncoder();
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('event: message_start'));
+        setTimeout(() => controller.enqueue(encoder.encode('\ndata: {}\n\n')), 25);
+        setTimeout(() => controller.close(), 50);
+      },
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    }));
+    const response = streamedResponse();
+    const body = responseBody(response);
+
+    try {
+      await relayAnthropicMessages(response, 'https://api.anthropic.test/v1/messages', { model: 'claude-test' }, 'key', true);
+      const text = await body;
+      const pingIndex = text.indexOf(': ping\n\n');
+      const eventEnd = text.indexOf('data: {}\n\n') + 'data: {}\n\n'.length;
+      expect(pingIndex).toBeGreaterThanOrEqual(eventEnd);
+      expect(text.slice(0, eventEnd)).not.toContain(': ping');
+      const pingFrame = text.split('\n\n').find(frame => frame === ': ping');
+      expect(pingFrame).toBe(': ping');
+    } finally {
+      fetchMock.mockRestore();
+    }
   });
 });
 

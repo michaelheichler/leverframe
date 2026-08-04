@@ -1,10 +1,24 @@
-import { Readable, Transform } from 'node:stream';
+import { Readable, Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ServerResponse } from 'node:http';
 import { StringDecoder } from 'node:string_decoder';
 import type { RequestExecutionObserver } from './request-execution-context.js';
 import { sanitizeCredential } from './server/auth.js';
 import { CLAUDE_CODE_USER_AGENT } from './oauth/claude-identity.js';
+import { createSseHeartbeat } from './sse-heartbeat.js';
+import { anthropicErrorType } from './upstream-error.js';
+
+function createBoundaryTransform(onWrite: (chunk: Buffer) => void): Transform {
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      this.push(buffer);
+      onWrite(buffer);
+      callback();
+    },
+  });
+}
+
 
 export function anthropicUpstreamHeaders(
   apiKey: string,
@@ -118,7 +132,10 @@ function rewriteAnthropicSseLines(text: string, responseModelId: string): string
   );
 }
 
-function createAnthropicModelEchoTransform(responseModelId: string): Transform {
+function createAnthropicModelEchoTransform(
+  responseModelId: string,
+  onWrite: (chunk: Buffer) => void,
+): Transform {
   const decoder = new StringDecoder('utf8');
   let buffered = '';
   return new Transform({
@@ -128,16 +145,30 @@ function createAnthropicModelEchoTransform(responseModelId: string): Transform {
       if (completeEnd >= 0) {
         const complete = buffered.slice(0, completeEnd + 1);
         buffered = buffered.slice(completeEnd + 1);
-        this.push(rewriteAnthropicSseLines(complete, responseModelId));
+        const rewritten = Buffer.from(rewriteAnthropicSseLines(complete, responseModelId));
+        this.push(rewritten);
+        onWrite(rewritten);
       }
       callback();
     },
     flush(callback) {
       buffered += decoder.end();
-      if (buffered) this.push(rewriteAnthropicSseLines(buffered, responseModelId));
+      if (buffered) {
+        const rewritten = Buffer.from(rewriteAnthropicSseLines(buffered, responseModelId));
+        this.push(rewritten);
+        onWrite(rewritten);
+      }
       callback();
     },
   });
+}
+
+function updateEventBoundary(tail: string, chunk: Buffer): { tail: string; boundary: boolean } {
+  const nextTail = (tail + chunk.toString('utf8')).slice(-4);
+  return {
+    tail: nextTail,
+    boundary: nextTail.endsWith('\n\n') || nextTail.endsWith('\r\n\r\n'),
+  };
 }
 
 export async function relayAnthropicMessages(
@@ -194,15 +225,26 @@ export async function relayAnthropicMessages(
       'Connection': 'keep-alive',
     });
     const upstream = Readable.fromWeb(upstreamRes.body as Parameters<typeof Readable.fromWeb>[0]);
-    // Every streamed chunk both resets the idle deadline and (once it
-    // carries visible bytes) permanently closes the auto-replay barrier —
-    // this listener runs whether or not a caller also observes the bytes
-    // via `onObservedText`, so lifecycle ownership never depends on tracking
-    // being wired up.
+    let outputTail = '';
+    let atEventBoundary = true;
+    const noteWrite = (chunk: Buffer) => {
+      const state = updateEventBoundary(outputTail, chunk);
+      outputTail = state.tail;
+      atEventBoundary = state.boundary;
+    };
+    const heartbeat = createSseHeartbeat(
+      () => res.write(': ping\n\n'),
+      () => atEventBoundary && !res.writableEnded && !res.destroyed,
+    );
+    const clearHeartbeat = () => heartbeat.clear();
+    options.signal?.addEventListener('abort', clearHeartbeat, { once: true });
+    lifecycle?.abortSignal.addEventListener('abort', clearHeartbeat, { once: true });
     upstream.on('data', (chunk: Buffer) => {
       lifecycle?.markStreamActivity();
       if (chunk.length > 0) lifecycle?.markOutputEmitted();
+      heartbeat.reset();
     });
+    heartbeat.arm();
     if (options.onObservedText) {
       const observe = options.onObservedText;
       const decoder = new StringDecoder('utf8');
@@ -218,16 +260,55 @@ export async function relayAnthropicMessages(
     // `.pipe()` — guarantees every stream in the chain is destroyed on
     // either path, so a torn-down connection can never leave the lifecycle
     // stuck non-terminal.
+    const sink = new Writable({
+      write(chunk, _encoding, callback) {
+        if (res.writableEnded || res.destroyed) {
+          callback();
+          return;
+        }
+        try {
+          const accepted = res.write(chunk);
+          if (accepted || !res.socket) {
+            callback();
+          } else {
+            const done = () => {
+              res.removeListener('drain', done);
+              res.removeListener('close', done);
+              callback();
+            };
+            res.once('drain', done);
+            res.once('close', done);
+          }
+        } catch (err) {
+          callback(err instanceof Error ? err : new Error(String(err)));
+        }
+      },
+    });
     try {
       if (options.responseModelId) {
-        // Invariant: emitted complete SSE lines echo responseModelId; buffered is only the incomplete final line.
-        await pipeline(upstream, createAnthropicModelEchoTransform(options.responseModelId), res);
+        await pipeline(
+          upstream,
+          createAnthropicModelEchoTransform(options.responseModelId, noteWrite),
+          sink,
+        );
       } else {
-        await pipeline(upstream, res);
+        await pipeline(upstream, createBoundaryTransform(noteWrite), sink);
       }
+      res.end();
       lifecycle?.complete();
     } catch (err) {
       lifecycle?.fail(err);
+      if (res.headersSent && !res.writableEnded && !res.destroyed) {
+        res.write(`event: error\ndata: ${JSON.stringify({
+          type: 'error',
+          error: { type: anthropicErrorType(502), message: err instanceof Error ? err.message : String(err) },
+        })}\n\n`);
+        res.end();
+      }
+    } finally {
+      heartbeat.clear();
+      options.signal?.removeEventListener('abort', clearHeartbeat);
+      lifecycle?.abortSignal.removeEventListener('abort', clearHeartbeat);
     }
     return;
   }

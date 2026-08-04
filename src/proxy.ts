@@ -68,6 +68,7 @@ import { resolveExecutionSessionKey } from './execution-session-key.js';
 import { buildProviderCapabilities } from './provider-capabilities.js';
 import { createRequestExecutionContext, cancelAllActiveRequestExecutions } from './request-execution-context.js';
 import { autoReplayMaxRetries, type LifecycleDeadlines } from './request-lifecycle.js';
+import { createSseHeartbeat, DELAY_FIRST_HEARTBEAT } from './sse-heartbeat.js';
 
 type ProxyLog = (message: string | (() => string)) => void;
 
@@ -830,50 +831,66 @@ export async function startProxyCatalog(
                 });
               }
               res.write(chunk);
+              heartbeat.reset();
             };
+            const heartbeat = createSseHeartbeat(() => {
+              if (!res.headersSent) {
+                applyProxyExecutionHeaders(res, tracking);
+                res.writeHead(200, {
+                  'Content-Type': 'text/event-stream',
+                  'Cache-Control': 'no-cache',
+                  'Connection': 'keep-alive',
+                });
+              }
+              res.write('event: ping\ndata: {"type":"ping"}\n\n');
+            }, () => !res.writableEnded && !res.destroyed, DELAY_FIRST_HEARTBEAT);
+            const clearHeartbeat = () => heartbeat.clear();
+            clientAbort.signal.addEventListener('abort', clearHeartbeat, { once: true });
+            heartbeat.arm();
             const maxRetries = autoReplayMaxRetries();
             let retryCount = 0;
-            while (true) {
-              try {
-                await withResponsesWebSocketDiagnosticContext(
-                  { requestId: relayRequestId, claudeSessionId },
-                  () => streamAnthropicResponse(
-                    model,
-                    params,
-                    clientModelId,
-                    writeStreamChunk,
-                    plog,
-                    {
-                      onPart: partType => translationLifecycle?.onPart(partType),
-                      initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
-                      abortSignal: clientAbort.signal,
-                      lifecycle: requestExecution,
-                    },
-                  ),
-                );
-                break;
-              } catch (error) {
-                if (retryCount >= maxRetries
-                  || !requestExecution.canReplay()
-                  || !isTransientSdkStreamFailure(error)) {
-                  throw error;
+            try {
+              while (true) {
+                try {
+                  await withResponsesWebSocketDiagnosticContext(
+                    { requestId: relayRequestId, claudeSessionId },
+                    () => streamAnthropicResponse(
+                      model,
+                      params,
+                      clientModelId,
+                      writeStreamChunk,
+                      plog,
+                      {
+                        onPart: partType => translationLifecycle?.onPart(partType),
+                        initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
+                        abortSignal: clientAbort.signal,
+                        lifecycle: requestExecution,
+                      },
+                    ),
+                  );
+                  break;
+                } catch (error) {
+                  if (retryCount >= maxRetries
+                    || !requestExecution.canReplay()
+                    || !isTransientSdkStreamFailure(error)) {
+                    throw error;
+                  }
+                  retryCount += 1;
+                  const reason = sdkTranslationErrorSignature(error);
+                  requestExecution.recordRetryAttempt({ attempt: retryCount, reason });
+                  tracking.recordRetryAttempt();
+                  plog(() => `sdk auto-replay: retry=${retryCount}/${maxRetries} reason=${reason}`);
                 }
-                retryCount += 1;
-                const reason = sdkTranslationErrorSignature(error);
-                requestExecution.recordRetryAttempt({ attempt: retryCount, reason });
-                tracking.recordRetryAttempt();
-                plog(() => `sdk auto-replay: retry=${retryCount}/${maxRetries} reason=${reason}`);
               }
+              translationLifecycle?.complete();
+              requestExecution.markStreamActivity();
+              requestExecution.complete();
+              if (!res.headersSent) writeStreamChunk('');
+              res.end();
+            } finally {
+              heartbeat.clear();
+              clientAbort.signal.removeEventListener('abort', clearHeartbeat);
             }
-            translationLifecycle?.complete();
-            // Defensive: production streams already drive markStreamActivity
-            // per SDK part (sdk-adapter.ts), but complete() only accepts a
-            // legal predecessor state, so guarantee one here too rather than
-            // depending on the adapter having emitted at least one part.
-            requestExecution.markStreamActivity();
-            requestExecution.complete();
-            if (!res.headersSent) writeStreamChunk('');
-            res.end();
           } else {
             // ChatGPT's Codex backend (OpenAI OAuth) rejects non-streaming requests
             // outright ("Stream must be set to true"), so always stream internally
@@ -950,7 +967,12 @@ export async function startProxyCatalog(
             const errorType = anthropicErrorType(upstreamStatus);
             res.write(`event: error\ndata: ${JSON.stringify({
               type: 'error',
-              error: { type: errorType, message: clientMessage },
+              error: {
+                type: errorType,
+                message: clientMessage,
+                status_code: upstreamStatus,
+                ...(details?.retryAfterMs !== undefined ? { retry_after: Math.ceil(details.retryAfterMs / 1_000) } : {}),
+              },
               ...(contextLengthExceeded ? { request_id: relayRequestId ?? randomUUID() } : {}),
             })}\n\n`);
             res.end();
