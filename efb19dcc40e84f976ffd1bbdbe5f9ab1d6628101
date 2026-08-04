@@ -1,0 +1,90 @@
+src/http-proxy/routes.ts
+  s_a50f20be06e662::t_73aa23ab05f168 64-66
+src/registry/types.ts
+  s_a50f20be06e662::t_be8b616d34d268 20
+  s_a50f20be06e662::t_73aa23ab05f168 18
+  s_a50f20be06e662::t_966df74503cc74 17,19
+tests/providers-command.test.ts
+  s_a50f20be06e662::t_c2ec719186a2f0 188,200
+src/registry/materialize.ts
+  s_a50f20be06e662::t_966df74503cc74 78,80
+  s_a50f20be06e662::t_73aa23ab05f168 79
+  s_a50f20be06e662::t_be8b616d34d268 83-84
+src/types.ts
+  s_a50f20be06e662::t_73aa23ab05f168 32
+  s_a50f20be06e662::t_966df74503cc74 30-31,33
+  s_a50f20be06e662::t_be8b616d34d268 35
+tests/http-proxy-routes.test.ts
+  s_a50f20be06e662::t_73aa23ab05f168 64-90
+src/favorites-picker.ts
+  s_a50f20be06e662::t_ca3bab8e58249c 9,87
+README.md
+  s_a50f20be06e662::t_3c270683ae1e59 3,59,61-66,70
+  s_a50f20be06e662::t_1063d313f4bacf 88
+  s_a50f20be06e662::t_ca3bab8e58249c 9,52-58,60,69
+  s_a50f20be06e662::t_4dab55341c4406 67-68
+src/cli.ts
+  s_a50f20be06e662::t_ca3bab8e58249c 3,800
+src/ui.ts
+  s_a50f20be06e662::t_966df74503cc74 28-40,42-44,48-51,158
+  s_a50f20be06e662::t_be8b616d34d268 41,45
+  s_a50f20be06e662::t_73aa23ab05f168 46-47
+src/registry/fetch-template-models.ts
+  s_a50f20be06e662::t_6732917baef2f4 11-16,161-193,195-198,323-332
+  s_a50f20be06e662::t_bed9328bb76a47 194
+tests/supplier-metadata.test.ts
+  s_a50f20be06e662::t_3d891d9cc8352b 1-22
+src/registry/models-dev.ts
+  s_a50f20be06e662::t_be8b616d34d268 36-40,47,304-313
+  s_a50f20be06e662::t_6732917baef2f4 207,218,226-229
+  s_35dc776856f152::t_e480b67c3ae2d0 230-231,314-317
+src/registry/supplier-metadata.ts
+  s_a50f20be06e662::t_be8b616d34d268 1-85
+src/registry/convert.ts
+  s_a50f20be06e662::t_be8b616d34d268 19
+  s_a50f20be06e662::t_966df74503cc74 16,18
+  s_a50f20be06e662::t_73aa23ab05f168 17
+src/provider-templates.ts
+  s_a50f20be06e662::t_be8b616d34d268 37-38,73-74
+  s_a50f20be06e662::t_966df74503cc74 66-72,75-76
+  s_a50f20be06e662::t_7cb894c5fb2aa6 65
+src/registry/pricing.ts
+  s_a50f20be06e662::t_966df74503cc74 214
+tests/model-capabilities-display.test.ts
+  s_a50f20be06e662::t_48ac593690fb14 1-28,30-31,40-41
+  s_a50f20be06e662::t_73aa23ab05f168 29,32-39
+tests/pricing.test.ts
+  s_a50f20be06e662::t_48ac593690fb14 54-67
+tests/provider-templates.test.ts
+  s_a50f20be06e662::t_3d891d9cc8352b 64-66,125-128,132-147,156-174,179-181,186-188,191
+  s_a50f20be06e662::t_8127bb393fbba3 62
+  s_a50f20be06e662::t_eba944a1885ada 19
+  s_a50f20be06e662::t_48ac593690fb14 12-13,31,42-43,47,59,63,124,175-178,182-185,189-190,199-200
+  s_a50f20be06e662::t_bed9328bb76a47 129-131,148-155,192-198
+  s_a50f20be06e662::t_4fb0d9924b1f90 60-61
+  s_a50f20be06e662::t_eac7a22d796acd 201-202
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "efb19dcc40e84f976ffd1bbdbe5f9ab1d6628101",
+  "prompts": {},
+  "sessions": {
+    "s_35dc776856f152": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f9e2f-6e6a-7060-abbd-4056fb02307e",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    },
+    "s_a50f20be06e662": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_061647258ffeheMEkhCp3Rs7UG",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}
