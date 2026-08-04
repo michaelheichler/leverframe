@@ -1,0 +1,37 @@
+src/http-proxy/server.ts
+  s_d8452b69fa898e::t_ed3223f2de32ce 330,333,335
+  s_d8452b69fa898e::t_5553bdfa274a36 69-73,76,78,87-94,97-103
+  s_d8452b69fa898e::t_3aa70ef748139d 121
+  s_d8452b69fa898e::t_0f0365a403e422 395-398
+  s_d8452b69fa898e::t_11086ba2fe736e 134,153,158
+  s_d8452b69fa898e::t_3855e08459d076 116
+  s_d8452b69fa898e::t_fcf301cac3e9ee 117-120,122
+  s_d8452b69fa898e::t_5cf0cf319530be 503-515
+  s_d8452b69fa898e::t_e85b2bd9a548c7 588-591,634-646
+  s_d8452b69fa898e::t_4798e2e5c6a2d9 133,135-136
+  s_d8452b69fa898e::t_8edb24ae4261a2 149
+  s_d8452b69fa898e::t_f94be45febf4d3 309-313,317-323
+  s_d8452b69fa898e::t_41c1bb2818d0ac 724-727
+  s_d8452b69fa898e::t_de9886db32e294 150-152,154-157,159
+  s_d8452b69fa898e::t_ece11355309a56 469-473
+  s_d8452b69fa898e::t_2ed9c5bb1f3a94 110
+  s_d8452b69fa898e::t_ca50c9e2aa72c1 104
+tests/config.test.ts
+  s_d8452b69fa898e::t_270e72e9b107d5 143-147
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.20",
+  "base_commit_sha": "e572680698b08717476a57c32c0df7c69a1e32f8",
+  "prompts": {},
+  "sessions": {
+    "s_d8452b69fa898e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26c6c004-3bbc-4b34-b72f-0d9110f1a8a6",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}
