@@ -4,16 +4,33 @@ import {
   anthropicEffortFromRequest,
   translateMessages,
   translateTools,
-  translateToolChoice,
   translateRequest,
   writeAnthropicStream,
   streamAnthropicResponse,
+  positiveEnvMs,
   supportsOpenAiPromptCacheBreakpoints,
   extractClaudeSessionId,
   claudeSessionPromptCacheKey,
   sdkTranslationErrorSignature,
   ToolResultImageError,
 } from '../src/sdk-adapter.js';
+
+describe('positiveEnvMs', () => {
+  it.each([
+    ['42', 42],
+    [' 42 ', 42],
+    ['10abc', 10_000],
+    ['0x10', 10_000],
+    ['-5', 10_000],
+    ['', 10_000],
+  ])('parses %s strictly', (raw, expected) => {
+    const previous = process.env.LEVERFRAME_TEST_TIMEOUT_MS;
+    process.env.LEVERFRAME_TEST_TIMEOUT_MS = raw;
+    expect(positiveEnvMs('LEVERFRAME_TEST_TIMEOUT_MS', 10_000)).toBe(expected);
+    if (previous === undefined) delete process.env.LEVERFRAME_TEST_TIMEOUT_MS;
+    else process.env.LEVERFRAME_TEST_TIMEOUT_MS = previous;
+  });
+});
 
 describe('sdkTranslationErrorSignature', () => {
   it('classifies missing stream parts without exposing their dynamic ids', () => {
@@ -1174,6 +1191,133 @@ describe('writeAnthropicStream', () => {
     expect(observed).toEqual(['start', 'text-start', 'text-delta', 'finish']);
   });
 
+  it('delivers a truncated response when a deadline aborts an active stream', async () => {
+    const deadline = new AbortController();
+    const client = new AbortController();
+    let raw = '';
+    async function* stream() {
+      yield { type: 'start' };
+      yield { type: 'text-start', id: 't1' };
+      yield { type: 'text-delta', id: 't1', text: 'partial' };
+      deadline.abort(new Error('deadline'));
+      yield { type: 'abort' };
+    }
+    await writeAnthropicStream(
+      stream() as unknown as AsyncIterable<never>,
+      'm',
+      chunk => { raw += chunk; },
+      undefined,
+      { abortSignal: deadline.signal, clientAbortSignal: client.signal },
+    );
+    const events = raw.split('\n\n').filter(Boolean).map(block => {
+      const [event, data] = block.split('\n');
+      return { event: event.replace('event: ', ''), data: JSON.parse(data.replace('data: ', '')) };
+    });
+    expect(events.map(event => event.event)).toContain('message_delta');
+    expect(events.find(event => event.event === 'message_delta')?.data.delta.stop_reason).toBe('max_tokens');
+    expect(events.map(event => event.event)).toContain('message_stop');
+    expect(events.map(event => event.event)).not.toContain('error');
+  });
+
+  it('delivers buffered tool JSON when a deadline aborts an active stream', async () => {
+    const deadline = new AbortController();
+    const client = new AbortController();
+    const parts = [
+      { type: 'start' },
+      { type: 'tool-input-start', id: 'call_1', toolName: 'Read' },
+      { type: 'tool-input-delta', id: 'call_1', delta: '{"path":"x"}' },
+      { type: 'abort' },
+    ];
+    let raw = '';
+    async function* stream() {
+      yield parts[0];
+      yield parts[1];
+      yield parts[2];
+      deadline.abort(new Error('deadline'));
+      yield parts[3];
+    }
+    await writeAnthropicStream(
+      stream() as unknown as AsyncIterable<never>,
+      'm',
+      chunk => { raw += chunk; },
+      undefined,
+      { abortSignal: deadline.signal, clientAbortSignal: client.signal },
+    );
+    const events = raw.split('\n\n').filter(Boolean).map(block => {
+      const [event, data] = block.split('\n');
+      return { event: event.replace('event: ', ''), data: JSON.parse(data.replace('data: ', '')) };
+    });
+    expect(toolInputFromEvents(events)).toEqual({ path: 'x' });
+    expect(events.map(event => event.event)).not.toContain('error');
+  });
+
+  it('flushes cumulative tool JSON without duplicating already emitted prefixes', async () => {
+    vi.useFakeTimers();
+    let release: (() => void) | undefined;
+    const paused = new Promise<void>(resolve => { release = resolve; });
+    const chunks: string[] = [];
+    async function* stream() {
+      yield { type: 'start' };
+      yield { type: 'tool-input-start', id: 'call_1', toolName: 'Read' };
+      yield { type: 'tool-input-delta', id: 'call_1', delta: '{"a":' };
+      await paused;
+      yield { type: 'tool-input-delta', id: 'call_1', delta: '1}' };
+      yield { type: 'tool-call', toolCallId: 'call_1', toolName: 'Read', input: { a: 1 } };
+      yield { type: 'finish', finishReason: 'tool-calls' };
+    }
+    const running = writeAnthropicStream(
+      stream() as unknown as AsyncIterable<never>,
+      'm',
+      chunk => chunks.push(chunk),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    vi.advanceTimersByTime(2_000);
+    release?.();
+    await running;
+    vi.useRealTimers();
+    const json = chunks
+      .join('')
+      .split('\n\n')
+      .filter(Boolean)
+      .map(block => JSON.parse(block.split('\n')[1].replace('data: ', '')))
+      .filter(event => event.type === 'content_block_delta' && event.delta.type === 'input_json_delta')
+      .map(event => event.delta.partial_json)
+      .join('');
+    expect(json).toBe('{"a":1}');
+  });
+
+  it('falls back to raw JSON when final key order differs after an early flush', async () => {
+    vi.useFakeTimers();
+    let release: (() => void) | undefined;
+    const paused = new Promise<void>(resolve => { release = resolve; });
+    const chunks: string[] = [];
+    async function* stream() {
+      yield { type: 'start' };
+      yield { type: 'tool-input-start', id: 'call_1', toolName: 'Read' };
+      yield { type: 'tool-input-delta', id: 'call_1', delta: '{"a": 1, "b": 2}' };
+      await paused;
+      yield { type: 'tool-call', toolCallId: 'call_1', toolName: 'Read', input: { b: 2, a: 1 } };
+      yield { type: 'finish', finishReason: 'tool-calls' };
+    }
+    const running = writeAnthropicStream(
+      stream() as unknown as AsyncIterable<never>,
+      'm',
+      chunk => chunks.push(chunk),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    vi.advanceTimersByTime(2_000);
+    release?.();
+    await running;
+    vi.useRealTimers();
+    const events = chunks.join('').split('\n\n').filter(Boolean).map(block => {
+      const [event, data] = block.split('\n');
+      return { event: event.replace('event: ', ''), data: JSON.parse(data.replace('data: ', '')) };
+    });
+    expect(toolInputFromEvents(events)).toEqual({ a: 1, b: 2 });
+  });
+
   it('propagates an SDK abort without synthesizing a completed response', async () => {
     const abort = new AbortController();
     const reason = new Error('Client disconnected');
@@ -1190,7 +1334,7 @@ describe('writeAnthropicStream', () => {
       'm',
       chunk => writes.push(chunk),
       undefined,
-      { abortSignal: abort.signal, onPart: type => observed.push(type) },
+      { abortSignal: abort.signal, clientAbortSignal: abort.signal, onPart: type => observed.push(type) },
     )).rejects.toBe(reason);
 
     expect(observed).toEqual(['start', 'abort']);

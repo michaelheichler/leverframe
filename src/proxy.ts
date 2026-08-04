@@ -864,6 +864,7 @@ export async function startProxyCatalog(
                         onPart: partType => translationLifecycle?.onPart(partType),
                         initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
                         abortSignal: clientAbort.signal,
+                        clientAbortSignal: clientAbort.signal,
                         lifecycle: requestExecution,
                       },
                     ),

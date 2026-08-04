@@ -810,6 +810,7 @@ async function handleAnthropicMessages(
               onUsage,
               initialInputTokens: estimateAnthropicInputTokens(body),
               abortSignal: clientAbort.signal,
+              clientAbortSignal: clientAbort.signal,
               lifecycle: requestExecution,
             }),
           );

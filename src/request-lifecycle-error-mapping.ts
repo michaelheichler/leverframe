@@ -1,8 +1,3 @@
-// Adapter layer: turns a provider-neutral `LifecycleOutcome` into a
-// `ProviderTransportError`. Kept out of `request-lifecycle.ts` on purpose —
-// the lifecycle state machine must stay usable for any transport (or none)
-// without importing provider/HTTP concepts; this module is where lifecycle
-// semantics meet the error taxonomy.
 
 import {
   classifyProviderErrorCategory,
@@ -15,11 +10,8 @@ import type { LifecycleOutcome, LifecycleState } from './request-lifecycle.js';
 export interface LifecycleErrorMappingContext {
   provider: string;
   model?: string;
-  /** Set when the failure/cancel happened mid-retry; folded into ProviderTransportError.attemptCount. */
   attemptCount?: number;
 }
-
-/** Maps a lifecycle state to the transport-error phase it corresponds to. */
 export function phaseForLifecycleState(state: LifecycleState): ProviderFailurePhase {
   switch (state) {
     case 'accepted':
@@ -44,12 +36,6 @@ function categoryForDeadline(deadline: 'connect' | 'header' | 'idle' | 'total'):
     case 'total': return 'total_timeout';
   }
 }
-
-/**
- * Converts a terminal, non-`completed` {@link LifecycleOutcome} into a
- * {@link ProviderTransportError}. Returns `undefined` for a `completed`
- * outcome, since there is nothing to report.
- */
 export function providerErrorForLifecycleOutcome(
   outcome: LifecycleOutcome,
   context: LifecycleErrorMappingContext,
@@ -74,7 +60,7 @@ export function providerErrorForLifecycleOutcome(
     return new ProviderTransportError({
       ...base,
       category,
-      retryable: outcome.reason.deadline !== 'total',
+      retryable: true,
       safeMessage: `Request exceeded its ${outcome.reason.deadline} deadline.`,
     });
   }

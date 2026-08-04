@@ -34,6 +34,25 @@ describe('autoReplayMaxRetries', () => {
   });
 });
 
+describe('deadline environment parsing', () => {
+  it.each([
+    ['42', 42],
+    [' 42 ', 42],
+    ['10abc', 30_000],
+    ['0x10', 30_000],
+    ['-5', 30_000],
+    ['', 30_000],
+  ])('uses %s as a connect deadline input', async (raw, expected) => {
+    const previous = process.env.LEVERFRAME_CONNECT_TIMEOUT_MS;
+    process.env.LEVERFRAME_CONNECT_TIMEOUT_MS = raw;
+    vi.resetModules();
+    const module = await import('../src/request-lifecycle.js');
+    expect(module.DEFAULT_LIFECYCLE_DEADLINES.connectMs).toBe(expected);
+    if (previous === undefined) delete process.env.LEVERFRAME_CONNECT_TIMEOUT_MS;
+    else process.env.LEVERFRAME_CONNECT_TIMEOUT_MS = previous;
+  });
+});
+
 describe('RequestLifecycle transitions', () => {
   it('starts accepted and walks the happy path to completed', () => {
     const lifecycle = makeLifecycle();

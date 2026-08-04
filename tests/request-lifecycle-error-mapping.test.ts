@@ -51,14 +51,14 @@ describe('providerErrorForLifecycleOutcome', () => {
     });
   });
 
-  it('total deadline maps to a non-retryable total_timeout', () => {
+  it('total deadline maps to a retryable total_timeout', () => {
     vi.useFakeTimers();
     const lifecycle = new RequestLifecycle({ requestId: 'r3', deadlines: { totalMs: 5 } });
     vi.advanceTimersByTime(6);
     vi.useRealTimers();
 
     const error = providerErrorForLifecycleOutcome(lifecycle.terminalOutcome!, { provider: 'anthropic' });
-    expect(error).toMatchObject({ category: 'total_timeout', retryable: false });
+    expect(error).toMatchObject({ category: 'total_timeout', retryable: true });
   });
 
   it('maps a local cancellation to local_shutdown', () => {

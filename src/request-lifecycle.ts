@@ -24,7 +24,6 @@ export type LifecycleState =
 export type { DeadlineKind } from './deadline-manager.js';
 
 const TERMINAL_STATES = new Set<LifecycleState>(['completed', 'failed', 'cancelled']);
-
 /**
  * Legal forward transitions. A request may always fail or be cancelled from
  * any non-terminal state; those two edges are enforced separately rather
@@ -65,18 +64,24 @@ export interface LifecycleDeadlines {
   totalMs?: number;
 }
 
+/** @why Malformed durations must retain the configured fallback. */
+function deadlineFromEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim() ?? '';
+  if (!/^\d+$/.test(raw)) return fallback;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
 /** Production defaults shared by every HTTP and WebSocket inference path. */
 export const DEFAULT_LIFECYCLE_DEADLINES: Readonly<Required<LifecycleDeadlines>> = {
-  connectMs: 30_000,
-  headerMs: 60_000,
-  idleMs: 120_000,
-  totalMs: 10 * 60_000,
+  connectMs: deadlineFromEnv('LEVERFRAME_CONNECT_TIMEOUT_MS', 30_000),
+  headerMs: deadlineFromEnv('LEVERFRAME_HEADER_TIMEOUT_MS', 60_000),
+  idleMs: deadlineFromEnv('LEVERFRAME_IDLE_TIMEOUT_MS', 10 * 60_000),
+  totalMs: deadlineFromEnv('LEVERFRAME_TOTAL_TIMEOUT_MS', 60 * 60_000),
 };
 
 export const AUTO_REPLAY_MAX_RETRIES_ENV = 'LEVERFRAME_AUTO_REPLAY_MAX_RETRIES';
 export const DEFAULT_AUTO_REPLAY_MAX_RETRIES = 2;
 const MAX_AUTO_REPLAY_MAX_RETRIES = 10;
-
 /** Invalid values use the safe default. Excessive values are bounded to ten retries. */
 export function autoReplayMaxRetries(
   env: Record<string, string | undefined> = process.env,
@@ -92,7 +97,6 @@ export interface RetryAttemptRecord {
   /** Caller-defined label (e.g. a provider-error category); this module does not interpret it. */
   reason?: string;
 }
-
 /** Why a lifecycle stopped, in terms this module can express without knowing about providers. */
 export type LifecycleFailureReason =
   | { kind: 'deadline'; deadline: DeadlineKind }
@@ -117,7 +121,6 @@ export interface RequestLifecycleOptions {
   signal?: AbortSignal;
   clock?: Clock;
 }
-
 /**
  * Tracks one request end-to-end. Deadlines are exposed as an
  * {@link AbortSignal} so callers can pass them straight to `fetch` or timer
@@ -177,7 +180,6 @@ export class RequestLifecycle {
   get attempts(): readonly RetryAttemptRecord[] {
     return this.retryAttempts;
   }
-
   /** Deadline-linked abort signal; also fires on explicit cancel() or an external signal. */
   get abortSignal(): AbortSignal {
     return this.controller.signal;
@@ -190,7 +192,6 @@ export class RequestLifecycle {
   get hasEmittedToolCall(): boolean {
     return this.toolCallEmitted;
   }
-
   /** Automatic replay is only safe while nothing visible has reached the client. */
   get canAutoReplay(): boolean {
     return !this.outputEmitted && !this.toolCallEmitted && !this.isTerminal;
@@ -204,7 +205,6 @@ export class RequestLifecycle {
     if (this.isTerminal) return;
     this.finish('failed', { kind: 'deadline', deadline: kind });
   }
-
   /** Transition to `to`. Throws {@link IllegalLifecycleTransitionError} on an illegal edge. */
   transition(to: LifecycleState): void {
     if (this.isTerminal) {
@@ -234,25 +234,21 @@ export class RequestLifecycle {
       this.settle(to as 'completed' | 'failed' | 'cancelled', from);
     }
   }
-
   /** Mark request validation/routing as started. Safe to call once at an operation boundary. */
   startResolving(): void {
     if (this.state === 'accepted') this.transition('resolving');
   }
-
   /** Mark an upstream operation as dispatched. */
   startConnecting(): void {
     this.startResolving();
     if (this.state === 'resolving') this.transition('connecting');
   }
-
   /** Mark that the upstream accepted the operation and response headers are available. */
   markHeadersReceived(): void {
     if (this.isTerminal) return;
     this.startConnecting();
     if (this.state === 'connecting') this.transition('headers');
   }
-
   /** Mark one provider stream event and re-arm the idle deadline. */
   markStreamActivity(): void {
     if (this.isTerminal) return;
@@ -263,7 +259,6 @@ export class RequestLifecycle {
       this.resetIdleDeadline();
     }
   }
-
   /** Mark that a tool call became externally visible; this permanently closes the replay barrier. */
   markToolCallEmitted(): void {
     if (this.isTerminal) return;
@@ -271,12 +266,10 @@ export class RequestLifecycle {
     this.toolCallEmitted = true;
     if (this.state === 'streaming') this.transition('tool-call-emitted');
   }
-
   /** Reset the idle deadline; call once per received stream chunk while streaming. */
   resetIdleDeadline(): void {
     this.deadlineManager.reset('idle', this.deadlines.idleMs);
   }
-
   /** Mark that visible output (text/content) has reached the client. */
   markOutputEmitted(): void {
     if (this.isTerminal) return;
@@ -291,13 +284,11 @@ export class RequestLifecycle {
     if (this.isTerminal) return;
     this.finish('failed', { kind: 'error', error });
   }
-
   /** Cancel due to a local shutdown/client-disconnect (`local`) or an upstream cancel (`provider`). */
   cancel(origin: 'local' | 'provider' = 'local'): void {
     if (this.isTerminal) return;
     this.finish('cancelled', { kind: 'cancelled', origin });
   }
-
   /**
    * Marks the request as having completed successfully. Legal from any
    * non-terminal state: a clean completion cascades through whichever
@@ -335,7 +326,6 @@ export class RequestLifecycle {
     };
     if (to !== 'completed') this.controller.abort();
   }
-
   /** Release timers/listeners without changing state — used on process shutdown for already-terminal requests. */
   dispose(): void {
     this.deadlineManager.clearAll();

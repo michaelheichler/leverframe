@@ -30,7 +30,6 @@ export { silenceSdkWarnings, ToolResultImageError };
 export type SdkTranslationErrorSignature =
   | 'reasoning_part_not_found'
   | 'text_part_not_found';
-
 /** Classify privacy-safe AI SDK stream-state errors without logging dynamic part ids. */
 export function sdkTranslationErrorSignature(error: unknown): SdkTranslationErrorSignature | undefined {
   const message = error instanceof Error
@@ -41,7 +40,6 @@ export function sdkTranslationErrorSignature(error: unknown): SdkTranslationErro
   if (/\btext part \S+ not found\b/i.test(message)) return 'text_part_not_found';
   return undefined;
 }
-
 // ── Anthropic request shapes (only the fields we read) ───────────────────────
 interface AnthropicBlock {
   type: string;
@@ -99,7 +97,6 @@ function validClaudeSessionId(value: unknown): string | undefined {
   const trimmed = value.trim();
   return CLAUDE_SESSION_ID_RE.test(trimmed) ? trimmed.toLowerCase() : undefined;
 }
-
 /** Extract Claude Code's stable session UUID without accepting arbitrary metadata. */
 export function extractClaudeSessionId(
   body: Pick<AnthropicRequest, 'metadata'>,
@@ -117,19 +114,16 @@ export function extractClaudeSessionId(
   }
   return validClaudeSessionId(headerFallback);
 }
-
 /** Opaque prompt-cache partition derived from a Claude session UUID. */
 export function claudeSessionPromptCacheKey(sessionId: string): string {
   return 'relay-session-' + createHash('sha256').update(sessionId).digest('hex').slice(0, 32);
 }
-
 /** Read reasoning effort from an Anthropic-format request body. */
 export function anthropicEffortFromRequest(body: AnthropicRequest): string | undefined {
   const effort = body.output_config?.effort;
   if (typeof effort === 'string' && effort.trim()) return effort.trim();
   return undefined;
 }
-
 /**
  * Stable OpenAI `prompt_cache_key` derived from the request's cacheable prefix
  * (top-level system prompt + tool definitions). OpenAI caches prompt prefixes
@@ -155,7 +149,6 @@ export function openAiPromptCacheKey(
   const material = `${system ?? ''}\0${toolSig}`;
   return 'relay-' + createHash('sha256').update(material).digest('hex').slice(0, 32);
 }
-
 /** Public OpenAI models that implement explicit prompt-cache breakpoints. */
 export function supportsOpenAiPromptCacheBreakpoints(modelId: string): boolean {
   const match = modelId.toLowerCase().match(/^gpt-(\d+)(?:\.(\d+))?(?:-|$)/);
@@ -177,7 +170,6 @@ export interface SdkCallParams {
   providerOptions?: Record<string, Record<string, unknown>>;
   inputTokensIncludeCache?: boolean;
 }
-
 // ── system ───────────────────────────────────────────────────────────────────
 function stripClaudeCodeBillingHeader(text: string): string | undefined {
   if (!text.startsWith(CLAUDE_CODE_BILLING_HEADER_PREFIX)) return text;
@@ -226,7 +218,6 @@ function translateTopLevelSystemForOpenAi(
     } as unknown as ModelMessage];
   });
 }
-
 // ── images ───────────────────────────────────────────────────────────────────
 const SUPPORTED_TOOL_RESULT_IMAGE_MEDIA_TYPES = new Set([
   'image/gif',
@@ -306,7 +297,6 @@ function imagePart(block: AnthropicBlock): SdkImagePart | null {
   }
   return null;
 }
-
 /**
  * Serialize a tool_result for the text-only function-output channel, lifting
  * image blocks out into user-message parts (the caller pushes them right after
@@ -331,7 +321,6 @@ function serializeToolResultForModel(
   });
   return JSON.stringify(blocks);
 }
-
 // ── tool_result name resolution (tool messages need the tool name) ────────────
 export function annotateToolNames(messages: AnthropicMsg[]): void {
   const nameById = new Map<string, string>();
@@ -368,7 +357,6 @@ function thinkingToSdkPart(
   }
   return part;
 }
-
 // ── messages: Anthropic → SDK ModelMessage[] ─────────────────────────────────
 export function translateMessages(
   messages: AnthropicMsg[],
@@ -462,7 +450,6 @@ export function translateMessages(
   }
   return out;
 }
-
 /**
  * Strip filler values GPT-family models emit for optional params instead of
  * omitting them: top-level `null` always, and empty arrays for properties the
@@ -520,7 +507,6 @@ function sanitizeToolInput(
   }
   return out;
 }
-
 /** Per-tool sanitization rules, read back out of the translated tool schemas. */
 function toolInputRules(tools?: SdkCallParams['tools']): Map<string, ToolInputRules> {
   const map = new Map<string, ToolInputRules>();
@@ -561,7 +547,6 @@ export function translateToolChoice(tc: AnthropicRequest['tool_choice']): SdkCal
 
 const COMPACT_TEXT_ONLY_START = 'CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.';
 const COMPACT_TEXT_ONLY_END = 'REMINDER: Do NOT call any tools. Respond with plain text only';
-
 /**
  * Claude Code's structured-output agents inherit the terminal StructuredOutput
  * tool when they fork a reactive compaction turn, even though the compact prompt
@@ -585,7 +570,6 @@ function isClaudeCodeStructuredOutputCompactRequest(body: AnthropicRequest): boo
       .join('\n');
   return text.includes(COMPACT_TEXT_ONLY_START) && text.includes(COMPACT_TEXT_ONLY_END);
 }
-
 /**
  * OAuth uses Relay's outer replay only; nested SDK retries would multiply attempts.
  * Non-OAuth keeps one inner retry for pre-stream transients with SDK backoff,
@@ -608,14 +592,12 @@ export function translateRequest(
 ): SdkCallParams {
   const messages = body.messages ?? [];
   annotateToolNames(messages);
-
   // Claude Code prepends an Anthropic-only billing attribution block whose
   // `cch` value changes every request. It is envelope metadata, not a model
   // instruction, and forwarding it to OpenAI would invalidate the stable
   // prompt prefix. Anthropic passthrough and non-OAuth providers are untouched.
   const baseSystem = systemToString(body.system, options?.openAiOAuth === true);
   const systemText = baseSystem?.trim() || (options?.openAiOAuth ? 'You are a coding assistant.' : undefined);
-
   // resolveUpstreamTools uses the shared proxy types; the adapter keeps its own
   // minimal request shapes, so cast at this boundary. Keep compact-request tool
   // definitions intact for prompt-cache prefix reuse; toolChoice='none' below
@@ -633,7 +615,6 @@ export function translateRequest(
     thinkingProviderOptions(npm),
     effortProviderOptions(npm, effort, options?.reasoningMetadata?.upstreamModelId ?? body.model, options?.reasoningMetadata),
   );
-
   // ChatGPT Codex OAuth backend requires `instructions` in providerOptions and
   // rejects the standard `system` field. It also manages its own output limit.
   if (options?.openAiOAuth && systemText) {
@@ -645,7 +626,6 @@ export function translateRequest(
   const upstreamModelId = options?.reasoningMetadata?.upstreamModelId ?? body.model;
   const supportsExplicitOpenAiCaching = !options?.openAiOAuth
     && supportsOpenAiPromptCacheBreakpoints(upstreamModelId);
-
   // Keep related requests in one cache partition. Prefer Claude Code's stable
   // session identity when available; the system/tools hash remains the fallback
   // for other Anthropic clients and API-server callers.
@@ -685,7 +665,6 @@ export function translateRequest(
     inputTokensIncludeCache: CACHE_INCLUSIVE_INPUT_NPMS.has(npm),
   };
 }
-
 // ── usage: SDK → Anthropic ────────────────────────────────────────────────────
 interface SdkUsage {
   inputTokens?: number;
@@ -704,7 +683,6 @@ interface AnthropicUsage {
   cache_creation_input_tokens: number;
   cache_read_input_tokens: number;
 }
-
 /**
  * Normalize SDK usage into disjoint Anthropic buckets. The SDK-normalized
  * `noCacheTokens` value is authoritative when present; provider semantics
@@ -748,7 +726,6 @@ function sdkPromptCacheKeyHash(params: SdkCallParams): string | undefined {
     ? createHash('sha256').update(key).digest('hex').slice(0, 16)
     : undefined;
 }
-
 // ── response: SDK fullStream → Anthropic SSE ─────────────────────────────────
 type WriteFn = (chunk: string) => void;
 
@@ -774,10 +751,26 @@ export interface AnthropicStreamObserver {
    * (`complete`/`fail`) stay owned by the caller, not this module.
    */
   lifecycle?: RequestExecutionObserver;
+  /** @why Deadline aborts must remain distinct from downstream disconnects. */
+  clientAbortSignal?: AbortSignal;
 }
 
-const SDK_STREAM_IDLE_TIMEOUT_MS = 120_000;
-const SDK_TOTAL_TIMEOUT_MS = 10 * 60_000;
+/** @why Malformed durations must retain the configured fallback. */
+export function positiveEnvMs(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim() ?? '';
+  if (!/^\d+$/.test(raw)) return fallback;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+/** @why Idle detection must remain bounded without imposing a wall-clock cap. */
+function sdkStreamIdleTimeoutMs(): number {
+  return positiveEnvMs('LEVERFRAME_SDK_IDLE_TIMEOUT_MS', 10 * 60_000);
+}
+
+/** @why Non-stream requests need a backstop while streams rely on idle activity. */
+function nonStreamRequestTimeoutMs(): number {
+  return positiveEnvMs('LEVERFRAME_SDK_REQUEST_TIMEOUT_MS', 60 * 60_000);
+}
 
 function streamAbortError(signal?: AbortSignal): Error {
   if (signal?.reason instanceof Error) return signal.reason;
@@ -787,7 +780,6 @@ function streamAbortError(signal?: AbortSignal): Error {
   error.name = 'AbortError';
   return error;
 }
-
 /**
  * Forward caller cancellation into a Relay-owned controller without creating
  * an AbortSignal.any() composite. Node 24 retains source-aborted composite
@@ -821,9 +813,12 @@ export async function writeAnthropicStream(
   let openType: 'text' | 'thinking' | 'tool' | null = null;
   let pendingThinkingSig: string | undefined;
   const idToBlock = new Map<string, number>();
+  const toolNameById = new Map<string, string>();
   // Tool input deltas are buffered (not forwarded raw) so the complete input
   // can be sanitized once the SDK's parsed `tool-call` part arrives.
   const toolJsonBuffer = new Map<string, string>();
+  const emittedToolLengths = new Map<string, number>();
+  const toolFlushTimers = new Map<string, ReturnType<typeof setInterval>>();
   const flushedTools = new Set<string>();
   let openToolId: string | null = null;
   let finishReason = 'end_turn';
@@ -835,6 +830,49 @@ export async function writeAnthropicStream(
   };
 
   const emit = (event: string, data: unknown) => write(sseChunk(event, data));
+  /** @why Early deltas are safe only when sanitization cannot rewrite the payload. */
+  const toolCanFlushEarly = (id: string): boolean => {
+    const rules = inputRules.get(toolNameById.get(id) ?? '');
+    return rules === undefined
+      || (rules.required.size === 0
+        && Object.keys(rules.properties).length === 0
+        && rules.omitEmptyArrays.size === 0);
+  };
+  /** @why Each tool must stop scheduling work once its block closes. */
+  const clearToolTimer = (id: string): void => {
+    const timer = toolFlushTimers.get(id);
+    if (timer !== undefined) {
+      clearInterval(timer);
+      toolFlushTimers.delete(id);
+    }
+  };
+  /** @why Early timers must not survive stream completion or failure. */
+  const clearToolTimers = (): void => {
+    for (const id of toolFlushTimers.keys()) clearToolTimer(id);
+  };
+  /** @why Cumulative provider fragments require suffix-only downstream deltas. */
+  const emitToolJson = (id: string, json: string): void => {
+    const emittedLength = emittedToolLengths.get(id) ?? 0;
+    const emittedPrefix = toolJsonBuffer.get(id)?.slice(0, emittedLength) ?? '';
+    let output = json;
+    if (!output.startsWith(emittedPrefix)) {
+      const raw = toolJsonBuffer.get(id) ?? '';
+      if (emittedLength === 0 || !raw.startsWith(emittedPrefix)) return;
+      output = raw;
+    }
+    const suffix = output.slice(emittedLength);
+    if (!suffix) return;
+    emit('content_block_delta', {
+      type: 'content_block_delta', index: idToBlock.get(id) ?? blockIndex,
+      delta: { type: 'input_json_delta', partial_json: suffix },
+    });
+    emittedToolLengths.set(id, output.length);
+  };
+  /** @why Timers should only expose raw text when sanitization is identity-safe. */
+  const flushToolJson = (id: string): void => {
+    if (!toolCanFlushEarly(id) || flushedTools.has(id)) return;
+    emitToolJson(id, toolJsonBuffer.get(id) ?? '');
+  };
   const ensureStart = () => {
     if (started) return;
     emit('message_start', {
@@ -863,13 +901,8 @@ export async function writeAnthropicStream(
     // Stream ended (or moved on) without a tool-call part for this block: emit
     // the buffered raw JSON so the deltas that did arrive are not lost.
     if (openType === 'tool' && openToolId !== null && !flushedTools.has(openToolId)) {
-      const buffered = toolJsonBuffer.get(openToolId);
-      if (buffered) {
-        emit('content_block_delta', {
-          type: 'content_block_delta', index: blockIndex,
-          delta: { type: 'input_json_delta', partial_json: buffered },
-        });
-      }
+      clearToolTimer(openToolId);
+      emitToolJson(openToolId, toolJsonBuffer.get(openToolId) ?? '');
       flushedTools.add(openToolId);
     }
     if (openType) emit('content_block_stop', { type: 'content_block_stop', index: blockIndex });
@@ -880,22 +913,41 @@ export async function writeAnthropicStream(
     ensureStart(); closeOpen(); blockIndex++; openType = type;
     emit('content_block_start', { type: 'content_block_start', index: blockIndex, content_block: contentBlock });
   };
+  /** @why Truncation is useful only while a downstream consumer remains attached. */
+  const clientStillListening = () =>
+    started && observer?.clientAbortSignal !== undefined && !observer.clientAbortSignal.aborted;
+  /** @why Preserving buffered output avoids billing work that the client never receives. */
+  const deliverTruncated = (): boolean => {
+    if (!clientStillListening()) return false;
+    closeOpen();
+    emit('message_delta', {
+      type: 'message_delta',
+      delta: { stop_reason: 'max_tokens', stop_sequence: null },
+      usage,
+    });
+    emit('message_stop', { type: 'message_stop' });
+    return true;
+  };
 
+  try {
   for await (const part of stream) {
     observer?.onPart?.(part.type);
     observer?.lifecycle?.markStreamActivity();
-    if (observer?.abortSignal?.aborted) throw streamAbortError(observer.abortSignal);
+    if (observer?.abortSignal?.aborted) {
+      if (deliverTruncated()) return;
+      throw streamAbortError(observer.abortSignal);
+    }
     switch (part.type) {
       // The SDK emits start before it knows whether the provider accepted the
       // request. Wait for content/finish so a pre-content HTTP failure can still
       // propagate through the proxy with its real non-2xx status.
       case 'start': break;
-
       // An abort is terminal but is not an error part in the AI SDK stream. If
       // treated like an unknown part, the loop ends and Relay synthesizes a
       // message_start/message_delta/message_stop after the client disconnected.
       // Throw so the HTTP layer follows its cancellation path and emits nothing.
       case 'abort':
+        if (deliverTruncated()) return;
         throw streamAbortError(observer?.abortSignal);
 
       case 'reasoning-start':
@@ -932,8 +984,17 @@ export async function writeAnthropicStream(
         openBlock('tool', {
           type: 'tool_use', id: encodeToolUseId(part.id ?? '', sig), name: part.toolName, input: {},
         });
-        idToBlock.set(part.id ?? '', blockIndex);
-        openToolId = part.id ?? '';
+        const id = part.id ?? '';
+        idToBlock.set(id, blockIndex);
+        toolNameById.set(id, part.toolName ?? '');
+        toolJsonBuffer.set(id, '');
+        emittedToolLengths.set(id, 0);
+        openToolId = id;
+        if (toolCanFlushEarly(id)) {
+          const timer = setInterval(() => flushToolJson(id), 2_000);
+          timer.unref?.();
+          toolFlushTimers.set(id, timer);
+        }
         // The tool_use content block is now externally visible on the wire —
         // this permanently closes the automatic-replay barrier even though
         // the tool's input is still streaming.
@@ -955,15 +1016,11 @@ export async function writeAnthropicStream(
           // Streamed input: emit the sanitized complete input as one delta,
           // falling back to the buffered raw JSON if the SDK gave no parsed input.
           if (!flushedTools.has(id)) {
+            clearToolTimer(id);
             const json = part.input !== undefined && part.input !== null
               ? JSON.stringify(sanitizeToolInput(part.input as Record<string, unknown>, inputRules.get(part.toolName ?? '')))
               : (toolJsonBuffer.get(id) ?? '');
-            if (json) {
-              emit('content_block_delta', {
-                type: 'content_block_delta', index: idToBlock.get(id) ?? blockIndex,
-                delta: { type: 'input_json_delta', partial_json: json },
-              });
-            }
+            emitToolJson(id, json);
             flushedTools.add(id);
           }
         } else if (openType !== 'tool') {
@@ -972,10 +1029,14 @@ export async function writeAnthropicStream(
           openBlock('tool', {
             type: 'tool_use', id: encodeToolUseId(id, sig), name: part.toolName, input: {},
           });
-          emit('content_block_delta', {
-            type: 'content_block_delta', index: blockIndex,
-            delta: { type: 'input_json_delta', partial_json: JSON.stringify(sanitizeToolInput(part.input as Record<string, unknown> ?? {}, inputRules.get(part.toolName ?? ''))) },
-          });
+          idToBlock.set(id, blockIndex);
+          toolNameById.set(id, part.toolName ?? '');
+          toolJsonBuffer.set(id, '');
+          emittedToolLengths.set(id, 0);
+          emitToolJson(
+            id,
+            JSON.stringify(sanitizeToolInput(part.input as Record<string, unknown> ?? {}, inputRules.get(part.toolName ?? ''))),
+          );
           flushedTools.add(id);
         }
         break;
@@ -1009,6 +1070,7 @@ export async function writeAnthropicStream(
         const errMsg = e?.message || (typeof part.error === 'string' ? part.error : JSON.stringify(e?.data ?? part.error));
         const errorType = anthropicErrorType(upstreamHttpStatus(part.error, errMsg));
         log?.(() => `sdk stream error (${errorType}): ${errMsg}`);
+        if (deliverTruncated()) return;
         closeOpen();
         throw part.error instanceof Error || (part.error && typeof part.error === 'object')
           ? part.error
@@ -1018,17 +1080,21 @@ export async function writeAnthropicStream(
       default: break;
     }
   }
-
   // Some SDK transports end the iterator without yielding an explicit abort
   // part. Never synthesize completion frames for an already-cancelled request.
-  if (observer?.abortSignal?.aborted) throw streamAbortError(observer.abortSignal);
+  if (observer?.abortSignal?.aborted) {
+    if (deliverTruncated()) return;
+    throw streamAbortError(observer.abortSignal);
+  }
 
   closeOpen();
   ensureStart();
   emit('message_delta', { type: 'message_delta', delta: { stop_reason: finishReason, stop_sequence: null }, usage });
   emit('message_stop', { type: 'message_stop' });
+  } finally {
+    clearToolTimers();
+  }
 }
-
 // ── high-level entry points ──────────────────────────────────────────────────
 export async function streamAnthropicResponse(
   model: LanguageModel,
@@ -1039,7 +1105,7 @@ export async function streamAnthropicResponse(
   observer?: AnthropicStreamObserver,
 ): Promise<void> {
   const { inputTokensIncludeCache = false, ...sdkParams } = params;
-  const idleTimeoutMs = observer?.idleTimeoutMs ?? SDK_STREAM_IDLE_TIMEOUT_MS;
+  const idleTimeoutMs = observer?.idleTimeoutMs ?? sdkStreamIdleTimeoutMs();
   const idleAbort = new AbortController();
   const externalAbort = observer?.lifecycle?.abortSignal ?? observer?.abortSignal; // lifecycle composes deadlines
   const stopForwardingAbort = forwardAbortSignal(externalAbort, idleAbort);
@@ -1047,10 +1113,6 @@ export async function streamAnthropicResponse(
   let idleTimer = setTimeout(
     () => idleAbort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1000)}s`)),
     idleTimeoutMs,
-  );
-  const totalTimer = setTimeout(
-    () => idleAbort.abort(new Error(`provider stream exceeded ${Math.round(SDK_TOTAL_TIMEOUT_MS / 1000)}s`)),
-    SDK_TOTAL_TIMEOUT_MS,
   );
   // Do not combine streamText's total/chunk timeout signals here. In AI SDK
   // 7.0.22 that composition retains completed StreamTextResult graphs. Relay
@@ -1081,13 +1143,13 @@ export async function streamAnthropicResponse(
     await writeAnthropicStream(watchedStream, modelId, write, log, {
       ...observer,
       abortSignal,
+      clientAbortSignal: observer?.clientAbortSignal,
       inputTokensIncludeCache,
       promptCacheKeyHash: sdkPromptCacheKeyHash(params) ?? observer?.promptCacheKeyHash,
     }, params.tools);
   } finally {
     stopForwardingAbort();
     clearTimeout(idleTimer);
-    clearTimeout(totalTimer);
     // Settle the direct Relay-owned signal only after stream consumption. Do not
     // replace this with AbortSignal.any(): source-driven abort leaves Node's
     // dependent composite rooted in gcPersistentSignals on Node 24.
@@ -1122,14 +1184,10 @@ export async function generateAnthropicResponse(
     const forceAbort = new AbortController();
     const stopForwardingAbort = forwardAbortSignal(options.lifecycle?.abortSignal ?? options.abortSignal, forceAbort);
     const abortSignal = forceAbort.signal;
-    const idleTimeoutMs = options.idleTimeoutMs ?? SDK_STREAM_IDLE_TIMEOUT_MS;
+    const idleTimeoutMs = options.idleTimeoutMs ?? sdkStreamIdleTimeoutMs();
     let idleTimer = setTimeout(
       () => forceAbort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1000)}s`)),
       idleTimeoutMs,
-    );
-    const totalTimer = setTimeout(
-      () => forceAbort.abort(new Error(`provider stream exceeded ${Math.round(SDK_TOTAL_TIMEOUT_MS / 1000)}s`)),
-      SDK_TOTAL_TIMEOUT_MS,
     );
     // See the streaming path above: Relay owns these timers and explicitly
     // settles its controller when the stream has been fully reduced.
@@ -1179,7 +1237,6 @@ export async function generateAnthropicResponse(
     } finally {
       stopForwardingAbort();
       clearTimeout(idleTimer);
-      clearTimeout(totalTimer);
       // See the streaming path above: settle the Relay-owned signal after the
       // result is fully reduced so Node can release AI SDK's listener graph.
       if (!forceAbort.signal.aborted) forceAbort.abort();
@@ -1191,9 +1248,10 @@ export async function generateAnthropicResponse(
   } else {
     const generateAbort = new AbortController();
     const stopForwardingAbort = forwardAbortSignal(options?.lifecycle?.abortSignal ?? options?.abortSignal, generateAbort);
+    const totalTimeoutMs = nonStreamRequestTimeoutMs();
     const totalTimer = setTimeout(
-      () => generateAbort.abort(new Error(`provider request exceeded ${Math.round(SDK_TOTAL_TIMEOUT_MS / 1000)}s`)),
-      SDK_TOTAL_TIMEOUT_MS,
+      () => generateAbort.abort(new Error(`provider request exceeded ${Math.round(totalTimeoutMs / 1000)}s`)),
+      totalTimeoutMs,
     );
     try {
       options?.lifecycle?.startConnecting();
