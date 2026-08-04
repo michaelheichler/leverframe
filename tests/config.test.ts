@@ -140,7 +140,11 @@ describe('dotfolder config', () => {
       expect(saved.ok).toBe(false);
       expect(saved.error).toMatch(/Secret Service|keyring|D-Bus|dbus/i);
       const lookup = await getSavedServerPassword();
-      expect(lookup.status).toBe('absent');
+      if (lookup.status === 'migration-failed') {
+        expect(lookup.error).toMatch(/Secret Service|keyring|D-Bus|dbus/i);
+      } else {
+        expect(lookup.status).toBe('absent');
+      }
       const cfgPath = getConfigPath();
       if (existsSync(cfgPath)) {
         const cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as {

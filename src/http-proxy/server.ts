@@ -66,14 +66,16 @@ function responseUsageFromSseBlock(block: string): ResponseUsage | undefined {
   }
 }
 
+type ResponseUsageCapture = {
+  capture: (chunk: Buffer) => void;
+  flush: () => void;
+};
+
 function createResponseUsageCapture(
   onUsage: (usage: ResponseUsage) => void,
-): (chunk: Buffer) => void {
+): ResponseUsageCapture {
   let buffered = '';
-
-  return chunk => {
-    buffered = (buffered + chunk.toString('utf8')).replace(/\r\n/g, '\n');
-
+  const processBuffer = (flush: boolean) => {
     let boundary: number;
     while ((boundary = buffered.indexOf('\n\n')) >= 0) {
       const block = buffered.slice(0, boundary);
@@ -82,23 +84,42 @@ function createResponseUsageCapture(
       const usage = responseUsageFromSseBlock(block);
       if (usage) onUsage(usage);
     }
-
+    if (flush && buffered.length > 0) {
+      const block = buffered;
+      buffered = '';
+      if (Buffer.byteLength(block) <= MAX_USAGE_SSE_BLOCK_BYTES) {
+        const usage = responseUsageFromSseBlock(block);
+        if (usage) onUsage(usage);
+      }
+    }
     if (Buffer.byteLength(buffered) > MAX_USAGE_SSE_BLOCK_BYTES) buffered = '';
+  };
+
+  return {
+    capture: chunk => {
+      buffered = (buffered + chunk.toString('utf8')).replace(/\r\n/g, '\n');
+      processBuffer(false);
+    },
+    flush: () => processBuffer(true),
   };
 }
 
 function observeResponseUsage(
   upstream: http.IncomingMessage,
   contentEncoding: string | string[] | undefined,
-  onUsage: (usage: ResponseUsage) => void,
+  callbacks: { onUsage: (usage: ResponseUsage) => void; onComplete: () => void },
 ): void {
   const encoding = (Array.isArray(contentEncoding) ? contentEncoding[0] : contentEncoding)
     ?.trim()
     .toLowerCase();
   if (!encoding || encoding === 'identity') {
-    const capture = createResponseUsageCapture(onUsage);
-    upstream.on('data', capture);
-    upstream.once('end', () => upstream.off('data', capture));
+    const capture = createResponseUsageCapture(callbacks.onUsage);
+    upstream.on('data', capture.capture);
+    upstream.once('end', () => {
+      capture.flush();
+      upstream.off('data', capture.capture);
+      callbacks.onComplete();
+    });
     return;
   }
 
@@ -109,7 +130,10 @@ function observeResponseUsage(
       : encoding === 'deflate'
         ? createInflate()
         : undefined;
-  if (!decoder) return;
+  if (!decoder) {
+    callbacks.onComplete();
+    return;
+  }
 
   const onCompressedData = (chunk: Buffer) => {
     if (!decoder.destroyed) decoder.write(chunk);
@@ -122,10 +146,17 @@ function observeResponseUsage(
     upstream.off('end', onCompressedEnd);
     decoder.destroy();
   };
-  const capture = createResponseUsageCapture(onUsage);
-  decoder.on('data', capture);
-  decoder.once('error', cleanup);
-  decoder.once('end', cleanup);
+  const capture = createResponseUsageCapture(callbacks.onUsage);
+  decoder.on('data', capture.capture);
+  decoder.once('error', () => {
+    cleanup();
+    callbacks.onComplete();
+  });
+  decoder.once('end', () => {
+    capture.flush();
+    cleanup();
+    callbacks.onComplete();
+  });
   upstream.on('data', onCompressedData);
   upstream.once('end', onCompressedEnd);
 }
@@ -275,25 +306,33 @@ function readRawBody(req: http.IncomingMessage): Promise<Buffer> {
 function copyResponse(
   upstream: http.IncomingMessage,
   res: http.ServerResponse,
-  onErrorResponse?: (statusCode: number, body: string) => void,
-  onResponseUsage?: (usage: ResponseUsage) => void,
+  options: {
+    onErrorResponse?: (statusCode: number, body: string) => void;
+    onResponseUsage?: (usage: ResponseUsage) => void;
+    onResponseUsageComplete?: () => void;
+  } = {},
 ): void {
   const statusCode = upstream.statusCode ?? 502;
   const contentType = upstream.headers['content-type'];
-  if (statusCode < 400 && onResponseUsage && typeof contentType === 'string' && contentType.includes('text/event-stream')) {
-    observeResponseUsage(upstream, upstream.headers['content-encoding'], onResponseUsage);
+  if (statusCode < 400 && options.onResponseUsage && typeof contentType === 'string' && contentType.includes('text/event-stream')) {
+    observeResponseUsage(upstream, upstream.headers['content-encoding'], {
+      onUsage: options.onResponseUsage,
+      onComplete: options.onResponseUsageComplete ?? (() => {}),
+    });
+  } else {
+    options.onResponseUsageComplete?.();
   }
   const errorChunks: Buffer[] = [];
   let capturedBytes = 0;
   let truncated = false;
   let errorLogged = false;
   const logErrorResponse = (suffix = '') => {
-    if (errorLogged || statusCode < 400 || !onErrorResponse) return;
+    if (errorLogged || statusCode < 400 || !options.onErrorResponse) return;
     errorLogged = true;
     const body = Buffer.concat(errorChunks).toString('utf8');
-    onErrorResponse(statusCode, `${body}${truncated ? ' [truncated]' : ''}${suffix}`);
+    options.onErrorResponse(statusCode, `${body}${truncated ? ' [truncated]' : ''}${suffix}`);
   };
-  if (statusCode >= 400 && onErrorResponse) {
+  if (statusCode >= 400 && options.onErrorResponse) {
     upstream.on('data', (chunk: Buffer) => {
       if (capturedBytes >= MAX_ERROR_BODY_BYTES) {
         truncated = true;
@@ -353,6 +392,10 @@ function forwardRawAnthropicRequest(
     let responseEnded = false;
     let failed = false;
     let clientDisconnected = false;
+    let resolveResponseUsageComplete: (() => void) | undefined;
+    const responseUsageComplete = lifecycle
+      ? new Promise<void>(resolve => { resolveResponseUsageComplete = resolve; })
+      : undefined;
     const writeLifecycle = (
       event: Parameters<typeof writeInferenceResponseLifecycleLog>[1]['event'],
       extra: Partial<Parameters<typeof writeInferenceResponseLifecycleLog>[1]> = {},
@@ -423,7 +466,11 @@ function forwardRawAnthropicRequest(
         bytes += chunk.length;
         chunks += 1;
       });
-      copyResponse(upstreamRes, res, onErrorResponse, onResponseUsage);
+      copyResponse(upstreamRes, res, {
+        onErrorResponse,
+        onResponseUsage,
+        onResponseUsageComplete: lifecycle ? () => resolveResponseUsageComplete?.() : undefined,
+      });
       upstreamRes.once('end', () => {
         responseEnded = true;
         lastActivityAt = Date.now();
@@ -453,14 +500,19 @@ function forwardRawAnthropicRequest(
     res.once('finish', () => {
       stopProgress();
       if (failed || clientDisconnected) return;
-      const now = Date.now();
-      writeLifecycle('response_completed', {
-        statusCode,
-        durationMs: now - startedAt,
-        ...(firstByteAt !== undefined ? { timeToFirstByteMs: firstByteAt - startedAt } : {}),
-        bytes,
-        chunks,
-      });
+      const writeCompleted = () => {
+        if (failed || clientDisconnected) return;
+        const now = Date.now();
+        writeLifecycle('response_completed', {
+          statusCode,
+          durationMs: now - startedAt,
+          ...(firstByteAt !== undefined ? { timeToFirstByteMs: firstByteAt - startedAt } : {}),
+          bytes,
+          chunks,
+        });
+      };
+      if (responseUsageComplete) void responseUsageComplete.then(writeCompleted);
+      else writeCompleted();
     });
     res.once('close', () => {
       stopProgress();
@@ -533,6 +585,10 @@ function forwardToAdapter(
     let clientDisconnected = false;
     let adapterResponse: http.IncomingMessage | undefined;
     let upstream: http.ClientRequest | undefined;
+    let resolveResponseUsageComplete: (() => void) | undefined;
+    const responseUsageComplete = lifecycle
+      ? new Promise<void>(resolve => { resolveResponseUsageComplete = resolve; })
+      : undefined;
 
     const writeLifecycle = (
       event: Parameters<typeof writeInferenceResponseLifecycleLog>[1]['event'],
@@ -575,14 +631,19 @@ function forwardToAdapter(
     res.once('finish', () => {
       stopProgress();
       if (failed || clientDisconnected) return;
-      const now = Date.now();
-      writeLifecycle('response_completed', {
-        statusCode,
-        durationMs: now - startedAt,
-        ...(firstByteAt !== undefined ? { timeToFirstByteMs: firstByteAt - startedAt } : {}),
-        bytes,
-        chunks,
-      });
+      const writeCompleted = () => {
+        if (failed || clientDisconnected) return;
+        const now = Date.now();
+        writeLifecycle('response_completed', {
+          statusCode,
+          durationMs: now - startedAt,
+          ...(firstByteAt !== undefined ? { timeToFirstByteMs: firstByteAt - startedAt } : {}),
+          bytes,
+          chunks,
+        });
+      };
+      if (responseUsageComplete) void responseUsageComplete.then(writeCompleted);
+      else writeCompleted();
     });
     res.once('close', () => {
       stopProgress();
@@ -660,9 +721,10 @@ function forwardToAdapter(
         bytes += chunk.length;
         chunks += 1;
       });
-      copyResponse(upstreamRes, res, undefined, lifecycle
-        ? usage => writeLifecycle('response_usage', usage)
-        : undefined);
+      copyResponse(upstreamRes, res, {
+        onResponseUsage: lifecycle ? usage => writeLifecycle('response_usage', usage) : undefined,
+        onResponseUsageComplete: lifecycle ? () => resolveResponseUsageComplete?.() : undefined,
+      });
       const failAdapterResponse = (err: Error) => {
         if (clientDisconnected) {
           resolve();
