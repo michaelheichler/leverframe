@@ -1,4 +1,10 @@
-# pnpm settings (single-package repo — this file is pnpm 10's config location).
+# pnpm settings (single-package repo, this file is pnpm 10's config location).
 # Supply-chain guard: refuse to install any direct or transitive dependency
 # version published less than 10 days ago (value is in MINUTES: 10d = 14400).
 minimumReleaseAge: 14400
+
+# Packages allowed to run install/postinstall scripts (pnpm blocks all
+# others by default as a supply-chain guard). esbuild only downloads its
+# platform-specific binary via postinstall; no other build step needed.
+onlyBuiltDependencies:
+  - esbuild
