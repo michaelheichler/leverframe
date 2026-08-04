@@ -134,6 +134,7 @@ export function durableAtomicWrite(
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   let fd: number | undefined;
   let renamed = false;
+  let cleanupError: unknown;
   try {
     fd = openSync(temporary, 'wx', mode);
     completeWrite(fd, content);
@@ -152,8 +153,9 @@ export function durableAtomicWrite(
       try {
         unlinkSync(temporary);
       } catch (error) {
-        if (errorCode(error) !== 'ENOENT') throw error;
+        if (errorCode(error) !== 'ENOENT') cleanupError = error;
       }
     }
   }
+  if (cleanupError !== undefined) throw cleanupError;
 }

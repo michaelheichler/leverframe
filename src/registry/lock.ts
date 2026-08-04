@@ -93,6 +93,8 @@ function createLockRecord(lockPath: string, owner: LockOwner): LockSnapshot | nu
   const raw = JSON.stringify(owner);
   const temporary = `${lockPath}.${process.pid}.${owner.token}.tmp`;
   let fd: number | undefined;
+  let snapshot: LockSnapshot | null = null;
+  let cleanupError: unknown;
   try {
     fd = openSync(temporary, 'wx', 0o600);
     writeFileSync(fd, raw);
@@ -100,19 +102,20 @@ function createLockRecord(lockPath: string, owner: LockOwner): LockSnapshot | nu
     const stats = fstatSync(fd);
     try {
       linkSync(temporary, lockPath);
+      snapshot = { raw, device: stats.dev, inode: stats.ino, modifiedAt: stats.mtimeMs };
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return null;
-      throw error;
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
     }
-    return { raw, device: stats.dev, inode: stats.ino, modifiedAt: stats.mtimeMs };
   } finally {
     if (fd !== undefined) closeSync(fd);
     try {
       unlinkSync(temporary);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') cleanupError = error;
     }
   }
+  if (cleanupError !== undefined) throw cleanupError;
+  return snapshot;
 }
 
 function readSnapshot(lockPath: string): LockSnapshot {
