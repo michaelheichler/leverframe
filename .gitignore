@@ -21,6 +21,11 @@
 !/.github/**
 !/tests/
 !/tests/**
+!/.craftsman-baseline.json
+!/.claude/
+!/.claude/skills/
+!/.claude/skills/**
+/.claude/worktrees/
 !/dist/
 /dist/*
 !/dist/*.js
