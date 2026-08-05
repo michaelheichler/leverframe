@@ -4,18 +4,18 @@
 **Milestone:** Local Models + CharXiv
 
 ## Current Phase
-Phase: 1 of 6
+Phase: 1 of 6 (Local Model Runtime Hardware Detection Core Engine)
 Plans: 0/0
 Progress: 0%
 Status: ready
 
 ## Phase Status
-- **Phase 1:** Pending planning
-- **Phase 2:** Pending
-- **Phase 3:** Pending
-- **Phase 4:** Pending
-- **Phase 5:** Pending
-- **Phase 6:** Pending
+- **Phase 1 (Local Model Runtime Hardware Detection Core Engine):** Pending planning
+- **Phase 2 (Local Model Registry Browser):** Pending
+- **Phase 3 (Local Model Lifecycle Caching Load Unload Timeout Gates):** Pending
+- **Phase 4 (Local Model Trust Tool Calling Gate):** Pending
+- **Phase 5 (Charxiv Chart Agent Core Integration):** Pending
+- **Phase 6 (Charxiv As A Registered Model):** Pending
 
 ## Key Decisions
 | Decision | Date | Rationale |

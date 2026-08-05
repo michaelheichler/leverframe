@@ -1,0 +1,61 @@
+{
+  "answered": [
+    {
+      "question": "Runtime implementation strategy and process architecture for the local model engine?",
+      "answer": "In-process native N-API bindings (node-mlx for Apple Silicon, node-llama-cpp for CUDA) loaded directly into the existing leverframe Node process. No Python subprocess, no sidecar server.",
+      "area": "runtime-implementation-strategy",
+      "phase": "01",
+      "date": "2026-08-05"
+    },
+    {
+      "question": "Which model weight formats should the engine support?",
+      "answer": "Both GGUF and MLX-native, selected automatically by detected hardware, not user-facing.",
+      "area": "model-weight-format",
+      "phase": "01",
+      "date": "2026-08-05"
+    },
+    {
+      "question": "How should hardware be detected, and how should context-window size be derived?",
+      "answer": "Use each native binding's own device-inspection API (not sysctl/nvidia-smi shell-out). Context window derived from a KV-cache memory formula against measured free memory, not hardcoded.",
+      "area": "hardware-detection-and-context-sizing",
+      "phase": "01",
+      "date": "2026-08-05"
+    },
+    {
+      "question": "Should Phase 1's engine API be model-agnostic from the start, or should model selection be pulled into Phase 1?",
+      "answer": "Engine API must be model-agnostic from day one (accepts any model id, weights path, backend). Registry/browser/BM25 search UI stays in Phase 2 per the existing roadmap dependency.",
+      "area": "engine-api-genericity",
+      "phase": "01",
+      "date": "2026-08-05"
+    },
+    {
+      "question": "Which model validates this phase's success criteria, given the actual hardware?",
+      "answer": "Qwen3.6-27B, chosen because the 32GB VRAM of the RTX 5090 (not the 96GB system RAM) is the binding constraint on the tux workstation, capping clean Q4 inference at roughly 30 to 32B. This is a validation artifact only, swappable since the engine is model-agnostic.",
+      "area": "reference-validation-model",
+      "phase": "01",
+      "date": "2026-08-05"
+    },
+    {
+      "question": "How should the CUDA path be validated during Phase 1?",
+      "answer": "SSH directly from the execution session to tux@10.0.10.106 (key access already configured) to run detection and inference validation before the phase is considered done.",
+      "area": "cuda-validation-approach",
+      "phase": "01",
+      "date": "2026-08-05"
+    }
+  ],
+  "inferred": [
+    {
+      "id": "REQ-ENGINE-01",
+      "text": "The core inference engine API accepts a model identifier, weights path, and resolves backend (MLX or CUDA) without any model hardcoded into the runtime layer",
+      "priority": "Must-have",
+      "source": "Discussion: engine API genericity"
+    },
+    {
+      "id": "REQ-ENGINE-02",
+      "text": "Context window size is computed at runtime from a KV-cache memory formula against measured free hardware memory",
+      "priority": "Must-have",
+      "source": "Discussion: hardware detection and context sizing"
+    }
+  ],
+  "deferred": []
+}
