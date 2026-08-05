@@ -1,0 +1,30 @@
+.vbw-planning/discovery.json
+  s_2f725507470c35::t_06669e53fc7f8b 1-61
+.vbw-planning/PROJECT.md
+  s_2f725507470c35::t_428d34d76a0915 4,6-8
+  s_2f725507470c35::t_0396e5ef9b2ea2 2
+.vbw-planning/phases/01-local-model-runtime-hardware-detection-core-engine/01-CONTEXT.md
+  s_2f725507470c35::t_a3a9e1eccbd6d3 1-51
+.vbw-planning/.skills-section-stripped
+  s_2f725507470c35::t_81a70fd21bb77d 1
+.vbw-planning/.todo-flat-migrated
+  s_2f725507470c35::t_c59f6fb2500ee4 1
+.vbw-planning/STATE.md
+  s_2f725507470c35::t_5614a3e3272941 7,13-18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "2c9ec75385f175039f4e05fe4e1a1b3564cb1598",
+  "prompts": {},
+  "sessions": {
+    "s_2f725507470c35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "67330a25-2b29-4ed2-81b9-52f4b2f0a0ef",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}
