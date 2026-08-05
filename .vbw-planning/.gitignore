@@ -1,0 +1,55 @@
+# VBW transient runtime artifacts
+.execution-state.json
+.execution-state.json.tmp
+.context-*.md
+.context-usage
+.contracts/
+.locks/
+.token-state/
+
+# Session & agent tracking
+.vbw-context
+.vbw-session
+.active-agent
+.active-agents/
+.active-agent-count
+.active-agent-roles
+.active-agent-role-pids
+.active-agent-count.lock/
+.agent-pids
+.task-verify-seen
+
+# Metrics & cost tracking
+.metrics/
+.cost-ledger.json
+
+# Caching
+.cache/
+
+# Artifacts & events (v2/v3 feature-gated)
+.artifacts/
+.events/
+.event-log.jsonl
+
+# Snapshots & recovery
+.snapshots/
+
+# Logging & markers
+.hook-errors.log
+.hook-debug.log
+.skill-decisions.log
+.compaction-marker
+.session-log.jsonl
+.session-log.jsonl.tmp
+.notification-log.jsonl
+.watchdog-pid
+.watchdog.log
+.claude-md-migrated
+.tmux-mode-patched
+.delegated-workflow.json
+
+# Baselines
+.baselines/
+
+# Codebase mapping
+codebase/

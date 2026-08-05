@@ -1,0 +1,16 @@
+{
+  "conventions": [
+    {"id": "CONV-001", "rule": "Provider integrations go exclusively through the Vercel AI SDK, never bespoke per-provider HTTP clients", "source": "auto-detected", "category": "patterns", "confidence": "high", "detected_from": "PATTERNS.md", "added": "2026-08-05"},
+    {"id": "CONV-002", "rule": "Persistence code routes through durable-io.ts/atomic-file.ts instead of writing files directly", "source": "auto-detected", "category": "patterns", "confidence": "high", "detected_from": "CONVENTIONS.md", "added": "2026-08-05"},
+    {"id": "CONV-003", "rule": "Source filenames use kebab-case throughout src/", "source": "auto-detected", "category": "naming", "confidence": "high", "detected_from": "CONVENTIONS.md", "added": "2026-08-05"},
+    {"id": "CONV-004", "rule": "Ambiguous states are modeled as typed string-literal unions rather than booleans or thrown exceptions", "source": "auto-detected", "category": "patterns", "confidence": "medium", "detected_from": "PATTERNS.md", "added": "2026-08-05"},
+    {"id": "CONV-005", "rule": "Tests prefer real file I/O in temp directories over vi.mock (used in only 11 of 73 test files)", "source": "auto-detected", "category": "testing", "confidence": "high", "detected_from": "TESTING.md", "added": "2026-08-05"},
+    {"id": "CONV-006", "rule": "No coverage tooling or gate is configured", "source": "auto-detected", "category": "testing", "confidence": "high", "detected_from": "TESTING.md", "added": "2026-08-05"},
+    {"id": "CONV-007", "rule": "oxlint enforces only the correctness rule category as an error, ESLint is not used", "source": "auto-detected", "category": "tooling", "confidence": "high", "detected_from": "CONVENTIONS.md", "added": "2026-08-05"},
+    {"id": "CONV-008", "rule": "CLI subcommand handlers live in *-command.ts modules, state-owning modules live in *-store.ts modules", "source": "auto-detected", "category": "file-structure", "confidence": "high", "detected_from": "PATTERNS.md", "added": "2026-08-05"},
+    {"id": "CONV-009", "rule": "Custom provider endpoint URLs must pass the SSRF guard in url-security.ts before use", "source": "auto-detected", "category": "patterns", "confidence": "high", "detected_from": "PATTERNS.md", "added": "2026-08-05"},
+    {"id": "CONV-010", "rule": "Root .gitignore uses an allowlist pattern (deny-all plus explicit unignores) instead of a blocklist", "source": "auto-detected", "category": "style", "confidence": "high", "detected_from": "CONVENTIONS.md", "added": "2026-08-05"},
+    {"id": "CONV-011", "rule": "Risky state mutations follow a transactional-journal-reconcile pattern that self-repairs an interrupted run on the next invocation", "source": "auto-detected", "category": "patterns", "confidence": "high", "detected_from": "INDEX.md", "added": "2026-08-05"},
+    {"id": "CONV-012", "rule": "Timeout/deadline logic is abstracted behind an injectable Clock port for deterministic testing", "source": "auto-detected", "category": "patterns", "confidence": "high", "detected_from": "CONVENTIONS.md", "added": "2026-08-05"}
+  ]
+}

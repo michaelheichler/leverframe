@@ -1,0 +1,186 @@
+{
+  "effort": "balanced",
+  "autonomy": "standard",
+  "auto_commit": true,
+  "planning_tracking": "commit",
+  "auto_push": "after_phase",
+  "verification_tier": "standard",
+  "skill_suggestions": true,
+  "auto_install_skills": false,
+  "discovery_questions": true,
+  "discussion_mode": "questions",
+  "context_compiler": true,
+  "visual_format": "unicode",
+  "max_tasks_per_plan": 5,
+  "prefer_teams": "auto",
+  "pipeline_research": false,
+  "branch_per_milestone": false,
+  "plain_summary": true,
+  "active_profile": "default",
+  "custom_profiles": {},
+  "model_profile": "quality",
+  "model_overrides": {},
+  "model_matrix": {
+    "lead": {
+      "thorough": "fable",
+      "balanced": "fable",
+      "fast": "fable",
+      "turbo": "fable"
+    },
+    "architect": {
+      "thorough": "sol",
+      "balanced": [
+        "claude-opus-5",
+        "claude-sonnet-5"
+      ],
+      "fast": "glm52",
+      "turbo": "glm52"
+    },
+    "dev": {
+      "thorough": "luna",
+      "balanced": "luna",
+      "fast": "luna",
+      "turbo": "luna"
+    },
+    "qa": {
+      "thorough": "sol",
+      "balanced": [
+        "glm52",
+        "claude-sonnet-5"
+      ],
+      "fast": "kimi3",
+      "turbo": "kimi3"
+    },
+    "scout": {
+      "thorough": "claude-sonnet-5",
+      "balanced": [
+        "claude-sonnet-5",
+        "kimi3"
+      ],
+      "fast": "luna",
+      "turbo": "luna"
+    },
+    "debugger": {
+      "thorough": "claude-opus-5",
+      "balanced": [
+        "sol",
+        "claude-sonnet-5"
+      ],
+      "fast": "glm52",
+      "turbo": "glm52"
+    },
+    "docs": {
+      "thorough": "fable",
+      "balanced": [
+        "luna",
+        "claude-sonnet-5"
+      ],
+      "fast": "luna",
+      "turbo": "luna"
+    }
+  },
+  "model_catalog": [
+    "claude-fable-5",
+    "claude-haiku-4-5",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "default",
+    "elonmusk",
+    "fable",
+    "glm52",
+    "haiku",
+    "hy3",
+    "kimi3",
+    "leverframe:opencode-go:deepseek-v4-flash",
+    "leverframe:opencode-go:deepseek-v4-pro",
+    "leverframe:opencode-go:minimax-m3",
+    "luna",
+    "mimo25",
+    "opus",
+    "opus48",
+    "qwen38",
+    "sol",
+    "sonnet",
+    "terra"
+  ],
+  "model_catalog_extra": [],
+  "reasoning_matrix": {
+    "lead": {
+      "thorough": "medium",
+      "balanced": "medium",
+      "fast": "medium",
+      "turbo": "medium"
+    },
+    "architect": {
+      "thorough": "medium",
+      "balanced": "medium",
+      "fast": "medium",
+      "turbo": "medium"
+    },
+    "dev": {
+      "thorough": "xhigh",
+      "balanced": "xhigh",
+      "fast": "xhigh",
+      "turbo": "xhigh"
+    },
+    "qa": {
+      "thorough": "high",
+      "balanced": "medium",
+      "fast": "low",
+      "turbo": "low"
+    },
+    "scout": {
+      "thorough": "medium",
+      "balanced": "medium",
+      "fast": "medium",
+      "turbo": "medium"
+    },
+    "debugger": {
+      "thorough": "xhigh",
+      "balanced": "medium",
+      "fast": "medium",
+      "turbo": "medium"
+    },
+    "docs": {
+      "thorough": "medium",
+      "balanced": "low",
+      "fast": "low",
+      "turbo": "low"
+    }
+  },
+  "reasoning_overrides": {},
+  "agent_max_turns": {
+    "scout": 15,
+    "qa": 25,
+    "architect": 30,
+    "debugger": 80,
+    "lead": 50,
+    "dev": 75
+  },
+  "qa_skip_agents": [
+    "docs"
+  ],
+  "worktree_isolation": "off",
+  "token_budgets": true,
+  "two_phase_completion": true,
+  "metrics": true,
+  "smart_routing": true,
+  "validation_gates": true,
+  "snapshot_resume": true,
+  "lease_locks": true,
+  "event_recovery": true,
+  "monorepo_routing": true,
+  "rolling_summary": false,
+  "require_phase_discussion": false,
+  "auto_uat": false,
+  "max_uat_remediation_rounds": false,
+  "statusline_hide_limits": false,
+  "statusline_hide_limits_for_api_key": false,
+  "statusline_hide_agent_in_tmux": false,
+  "statusline_collapse_agent_in_tmux": false,
+  "debug_logging": false,
+  "caveman_style": "none",
+  "caveman_commit": false,
+  "caveman_review": false,
+  "model_catalog_detected_at": "2026-08-05T08:21:28Z"
+}
