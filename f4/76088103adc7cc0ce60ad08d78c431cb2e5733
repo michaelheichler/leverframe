@@ -1,0 +1,48 @@
+src/context-model-id.ts
+  s_7fd621581b3f0d::t_e72e356be29cd7 15
+src/registry/refresh-models.ts
+  s_d52a09b20bec05::t_261c3e39ce28bd 291,307,315,320,329,340,348,356
+  s_7fd621581b3f0d::t_e72e356be29cd7 53,66-69,79,89,99,103-104,117-118
+tests/context-model-id.test.ts
+  s_7fd621581b3f0d::t_e8c82350e896b8 8-11
+  s_7fd621581b3f0d::t_ab5164862660f9 1-7,12
+src/env.ts
+  s_7fd621581b3f0d::t_3b157fb8d84082 56
+  s_7fd621581b3f0d::t_e72e356be29cd7 3,63-65
+tests/openai-oauth-refresh.test.ts
+  s_7fd621581b3f0d::t_ab5164862660f9 1-115
+tests/env.test.ts
+  s_7fd621581b3f0d::t_8c345a08155e35 1,5-8,10-17
+  s_7fd621581b3f0d::t_ab5164862660f9 2-4,9,18-21,28
+  s_7fd621581b3f0d::t_e8c82350e896b8 22-27
+src/data/openai-oauth-models.ts
+  s_7fd621581b3f0d::t_e72e356be29cd7 32-38,56
+  s_7fd621581b3f0d::t_63f361ec4b4f76 55
+tests/openai-oauth-models.test.ts
+  s_7fd621581b3f0d::t_ab5164862660f9 5,8-11
+  s_7fd621581b3f0d::t_f57c5f79dfe431 1-4,6-7,12-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "f476088103adc7cc0ce60ad08d78c431cb2e5733",
+  "prompts": {},
+  "sessions": {
+    "s_7fd621581b3f0d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fe67b-1cb9-77b3-9914-dd7516b8b334",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": null
+    },
+    "s_d52a09b20bec05": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fe62b-64dd-7501-94e4-4f8bcfbfea26",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": null
+    }
+  }
+}
