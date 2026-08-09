@@ -1,13 +1,10 @@
-// src/patch-diagnostics.ts — `leverframe patch --diagnose[, --json]`.
-//
-// Read-only and network-free: this module only inspects the resolved
-// installation, its V2 manifest, its transaction journal, its lock, and legacy
-// migration eligibility. It never mutates state, and --json output must be
-// ANSI-free (docs/stabilization-and-upstream-plan.md sections 5.6 and 12).
-
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { resolveClaudeInstallation } from './claude-installation.js';
+import {
+  isClaudeCodeVersionSupportedForBinaryPatching,
+  resolveClaudeInstallation,
+  unsupportedClaudeCodeBinaryPatchingMessage,
+} from './claude-installation.js';
 import { getPatchTargetLockPath } from './patch-lock.js';
 import { readPatchJournal, verifyPatchSites, defaultPatchRuntime, type PatchRuntime } from './patch-transaction.js';
 import { currentTransformVersion, readManifestV2, type PatchManifestV2 } from './patch-state.js';
@@ -29,6 +26,7 @@ function sha256File(path: string): string | null {
 
 export interface PatchDiagnosticsReport {
   resolved: boolean;
+  supported: boolean;
   identity: {
     logicalPath: string;
     canonicalPath: string;
@@ -114,12 +112,13 @@ export async function diagnosePatchV2(
   runtime: PatchRuntime = defaultPatchRuntime,
 ): Promise<PatchDiagnosticsReport> {
   const installation = resolveClaudeInstallation({ target });
-  const legacy = readLegacyManifest();
-  const legacyDiag = { legacyManifestPresent: legacy !== null };
 
   if (!installation) {
+    const legacy = readLegacyManifest();
+    const legacyDiag = { legacyManifestPresent: legacy !== null };
     return {
       resolved: false,
+      supported: false,
       identity: null,
       leverframe: { schemaVersion: 2, transformVersion: currentTransformVersion() },
       manifest: { present: false },
@@ -131,6 +130,33 @@ export async function diagnosePatchV2(
       nextAction: nextActionFor('not_resolved'),
     };
   }
+
+  const supported = isClaudeCodeVersionSupportedForBinaryPatching(installation.version);
+  if (!supported) {
+    return {
+      resolved: true,
+      supported,
+      identity: {
+        logicalPath: installation.logicalPath,
+        canonicalPath: installation.canonicalPath,
+        discoverySource: installation.discoverySource,
+        installationKind: installation.installationKind,
+        executableType: installation.executableType,
+        version: installation.version,
+      },
+      leverframe: { schemaVersion: 2, transformVersion: currentTransformVersion() },
+      manifest: { present: false },
+      drift: { observedSha256: null, expectedPatchedSha256: null, hashesMatch: null, injectionState: null, semanticSitesComplete: null },
+      transaction: { pending: false },
+      lock: { path: '', held: false },
+      migration: { legacyManifestPresent: false, eligible: false, reason: 'Binary patching is not supported for this Claude Code version.' },
+      state: 'unsupported',
+      nextAction: unsupportedClaudeCodeBinaryPatchingMessage(installation.version),
+    };
+  }
+
+  const legacy = readLegacyManifest();
+  const legacyDiag = { legacyManifestPresent: legacy !== null };
 
   const manifest: PatchManifestV2 | null = readManifestV2(installation.identity);
   const journal = readPatchJournal(installation.identity);
@@ -167,6 +193,7 @@ export async function diagnosePatchV2(
 
   return {
     resolved: true,
+    supported,
     identity: {
       logicalPath: installation.logicalPath,
       canonicalPath: installation.canonicalPath,
@@ -224,7 +251,6 @@ function pad(label: string): string {
   return label.padEnd(22, ' ');
 }
 
-/** ANSI-free by construction; caller decides whether to colorize when printing. */
 export function formatPatchDiagnosticsText(report: PatchDiagnosticsReport): string[] {
   const lines: string[] = [];
   lines.push('leverframe patch diagnostics');
@@ -238,6 +264,7 @@ export function formatPatchDiagnosticsText(report: PatchDiagnosticsReport): stri
   lines.push(`${pad('discovery source')}${report.identity.discoverySource}`);
   lines.push(`${pad('installation kind')}${report.identity.installationKind}`);
   lines.push(`${pad('claude version')}${report.identity.version}`);
+  lines.push(`${pad('binary patching')}${report.supported ? 'supported' : 'unsupported'}`);
   lines.push(`${pad('schema / transform')}v${report.leverframe.schemaVersion} / v${report.leverframe.transformVersion}`);
   lines.push(`${pad('manifest')}${report.manifest.present ? `generation ${report.manifest.generation}, ${report.manifest.provenance}` : 'absent'}`);
   if (report.manifest.present) {
@@ -251,7 +278,7 @@ export function formatPatchDiagnosticsText(report: PatchDiagnosticsReport): stri
   }
   lines.push(`${pad('transaction')}${report.transaction.pending ? `pending at ${report.transaction.phase} (${report.transaction.operation})` : 'none pending'}`);
   lines.push(`${pad('lock')}${report.lock.held ? `held (${report.lock.path})` : 'free'}`);
-  lines.push(`${pad('legacy migration')}${report.migration.eligible ? `eligible — ${report.migration.mode}` : (report.migration.legacyManifestPresent ? `not eligible — ${report.migration.reason}` : 'no legacy state')}`);
+  lines.push(`${pad('legacy migration')}${report.migration.eligible ? `eligible - ${report.migration.mode}` : (report.migration.legacyManifestPresent ? `not eligible - ${report.migration.reason}` : 'no legacy state')}`);
   lines.push(`${pad('state')}${report.state}`);
   lines.push(`${pad('next action')}${report.nextAction}`);
   return lines;

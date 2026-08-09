@@ -1,13 +1,3 @@
-// src/claude-installation.ts — one Claude Code installation identity, shared by
-// startup verification, patching, restore, and launch.
-//
-// Fixes the design defect recorded in docs/stabilization-and-upstream-plan.md
-// section 4.2.1: launch discovery and patch discovery previously used
-// different precedence and could silently select two different Claude Code
-// binaries on the same machine. `resolveClaudeInstallation` is now the single
-// resolver every patch-lifecycle caller must use; `--target` lets a caller
-// pin an explicit path (used by `leverframe patch --target <path>`).
-
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
@@ -36,15 +26,11 @@ export type InstallationKind =
 export type ExecutableType = 'binary' | 'windows-shell-launcher' | 'script';
 
 export interface ClaudeInstallation {
-  /** The path as discovered, before symlink resolution. */
   logicalPath: string;
-  /** realpath(logicalPath) — the exact file that will actually execute. */
   canonicalPath: string;
-  /** Alias of canonicalPath; the value patch state is keyed by. */
   installationPath: string;
   discoverySource: InstallationDiscoverySource;
   installationKind: InstallationKind;
-  /** SHA-256 hex of canonicalPath — the per-target state directory key. */
   identity: string;
   version: string;
   executableType: ExecutableType;
@@ -83,10 +69,35 @@ function readExactClaudeVersion(path: string): string | null {
       timeout: 5_000,
       killSignal: 'SIGKILL',
     });
-    return output.match(/(\d+\.\d+\.\d+)/)?.[1] ?? null;
+    return /^(\d+\.\d+\.\d+) \(Claude Code\)(?:\n(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*) \(tweakcc-fixed\))?\n?$/.exec(output)?.[1] ?? null;
   } catch {
     return null;
   }
+}
+
+const minimumClaudeCodeBinaryPatchVersion = [2, 1, 223] as const;
+
+function parseNumericSemver(version: string): readonly [number, number, number] | null {
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(version);
+  if (!match) return null;
+  const parsed = match.slice(1).map(Number);
+  if (parsed.some(value => !Number.isSafeInteger(value))) return null;
+  return [parsed[0], parsed[1], parsed[2]];
+}
+
+export function isClaudeCodeVersionSupportedForBinaryPatching(version: string): boolean {
+  const parsed = parseNumericSemver(version);
+  if (!parsed) return false;
+  for (let index = 0; index < minimumClaudeCodeBinaryPatchVersion.length; index += 1) {
+    if (parsed[index] !== minimumClaudeCodeBinaryPatchVersion[index]) {
+      return parsed[index] > minimumClaudeCodeBinaryPatchVersion[index];
+    }
+  }
+  return true;
+}
+
+export function unsupportedClaudeCodeBinaryPatchingMessage(version: string): string {
+  return `Claude Code ${version} is not supported for binary patching. Upgrade to Claude Code 2.1.223 or newer.`;
 }
 
 function computeIdentity(canonicalPath: string): string {
@@ -115,8 +126,6 @@ function discoverLogicalPath(
 
   const leverframeOverride = process.env['LEVERFRAME_CLAUDE_PATH'];
   if (leverframeOverride?.trim()) {
-    // Preserves findClaudeBinary's contract: an explicit override that does
-    // not exist yields no result rather than silently falling back.
     return existsSync(leverframeOverride) ? { path: leverframeOverride, source: 'leverframe-env-override' } : null;
   }
 
@@ -135,7 +144,6 @@ function discoverLogicalPath(
 }
 
 export interface ResolveInstallationOptions {
-  /** `leverframe patch --target <path>` — pin an explicit installation path. */
   target?: string;
 }
 

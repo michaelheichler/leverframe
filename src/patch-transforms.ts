@@ -1,40 +1,12 @@
-// src/patch-transforms.ts — leverframe patch transforms, applied in-process.
-//
-// Ported from the relay-ai scripts/patch-custom-models wrapper, originally run
-// as a tweakcc `adhoc-patch --script` inside tweakcc's sandbox (with the Claude
-// Code source as global `js`). Now a pure function: patcher.ts extracts the
-// bundled JS with tweakcc's programmatic `readContent`, calls
-// `applyLeverframePatches`, and repacks with `writeContent`. The patch sites and
-// their regex/replacement logic are unchanged — they are hard-won; do not
-// "improve" them.
-//
-// Inspired by https://github.com/East-rayyy/claude-alias-patch (MIT); this is a
-// from-scratch reimplementation with a different patch mechanism and an added
-// per-model context window patch.
-//
-// The ALIAS is the model's identity inside the binary: for any entry that
-// defines one, the alias (not the canonical `leverframe:<provider>:<model>` id) is
-// what lands in the Agent-tool enum, the known-alias validator, the /model
-// picker, and the context-window table — so `model: sol` in agent/skill
-// frontmatter validates. Entries with no alias fall back to their canonical id
-// as the identity (they still join the enum, validator, and context table, but
-// skip the resolver and /model picker patches).
 
-export const PATCH_TRANSFORMS_VERSION = 2;
+export const PATCH_TRANSFORMS_VERSION = 3;
 
 export interface PatchScriptModelEntry {
   alias?: string;
   context?: number;
-  /** Human label for the /model picker, e.g. `GPT-5.6 Sol (OpenAI (ChatGPT))`. */
+
   display?: string;
-  /**
-   * Supplier-authoritative reasoning-effort ladder for this model (see
-   * `getReasoningCapabilities` in provider-factory.ts). Not a literal port of
-   * upstream's hard-coded per-model effort table — Leverframe derives it from
-   * the same provider capability data that drives the proxy-side effort
-   * wiring, so the binary-side gates and the proxy request path can never
-   * disagree about which levels a model actually supports.
-   */
+
   effort?: PatchScriptEffort;
 }
 
@@ -43,42 +15,20 @@ export interface PatchScriptEffort {
   defaultLevel: string;
 }
 
-/** Real model id (e.g. `leverframe:openai-oauth:gpt-5.6-sol`) → alias/context. */
 export type PatchScriptModelConfig = Record<string, PatchScriptModelEntry>;
 
-/**
- * Built-in Claude Code identities (PATCH 1/PATCH 3 anchors) that a custom
- * alias must never shadow — reassigning one would make the model picker,
- * the Agent-tool enum, and the alias resolver disagree about what e.g.
- * "opus" means.
- */
 const RESERVED_MODEL_ALIASES = new Set(['sonnet', 'opus', 'haiku', 'fable', 'opusplan', 'best', 'default']);
 
-/** Claude Code's own native effort ladder, most to least conservative gate. */
 const NATIVE_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
-/** Every native identity must offer at least these three to gate cleanly. */
+
 const BASE_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
 
-/**
- * Project a supplier's reasoning-capability ladder onto Claude Code's native
- * effort levels. Returns `undefined` (skip PATCH 8/9 for this model) unless
- * the supplier declares at least the low/medium/high base ladder with a
- * default that is itself one of the declared levels — a partial ladder (e.g.
- * GLM-5.2's `high`/`xhigh`-only levels) cannot be projected onto the native
- * picker without inventing levels the supplier never offered, so it is left
- * alone rather than guessed. The native client's own custom-identity default
- * is `high`, so the projected default is pinned to `high` regardless of the
- * supplier default (matching the picker/description projection everywhere
- * else in this file), never to a level the supplier did not declare.
- */
 export function projectNativeEffort(effort: PatchScriptEffort | undefined): PatchScriptEffort | undefined {
   if (!effort || !Array.isArray(effort.levels) || typeof effort.defaultLevel !== 'string') return undefined;
   const declared = new Set(effort.levels);
   if (!BASE_EFFORT_LEVELS.every(level => declared.has(level))) return undefined;
   const levels = NATIVE_EFFORT_LEVELS.filter(level => declared.has(level));
-  // The default must itself be one of the levels actually exposed to the
-  // native picker — a supplier default outside the native ladder (e.g. an
-  // OpenRouter "none"/transport-only default) cannot be projected either.
+
   if (!levels.some(level => level === effort.defaultLevel)) return undefined;
   return { levels, defaultLevel: 'high' };
 }
@@ -92,17 +42,12 @@ export interface PatchSiteResult {
 }
 
 export interface ApplyPatchesOutcome {
-  /** The patched Claude Code source. */
+
   content: string;
-  /** Per-site outcome, in patch order. */
+
   results: PatchSiteResult[];
 }
 
-/**
- * Thrown when a required patch site fails (or the config is invalid). Carries
- * the per-site results collected up to the failure so `--trace` can report
- * exactly what the sandboxed script used to print.
- */
 export class PatchApplyError extends Error {
   readonly results: PatchSiteResult[];
   constructor(message: string, results: PatchSiteResult[]) {
@@ -112,52 +57,32 @@ export class PatchApplyError extends Error {
   }
 }
 
-/** One report line, same format the tweakcc-sandbox script wrote to stderr. */
 export function formatPatchSiteLine(result: PatchSiteResult): string {
-  return '  ' + result.status.padEnd(4) + ' ' + result.name + (result.extra ? ' — ' + result.extra : '');
+  return '  ' + result.status.padEnd(4) + ' ' + result.name + (result.extra ? ': ' + result.extra : '');
 }
 
-/**
- * Apply the leverframe patch sites (PATCH 1–7) to the Claude Code source.
- * Pure: source string in → patched string + per-site results out. Throws
- * `PatchApplyError` when the config is invalid or a required site fails —
- * nothing should be written to the binary in that case.
- */
 export function applyLeverframePatches(source: string, config: PatchScriptModelConfig): ApplyPatchesOutcome {
   let js = source;
   const MODEL_CONFIG = config;
 
-  // ---- derive helpers ------------------------------------------------------
-  // alias -> model id (only for entries that define an alias)
-  const ALIAS_TO_ID: Record<string, string> = {};
-  // The name Claude Code knows a model by: its alias when it has one, else its
-  // canonical id. This single value is used for the Agent-tool enum, the
-  // known-alias validator, the /model picker value, and the context-window table,
-  // so the name the binary validates == the name it sends upstream == the name
-  // the proxy echoes back == the key its context window is stored under.
+  const ALIAS_TO_ID: Record<string, string> = Object.create(null) as Record<string, string>;
+
   const IDENTITIES: string[] = [];
-  // identity -> human label for the /model picker (falls back at use site)
-  const DISPLAY_BY_IDENTITY: Record<string, string> = {};
-  // lowercased alias AND id -> context-window tokens (only for models that set it)
-  const CONTEXT_BY_KEY: Record<string, number> = {};
-  // lowercased alias AND id (bare and [1m]-suffixed) for every configured
-  // model. Capability verdicts (PATCH 8) must distinguish "configured
-  // without effort" (explicit false) from "not configured at all" (absent
-  // from the map — falls through to the native built-in/provider check).
+
+  const DISPLAY_BY_IDENTITY: Record<string, string> = Object.create(null) as Record<string, string>;
+
+  const CONTEXT_BY_KEY: Record<string, number> = Object.create(null) as Record<string, number>;
+
   const CONFIGURED_CAPABILITY_KEYS = new Set<string>();
-  // lowercased alias AND id (bare and [1m]-suffixed) -> effort metadata for
-  // Claude Code's native effort-capability gates (PATCH 8/9). Object.create(null)
-  // so a model id/alias that happens to spell a prototype name — "constructor",
-  // "toString", "__proto__" — is stored as a normal own property instead of
-  // silently reassigning the object's prototype or hitting an inherited method.
+
   const EFFORT_BY_KEY: Record<string, PatchScriptEffort> = Object.create(null) as Record<string, PatchScriptEffort>;
+  const ALIAS_OWNERS = new Map<string, string>();
 
   const report: PatchSiteResult[] = [];
   const fail = (message: string): never => {
     throw new PatchApplyError(message, report);
   };
 
-  /** Both the bare and `[1m]`-suffixed form of a lowercased identity key. */
   const capabilityKeys = (value: string): string[] => {
     const normalized = String(value).trim().toLowerCase();
     const bare = normalized.replace(/\[1m\]$/i, '');
@@ -174,6 +99,11 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
       if (RESERVED_MODEL_ALIASES.has(a.replace(/\[1m\]$/i, ''))) {
         fail('leverframe patch: reserved alias "' + a + '" cannot be reassigned');
       }
+      const existingOwner = ALIAS_OWNERS.get(a);
+      if (existingOwner !== undefined) {
+        fail('leverframe patch: duplicate alias "' + a + '" for "' + existingOwner + '" and "' + id + '"');
+      }
+      ALIAS_OWNERS.set(a, String(id));
       ALIAS_TO_ID[a] = String(id);
       IDENTITIES.push(a);
       if (spec.display) DISPLAY_BY_IDENTITY[a] = String(spec.display);
@@ -193,12 +123,10 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
       if (!Number.isInteger(n) || n <= 0) {
         fail('leverframe patch: context for "' + id + '" must be a positive integer, got ' + spec.context);
       }
-      // A [1m] suffix hard-codes 1M upstream (and sends the context-1m beta header
-      // + raises the media cap). An explicit context on a [1m] model would win via
-      // PATCH 7 while those side effects silently stayed on — so reject it.
+
       if (/\[1m\]/i.test(String(spec.alias ?? '')) || /\[1m\]/i.test(id)) {
         fail(
-          'leverframe patch: "' + id + '" sets context but keeps the [1m] suffix — drop the suffix from both the id and the alias'
+          'leverframe patch: "' + id + '" sets context but keeps the [1m] suffix: drop the suffix from both the id and the alias'
         );
       }
       if (spec.alias !== undefined) CONTEXT_BY_KEY[String(spec.alias).trim().toLowerCase()] = n;
@@ -212,9 +140,7 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
           'leverframe patch: effort for "' + id + '" must declare at least low/medium/high with a declared default level'
         );
       }
-      // [1m]-suffixed identities keep their own context/media-cap contract
-      // (see the context check above); extending effort onto the suffixed
-      // key too keeps the gate consistent whichever form the binary echoes.
+
       const keys = capabilityKeys(spec.alias !== undefined ? String(spec.alias) : String(id));
       for (const key of keys) {
         EFFORT_BY_KEY[key] = projected;
@@ -230,26 +156,17 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
   const MODELS = Object.keys(MODEL_CONFIG);
   if (MODELS.length === 0) fail('leverframe patch: MODEL_CONFIG is empty');
 
-  /** Picker/description label for an identity; falls back to the old wording. */
   function displayFor(identity: string, fallbackId: string): string {
     return DISPLAY_BY_IDENTITY[identity] || 'Custom model (' + fallbackId + ')';
   }
 
   const reEsc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const q = (s: string) => JSON.stringify(s); // safe JS string literal
+  const q = (s: string) => JSON.stringify(s);
 
-  // ---- reporting -----------------------------------------------------------
   function log(status: PatchSiteStatus, name: string, extra?: string) {
     report.push(extra === undefined ? { status, name } : { status, name, extra });
   }
 
-  /**
-   * Apply exactly one regex replacement.
-   *  - marker: if present in js, treat as already-patched -> SKIP.
-   *  - expects exactly one match; 0 -> FAIL, >1 -> FAIL (ambiguous).
-   *  - fn(match, ...groups) returns the replacement text.
-   *  - required: on FAIL, throw (aborts the whole patch).
-   */
   function applyOnce(
     name: string,
     regex: RegExp,
@@ -273,8 +190,7 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     const before = js;
     js = js.replace(regex, fn as (substring: string, ...args: unknown[]) => string);
     if (js === before) {
-      // For array-extend / append patches, "no change" means the aliases are
-      // already present (anchor matched, but fn had nothing new to add) -> SKIP.
+
       if (noopIsSkip) { log('SKIP', name, 'already patched'); return; }
       log('FAIL', name, 'replacement made no change');
       if (required) fail(name);
@@ -283,37 +199,19 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     log('OK', name);
   }
 
-  /** Insert missing identities just before the closing bracket of a JS array literal string. */
   function extendAliasArray(arrLiteral: string): string {
     const toAdd = IDENTITIES.filter((a) => !new RegExp('"' + reEsc(a) + '"').test(arrLiteral));
-    if (toAdd.length === 0) return arrLiteral; // idempotent
+    if (toAdd.length === 0) return arrLiteral;
     return arrLiteral.replace(/\]\s*$/, ',' + toAdd.map(q).join(',') + ']');
   }
 
-  // ---------------------------------------------------------------------------
-  // PATCH 1 — Agent/subagent tool 'model' zod enum.
-  // Anchor: .enum([ "sonnet",...,"fable" ]).optional().describe( — the array
-  // begins with the built-in aliases and is immediately followed by
-  // .optional().describe(. We append our identities (alias when defined, else
-  // the canonical id) inside the enum so the tool accepts them — this is the same
-  // enum subagent/skill 'model:' frontmatter is validated against, which is why
-  // the short alias has to be the value that lands here.
-  // (This same .describe( is patched by PATCH 4 below.)
-  // ---------------------------------------------------------------------------
   applyOnce(
     'PATCH 1: Agent tool model enum',
-    /\.enum\((\["sonnet","opus","haiku"(?:,"[^"]+")*\])\)\.optional\(\)\.describe\(/,
-    (_m, arr) => '.enum(' + extendAliasArray(arr!) + ').optional().describe(',
+    /((?:\.enum|:[A-Za-z_$][\w$]*)\()(\["sonnet","opus","haiku","fable"(?:,"[^"]+")*\])(\)\.optional\(\)\.describe\(`Optional model override for this agent)/,
+    (_m, constructorHead, arr, descriptionHead) => constructorHead! + extendAliasArray(arr!) + descriptionHead!,
     { required: true, noopIsSkip: true }
   );
 
-  // ---------------------------------------------------------------------------
-  // PATCH 3 — known-alias validator list (drives "is this a known alias?").
-  // Anchor: the master list literal, matched loosely as
-  // ["sonnet","opus","haiku","fable", ...anything... ,"opusplan"] so it
-  // tolerates new built-ins being added in the middle. Appending our identities
-  // makes them recognized as first-class aliases everywhere the gate runs.
-  // ---------------------------------------------------------------------------
   applyOnce(
     'PATCH 3: known-alias validator list',
     /\["sonnet","opus","haiku","fable"(?:,"[^"]+")*,"opusplan"(?:,"[^"]+")*\]/,
@@ -321,24 +219,6 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     { required: true, noopIsSkip: true }
   );
 
-  // ---------------------------------------------------------------------------
-  // PATCH 6 — alias resolver switch (IDENTITY mapping).
-  // Anchor: case"best":{ ... } (the case"best":{ is unique). We inject
-  // case"<alias>":return"<alias>"; right after it (before the switch's
-  // default:return null).
-  //
-  // The mapping is deliberately an identity, NOT alias -> canonical id: the alias
-  // IS the model's identity everywhere else in the patched binary (enum,
-  // validator, picker, context table), and the MITM proxy resolves short alias
-  // names as request model ids and echoes request bodies unrewritten. Resolving
-  // to the canonical id here would make Claude Code send one name and look its
-  // context window up under another — the exact mismatch that stopped auto-compact
-  // from firing and killed agents with "Prompt is too long". The case still has to
-  // EXIST (rather than be skipped) so the resolver returns the name instead of
-  // falling through to default:return null.
-  // Only aliases not already present are inserted, so a rerun (or a config
-  // edit) tops up cleanly rather than duplicating cases.
-  // ---------------------------------------------------------------------------
   {
     const missing = ALIASES.filter((a) => !new RegExp('case' + reEsc(q(a)) + ':return').test(js));
     const cases = missing.map((a) => 'case' + q(a) + ':return ' + q(a) + ';').join('');
@@ -354,22 +234,11 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // PATCH 5 — interactive /model picker.
-  // The picker is assembled through a single choke-point function; we insert,
-  // right after its loop, a snippet that appends our custom
-  // {value,label,description} entries — with a runtime .some() dedupe guard so
-  // it is safe even if the function runs over the same array twice. Only
-  // aliases not already injected are added, so reruns top up cleanly.
-  // ---------------------------------------------------------------------------
   {
     const missing = ALIASES.filter((a) => !new RegExp('value:' + reEsc(q(a))).test(js));
     const entries = missing
       .map(
-        // value = the alias (the name the user types and the binary sends);
-        // description = the real model label, e.g. "GPT-5.6 Sol (OpenAI (ChatGPT))".
-        // (tweakcc's writeContent round-trips utf8 faithfully — verified — so the
-        // old adhoc-patch ASCII-only constraint no longer applies.)
+
         (a) => '{value:' + q(a) + ',label:' + q(a.charAt(0).toUpperCase() + a.slice(1)) + ',description:' + q(displayFor(a, ALIAS_TO_ID[a]!)) + '}'
       )
       .join(',');
@@ -388,13 +257,6 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // PATCH 4 — Agent tool 'model' parameter description text.
-  // Append the available model names (with their real labels) before the closing
-  // backtick so the model knows which extra names it may request and what they
-  // actually are. Best-effort (cosmetic). The text is spliced into a backtick
-  // template literal, so backticks and interpolation openers are stripped.
-  // ---------------------------------------------------------------------------
   {
     const safe = (s: string) => String(s).replace(/`/g, "'").replace(/\$\{/g, '(');
     const listing = IDENTITIES.map(function (i) {
@@ -412,31 +274,18 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // PATCH 7 — per-model context window.
-  //
-  // Claude Code funnels EVERY context-window consumer (autocompact threshold,
-  // /context, the countdown, statusline, cost/usage records, subagent budgets)
-  // through one resolver function. We inject a baked table lookup at the TOP of
-  // that resolver, so it wins over the 200k clamp and the global
-  // CLAUDE_CODE_MAX_CONTEXT_TOKENS env override. Lookup is on the raw,
-  // lowercased model string — alias and id are both in the table, so it hits
-  // pre- or post-alias-resolution.
-  //
-  // Anchor: the resolver's exact body shape. Identifiers are wildcarded (they
-  // churn per build); the (e,t) arity + 3-statement shape matches once.
-  // ---------------------------------------------------------------------------
   if (Object.keys(CONTEXT_BY_KEY).length) {
     const MARKER = '/*ccpatch:ctx*/';
+    const contextTable = JSON.stringify(CONTEXT_BY_KEY);
+    const contextLookup = 'Object.assign(Object.create(null),JSON.parse(' + JSON.stringify(contextTable) + '))';
     const SNIPPET =
-      MARKER + 'var _ccw=(' + JSON.stringify(CONTEXT_BY_KEY) + ')[String(e||"").trim().toLowerCase()];if(_ccw!==void 0)return _ccw;';
+      MARKER + 'var _ccw=' + contextLookup + '[String(e||"").trim().toLowerCase()];if(_ccw!==void 0)return _ccw;';
 
     if (js.includes(MARKER)) {
-      // Re-patching an already-patched binary: refresh the baked table in place
-      // so a MODEL_CONFIG edit takes effect without a restore first.
+
       applyOnce(
         'PATCH 7: per-model context window (refresh)',
-        /\/\*ccpatch:ctx\*\/var _ccw=\(\{[^{}]*\}\)\[[^\]]*\];if\(_ccw!==void 0\)return _ccw;/,
+          /\/\*ccpatch:ctx\*\/var _ccw=(?:\(\{[^{}]*\}\)|Object\.assign\(Object\.create\(null\),JSON\.parse\("(?:[^"\\]|\\.)*"\)\))\[[^\]]*\];if\(_ccw!==void 0\)return _ccw;/,
         () => SNIPPET,
         { required: true, noopIsSkip: true }
       );
@@ -450,26 +299,6 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // PATCH 8 — per-model effort capability gates.
-  //
-  // Claude Code checks three separate resolvers before it exposes effort at
-  // all, includes xhigh/max in the /model picker, and emits effort.level in
-  // status hooks. Each resolver has the same wildcarded shape: a guard
-  // returning `!1` (false) for a denylisted identity, then a native
-  // capability lookup. We inject a baked verdict table right after the
-  // denylist guard, so a configured model wins over the native fallback but
-  // a denylisted identity is never reached (the guard already returned).
-  //
-  // Only attempted when at least one configured model declares a supplier
-  // effort ladder that projects onto the native levels (`EFFORT_BY_KEY`) —
-  // otherwise there is nothing binary-side to gate and the site is skipped
-  // entirely rather than injecting an always-empty table. When it does run,
-  // the site is required: an unmatched anchor means this build's obfuscated
-  // shape no longer matches what was verified, and publishing a binary where
-  // the proxy advertises xhigh/max but the client silently can't select them
-  // is worse than refusing to patch.
-  // ---------------------------------------------------------------------------
   if (Object.keys(EFFORT_BY_KEY).length) {
     patchEffortCapabilitySite(
       'effort',
@@ -491,12 +320,6 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // PATCH 9 — per-model default effort.
-  //
-  // Same conditional gate as PATCH 8: only runs when a configured model has
-  // a projected effort ladder, and required when it does.
-  // ---------------------------------------------------------------------------
   if (Object.keys(EFFORT_BY_KEY).length) {
     const DEFAULT_EFFORT_MARKER = '/*ccpatch:default-effort*/';
     const defaults = Object.fromEntries(
@@ -527,15 +350,6 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
 
   return { content: js, results: report };
 
-  /**
-   * Inject (or refresh) a baked capability-verdict table for one of the
-   * three effort gates. `CONFIGURED_CAPABILITY_KEYS` seeds every configured
-   * identity with an explicit verdict (true/false) so a configured-but-
-   * effort-less model is denied the capability rather than falling through
-   * to a native/provider heuristic; an identity absent from the map (never
-   * configured) is left out of the table entirely, so the native fallback
-   * still runs for it.
-   */
   function patchEffortCapabilitySite(
     capability: 'effort' | 'xhigh_effort' | 'max_effort',
     marker: string,

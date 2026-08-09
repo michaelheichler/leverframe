@@ -1,5 +1,3 @@
-// tests/launch-installation.test.ts — one resolved installation is shared by
-// patch verification and the final child spawn, even if discovery changes.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -36,7 +34,7 @@ const silentPresenter: PatchPresenter = {
 function writeCandidate(path: string, label: string): void {
   writeFileSync(path, `#!/bin/sh
 if [ "$1" = "--version" ]; then
-  printf '2.1.220 (Claude Code)\\n'
+  printf '2.1.223 (Claude Code)\\n'
   exit 0
 fi
 printf '${label}' > "$LEVERFRAME_TEST_LAUNCH_MARKER"
@@ -108,8 +106,6 @@ describe('resolved Claude installation launch invariant', () => {
     );
     expect(inspectedPaths).toEqual([installation.canonicalPath]);
 
-    // Discovery now points elsewhere. A rediscovery inside launchClaude would
-    // execute candidate B and fail this assertion.
     process.env['LEVERFRAME_CLAUDE_PATH'] = candidateB;
     expect(resolveClaudeInstallation()?.canonicalPath).not.toBe(installation.canonicalPath);
 

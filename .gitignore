@@ -26,6 +26,9 @@
 !/.claude/skills/
 !/.claude/skills/**
 /.claude/worktrees/
+!/CLAUDE.md
+!/.vbw-planning/
+!/.vbw-planning/**
 !/dist/
 /dist/*
 !/dist/*.js

@@ -1,13 +1,3 @@
-// src/patch-transaction.ts — crash-safe, journaled per-target patch/restore.
-//
-// Every destructive step (baseline commit, binary swap, manifest publication)
-// is preceded by a durable journal write recording the phase about to start.
-// docs/stabilization-and-upstream-plan.md section 5.5 defines the phases:
-// prepared -> baseline_committed -> binary_committed -> manifest_committed ->
-// completed. `src/patch-reconcile.ts` reads this journal on the next run and
-// either completes or safely discards an interrupted transaction — it never
-// guesses past an unverifiable hash.
-
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { ensurePrivateDirectory, readFileStrict } from './durable-io.js';
@@ -17,7 +7,11 @@ import {
   copyImmutableFileSync,
   sameDirectoryStagePath,
 } from './atomic-file.js';
-import type { ClaudeInstallation } from './claude-installation.js';
+import {
+  isClaudeCodeVersionSupportedForBinaryPatching,
+  unsupportedClaudeCodeBinaryPatchingMessage,
+  type ClaudeInstallation,
+} from './claude-installation.js';
 import {
   currentTransformVersion,
   ensureBaselineStored,
@@ -56,7 +50,6 @@ export interface PatchTransactionJournal {
   canonicalPath: string;
   generation: number;
   phase: PatchTransactionPhase;
-  /** The live binary's SHA-256 immediately before this transaction touched it. */
   expectedPreHash: string;
   claudeVersion: string;
   baselineSha256: string;
@@ -158,12 +151,6 @@ export const defaultPatchRuntime: PatchRuntime = {
   },
 };
 
-/** Read-only structural check: do the required patch sites still verify against this content? */
-/**
- * Verify that applying the current transform would be byte-idempotent.
- * A transform result of `OK` means a site still needed modification and is
- * therefore stale; only unchanged output with no failed sites is current.
- */
 export function verifyPatchSites(
   content: string,
   config: PatchScriptModelConfig,
@@ -192,7 +179,6 @@ export interface ApplyOutcome {
 }
 
 export interface VerifiedRecoveryBaseline {
-  /** Verified pristine source; the transaction revalidates it before use. */
   sourcePath: string;
   sha256: string;
   version: string;
@@ -255,6 +241,9 @@ export async function applyPatchTransactionV2(
 ): Promise<ApplyOutcome> {
   const { installation, desiredConfig, configHash, manifest, recoveryBaseline, trace } = input;
   const { identity, canonicalPath, version } = installation;
+  if (!isClaudeCodeVersionSupportedForBinaryPatching(version)) {
+    return { ok: false, message: unsupportedClaudeCodeBinaryPatchingMessage(version) };
+  }
   const now = () => new Date().toISOString();
 
   const live = await runtime.inspect(canonicalPath, manifest?.patchedSha256);
@@ -341,16 +330,17 @@ export async function applyPatchTransactionV2(
     ) {
       return { ok: false, message: 'Patched candidate failed staged validation.' };
     }
-    commitSameDirectoryStageSync(stage, canonicalPath);
+    const patchedSize = statSync(stage).size;
     writeJournal({
       ...journalBase,
       phase: 'binary_committed',
       baselineSha256,
       baselinePath,
       patchedSha256: stagedPatched.sha256,
-      patchedSize: statSync(canonicalPath).size,
+      patchedSize,
       updatedAt: now(),
     });
+    commitSameDirectoryStageSync(stage, canonicalPath);
 
     const manifestV2: PatchManifestV2 = {
       schemaVersion: 2,
@@ -363,7 +353,7 @@ export async function applyPatchTransactionV2(
       baselineSha256,
       baselinePath,
       patchedSha256: stagedPatched.sha256,
-      patchedSize: statSync(canonicalPath).size,
+      patchedSize,
       semanticFingerprint: computeSemanticFingerprint(results),
       configHash,
       provenance,
@@ -381,7 +371,7 @@ export async function applyPatchTransactionV2(
     });
   } catch (err) {
     const detailLines = err instanceof PatchApplyError
-      ? err.results.map(r => `${r.status} ${r.name}${r.extra ? ` — ${r.extra}` : ''}`)
+      ? err.results.map(r => `${r.status} ${r.name}${r.extra ? ` (${r.extra})` : ''}`)
       : [];
     return {
       ok: false,
@@ -399,7 +389,7 @@ export async function applyPatchTransactionV2(
   return {
     ok: true,
     message: `Patched claude ${version}: ${modelCount} model${modelCount === 1 ? '' : 's'} configured.`,
-    detailLines: trace ? results.map(r => `${r.status} ${r.name}${r.extra ? ` — ${r.extra}` : ''}`) : undefined,
+    detailLines: trace ? results.map(r => `${r.status} ${r.name}${r.extra ? ` (${r.extra})` : ''}`) : undefined,
   };
 }
 

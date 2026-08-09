@@ -301,10 +301,31 @@ function readExactClaudeVersion(path) {
       timeout: 5e3,
       killSignal: "SIGKILL"
     });
-    return output.match(/(\d+\.\d+\.\d+)/)?.[1] ?? null;
+    return /^(\d+\.\d+\.\d+) \(Claude Code\)(?:\n(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*) \(tweakcc-fixed\))?\n?$/.exec(output)?.[1] ?? null;
   } catch {
     return null;
   }
+}
+var minimumClaudeCodeBinaryPatchVersion = [2, 1, 223];
+function parseNumericSemver(version) {
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(version);
+  if (!match) return null;
+  const parsed = match.slice(1).map(Number);
+  if (parsed.some((value) => !Number.isSafeInteger(value))) return null;
+  return [parsed[0], parsed[1], parsed[2]];
+}
+function isClaudeCodeVersionSupportedForBinaryPatching(version) {
+  const parsed = parseNumericSemver(version);
+  if (!parsed) return false;
+  for (let index = 0; index < minimumClaudeCodeBinaryPatchVersion.length; index += 1) {
+    if (parsed[index] !== minimumClaudeCodeBinaryPatchVersion[index]) {
+      return parsed[index] > minimumClaudeCodeBinaryPatchVersion[index];
+    }
+  }
+  return true;
+}
+function unsupportedClaudeCodeBinaryPatchingMessage(version) {
+  return `Claude Code ${version} is not supported for binary patching. Upgrade to Claude Code 2.1.223 or newer.`;
 }
 function computeIdentity(canonicalPath) {
   return createHash("sha256").update(canonicalPath).digest("hex");
@@ -14704,7 +14725,7 @@ import { readFileSync as readFileSync7 } from "fs";
 import { join as join8 } from "path";
 
 // src/patch-transforms.ts
-var PATCH_TRANSFORMS_VERSION = 2;
+var PATCH_TRANSFORMS_VERSION = 3;
 var RESERVED_MODEL_ALIASES = /* @__PURE__ */ new Set(["sonnet", "opus", "haiku", "fable", "opusplan", "best", "default"]);
 var NATIVE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 var BASE_EFFORT_LEVELS = ["low", "medium", "high"];
@@ -14727,12 +14748,13 @@ var PatchApplyError = class extends Error {
 function applyLeverframePatches(source, config) {
   let js = source;
   const MODEL_CONFIG = config;
-  const ALIAS_TO_ID = {};
+  const ALIAS_TO_ID = /* @__PURE__ */ Object.create(null);
   const IDENTITIES = [];
-  const DISPLAY_BY_IDENTITY = {};
-  const CONTEXT_BY_KEY = {};
+  const DISPLAY_BY_IDENTITY = /* @__PURE__ */ Object.create(null);
+  const CONTEXT_BY_KEY = /* @__PURE__ */ Object.create(null);
   const CONFIGURED_CAPABILITY_KEYS = /* @__PURE__ */ new Set();
   const EFFORT_BY_KEY = /* @__PURE__ */ Object.create(null);
+  const ALIAS_OWNERS = /* @__PURE__ */ new Map();
   const report = [];
   const fail = (message2) => {
     throw new PatchApplyError(message2, report);
@@ -14752,6 +14774,11 @@ function applyLeverframePatches(source, config) {
       if (RESERVED_MODEL_ALIASES.has(a.replace(/\[1m\]$/i, ""))) {
         fail('leverframe patch: reserved alias "' + a + '" cannot be reassigned');
       }
+      const existingOwner = ALIAS_OWNERS.get(a);
+      if (existingOwner !== void 0) {
+        fail('leverframe patch: duplicate alias "' + a + '" for "' + existingOwner + '" and "' + id + '"');
+      }
+      ALIAS_OWNERS.set(a, String(id));
       ALIAS_TO_ID[a] = String(id);
       IDENTITIES.push(a);
       if (spec.display) DISPLAY_BY_IDENTITY[a] = String(spec.display);
@@ -14772,7 +14799,7 @@ function applyLeverframePatches(source, config) {
       }
       if (/\[1m\]/i.test(String(spec.alias ?? "")) || /\[1m\]/i.test(id)) {
         fail(
-          'leverframe patch: "' + id + '" sets context but keeps the [1m] suffix \u2014 drop the suffix from both the id and the alias'
+          'leverframe patch: "' + id + '" sets context but keeps the [1m] suffix: drop the suffix from both the id and the alias'
         );
       }
       if (spec.alias !== void 0) CONTEXT_BY_KEY[String(spec.alias).trim().toLowerCase()] = n;
@@ -14845,8 +14872,8 @@ function applyLeverframePatches(source, config) {
   }
   applyOnce(
     "PATCH 1: Agent tool model enum",
-    /\.enum\((\["sonnet","opus","haiku"(?:,"[^"]+")*\])\)\.optional\(\)\.describe\(/,
-    (_m, arr) => ".enum(" + extendAliasArray(arr) + ").optional().describe(",
+    /((?:\.enum|:[A-Za-z_$][\w$]*)\()(\["sonnet","opus","haiku","fable"(?:,"[^"]+")*\])(\)\.optional\(\)\.describe\(`Optional model override for this agent)/,
+    (_m, constructorHead, arr, descriptionHead) => constructorHead + extendAliasArray(arr) + descriptionHead,
     { required: true, noopIsSkip: true }
   );
   applyOnce(
@@ -14872,10 +14899,6 @@ function applyLeverframePatches(source, config) {
   {
     const missing = ALIASES.filter((a) => !new RegExp("value:" + reEsc(q(a))).test(js));
     const entries = missing.map(
-      // value = the alias (the name the user types and the binary sends);
-      // description = the real model label, e.g. "GPT-5.6 Sol (OpenAI (ChatGPT))".
-      // (tweakcc's writeContent round-trips utf8 faithfully — verified — so the
-      // old adhoc-patch ASCII-only constraint no longer applies.)
       (a) => "{value:" + q(a) + ",label:" + q(a.charAt(0).toUpperCase() + a.slice(1)) + ",description:" + q(displayFor(a, ALIAS_TO_ID[a])) + "}"
     ).join(",");
     const inject = missing.length ? "[" + entries + "].forEach(function(_o){if(!e.some(function(_i){return _i.value===_o.value}))e.push(_o)});" : "";
@@ -14905,11 +14928,13 @@ function applyLeverframePatches(source, config) {
   }
   if (Object.keys(CONTEXT_BY_KEY).length) {
     const MARKER = "/*ccpatch:ctx*/";
-    const SNIPPET = MARKER + "var _ccw=(" + JSON.stringify(CONTEXT_BY_KEY) + ')[String(e||"").trim().toLowerCase()];if(_ccw!==void 0)return _ccw;';
+    const contextTable = JSON.stringify(CONTEXT_BY_KEY);
+    const contextLookup = "Object.assign(Object.create(null),JSON.parse(" + JSON.stringify(contextTable) + "))";
+    const SNIPPET = MARKER + "var _ccw=" + contextLookup + '[String(e||"").trim().toLowerCase()];if(_ccw!==void 0)return _ccw;';
     if (js.includes(MARKER)) {
       applyOnce(
         "PATCH 7: per-model context window (refresh)",
-        /\/\*ccpatch:ctx\*\/var _ccw=\(\{[^{}]*\}\)\[[^\]]*\];if\(_ccw!==void 0\)return _ccw;/,
+        /\/\*ccpatch:ctx\*\/var _ccw=(?:\(\{[^{}]*\}\)|Object\.assign\(Object\.create\(null\),JSON\.parse\("(?:[^"\\]|\\.)*"\)\))\[[^\]]*\];if\(_ccw!==void 0\)return _ccw;/,
         () => SNIPPET,
         { required: true, noopIsSkip: true }
       );
@@ -15367,6 +15392,9 @@ async function validatePristineBaseline(input) {
 async function applyPatchTransactionV2(input, runtime = defaultPatchRuntime) {
   const { installation, desiredConfig, configHash, manifest, recoveryBaseline, trace } = input;
   const { identity, canonicalPath, version } = installation;
+  if (!isClaudeCodeVersionSupportedForBinaryPatching(version)) {
+    return { ok: false, message: unsupportedClaudeCodeBinaryPatchingMessage(version) };
+  }
   const now = () => (/* @__PURE__ */ new Date()).toISOString();
   const live = await runtime.inspect(canonicalPath, manifest?.patchedSha256);
   if (!live.readable || !live.sha256 || !live.version) {
@@ -15438,16 +15466,17 @@ async function applyPatchTransactionV2(input, runtime = defaultPatchRuntime) {
     if (!stagedPatched.readable || stagedPatched.version !== version || stagedPatched.injection.evidence !== "marker-v1" || !stagedPatched.sha256) {
       return { ok: false, message: "Patched candidate failed staged validation." };
     }
-    commitSameDirectoryStageSync(stage, canonicalPath);
+    const patchedSize = statSync4(stage).size;
     writeJournal({
       ...journalBase,
       phase: "binary_committed",
       baselineSha256,
       baselinePath,
       patchedSha256: stagedPatched.sha256,
-      patchedSize: statSync4(canonicalPath).size,
+      patchedSize,
       updatedAt: now()
     });
+    commitSameDirectoryStageSync(stage, canonicalPath);
     const manifestV2 = {
       schemaVersion: 2,
       transformVersion: currentTransformVersion(),
@@ -15459,7 +15488,7 @@ async function applyPatchTransactionV2(input, runtime = defaultPatchRuntime) {
       baselineSha256,
       baselinePath,
       patchedSha256: stagedPatched.sha256,
-      patchedSize: statSync4(canonicalPath).size,
+      patchedSize,
       semanticFingerprint: computeSemanticFingerprint(results),
       configHash,
       provenance,
@@ -15476,7 +15505,7 @@ async function applyPatchTransactionV2(input, runtime = defaultPatchRuntime) {
       updatedAt: now()
     });
   } catch (err) {
-    const detailLines = err instanceof PatchApplyError ? err.results.map((r) => `${r.status} ${r.name}${r.extra ? ` \u2014 ${r.extra}` : ""}`) : [];
+    const detailLines = err instanceof PatchApplyError ? err.results.map((r) => `${r.status} ${r.name}${r.extra ? ` (${r.extra})` : ""}`) : [];
     return {
       ok: false,
       message: `Patch failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -15492,7 +15521,7 @@ async function applyPatchTransactionV2(input, runtime = defaultPatchRuntime) {
   return {
     ok: true,
     message: `Patched claude ${version}: ${modelCount} model${modelCount === 1 ? "" : "s"} configured.`,
-    detailLines: trace ? results.map((r) => `${r.status} ${r.name}${r.extra ? ` \u2014 ${r.extra}` : ""}`) : void 0
+    detailLines: trace ? results.map((r) => `${r.status} ${r.name}${r.extra ? ` (${r.extra})` : ""}`) : void 0
   };
 }
 async function restorePatchTransactionV2(input, runtime = defaultPatchRuntime) {
@@ -15728,10 +15757,6 @@ async function reconcilePatchTransaction(installation, runtime = defaultPatchRun
         baselinePath: journal.baselinePath,
         patchedSha256: journal.patchedSha256,
         patchedSize: journal.patchedSize ?? statSync6(installation.canonicalPath).size,
-        // The journal does not carry a per-site fingerprint; record a
-        // deterministic, honestly-labeled placeholder rather than reusing an
-        // unrelated hash. `leverframe patch` recomputes the real fingerprint
-        // on the next full run.
         semanticFingerprint: computeSemanticFingerprint([{ status: "OK", name: "reconciled-from-journal" }]),
         configHash: journal.configHash,
         provenance: journal.provenance,
@@ -15797,27 +15822,18 @@ async function checkResolvedPatchState(installation, runtime = defaultPatchRunti
     legacyRecovery: manifest ? null : legacyInspection
   };
 }
-async function checkPatchState(target, runtime = defaultPatchRuntime) {
-  const installation = resolveClaudeInstallation({ target });
-  if (installation) return checkResolvedPatchState(installation, runtime);
-  const desired = buildDesiredPatchConfig();
-  return {
-    installation: null,
-    manifest: null,
-    state: null,
-    desired,
-    configHash: computePatchConfigHash(desired.config),
-    legacyRecovery: null
-  };
-}
 async function runPatchCommandV2(opts = {}, presenter = clackPatchPresenter) {
   const runtime = opts.runtime ?? defaultPatchRuntime;
-  const checked = opts.installation ? await checkResolvedPatchState(opts.installation, runtime) : await checkPatchState(opts.target, runtime);
-  const { installation, manifest, state, desired, legacyRecovery } = checked;
+  const installation = opts.installation ?? resolveClaudeInstallation({ target: opts.target });
   if (!installation) {
     presenter.error("claude binary not found. Install Claude Code, set TWEAKCC_CC_INSTALLATION_PATH, or pass --target.");
     return 1;
   }
+  if (!opts.restore && !isClaudeCodeVersionSupportedForBinaryPatching(installation.version)) {
+    presenter.error(unsupportedClaudeCodeBinaryPatchingMessage(installation.version));
+    return 1;
+  }
+  const { manifest, state, desired, legacyRecovery } = await checkResolvedPatchState(installation, runtime);
   return withPatchTargetLock(installation.identity, async () => {
     if (opts.restore) {
       const outcome2 = await restorePatchTransactionV2({ installation, manifest }, runtime);
@@ -15866,9 +15882,13 @@ function reportOutcome(outcome, trace, presenter) {
 async function runLaunchPatchCheckV2(opts = {}, presenter = clackPatchPresenter) {
   try {
     const runtime = opts.runtime ?? defaultPatchRuntime;
-    const checked = opts.installation ? await checkResolvedPatchState(opts.installation, runtime) : await checkPatchState(void 0, runtime);
-    const { installation, state, desired, legacyRecovery } = checked;
+    const installation = opts.installation ?? resolveClaudeInstallation();
     if (!installation) return;
+    if (!isClaudeCodeVersionSupportedForBinaryPatching(installation.version)) {
+      presenter.notice(unsupportedClaudeCodeBinaryPatchingMessage(installation.version));
+      return;
+    }
+    const { state, desired, legacyRecovery } = await checkResolvedPatchState(installation, runtime);
     if (Object.keys(desired.config).length === 0) return;
     if (isCurrentPatchState(state)) return;
     const interactive = !opts.dryRun && !opts.agentStdout && process.stdin.isTTY === true && process.stdout.isTTY === true;
@@ -15938,22 +15958,48 @@ function nextActionFor(state, legacyRecovery) {
 }
 async function diagnosePatchV2(target, runtime = defaultPatchRuntime) {
   const installation = resolveClaudeInstallation({ target });
-  const legacy = readPatchManifest();
-  const legacyDiag = { legacyManifestPresent: legacy !== null };
   if (!installation) {
+    const legacy2 = readPatchManifest();
+    const legacyDiag2 = { legacyManifestPresent: legacy2 !== null };
     return {
       resolved: false,
+      supported: false,
       identity: null,
       leverframe: { schemaVersion: 2, transformVersion: currentTransformVersion() },
       manifest: { present: false },
       drift: { observedSha256: null, expectedPatchedSha256: null, hashesMatch: null, injectionState: null, semanticSitesComplete: null },
       transaction: { pending: false },
       lock: { path: "", held: false },
-      migration: { ...legacyDiag, eligible: false, reason: "No installation resolved." },
+      migration: { ...legacyDiag2, eligible: false, reason: "No installation resolved." },
       state: "not_resolved",
       nextAction: nextActionFor("not_resolved")
     };
   }
+  const supported = isClaudeCodeVersionSupportedForBinaryPatching(installation.version);
+  if (!supported) {
+    return {
+      resolved: true,
+      supported,
+      identity: {
+        logicalPath: installation.logicalPath,
+        canonicalPath: installation.canonicalPath,
+        discoverySource: installation.discoverySource,
+        installationKind: installation.installationKind,
+        executableType: installation.executableType,
+        version: installation.version
+      },
+      leverframe: { schemaVersion: 2, transformVersion: currentTransformVersion() },
+      manifest: { present: false },
+      drift: { observedSha256: null, expectedPatchedSha256: null, hashesMatch: null, injectionState: null, semanticSitesComplete: null },
+      transaction: { pending: false },
+      lock: { path: "", held: false },
+      migration: { legacyManifestPresent: false, eligible: false, reason: "Binary patching is not supported for this Claude Code version." },
+      state: "unsupported",
+      nextAction: unsupportedClaudeCodeBinaryPatchingMessage(installation.version)
+    };
+  }
+  const legacy = readPatchManifest();
+  const legacyDiag = { legacyManifestPresent: legacy !== null };
   const manifest = readManifestV2(installation.identity);
   const journal = readPatchJournal(installation.identity);
   const lockPath2 = getPatchTargetLockPath(installation.identity);
@@ -15980,6 +16026,7 @@ async function diagnosePatchV2(target, runtime = defaultPatchRuntime) {
   });
   return {
     resolved: true,
+    supported,
     identity: {
       logicalPath: installation.logicalPath,
       canonicalPath: installation.canonicalPath,
@@ -16046,6 +16093,7 @@ function formatPatchDiagnosticsText(report) {
   lines.push(`${pad("discovery source")}${report.identity.discoverySource}`);
   lines.push(`${pad("installation kind")}${report.identity.installationKind}`);
   lines.push(`${pad("claude version")}${report.identity.version}`);
+  lines.push(`${pad("binary patching")}${report.supported ? "supported" : "unsupported"}`);
   lines.push(`${pad("schema / transform")}v${report.leverframe.schemaVersion} / v${report.leverframe.transformVersion}`);
   lines.push(`${pad("manifest")}${report.manifest.present ? `generation ${report.manifest.generation}, ${report.manifest.provenance}` : "absent"}`);
   if (report.manifest.present) {
@@ -16059,7 +16107,7 @@ function formatPatchDiagnosticsText(report) {
   }
   lines.push(`${pad("transaction")}${report.transaction.pending ? `pending at ${report.transaction.phase} (${report.transaction.operation})` : "none pending"}`);
   lines.push(`${pad("lock")}${report.lock.held ? `held (${report.lock.path})` : "free"}`);
-  lines.push(`${pad("legacy migration")}${report.migration.eligible ? `eligible \u2014 ${report.migration.mode}` : report.migration.legacyManifestPresent ? `not eligible \u2014 ${report.migration.reason}` : "no legacy state"}`);
+  lines.push(`${pad("legacy migration")}${report.migration.eligible ? `eligible - ${report.migration.mode}` : report.migration.legacyManifestPresent ? `not eligible - ${report.migration.reason}` : "no legacy state"}`);
   lines.push(`${pad("state")}${report.state}`);
   lines.push(`${pad("next action")}${report.nextAction}`);
   return lines;

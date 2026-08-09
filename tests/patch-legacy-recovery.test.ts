@@ -1,8 +1,3 @@
-// tests/patch-legacy-recovery.test.ts — regression coverage for recovering an
-// injected pre-V2 Claude target whose live hash no longer matches the legacy
-// manifest. Every case uses fixture files and a sandboxed LEVERFRAME_HOME;
-// nothing resolves or modifies a real Claude installation.
-
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,7 +26,7 @@ import {
 import { applyLeverframePatches, type PatchScriptModelConfig } from '../src/patch-transforms.js';
 import type { PatchManifest as LegacyPatchManifest } from '../src/patcher.js';
 
-const VERSION = '2.1.220';
+const VERSION = '2.1.223';
 const CURRENT_CONFIG: PatchScriptModelConfig = {
   'leverframe:openai:model': {
     alias: 'current',
@@ -44,7 +39,7 @@ const LEGACY_CONFIG: PatchScriptModelConfig = {
 };
 const BASELINE = [
   '#!/bin/sh',
-  'echo "2.1.220 (Claude Code)"',
+  'echo "2.1.223 (Claude Code)"',
   'exit 0',
   '.enum(["sonnet","opus","haiku","fable"]).optional().describe(`Optional model override for this agent. Defaults to inherit.`)',
   'var KNOWN=["sonnet","opus","haiku","fable","opusplan"];',
@@ -57,7 +52,6 @@ function sha256(content: string): string {
   return createHash('sha256').update(content).digest('hex');
 }
 
-/** Fixture runtime that mirrors tweakcc inspection and patching using UTF-8 files. */
 function fakeRuntime(options: { failPatch?: boolean; patchCalls?: string[] } = {}): PatchRuntime {
   return {
     async inspect(path, knownPatchedSha256) {
@@ -237,7 +231,6 @@ function recordingPresenter(): {
   };
 }
 
-/** Temporarily make launch checks interactive inside this isolated test worker. */
 async function resignedPatchedFixture(name: string): Promise<{
   f: ReturnType<typeof fixture>;
   runtime: PatchRuntime;
@@ -261,7 +254,6 @@ async function resignedPatchedFixture(name: string): Promise<{
   return { f, runtime, patchCalls };
 }
 
-/** Temporarily make launch checks interactive inside this isolated test worker. */
 function setInteractiveTty(): () => void {
   const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
   const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
@@ -308,7 +300,7 @@ describe('legacy baseline recovery', () => {
     expect(report.drift.semanticSitesComplete).toBe(false);
     expect(report.nextAction).toMatch(/verified pristine legacy backup/i);
     const text = formatPatchDiagnosticsText(report).join('\n');
-    expect(text).toMatch(/legacy migration\s+eligible — baseline-recovery/);
+    expect(text).toMatch(/legacy migration\s+eligible - baseline-recovery/);
     expect(text).toMatch(/next action\s+Run `leverframe patch` to rebuild from the verified pristine legacy backup/);
     expect(readFileSync(f.livePath)).toEqual(before);
     expect(readManifestV2(f.installation.identity)).toBeNull();

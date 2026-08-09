@@ -1,21 +1,3 @@
-// Fixture-based end-to-end coverage for the V2 patch lifecycle
-// (docs/stabilization-and-upstream-plan.md sections 5, 10-15):
-//   - deterministic installation identity (src/claude-installation.ts)
-//   - per-target, content-addressed baselines (src/patch-state.ts)
-//   - crash-safe journaled transactions and restart reconciliation
-//     (src/patch-transaction.ts, src/patch-reconcile.ts)
-//   - conservative legacy migration (src/patch-reconcile.ts)
-//   - read-only diagnostics (src/patch-diagnostics.ts)
-//
-// All Claude "binaries" are real, executable, tiny shell scripts so
-// resolveClaudeInstallation performs its real discovery + version probe.
-// Patch/inspect/read operations use an injected PatchRuntime (plain fs, real
-// applyLeverframePatches) instead of the tweakcc-backed defaultPatchRuntime,
-// so tests never depend on an actual Claude Code build. The whole fixture
-// file — not a sidecar — is both the executable probed for --version and the
-// content that gets hashed/patched, matching how defaultPatchRuntime treats
-// one real binary.
-
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -57,7 +39,7 @@ import {
 import { savePreferences } from '../src/config.js';
 import { loadRegistry, saveRegistry } from '../src/registry/io.js';
 
-const VERSION = '2.1.220';
+const VERSION = '2.1.223';
 const BASELINE_SOURCE = [
   '.enum(["sonnet","opus","haiku","fable"]).optional().describe(`Optional model override for this agent. Defaults to inherit.`)',
   'var KNOWN=["sonnet","opus","haiku","fable","opusplan"];',
@@ -91,7 +73,6 @@ function wholeFileContent(payload: string, version = VERSION): string {
   ].join('\n');
 }
 
-/** What fixtureRuntime.patch would produce for a given starting payload/version. */
 function patchedWholeFileContent(config: PatchScriptModelConfig, payload = BASELINE_SOURCE, version = VERSION): string {
   const patched = applyLeverframePatches(wholeFileContent(payload, version), config);
   return addLeverframeInjectionMarker(patched.content);
@@ -102,7 +83,6 @@ function writeFixtureClaude(path: string, payload = BASELINE_SOURCE, version = V
   chmodSync(path, 0o755);
 }
 
-/** Fixture PatchRuntime: reads/writes the whole fixture file, using the real transform + marker logic. */
 const fixtureRuntime: PatchRuntime = {
   async inspect(path, knownPatchedSha256) {
     try {
@@ -130,7 +110,6 @@ const fixtureRuntime: PatchRuntime = {
   },
 };
 
-/** A patch runtime whose `patch` step always throws after touching nothing durable. */
 function failingPatchRuntime(): PatchRuntime {
   return {
     ...fixtureRuntime,
@@ -146,13 +125,6 @@ function readJournal(identity: string): PatchTransactionJournal | null {
   return JSON.parse(readFileSync(path, 'utf8')) as PatchTransactionJournal;
 }
 
-/**
- * Seed global favorites + a registry model so `buildDesiredPatchConfig()` —
- * the same function `checkPatchState`/`diagnosePatchV2` call internally —
- * deterministically resolves to one favorite, letting a test drive the real
- * end-to-end config resolution instead of a hand-picked `configHash` that
- * would never match what those read paths independently recompute.
- */
 function seedOneFavoriteAndBuildConfig(): { config: PatchScriptModelConfig; configHash: string } {
   savePreferences({
     favoriteModels: [{ providerId: 'openai', modelId: 'model' }],
@@ -192,9 +164,6 @@ let leverframeHome: string;
 let originalHome: string | undefined;
 
 beforeEach(() => {
-  // realpathSync normalizes macOS's /var -> /private/var symlink up front so
-  // every downstream comparison against a raw fixture path already matches
-  // the canonicalPath resolveClaudeInstallation reports.
   workDir = realpathSync(mkdtempSync(join(tmpdir(), 'lf-patch-fixture-')));
   leverframeHome = join(workDir, 'leverframe-home');
   originalHome = process.env.LEVERFRAME_HOME;
@@ -218,7 +187,6 @@ describe('deterministic installation identity', () => {
     expect(installation!.canonicalPath).toBe(claudePath);
     expect(installation!.identity).toBe(createHash('sha256').update(claudePath).digest('hex'));
 
-    // Re-resolving the identical path is fully deterministic.
     const again = resolveClaudeInstallation({ target: claudePath });
     expect(again!.identity).toBe(installation!.identity);
   });
@@ -311,7 +279,6 @@ describe('content-addressed immutable baselines', () => {
     expect(existsSync(expectedBaselinePath)).toBe(true);
     expect(readFileSync(expectedBaselinePath, 'utf8')).toBe(wholeFileContent(BASELINE_SOURCE));
 
-    // Restore, then re-patch: the baseline object is reused, not duplicated.
     const restored = await restorePatchTransactionV2({ installation, manifest }, fixtureRuntime);
     expect(restored.ok).toBe(true);
     const second = await applyPatchTransactionV2(
@@ -371,7 +338,6 @@ describe('journal phases and failpoints', () => {
 
     const journal = readJournal(installation.identity)!;
     expect(journal.phase).toBe('baseline_committed');
-    // The live content is untouched: still the pristine baseline text.
     expect(readFileSync(claudePath, 'utf8')).toBe(wholeFileContent(BASELINE_SOURCE));
     expect(readManifestV2(installation.identity)).toBeNull();
   });
@@ -409,8 +375,6 @@ describe('journal phases and failpoints', () => {
     writeFixtureClaude(claudePath);
     const installation = resolveClaudeInstallation({ target: claudePath })!;
 
-    // Simulate: the binary swap landed (content already carries the marker)
-    // but the process died before the manifest was published.
     const patchedContent = patchedWholeFileContent(CONFIG);
     writeFileSync(claudePath, patchedContent, 'utf8');
     const patchedSha256 = sha256(patchedContent);
@@ -478,8 +442,6 @@ describe('journal phases and failpoints', () => {
     writeFixtureClaude(claudePath);
     const installation = resolveClaudeInstallation({ target: claudePath })!;
 
-    // Claude updated itself mid-interruption: content is neither our pre-image
-    // nor our expected post-image.
     const refreshedContent = `${wholeFileContent(BASELINE_SOURCE)}\n# unrelated upstream change\n`;
     writeFileSync(claudePath, refreshedContent, 'utf8');
 
@@ -506,7 +468,6 @@ describe('journal phases and failpoints', () => {
     const result = await reconcilePatchTransaction(installation, fixtureRuntime);
     expect(result.action).toBe('left-in-place');
     expect(readJournal(installation.identity)).toBeNull();
-    // The refreshed content was never touched.
     expect(readFileSync(claudePath, 'utf8')).toBe(refreshedContent);
     expect(readManifestV2(installation.identity)).toBeNull();
   });
@@ -599,21 +560,12 @@ describe('unknown hash handling (whole-file mismatch with valid markers/sites)',
     const claudePath = join(workDir, 'claude-a');
     writeFixtureClaude(claudePath);
     const installation = resolveClaudeInstallation({ target: claudePath })!;
-    // checkPatchState recomputes the desired config from real global
-    // favorites internally, so the applied config must be seeded to match —
-    // otherwise every classification degrades to config_stale regardless of
-    // the scenario under test.
     const { config, configHash } = seedOneFavoriteAndBuildConfig();
 
     await applyPatchTransactionV2({ installation, desiredConfig: config, configHash, manifest: null, trace: false }, fixtureRuntime);
     const manifest = readManifestV2(installation.identity)!;
 
-    // Simulate an external re-sign: append a byte, changing the whole-file
-    // hash while keeping every real patch site intact.
     const currentContent = readFileSync(claudePath, 'utf8');
-    // The heredoc has already closed by the time the marker line was
-    // appended, so appending here (after the marker) is likewise inert shell
-    // text and does not disturb the version probe.
     writeFileSync(claudePath, `${currentContent}\n# resigned\n`, 'utf8');
 
     const { complete } = verifyPatchSites(readFileSync(claudePath, 'utf8'), config);
@@ -631,7 +583,6 @@ describe('legacy migration', () => {
     writeFixtureClaude(claudePath);
     const installation = resolveClaudeInstallation({ target: claudePath })!;
 
-    // Live is already patched (as legacy Leverframe would have left it).
     const patchedContent = patchedWholeFileContent(CONFIG);
     writeFileSync(claudePath, patchedContent, 'utf8');
     const patchedSha256 = sha256(patchedContent);
@@ -658,7 +609,6 @@ describe('legacy migration', () => {
     expect(manifest).not.toBeNull();
     expect(manifest!.provenance).toBe('legacy-migrated');
     expect(manifest!.baselineSha256).toBe(sha256(baselineContent));
-    // The legacy backup file itself must be left untouched.
     expect(existsSync(backupPath)).toBe(true);
     expect(readFileSync(backupPath, 'utf8')).toBe(baselineContent);
 
@@ -747,7 +697,6 @@ describe('read-only diagnostics', () => {
 
     // ANSI-free JSON: no CSI escape sequences anywhere in the serialized report.
     const json = JSON.stringify(report, null, 2);
-    // eslint-disable-next-line no-control-regex
     expect(/\[/.test(json)).toBe(false);
   });
 

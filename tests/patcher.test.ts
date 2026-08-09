@@ -86,8 +86,6 @@ describe('buildPatchModelConfig', () => {
       () => ({
         contextWindow: 272_000,
         displayName: 'GPT-5.6 Sol (OpenAI (ChatGPT))',
-        // Mirrors getReasoningCapabilities('@ai-sdk/openai', 'gpt-5.6-sol', ...):
-        // OPENAI_EFFORT_LEVELS with a "medium" provider default.
         effort: { levels: ['low', 'medium', 'high', 'xhigh'], defaultLevel: 'medium' },
       }),
     );
@@ -281,8 +279,6 @@ describe('computePatchConfigHash', () => {
 
   it('changes when only the effort default level changes', () => {
     const base = { 'leverframe:p:m1': { effort: { levels: ['low', 'medium', 'high'], defaultLevel: 'high' } } };
-    // The projected default is always "high" in practice, but the hash must
-    // still distinguish any distinct effort payload structurally.
     expect(computePatchConfigHash(base)).not.toBe(
       computePatchConfigHash({
         'leverframe:p:m1': { effort: { levels: ['low', 'medium', 'high'], defaultLevel: 'medium' } },
@@ -335,9 +331,6 @@ const CLAUDE_FIXTURE = [
   'function rz(x){switch(x){case"best":{return "opus"}default:return null}}',
   'function opts(e,t,r){let n=cur(),o=(n==="opus")?[n,r]:[r];for(let i of o)Dlh(e,i,t);return e}',
   'function RS(e,t){let r=FAc();if(r!==void 0)return r;if(EHi(e,t))return Dve;return $Ac(e,t)}',
-  // Three capability gates and a default-effort resolver — the wildcarded
-  // anchors PATCH 8a/8b/8c/9 key on. Each gate denies a denylisted identity
-  // first, then falls through to a native/provider capability check.
   'function OI(e){if(SNr(e))return!1;let t=Ede(e,"effort");if(t!==void 0)return t;return!1}',
   'function IXe(e){if(SNr(e))return!1;let t=Ede(e,"xhigh_effort");if(t!==void 0)return t;return!1}',
   'function eqe(e){if(SNr(e))return!1;let t=Ede(e,"max_effort");if(t!==void 0)return t;return!1}',
@@ -350,7 +343,6 @@ function runPatchScript(config: Parameters<typeof applyLeverframePatches>[1], so
 
 type CapabilityFunctionName = 'OI' | 'IXe' | 'eqe';
 
-/** Extract and execute one capability-gate function from patched fixture output. */
 function executeCapability(
   source: string,
   functionName: CapabilityFunctionName,
@@ -371,7 +363,6 @@ function executeCapability(
   return capability(modelId);
 }
 
-/** Extract and execute the default-effort resolver from patched fixture output. */
 function executeDefaultEffort(source: string, modelId: string, nativeDefault: string): string {
   const declaration = source.split('\n').find(line => line.startsWith('function ait('));
   expect(declaration).toBeDefined();
@@ -419,9 +410,9 @@ describe('patch script identity naming', () => {
 
   it('keys the context-window table by the alias (and still by the canonical id)', () => {
     const out = runPatchScript(config);
-    const table = out.match(/\/\*ccpatch:ctx\*\/var _ccw=\((\{[^}]*\})\)/)?.[1];
+    const table = out.match(/\/\*ccpatch:ctx\*\/var _ccw=Object\.assign\(Object\.create\(null\),JSON\.parse\(("(?:[^"\\]|\\.)*")\)\)/)?.[1];
     expect(table).toBeTruthy();
-    const parsed = JSON.parse(table!) as Record<string, number>;
+    const parsed = JSON.parse(JSON.parse(table!)) as Record<string, number>;
     expect(parsed['sol']).toBe(272_000);
     expect(parsed['leverframe:openai-oauth:gpt-5.6-sol']).toBe(272_000);
     expect(parsed['leverframe:openai:mystery']).toBe(128_000);
@@ -482,8 +473,8 @@ describe('patch script identity naming', () => {
       once,
     );
     expect(updated).not.toBe(once);
-    const table = updated.match(/\/\*ccpatch:ctx\*\/var _ccw=\((\{[^}]*\})\)/)?.[1];
-    const parsed = JSON.parse(table!) as Record<string, number>;
+    const table = updated.match(/\/\*ccpatch:ctx\*\/var _ccw=Object\.assign\(Object\.create\(null\),JSON\.parse\(("(?:[^"\\]|\\.)*")\)\)/)?.[1];
+    const parsed = JSON.parse(JSON.parse(table!)) as Record<string, number>;
     expect(parsed['leverframe:openai:mystery']).toBe(131_072);
     expect(parsed['sol']).toBe(272_000);
   });
@@ -514,8 +505,6 @@ describe('PATCH 8/9 effort capability gates', () => {
     expect(out).toContain('/*ccpatch:xhigh-effort*/');
     expect(out).toContain('/*ccpatch:max-effort*/');
     expect(out).toContain('/*ccpatch:default-effort*/');
-    // Native contract: the projected default is always "high" regardless of
-    // the supplier's own default (here "medium"), never invented per-model.
     expect(out).toContain('"extended":"high"');
   });
 
@@ -607,8 +596,6 @@ describe('PATCH 8/9 effort capability gates', () => {
     }
     expect(caught).toBeInstanceOf(PatchApplyError);
     expect((caught as Error).message).toContain('required patch failed: PATCH 8a: effort capability');
-    // Nothing after the missing anchor should have run either — the whole
-    // patch aborts rather than publishing a half-applied binary.
     const results = (caught as PatchApplyError).results;
     expect(results.find(r => r.name === 'PATCH 8a: effort capability')).toEqual({
       status: 'FAIL',
@@ -663,9 +650,6 @@ describe('PATCH 8/9 effort capability gates', () => {
 
 describe('PATCH_TRANSFORMS_VERSION', () => {
   it('is bumped so PATCH 8/9 capability wiring reconciles existing installs (config_stale)', () => {
-    // Bumping this without a corresponding version constant change would
-    // leave already-patched installs silently stale forever — patch-state.ts
-    // reads PATCH_TRANSFORMS_VERSION directly (see currentTransformVersion()).
-    expect(PATCH_TRANSFORMS_VERSION).toBe(2);
+    expect(PATCH_TRANSFORMS_VERSION).toBe(3);
   });
 });

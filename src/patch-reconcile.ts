@@ -1,16 +1,10 @@
-// src/patch-reconcile.ts — startup reconciliation, legacy migration, and the
-// top-level patch/restore/launch-check commands.
-//
-// Reconciliation only ever acts on an *exact* hash match against a value the
-// interrupted transaction itself recorded. If the live binary's hash matches
-// neither the transaction's pre-image nor its post-image, the live binary was
-// refreshed (Claude was updated, or someone else modified it) while
-// Leverframe was interrupted — that refreshed binary remains authoritative
-// and the stale journal is discarded without touching it
-// (docs/stabilization-and-upstream-plan.md sections 4.1 and 5.5).
-
 import { statSync } from 'node:fs';
-import { resolveClaudeInstallation, type ClaudeInstallation } from './claude-installation.js';
+import {
+  isClaudeCodeVersionSupportedForBinaryPatching,
+  resolveClaudeInstallation,
+  unsupportedClaudeCodeBinaryPatchingMessage,
+  type ClaudeInstallation,
+} from './claude-installation.js';
 import { withPatchTargetLock } from './patch-lock.js';
 import { clackPatchPresenter, type PatchPresenter } from './patch-presenter.js';
 import {
@@ -42,8 +36,6 @@ import {
 } from './patch-legacy-recovery.js';
 import { buildDesiredPatchConfig, computePatchConfigHash, type DesiredPatchConfig } from './patcher.js';
 
-// Compatibility export for callers that historically imported migration from
-// patch-reconcile; implementation ownership now lives in the recovery module.
 export { migrateLegacyStateIfVerified } from './patch-legacy-recovery.js';
 
 /**
@@ -59,9 +51,6 @@ export async function reconcilePatchTransaction(
   const journal = readPatchJournal(installation.identity);
   if (!journal || journal.phase === 'completed') return { action: 'none' };
 
-  // Inspect through the same runtime abstraction production and tests share,
-  // rather than reading bytes directly, so reconciliation always agrees with
-  // however "the live hash" is defined elsewhere in the transaction.
   const liveInspection = await runtime.inspect(installation.canonicalPath);
   if (!liveInspection.readable || !liveInspection.sha256) {
     return { action: 'left-in-place', detail: 'Live binary is unreadable during reconciliation.' };
@@ -69,15 +58,12 @@ export async function reconcilePatchTransaction(
   const liveSha256 = liveInspection.sha256;
 
   if (journal.phase === 'prepared' || journal.phase === 'baseline_committed') {
-    // No destructive write to the live binary happened yet (the baseline
-    // commit only publishes into immutable content-addressed storage).
     clearPatchJournal(installation.identity);
     return { action: 'discarded', detail: `Discarded an interrupted ${journal.operation} at phase ${journal.phase}.` };
   }
 
   if (journal.phase === 'binary_committed') {
     if (journal.patchedSha256 && liveSha256 === journal.patchedSha256) {
-      // The binary swap completed; only the manifest publication was interrupted.
       const manifest: PatchManifestV2 = {
         schemaVersion: 2,
         transformVersion: journal.transformVersion,
@@ -90,18 +76,12 @@ export async function reconcilePatchTransaction(
         baselinePath: journal.baselinePath,
         patchedSha256: journal.patchedSha256,
         patchedSize: journal.patchedSize ?? statSync(installation.canonicalPath).size,
-        // The journal does not carry a per-site fingerprint; record a
-        // deterministic, honestly-labeled placeholder rather than reusing an
-        // unrelated hash. `leverframe patch` recomputes the real fingerprint
-        // on the next full run.
         semanticFingerprint: computeSemanticFingerprint([{ status: 'OK', name: 'reconciled-from-journal' }]),
         configHash: journal.configHash,
         provenance: journal.provenance,
         completedAt: new Date().toISOString(),
       };
       if (journal.operation === 'restore') {
-        // Restore's completed state is "no manifest"; the journal itself is
-        // the only record needed, so just clear it.
         clearPatchJournal(installation.identity);
         return { action: 'completed', detail: 'Completed an interrupted restore (manifest already absent).' };
       }
@@ -110,13 +90,9 @@ export async function reconcilePatchTransaction(
       return { action: 'completed', detail: 'Completed an interrupted patch by publishing its manifest.' };
     }
     if (liveSha256 === journal.expectedPreHash) {
-      // The rename never actually took effect; nothing changed live-side.
       clearPatchJournal(installation.identity);
       return { action: 'discarded', detail: `Discarded an interrupted ${journal.operation}; the live binary was never modified.` };
     }
-    // The live binary matches neither this transaction's before nor after
-    // hash: it was refreshed independently while we were interrupted. It
-    // remains authoritative; we only drop the stale journal.
     clearPatchJournal(installation.identity);
     return {
       action: 'left-in-place',
@@ -124,8 +100,6 @@ export async function reconcilePatchTransaction(
     };
   }
 
-  // manifest_committed: for patch, the manifest write itself is atomic and
-  // either landed or didn't; treat this phase as equivalent to completed.
   clearPatchJournal(installation.identity);
   return { action: 'completed', detail: 'Completed an interrupted transaction at its final phase.' };
 }
@@ -136,11 +110,9 @@ export interface CheckResult {
   state: PatchStateV2 | null;
   desired: DesiredPatchConfig;
   configHash: string;
-  /** Verified read-only legacy recovery plan when V2 state is still absent. */
   legacyRecovery: LegacyPatchRecoveryInspection | null;
 }
 
-/** Reconcile, migrate, and classify one already-resolved installation without rediscovery. */
 export async function checkResolvedPatchState(
   installation: ClaudeInstallation,
   runtime: PatchRuntime = defaultPatchRuntime,
@@ -192,7 +164,6 @@ export async function checkResolvedPatchState(
   };
 }
 
-/** Resolve once for standalone patch commands, then delegate to the no-rediscovery path. */
 export async function checkPatchState(
   target?: string,
   runtime: PatchRuntime = defaultPatchRuntime,
@@ -215,7 +186,6 @@ export interface RunPatchCommandV2Options {
   restore?: boolean;
   trace?: boolean;
   target?: string;
-  /** Internal no-rediscovery seam used by launch and fixture tests. */
   installation?: ClaudeInstallation;
   runtime?: PatchRuntime;
 }
@@ -225,14 +195,16 @@ export async function runPatchCommandV2(
   presenter: PatchPresenter = clackPatchPresenter,
 ): Promise<number> {
   const runtime = opts.runtime ?? defaultPatchRuntime;
-  const checked = opts.installation
-    ? await checkResolvedPatchState(opts.installation, runtime)
-    : await checkPatchState(opts.target, runtime);
-  const { installation, manifest, state, desired, legacyRecovery } = checked;
+  const installation = opts.installation ?? resolveClaudeInstallation({ target: opts.target });
   if (!installation) {
     presenter.error('claude binary not found. Install Claude Code, set TWEAKCC_CC_INSTALLATION_PATH, or pass --target.');
     return 1;
   }
+  if (!opts.restore && !isClaudeCodeVersionSupportedForBinaryPatching(installation.version)) {
+    presenter.error(unsupportedClaudeCodeBinaryPatchingMessage(installation.version));
+    return 1;
+  }
+  const { manifest, state, desired, legacyRecovery } = await checkResolvedPatchState(installation, runtime);
 
   return withPatchTargetLock(installation.identity, async () => {
     if (opts.restore) {
@@ -297,11 +269,13 @@ export async function runLaunchPatchCheckV2(
 ): Promise<void> {
   try {
     const runtime = opts.runtime ?? defaultPatchRuntime;
-    const checked = opts.installation
-      ? await checkResolvedPatchState(opts.installation, runtime)
-      : await checkPatchState(undefined, runtime);
-    const { installation, state, desired, legacyRecovery } = checked;
+    const installation = opts.installation ?? resolveClaudeInstallation();
     if (!installation) return;
+    if (!isClaudeCodeVersionSupportedForBinaryPatching(installation.version)) {
+      presenter.notice(unsupportedClaudeCodeBinaryPatchingMessage(installation.version));
+      return;
+    }
+    const { state, desired, legacyRecovery } = await checkResolvedPatchState(installation, runtime);
     if (Object.keys(desired.config).length === 0) return;
     if (isCurrentPatchState(state)) return;
 

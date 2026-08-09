@@ -1,6 +1,5 @@
-// tests/cli.test.ts
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs, rootHelpText, claudeHelpText, serverHelpText, modelsHelpText, patchHelpText, main } from '../src/cli.js';
@@ -57,7 +56,6 @@ describe('parseArgs', () => {
       command: 'server',
       bridgeMode: 'endpoint',
     });
-    // bare commands leave bridgeMode undefined so the saved default applies
     expect(parseArgs(['claude']).bridgeMode).toBeUndefined();
     expect(parseArgs(['server']).bridgeMode).toBeUndefined();
   });
@@ -85,12 +83,10 @@ describe('parseArgs', () => {
       bridgeMode: 'endpoint',
       saveBridgeMode: true,
     });
-    // order does not matter
     expect(parseArgs(['server', '--save-mode', '--proxy'])).toMatchObject({
       bridgeMode: 'proxy',
       saveBridgeMode: true,
     });
-    // --save-mode without a mode flag is an error with guidance
     expect(parseArgs(['claude', '--save-mode']).error).toContain('--endpoint or --proxy');
     expect(parseArgs(['server', '--save-mode']).error).toContain('--endpoint or --proxy');
   });
@@ -297,12 +293,12 @@ describe('main dispatch', () => {
     const home = mkdtempSync(join(tmpdir(), 'leverframe-diagnose-home-'));
     const previousHome = process.env['LEVERFRAME_HOME'];
     process.env['LEVERFRAME_HOME'] = home;
+    const target = join(home, 'claude');
+    writeFileSync(target, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.1.226 (Claude Code)"; exit 0; fi\n', { mode: 0o755 });
+    const before = readFileSync(target);
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      // Point --target at this process's own binary: it resolves and probes a
-      // version like any real installation, without touching a real Claude
-      // Code install or the network.
-      const code = await main(['patch', '--diagnose', '--json', '--target', process.execPath]);
+      const code = await main(['patch', '--diagnose', '--json', '--target', target]);
       expect(code).toBe(0);
       const jsonCalls = log.mock.calls.filter(call => String(call[0]).trim().startsWith('{'));
       expect(jsonCalls.length).toBe(1);
@@ -310,10 +306,11 @@ describe('main dispatch', () => {
       expect(raw).not.toMatch(new RegExp(String.raw`\u001B\[`, 'u'));
       const report = JSON.parse(raw);
       expect(report.resolved).toBe(true);
-      expect(report.identity.canonicalPath).toBe(process.execPath);
+      expect(report.identity.canonicalPath).toBe(realpathSync(target));
       expect(report.identity.discoverySource).toBe('explicit-target');
       expect(typeof report.state).toBe('string');
       expect(typeof report.nextAction).toBe('string');
+      expect(readFileSync(target)).toEqual(before);
     } finally {
       if (previousHome === undefined) delete process.env['LEVERFRAME_HOME'];
       else process.env['LEVERFRAME_HOME'] = previousHome;

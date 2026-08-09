@@ -1,7 +1,3 @@
-// tests/patch-v2.test.ts — fixture coverage for the per-target V2 patch
-// architecture: identity, content-addressed baselines, journaled
-// apply/restore, restart reconciliation at every phase, conservative legacy
-// migration, and the explicit state classifier.
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -37,7 +33,7 @@ import { addLeverframeInjectionMarker, classifyLeverframeInjectionByHash } from 
 import { applyLeverframePatches } from '../src/patch-transforms.js';
 import type { PatchManifest as LegacyPatchManifest } from '../src/patcher.js';
 
-const VERSION = '2.1.220';
+const VERSION = '2.1.223';
 const CONFIG = { 'leverframe:openai:model': { alias: 'model', context: 272_000 } };
 const BASELINE = [
   '.enum(["sonnet","opus","haiku","fable"]).optional().describe(`Optional model override for this agent. Defaults to inherit.`)',
@@ -51,7 +47,6 @@ function sha256(content: string): string {
   return createHash('sha256').update(content).digest('hex');
 }
 
-/** Fake tweakcc-backed runtime operating on real files, mirroring the shape of defaultPatchRuntime. */
 function fakeRuntime(opts: { version?: string; failPatch?: boolean } = {}): PatchRuntime {
   const version = opts.version ?? VERSION;
   return {
@@ -145,8 +140,8 @@ describe('claude-installation identity', () => {
     const b = join(dir, 'b', 'claude');
     mkdirSync(join(dir, 'a'), { recursive: true });
     mkdirSync(join(dir, 'b'), { recursive: true });
-    writeFileSync(a, '#!/bin/sh\necho "2.1.220"\n', { mode: 0o755 });
-    writeFileSync(b, '#!/bin/sh\necho "2.1.220"\n', { mode: 0o755 });
+    writeFileSync(a, '#!/bin/sh\necho "2.1.220 (Claude Code)"\n', { mode: 0o755 });
+    writeFileSync(b, '#!/bin/sh\necho "2.1.220 (Claude Code)"\n', { mode: 0o755 });
 
     const resolvedA = resolveClaudeInstallation({ target: a });
     const resolvedB = resolveClaudeInstallation({ target: b });
@@ -208,9 +203,6 @@ describe('applyPatchTransactionV2 / restorePatchTransactionV2', () => {
     expect(manifest!.baselineSha256).toBe(sha256(BASELINE));
     expect(existsSync(manifest!.baselinePath)).toBe(true);
     expect(readFileSync(canonicalPath, 'utf8')).toContain('/*leverframe:patch:v1*/');
-    // The journal's terminal phase is retained as an audit trail (it is never
-    // "pending"; diagnose reports it as completed, and the next transaction
-    // simply overwrites it) rather than deleted on success.
     expect(readPatchJournal(installation.identity)?.phase).toBe('completed');
   });
 
@@ -299,7 +291,7 @@ describe('restart reconciliation over every journal phase', () => {
     writeFileSync(getPatchJournalPath(journal.identity), `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
   }
 
-  it('discards a journal stuck at `prepared` — nothing destructive happened yet', async () => {
+  it('discards a journal stuck at `prepared` when no destructive work occurred', async () => {
     useTempHome();
     const dir = mkdtempSync(join(tmpdir(), 'leverframe-reconcile-prepared-'));
     dirs.push(dir);
@@ -314,7 +306,7 @@ describe('restart reconciliation over every journal phase', () => {
     expect(readFileSync(canonicalPath, 'utf8')).toBe(BASELINE);
   });
 
-  it('discards a journal stuck at `baseline_committed` — only immutable storage was touched', async () => {
+  it('discards a journal stuck at `baseline_committed` when only immutable storage was touched', async () => {
     useTempHome();
     const dir = mkdtempSync(join(tmpdir(), 'leverframe-reconcile-baseline-'));
     dirs.push(dir);
@@ -397,7 +389,6 @@ describe('restart reconciliation over every journal phase', () => {
     const before = readFileSync(canonicalPath, 'utf8');
     const result = await reconcilePatchTransaction(installation, fakeRuntime());
     expect(result.action).toBe('left-in-place');
-    // The refreshed live binary is authoritative: reconciliation never rewrites it.
     expect(readFileSync(canonicalPath, 'utf8')).toBe(before);
     expect(readManifestV2(installation.identity)).toBeNull();
     expect(readPatchJournal(installation.identity)).toBeNull();
@@ -482,7 +473,7 @@ describe('conservative legacy migration', () => {
     const backupPath = join(dir, 'claude.orig');
     const patchedContent = addLeverframeInjectionMarker(applyLeverframePatches(BASELINE, CONFIG).content);
     writeFileSync(canonicalPath, patchedContent);
-    writeFileSync(backupPath, patchedContent); // backup is itself injected — must never be adopted as pristine
+    writeFileSync(backupPath, patchedContent);
     const legacy = legacyManifestFor(canonicalPath, backupPath, patchedContent, patchedContent);
     const installation = makeInstallation(canonicalPath);
 
@@ -662,8 +653,6 @@ describe('restorePatchTransactionV2 refusals', () => {
     );
     const patchedManifest = readManifestV2(installation.identity)!;
 
-    // Restore the pristine content directly (bypassing restorePatchTransactionV2)
-    // so the live binary is no longer injected, but the manifest still is.
     writeFileSync(canonicalPath, BASELINE);
 
     const restored = await restorePatchTransactionV2({ installation, manifest: patchedManifest }, runtime);
@@ -737,7 +726,6 @@ describe('restorePatchTransactionV2 refusals', () => {
       canonicalPath,
       installationKind: 'custom',
       claudeVersion: VERSION,
-      // Recorded hash intentionally does not match tamperedBaselinePath's actual content.
       baselineSha256: sha256(BASELINE),
       baselinePath: tamperedBaselinePath,
       patchedSha256: sha256(patchedContent),
@@ -752,7 +740,6 @@ describe('restorePatchTransactionV2 refusals', () => {
     const restored = await restorePatchTransactionV2({ installation, manifest }, fakeRuntime());
     expect(restored.ok).toBe(false);
     expect(restored.message).toMatch(/hash does not match/);
-    // The live binary must be untouched by a refused restore.
     expect(readFileSync(canonicalPath)).toEqual(before);
   });
 });
@@ -879,7 +866,6 @@ describe('per-target patch lock (src/patch-lock.ts, backed by the registry lock 
     const identity = 'lock-identity-dead';
     const first = tryAcquirePatchTargetLock(identity, { isAlive: () => false });
     expect(first).not.toBeNull();
-    // Do not release; simulate the owning process having died.
     const second = tryAcquirePatchTargetLock(identity, { isAlive: () => false });
     expect(second).not.toBeNull();
     second!.release();
@@ -893,7 +879,6 @@ describe('per-target patch lock (src/patch-lock.ts, backed by the registry lock 
       isAlive: () => true,
     });
     expect(owner).not.toBeNull();
-    // A much later attempt, still against a live pid, must still be refused.
     expect(tryAcquirePatchTargetLock(identity, { now: () => Date.now(), isAlive: () => true })).toBeNull();
     owner!.release();
   });
@@ -903,11 +888,9 @@ describe('per-target patch lock (src/patch-lock.ts, backed by the registry lock 
     const identity = 'lock-identity-token';
     const first = tryAcquirePatchTargetLock(identity, { isAlive: () => false });
     expect(first).not.toBeNull();
-    // Simulate a second process stealing the lock after the first died.
     const second = tryAcquirePatchTargetLock(identity, { isAlive: () => false });
     expect(second).not.toBeNull();
     first!.release();
-    // The new owner's lease must still be intact.
     expect(existsSync(getPatchTargetLockPath(identity))).toBe(true);
     second!.release();
   });
