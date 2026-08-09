@@ -61,6 +61,8 @@ Start a server with `--no-discovery`, or set `LEVERFRAME_NO_DISCOVERY=1`, when `
 
 Claude Code invokes the same wrapper for spawned processes when `CLAUDE_CODE_PROCESS_WRAPPER` is present in its environment.
 
+When the Claude Code binary has the current Leverframe patch, background Agents, the default since Claude Code v2.1.198, show the routing notice at launch, not at completion. The notice uses the final model and effective reasoning level selected for that Agent. A resumed Agent does not emit a duplicate launch notice.
+
 ## Troubleshooting
 
 - Run `leverframe models --list` to see accepted `leverframe:` routes and aliases.

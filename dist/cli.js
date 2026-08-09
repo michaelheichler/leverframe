@@ -2553,9 +2553,9 @@ function connectionEntries(key) {
   return key ? [...connections.get(key) ?? []] : [...connections.values()].flatMap((entries) => [...entries]);
 }
 function connectionCount() {
-  let count = 0;
-  for (const entries of connections.values()) count += entries.size;
-  return count;
+  let count2 = 0;
+  for (const entries of connections.values()) count2 += entries.size;
+  return count2;
 }
 function connectionCountByGeneration(generation) {
   return connectionEntries().filter((entry) => entry.generation === generation).length;
@@ -5910,13 +5910,13 @@ function cachedModelCount(provider) {
   return provider.modelsCache?.models.length ?? 0;
 }
 function skipWithCachedModels(provider, reason) {
-  const count = cachedModelCount(provider);
+  const count2 = cachedModelCount(provider);
   return {
     id: provider.id,
     name: provider.name,
     ok: true,
     skipped: true,
-    modelCount: count > 0 ? count : void 0,
+    modelCount: count2 > 0 ? count2 : void 0,
     reason
   };
 }
@@ -7095,8 +7095,8 @@ async function runProvidersHub() {
     }
     if (typeof choice === "string" && choice.startsWith("provider:")) {
       const id = choice.slice("provider:".length);
-      const outcome = await runProviderDetail(id);
-      if (outcome === "removed") continue;
+      const outcome2 = await runProviderDetail(id);
+      if (outcome2 === "removed") continue;
     }
   }
 }
@@ -10445,38 +10445,38 @@ function categoryForDeadline(deadline) {
       return "total_timeout";
   }
 }
-function providerErrorForLifecycleOutcome(outcome, context) {
-  if (outcome.state === "completed") return void 0;
-  const phase = phaseForLifecycleState(outcome.priorState);
+function providerErrorForLifecycleOutcome(outcome2, context) {
+  if (outcome2.state === "completed") return void 0;
+  const phase = phaseForLifecycleState(outcome2.priorState);
   const base = {
     provider: context.provider,
     model: context.model,
     phase,
-    outputEmitted: outcome.outputEmitted,
+    outputEmitted: outcome2.outputEmitted,
     attemptCount: context.attemptCount
   };
-  if (outcome.reason?.kind === "error" && ProviderTransportError.isInstance(outcome.reason.error)) {
-    return outcome.reason.error;
+  if (outcome2.reason?.kind === "error" && ProviderTransportError.isInstance(outcome2.reason.error)) {
+    return outcome2.reason.error;
   }
-  if (outcome.reason?.kind === "deadline") {
-    const category = categoryForDeadline(outcome.reason.deadline);
+  if (outcome2.reason?.kind === "deadline") {
+    const category = categoryForDeadline(outcome2.reason.deadline);
     return new ProviderTransportError({
       ...base,
       category,
       retryable: true,
-      safeMessage: `Request exceeded its ${outcome.reason.deadline} deadline.`
+      safeMessage: `Request exceeded its ${outcome2.reason.deadline} deadline.`
     });
   }
-  if (outcome.reason?.kind === "cancelled") {
-    const category = outcome.reason.origin === "local" ? "local_shutdown" : "cancellation";
+  if (outcome2.reason?.kind === "cancelled") {
+    const category = outcome2.reason.origin === "local" ? "local_shutdown" : "cancellation";
     return new ProviderTransportError({
       ...base,
       category,
       retryable: false,
-      safeMessage: outcome.reason.origin === "local" ? "Request cancelled locally." : "Request cancelled by provider."
+      safeMessage: outcome2.reason.origin === "local" ? "Request cancelled locally." : "Request cancelled by provider."
     });
   }
-  const cause = outcome.reason?.kind === "error" ? outcome.reason.error : void 0;
+  const cause = outcome2.reason?.kind === "error" ? outcome2.reason.error : void 0;
   return new ProviderTransportError({
     ...base,
     category: classifyProviderErrorCategory({ phase, cause }),
@@ -10523,7 +10523,7 @@ function createRequestExecutionContext(options) {
     signal: options.signal
   });
   const untrack = trackForShutdown(lifecycle);
-  const mapOutcome = (outcome, attemptCount) => providerErrorForLifecycleOutcome(outcome, {
+  const mapOutcome = (outcome2, attemptCount) => providerErrorForLifecycleOutcome(outcome2, {
     provider: options.provider,
     model: options.model,
     attemptCount
@@ -10539,8 +10539,8 @@ function createRequestExecutionContext(options) {
     }),
     canReplay: () => lifecycle.canAutoReplay,
     finish(attemptCount) {
-      const outcome = lifecycle.terminalOutcome;
-      return outcome ? mapOutcome(outcome, attemptCount) : void 0;
+      const outcome2 = lifecycle.terminalOutcome;
+      return outcome2 ? mapOutcome(outcome2, attemptCount) : void 0;
     },
     dispose() {
       untrack();
@@ -11997,8 +11997,8 @@ function parseReconcileOutcome(value) {
 async function handleExecutionReconcile(input) {
   const { req, res, scopeHash, executionId } = input;
   const body = await readJson(req);
-  const outcome = parseReconcileOutcome(body?.outcome);
-  if (!body || typeof body.toolCallId !== "string" || !outcome) {
+  const outcome2 = parseReconcileOutcome(body?.outcome);
+  if (!body || typeof body.toolCallId !== "string" || !outcome2) {
     sendJson(res, 400, { error: { message: 'Request body must include toolCallId and outcome ("executed" | "not-executed")' } });
     return;
   }
@@ -12014,7 +12014,7 @@ async function handleExecutionReconcile(input) {
     scopeHash,
     executionId,
     toolCallId: body.toolCallId,
-    outcome,
+    outcome: outcome2,
     expectedGeneration: candidateGeneration
   });
   if (!result.ok) {
@@ -12673,7 +12673,7 @@ function summarizeServerProviders(models) {
     const key = model.providerLabel ?? model.providerId ?? "unknown";
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([name, count]) => `${name} (${count})`).join(", ");
+  return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([name, count2]) => `${name} (${count2})`).join(", ");
 }
 
 // src/server/provider-select.ts
@@ -14826,8 +14826,125 @@ import { createHash as createHash11 } from "crypto";
 import { readFileSync as readFileSync8 } from "fs";
 import { join as join8 } from "path";
 
+// src/patch-transforms-routing-notice.ts
+var ROUTING_NOTICE_MARKER = "/*ccpatch:routing-notice*/";
+var ROUTING_NOTICE_HANDOFF_MARKER = "/*ccpatch:routing-notice-handoff*/";
+function displayKeys(value) {
+  const bare = String(value).trim().toLowerCase().replace(/\[1m\]$/i, "");
+  return [.../* @__PURE__ */ new Set([bare, bare + "[1m]"])];
+}
+function buildRoutingDisplayTable(config) {
+  const table = /* @__PURE__ */ Object.create(null);
+  for (const [identity, rawEntry] of Object.entries(config)) {
+    const entry = rawEntry && typeof rawEntry === "object" ? rawEntry : {};
+    const display = typeof entry.display === "string" ? entry.display.trim().replace(/\s+/g, " ") : "";
+    if (display.trim() === "") continue;
+    for (const key of displayKeys(identity)) table[key] = display;
+    if (entry.alias !== void 0) {
+      for (const key of displayKeys(String(entry.alias))) table[key] = display;
+    }
+  }
+  return table;
+}
+function escaped(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function count(source, pattern) {
+  const flags = pattern.flags.includes("g") ? pattern.flags : pattern.flags + "g";
+  return source.match(new RegExp(pattern.source, flags))?.length ?? 0;
+}
+function replaceOnce(source, pattern, replacement) {
+  if (count(source, pattern) !== 1) return void 0;
+  if (typeof replacement === "string") return source.replace(pattern, replacement);
+  return source.replace(pattern, replacement);
+}
+function callbackSnippet() {
+  return `${ROUTING_NOTICE_MARKER}onRoutingNotice:d`;
+}
+function handoffPrefix() {
+  return `${ROUTING_NOTICE_HANDOFF_MARKER}if(d?.replHydration?.kind!=="resume"){`;
+}
+function handoffSnippet(table) {
+  const serializedTable = JSON.stringify(table).replaceAll("/*ccpatch:", "\\u002f*ccpatch:");
+  return handoffPrefix() + `let _ccm=Object.assign(Object.create(null),${serializedTable})[String(ne||"").trim().toLowerCase()],_ccd=_ccm!==void 0?_ccm:qce(ne)||String(ne||""),_ccr=nS(st);_ccr=_ccr===void 0?sJe(ne):_ccr;_ccd=String(_ccd).trim().replace(/\\s+/g," ");_ccr=String(_ccr).trim().replace(/\\s+/g," ");ccRoutingNotice?.({type:"notification",notification:{key:\`leverframe-routing-success-\${se}\`,text:\`Routing successful. Model \${_ccd} with Reasoning \${_ccr}\`,segments:[{text:"Routing successful. Model "},{text:_ccd,color:"suggestion",bold:!0},{text:" with Reasoning "},{text:_ccr,color:"success",bold:!0}],priority:"high",timeoutMs:1e4}})}`;
+}
+var callSiteAnchor = /let Y=eP\(l\),ne=fse\(aZe\(V,Y\),Y,H\?void 0:f,S\);l\.agentLifecycle\.markTypeInvoked\(V\.agentType\);/;
+var callbackAnchor = /onModelRestricted:\(Je,rt\)=>d\?\.\(\{type:"notification",notification:\{key:`agent-model-restricted-\$\{V\.agentType\}-\$\{Hbe\(Je\)\}`,text:`\$\{V\.agentType\} agent: \$\{XF\(Je,rt\)\}`,priority:"medium",color:"warning",timeoutMs:1e4\}\}\)/;
+var runnerSignatureAnchor = /async function\*g5\(\{agentDefinition:e,promptMessages:t,toolUseContext:r,[^{}]*?requiresStructuredOutput:W\}\)/;
+var runnerSignaturePatched = /async function\*g5\(\{agentDefinition:e,promptMessages:t,toolUseContext:r,[^{}]*?requiresStructuredOutput:W,onRoutingNotice:ccRoutingNotice\}\)/;
+var runnerContextAnchor = /st=Q4o\(r,\{options:je,agentId:se,isBackgroundAgent:o,[^{}]*?permissionLayers:yt,[^{}]*?contentReplacementState:S\}\);/;
+function handoffPattern() {
+  return new RegExp(
+    escaped(ROUTING_NOTICE_HANDOFF_MARKER) + 'if\\(d\\?\\.replHydration\\?\\.kind!=="resume"\\)\\{[\\s\\S]*?ccRoutingNotice\\?\\.\\(\\{type:"notification",notification:\\{[\\s\\S]*?timeoutMs:1e4\\}\\}\\)\\}'
+  );
+}
+function outcome(source, status, extra) {
+  return {
+    content: source,
+    results: [{ status, name: "PATCH 10: routing notice", ...extra === void 0 ? {} : { extra } }]
+  };
+}
+function refreshRoutingNotice(source, config) {
+  const refreshedCallback = replaceOnce(source, new RegExp(escaped(callbackSnippet())), callbackSnippet());
+  const refreshedSignature = refreshedCallback === void 0 ? void 0 : replaceOnce(refreshedCallback, runnerSignaturePatched, (match) => match);
+  const refreshedHandoff = refreshedSignature === void 0 ? void 0 : replaceOnce(refreshedSignature, handoffPattern(), handoffSnippet(buildRoutingDisplayTable(config)));
+  if (refreshedHandoff === void 0) return outcome(source, "SKIP", "generated block could not be refreshed");
+  if (refreshedHandoff === source) return outcome(source, "SKIP", "already patched");
+  return {
+    content: refreshedHandoff,
+    results: [{ status: "OK", name: "PATCH 10: routing notice (refresh)" }]
+  };
+}
+function patchFreshRoutingNotice(source, config) {
+  const callCount = count(source, callSiteAnchor);
+  const callbackCount = count(source, callbackAnchor);
+  const signatureCount = count(source, runnerSignatureAnchor);
+  const contextCount = count(source, runnerContextAnchor);
+  const callPresent = callCount > 0 || callbackCount > 0;
+  const runnerPresent = signatureCount > 0 || contextCount > 0;
+  if (!callPresent && !runnerPresent) return outcome(source, "SKIP", "Agent launch anchor not recognized");
+  if (callCount !== 1 || callbackCount !== 1) return outcome(source, "SKIP", "Agent call-site anchor not recognized");
+  if (signatureCount !== 1 || contextCount !== 1) return outcome(source, "SKIP", "runner anchor not recognized");
+  const callbackPatched = replaceOnce(source, callbackAnchor, (match) => `${match},${callbackSnippet()}`);
+  if (callbackPatched === void 0) return outcome(source, "FAIL", "Agent callback site could not be patched");
+  const signaturePatched = replaceOnce(
+    callbackPatched,
+    runnerSignatureAnchor,
+    (match) => match.replace("requiresStructuredOutput:W})", "requiresStructuredOutput:W,onRoutingNotice:ccRoutingNotice})")
+  );
+  if (signaturePatched === void 0) return outcome(source, "FAIL", "runner signature could not be patched");
+  const handoffPatched = replaceOnce(
+    signaturePatched,
+    runnerContextAnchor,
+    (match) => `${match}${handoffSnippet(buildRoutingDisplayTable(config))}`
+  );
+  if (handoffPatched === void 0) return outcome(source, "FAIL", "runner handoff could not be patched");
+  return {
+    content: handoffPatched,
+    results: [
+      { status: "OK", name: "PATCH 10a: routing notice callback" },
+      { status: "OK", name: "PATCH 10b: routing notice signature" },
+      { status: "OK", name: "PATCH 10c: routing notice handoff" }
+    ]
+  };
+}
+function existingRoutingNoticeOutcome(source, config) {
+  const primaryMarkerCount = count(source, new RegExp(callbackAnchor.source + "," + escaped(ROUTING_NOTICE_MARKER)));
+  const handoffMarkerCount = count(source, new RegExp(runnerContextAnchor.source + escaped(ROUTING_NOTICE_HANDOFF_MARKER)));
+  if (primaryMarkerCount === 0 && handoffMarkerCount === 0) return void 0;
+  const primaryCount = count(source, new RegExp(callbackAnchor.source + "," + escaped(callbackSnippet())));
+  const handoffCount = count(source, new RegExp(runnerContextAnchor.source + escaped(handoffPrefix())));
+  if (primaryCount !== 1 || handoffCount !== 1) {
+    return outcome(source, "SKIP", "partial or ambiguous patch markers found");
+  }
+  return refreshRoutingNotice(source, config);
+}
+function applyRoutingNoticeTransform(source, config) {
+  return existingRoutingNoticeOutcome(source, config) ?? patchFreshRoutingNotice(source, config);
+}
+
 // src/patch-transforms.ts
-var PATCH_TRANSFORMS_VERSION = 3;
+var PATCH_TRANSFORMS_VERSION = 4;
 var RESERVED_MODEL_ALIASES = /* @__PURE__ */ new Set(["sonnet", "opus", "haiku", "fable", "opusplan", "best", "default"]);
 var NATIVE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 var BASE_EFFORT_LEVELS = ["low", "medium", "high"];
@@ -14943,14 +15060,14 @@ function applyLeverframePatches(source, config) {
     }
     const g = new RegExp(regex.source, regex.flags.includes("g") ? regex.flags : regex.flags + "g");
     const matches = js.match(g);
-    const count = matches ? matches.length : 0;
-    if (count === 0) {
+    const count2 = matches ? matches.length : 0;
+    if (count2 === 0) {
       log12("FAIL", name, "anchor not found");
       if (required) fail("leverframe patch: required patch failed: " + name);
       return;
     }
-    if (count > 1) {
-      log12("FAIL", name, "anchor matched " + count + " times (expected 1)");
+    if (count2 > 1) {
+      log12("FAIL", name, "anchor matched " + count2 + " times (expected 1)");
       if (required) fail("leverframe patch: ambiguous anchor: " + name);
       return;
     }
@@ -15091,6 +15208,9 @@ function applyLeverframePatches(source, config) {
       );
     }
   }
+  const routingNotice = applyRoutingNoticeTransform(js, MODEL_CONFIG);
+  js = routingNotice.content;
+  report.push(...routingNotice.results);
   return { content: js, results: report };
   function patchEffortCapabilitySite(capability, marker, name, anchor) {
     const verdicts = Object.fromEntries(
@@ -15938,8 +16058,8 @@ async function runPatchCommandV2(opts = {}, presenter = clackPatchPresenter) {
   const { manifest, state, desired, legacyRecovery } = await checkResolvedPatchState(installation, runtime);
   return withPatchTargetLock(installation.identity, async () => {
     if (opts.restore) {
-      const outcome2 = await restorePatchTransactionV2({ installation, manifest }, runtime);
-      return reportOutcome(outcome2, false, presenter);
+      const outcome3 = await restorePatchTransactionV2({ installation, manifest }, runtime);
+      return reportOutcome(outcome3, false, presenter);
     }
     if (Object.keys(desired.config).length === 0) {
       presenter.error("No favorite models to patch. Save favorites with `leverframe models` first.");
@@ -15955,7 +16075,7 @@ async function runPatchCommandV2(opts = {}, presenter = clackPatchPresenter) {
     }
     const configHash = computePatchConfigHash(desired.config);
     const recoveryBaseline = !manifest && legacyRecovery && legacyRecovery.kind !== "unavailable" ? legacyRecovery.baseline : void 0;
-    const outcome = await applyPatchTransactionV2({
+    const outcome2 = await applyPatchTransactionV2({
       installation,
       desiredConfig: desired.config,
       configHash,
@@ -15963,21 +16083,21 @@ async function runPatchCommandV2(opts = {}, presenter = clackPatchPresenter) {
       recoveryBaseline,
       trace: opts.trace ?? false
     }, runtime);
-    return reportOutcome(outcome, opts.trace ?? false, presenter);
+    return reportOutcome(outcome2, opts.trace ?? false, presenter);
   }, { waitMs: 500 }).catch((err) => {
     presenter.warn(`Another leverframe process is patching the claude binary right now. Skipped. (${err instanceof Error ? err.message : String(err)})`);
     return 1;
   });
 }
-function reportOutcome(outcome, trace, presenter) {
-  if (!outcome.ok) {
-    presenter.error(outcome.message);
-    for (const line of outcome.detailLines ?? []) presenter.detail(line);
+function reportOutcome(outcome2, trace, presenter) {
+  if (!outcome2.ok) {
+    presenter.error(outcome2.message);
+    for (const line of outcome2.detailLines ?? []) presenter.detail(line);
     return 1;
   }
-  presenter.success(outcome.message);
+  presenter.success(outcome2.message);
   if (!trace) {
-    for (const line of outcome.detailLines ?? []) presenter.detail(line);
+    for (const line of outcome2.detailLines ?? []) presenter.detail(line);
   }
   return 0;
 }
@@ -16432,8 +16552,8 @@ function runReconcile(rest) {
     printUsage();
     return 1;
   }
-  const { toolCallId, all, outcome } = parseReconcileFlags(flags);
-  if (!outcome || !toolCallId && !all) {
+  const { toolCallId, all, outcome: outcome2 } = parseReconcileFlags(flags);
+  if (!outcome2 || !toolCallId && !all) {
     console.error("Specify --executed or --not-executed, and either --tool-call <id> or --all.");
     printUsage();
     return 1;
@@ -16442,7 +16562,7 @@ function runReconcile(rest) {
     scopeHash,
     executionId,
     selection: all ? { kind: "all" } : { kind: "one", toolCallId: toolCallId ?? "" },
-    outcome
+    outcome: outcome2
   });
   if (!workflow.ok && workflow.results.length === 0) {
     console.error(`Reconciliation failed: ${workflow.error ?? "unknown error"}`);

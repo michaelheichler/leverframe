@@ -132,7 +132,21 @@ leverframe executions [list|show|reconcile]
 
 `leverframe patch` makes favorites and aliases first-class Claude Code models. It updates model validation, the `/model` picker, aliases, context-window metadata, and supported effort levels.
 
-Binary patching supports Claude Code 2.1.223 or newer. Older installations receive an upgrade instruction while proxy mode remains available. Re-run the patch after a Claude Code update.
+### Agent launch routing notice
+
+On Claude Code 2.1.226, each new local Agent launch shows:
+
+```text
+Routing successful. Model <modelDisplay> with Reasoning <effort>
+```
+
+Both values are dynamic. `<modelDisplay>` resolves from configured Leverframe model metadata (alias or display name), then Claude Code's native display name, then the raw model identity. `<effort>` is the effective effort resolved from child permission layers and app state at request time. When the request has no explicit effort, it falls back to that model's default. This is not the declared agent frontmatter value, so it remains truthful when Claude Code ignores that declaration ([anthropics/claude-code#64706](https://github.com/anthropics/claude-code/issues/64706)).
+
+The values use Claude Code's bold suggestion and success theme roles. The sentence retains its full meaning without color, including in screen-reader mode. The notice appears once per subagent launch. Resumed subagents do not emit a duplicate. Background subagents, the default since Claude Code v2.1.198, show it at launch, not at completion.
+
+The notice comes from Leverframe's existing Claude Code binary patch. It is not a hook, plugin, `settings.json` change, or statusline entry, and needs no user configuration beyond the existing patch flow. Machine-readable modes such as `--output-format json` are unaffected. The notice stays in the Claude Code UI and never reaches stdout or stderr.
+
+Binary patching requires Claude Code 2.1.223 or newer, and this feature is pinned against 2.1.226. The routing transform is optional. If Claude Code internals change and its anchors no longer match, Leverframe skips the notice while required model and effort patches keep working. Re-run `leverframe patch` after a Claude Code update to restore it when supported. The transform version moved from 3 to 4, so existing patched installations are treated as stale and re-patched on next launch through the existing stale flow. Older installations receive an upgrade instruction while proxy mode remains available.
 
 Leverframe can rebuild a lost V2 manifest only from an independently verified pristine legacy backup. It never patches on top of unowned injected bytes.
 

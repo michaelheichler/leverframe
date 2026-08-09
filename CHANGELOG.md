@@ -6,12 +6,14 @@ All notable changes to Leverframe are recorded here.
 
 ### Added
 
+- Claude Code Agent launches now show a colored routing confirmation with the resolved model and effective reasoning level. The notice is rendered through Claude Code's notification UI and is not written to process output.
 - Context infrastructure for budgeting, compaction planning, summaries, trusted metadata, encrypted memory, local inference profiling, retention, vector memory, and worker supervision.
 - Read-only patch diagnostics with installation identity, version support, manifest, drift, transaction, lock, and legacy recovery details.
 - Quality, testing, and technical-debt documents for the context and compaction work.
 
 ### Changed
 
+- The binary patch transform version is now 4, with Claude Code 2.1.226 Agent-launch compatibility coverage and machine-readable output protection for the routing notice. Existing patched installations are treated as stale and re-patched on next launch.
 - Claude Code binary patching now requires version 2.1.223 or newer. Older installations receive an upgrade instruction while proxy mode remains available.
 - ChatGPT/Codex OAuth context windows now use positive finite provider metadata. Missing or invalid values remain unconfirmed.
 - Context budgeting uses named token costs instead of positional array indexes.

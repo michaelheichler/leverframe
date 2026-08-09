@@ -622,6 +622,19 @@ describe('verifyPatchSites (read-only semantic verification)', () => {
     expect(recheck.results.every(site => site.status === 'SKIP')).toBe(true);
   });
 
+  it('treats an optional routing notice anchor mismatch as complete when only the model-resolution call site is present', () => {
+    const patched = applyLeverframePatches(BASELINE, CONFIG).content;
+    const partialRoutingCallSite = `${patched}let Y=eP(l),ne=fse(aZe(V,Y),Y,H?void 0:f,S);l.agentLifecycle.markTypeInvoked(V.agentType);`;
+    const result = verifyPatchSites(partialRoutingCallSite, CONFIG);
+
+    expect(result.complete).toBe(true);
+    expect(result.results).toContainEqual({
+      status: 'SKIP',
+      name: 'PATCH 10: routing notice',
+      extra: 'Agent call-site anchor not recognized',
+    });
+  });
+
   it('reports incomplete when a required anchor is missing', () => {
     const result = verifyPatchSites('var x = 1;', { 'leverframe:openai:model': { alias: 'model' } });
     expect(result.complete).toBe(false);

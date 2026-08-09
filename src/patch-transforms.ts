@@ -1,5 +1,7 @@
 
-export const PATCH_TRANSFORMS_VERSION = 3;
+import { applyRoutingNoticeTransform } from './patch-transforms-routing-notice.js';
+
+export const PATCH_TRANSFORMS_VERSION = 4;
 
 export interface PatchScriptModelEntry {
   alias?: string;
@@ -348,6 +350,9 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     }
   }
 
+  const routingNotice = applyRoutingNoticeTransform(js, MODEL_CONFIG);
+  js = routingNotice.content;
+  report.push(...routingNotice.results);
   return { content: js, results: report };
 
   function patchEffortCapabilitySite(

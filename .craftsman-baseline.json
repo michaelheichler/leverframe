@@ -62,6 +62,7 @@
 {"complexity":24,"fan_out":5,"file_lines":339,"ignores":0,"max_fn_lines":64,"path":"src/patch-reconcile.ts"},
 {"complexity":26,"fan_out":6,"file_lines":143,"ignores":0,"max_fn_lines":64,"path":"src/patch-state.ts"},
 {"complexity":27,"fan_out":4,"file_lines":499,"ignores":0,"max_fn_lines":166,"path":"src/patch-transaction.ts"},
+{"complexity":8,"fan_out":1,"file_lines":141,"ignores":0,"max_fn_lines":38,"path":"src/patch-transforms-routing-notice.ts"},
 {"complexity":28,"fan_out":0,"file_lines":584,"ignores":0,"max_fn_lines":106,"path":"src/patch-transforms.ts"},
 {"complexity":10,"fan_out":13,"file_lines":216,"ignores":0,"max_fn_lines":82,"path":"src/patcher.ts"},
 {"complexity":6,"fan_out":3,"file_lines":90,"ignores":0,"max_fn_lines":37,"path":"src/paths.ts"},
@@ -107,6 +108,7 @@
 {"complexity":2,"fan_out":1,"file_lines":179,"ignores":0,"max_fn_lines":32,"path":"src/request-execution-context.ts"},
 {"complexity":12,"fan_out":1,"file_lines":89,"ignores":0,"max_fn_lines":59,"path":"src/request-lifecycle-error-mapping.ts"},
 {"complexity":32,"fan_out":1,"file_lines":334,"ignores":0,"max_fn_lines":191,"path":"src/request-lifecycle.ts"},
+{"complexity":0,"fan_out":0,"file_lines":31,"ignores":0,"max_fn_lines":21,"path":"src/routing-notice.ts"},
 {"complexity":54,"fan_out":10,"file_lines":1297,"ignores":0,"max_fn_lines":304,"path":"src/sdk-adapter.ts"},
 {"complexity":24,"fan_out":2,"file_lines":351,"ignores":0,"max_fn_lines":105,"path":"src/server-runtime.ts"},
 {"complexity":30,"fan_out":2,"file_lines":120,"ignores":0,"max_fn_lines":120,"path":"src/server/auth.ts"},
@@ -129,5 +131,10 @@
 {"complexity":16,"fan_out":3,"file_lines":254,"ignores":0,"max_fn_lines":145,"path":"src/ui.ts"},
 {"complexity":2,"fan_out":1,"file_lines":191,"ignores":0,"max_fn_lines":8,"path":"src/upstream-error.ts"},
 {"complexity":13,"fan_out":9,"file_lines":347,"ignores":0,"max_fn_lines":74,"path":"src/upstream-forward.ts"},
-{"complexity":7,"fan_out":2,"file_lines":35,"ignores":0,"max_fn_lines":35,"path":"src/wrapper-env.ts"}
+{"complexity":7,"fan_out":2,"file_lines":35,"ignores":0,"max_fn_lines":35,"path":"src/wrapper-env.ts"},
+{"complexity":5,"fan_out":2,"file_lines":56,"ignores":0,"max_fn_lines":56,"path":"tests/patch-transforms-claude-2-1-226.test.ts"},
+{"complexity":1,"fan_out":1,"file_lines":64,"ignores":0,"max_fn_lines":42,"path":"tests/patch-transforms-routing-notice-claude-2-1-226.test.ts"},
+{"complexity":2,"fan_out":1,"file_lines":129,"ignores":0,"max_fn_lines":34,"path":"tests/patch-transforms-routing-notice.test.ts"},
+{"complexity":13,"fan_out":12,"file_lines":911,"ignores":0,"max_fn_lines":454,"path":"tests/patch-v2.test.ts"},
+{"complexity":1,"fan_out":2,"file_lines":47,"ignores":0,"max_fn_lines":47,"path":"tests/routing-notice.test.ts"}
 ]

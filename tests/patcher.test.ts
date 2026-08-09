@@ -454,6 +454,7 @@ describe('patch script identity naming', () => {
       ['PATCH 5: model picker options', 'OK'],
       ['PATCH 4: Agent tool model description', 'OK'],
       ['PATCH 7: per-model context window', 'OK'],
+      ['PATCH 10: routing notice', 'SKIP'],
     ]);
     const rerun = applyLeverframePatches(fresh.content, config);
     expect(rerun.results.map(r => [r.name, r.status])).toEqual([
@@ -463,6 +464,7 @@ describe('patch script identity naming', () => {
       ['PATCH 5: model picker options', 'SKIP'],
       ['PATCH 4: Agent tool model description', 'SKIP'],
       ['PATCH 7: per-model context window (refresh)', 'SKIP'],
+      ['PATCH 10: routing notice', 'SKIP'],
     ]);
   });
 
@@ -649,7 +651,7 @@ describe('PATCH 8/9 effort capability gates', () => {
 });
 
 describe('PATCH_TRANSFORMS_VERSION', () => {
-  it('is bumped so PATCH 8/9 capability wiring reconciles existing installs (config_stale)', () => {
-    expect(PATCH_TRANSFORMS_VERSION).toBe(3);
+  it('is bumped for Agent routing notice wiring and capability reconciliation', () => {
+    expect(PATCH_TRANSFORMS_VERSION).toBe(4);
   });
 });
