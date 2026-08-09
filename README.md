@@ -1,6 +1,6 @@
 # Leverframe
 
-Leverframe bridges Claude Code to external model providers through Anthropic and OpenAI-compatible APIs while preserving tools, skills, agents, prompt caching, model switching, and auto-compaction.
+Leverframe bridges Claude Code to external model providers through Anthropic and OpenAI-compatible APIs. It preserves tools, skills, agents, prompt caching, model switching, and auto-compaction.
 
 Supported provider setups include:
 
@@ -40,6 +40,8 @@ leverframe models --alias sol=leverframe:openai-oauth:gpt-5.6-sol
 leverframe patch
 leverframe claude
 ```
+
+ChatGPT/Codex model context limits come from positive finite `context_window` values reported by the authenticated provider. Missing or invalid values remain unconfirmed. Leverframe does not present a seed or heuristic as a provider limit. An unconfirmed limit omits the `[1m]` suffix and the `CLAUDE_CODE_MAX_CONTEXT_TOKENS` override.
 
 ### API-key providers
 
@@ -128,9 +130,17 @@ leverframe providers [add|auth|list|remove|refresh-models]
 leverframe executions [list|show|reconcile]
 ```
 
-`leverframe patch` makes favorites and aliases first-class Claude Code models. It updates model validation, the `/model` picker, aliases, context-window metadata, and supported effort levels. Re-run it after a Claude Code update. If an older injected target has lost its V2 manifest, Leverframe can rebuild it only from an independently verified pristine legacy backup; it never patches on top of unowned injected bytes. `leverframe patch --diagnose` prints a read-only, network-free report of the resolved installation, patch/manifest state, pending transaction, and exact legacy recovery mode without mutating anything; `--target` pins discovery to one binary for both patching and diagnostics.
+`leverframe patch` makes favorites and aliases first-class Claude Code models. It updates model validation, the `/model` picker, aliases, context-window metadata, and supported effort levels.
 
-`leverframe executions` inspects interrupted or ambiguous provider executions recorded under `~/.leverframe/state/executions`. `leverframe executions list` and `show <scope-hash> <execution-id>` are read-only; `leverframe executions reconcile <scope-hash> <execution-id> --tool-call <id>|--all --executed|--not-executed` records a human-confirmed outcome for a tool call whose client-side execution status is ambiguous (Leverframe never executes tools itself and never guesses this outcome automatically). Reconciled and expired executions are also reported — but never auto-resolved — on every proxy/server startup.
+Binary patching supports Claude Code 2.1.223 or newer. Older installations receive an upgrade instruction while proxy mode remains available. Re-run the patch after a Claude Code update.
+
+Leverframe can rebuild a lost V2 manifest only from an independently verified pristine legacy backup. It never patches on top of unowned injected bytes.
+
+`leverframe patch --diagnose` prints a read-only, network-free report. The report covers the resolved installation, patch and manifest state, pending transaction, and exact legacy recovery mode. `--target` pins discovery to one binary for patching and diagnostics.
+
+`leverframe executions` inspects interrupted or ambiguous provider executions recorded under `~/.leverframe/state/executions`. `leverframe executions list` and `show <scope-hash> <execution-id>` are read-only.
+
+`leverframe executions reconcile <scope-hash> <execution-id> --tool-call <id>|--all --executed|--not-executed` records a human-confirmed outcome for a tool call with an ambiguous client-side status. Leverframe never executes tools or guesses this outcome. Every proxy or server startup reports reconciled and expired executions without resolving them automatically.
 
 For agents view and background-agent setup, see [docs/background-agents.md](docs/background-agents.md).
 
@@ -155,6 +165,12 @@ leverframe keyring repair
 ```
 
 It rebuilds each account's credential journal from the published credential and only clears entries whose credential is genuinely unreadable, telling you which ones to re-add.
+
+## Context infrastructure status
+
+The repository includes tested building blocks for context budgeting, request compaction, trusted metadata, encrypted memory, local inference profiling, summaries, and worker supervision. These modules are not connected to the production request path yet. Leverframe does not claim automatic custom compaction until that integration and its stream fixtures are complete.
+
+See [docs/TESTING.md](docs/TESTING.md) for the current safety net and [docs/TECH-DEBT.md](docs/TECH-DEBT.md) for the remaining integration work.
 
 ## Known limitations
 

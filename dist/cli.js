@@ -5,6 +5,7 @@ import {
   CODEX_RESPONSES_WEBSOCKETS_BETA,
   DEFAULT_SERVER_PORT,
   MAX_MODEL_CATALOG,
+  OPENCODE_CACHE_PATH,
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
   VERSION,
@@ -46,7 +47,6 @@ import {
   registerServerRuntimeState,
   repairStoredCredential,
   resolveBridgeMode,
-  resolveContextWindow,
   resolveProviderCredential,
   resolveProviderOAuthAccountId,
   resolveProviderOAuthProviderData,
@@ -67,7 +67,7 @@ import {
   withProviderMutationLock,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-HS4KB2ZM.js";
+} from "./chunk-HRR5J3AN.js";
 
 // src/cli.ts
 import pc14 from "picocolors";
@@ -1835,6 +1835,106 @@ function deriveBrand(family) {
     if (lower.startsWith(prefix)) return brand;
   }
   return "Other";
+}
+
+// src/context-window.ts
+import { readFileSync as readFileSync3 } from "fs";
+var DEFAULT_CONTEXT_WINDOW = 2e5;
+var CACHE_PROVIDER_PRIORITY = /* @__PURE__ */ new Set(["opencode", "opencode-go"]);
+var HEURISTIC_RULES = [
+  [/gemini-2\.5-pro|gemini-1\.5-pro|gemini-3-pro/i, 2e6],
+  [/gemini/i, 1e6],
+  [/claude-opus-4-[678]|claude-sonnet-4-[678]/i, 1e6],
+  [/claude-haiku-4-[567]/i, 2e5],
+  [/claude.*\[1m\]/i, 1e6],
+  [/claude-opus-4-[56]|claude-sonnet-4-[45]|claude-3/i, 2e5],
+  [/claude/i, 2e5],
+  [/deepseek-v4|deepseek-r1|deepseek-reasoner/i, 1e6],
+  [/deepseek/i, 64e3],
+  [/gpt-5|gpt-4\.1|o3-|o4-/i, 1e6],
+  [/gpt-4o|gpt-4-turbo|gpt-4/i, 128e3],
+  [/gpt-oss/i, 131072],
+  [/qwen3|qwen-3|qwen2\.5-72b|qwen2\.5-32b|qwen-coder/i, 262144],
+  [/qwen/i, 131072],
+  [/^k3$|^k3-|kimi-k3/i, 1048576],
+  [/kimi-k2|kimi-k2\.5|moonshot/i, 262144],
+  [/minimax-m2/i, 204800],
+  [/minimax/i, 128e3],
+  [/mistral-large|ministral|mistral/i, 262144],
+  [/llama-3\.[23]|llama3/i, 131072],
+  [/grok-4\.20/i, 1e6],
+  [/grok-4\.5/i, 5e5],
+  [/grok-3|grok-4/i, 131072],
+  [/nemotron/i, 131072],
+  [/glm-5\.2/i, 1e6],
+  [/glm-5-turbo|glm-4\.7/i, 128e3],
+  [/glm-4/i, 128e3],
+  [/solar-pro3/i, 131072],
+  [/solar-pro2/i, 65536],
+  [/solar/i, 32768]
+];
+var parsedCache;
+var cacheIndex;
+var heuristicCache = /* @__PURE__ */ new Map();
+function loadOpencodeCache() {
+  if (parsedCache === void 0) {
+    try {
+      parsedCache = JSON.parse(readFileSync3(OPENCODE_CACHE_PATH, "utf8"));
+    } catch {
+      parsedCache = null;
+    }
+  }
+  return parsedCache;
+}
+function buildContextWindowIndex(cache) {
+  const index = /* @__PURE__ */ new Map();
+  const allLimits = /* @__PURE__ */ new Map();
+  for (const [providerKey, providerData] of Object.entries(cache)) {
+    const models = providerData?.models;
+    if (!models) continue;
+    for (const [modelId, entry] of Object.entries(models)) {
+      const ctx = entry.limit?.context;
+      if (typeof ctx !== "number" || ctx <= 0) continue;
+      const limits = allLimits.get(modelId) ?? [];
+      limits.push(ctx);
+      allLimits.set(modelId, limits);
+      if (CACHE_PROVIDER_PRIORITY.has(providerKey)) {
+        index.set(modelId, ctx);
+      }
+    }
+  }
+  for (const [modelId, limits] of allLimits) {
+    if (!index.has(modelId)) {
+      index.set(modelId, Math.max(...limits));
+    }
+  }
+  return index;
+}
+function getCacheIndex() {
+  if (cacheIndex === void 0) {
+    const cache = loadOpencodeCache();
+    cacheIndex = cache ? buildContextWindowIndex(cache) : /* @__PURE__ */ new Map();
+  }
+  return cacheIndex;
+}
+function contextWindowFromHeuristics(modelId) {
+  const cached = heuristicCache.get(modelId);
+  if (cached !== void 0) return cached;
+  for (const [pattern, size] of HEURISTIC_RULES) {
+    if (pattern.test(modelId)) {
+      heuristicCache.set(modelId, size);
+      return size;
+    }
+  }
+  heuristicCache.set(modelId, DEFAULT_CONTEXT_WINDOW);
+  return DEFAULT_CONTEXT_WINDOW;
+}
+function lookupContextWindow(modelId) {
+  return getCacheIndex().get(modelId) ?? contextWindowFromHeuristics(modelId);
+}
+function resolveContextWindow(modelId, explicit) {
+  if (typeof explicit === "number" && explicit > 0) return explicit;
+  return lookupContextWindow(modelId);
 }
 
 // src/registry/google-model-id.ts
@@ -4785,7 +4885,7 @@ import {
   chmodSync as chmodSync3,
   existsSync as existsSync6,
   mkdirSync as mkdirSync3,
-  readFileSync as readFileSync3,
+  readFileSync as readFileSync4,
   unlinkSync,
   writeFileSync as writeFileSync3
 } from "fs";
@@ -5149,7 +5249,7 @@ function writeSecureLogLine(path, line, secrets = []) {
 }
 function printTraceLog(debugLogPath) {
   if (!existsSync6(debugLogPath)) return;
-  const raw = readFileSync3(debugLogPath, "utf8");
+  const raw = readFileSync4(debugLogPath, "utf8");
   const log12 = redactTraceLog(raw);
   const errorLines = log12.split("\n").filter(
     (l) => l.includes("error") || l.includes("Error") || l.includes('"type":"error"') || l.includes("status") || l.includes("resolveModel failed") || l.includes("resolveModel fallback")
@@ -5841,18 +5941,13 @@ var CHATGPT_CODEX_UNSUPPORTED_MODELS = /* @__PURE__ */ new Set([
   // confirmed: rejected by chatgpt.com/backend-api/codex
 ]);
 var OPENAI_OAUTH_MODEL_SEEDS = [
-  // GPT-5.6 family (Sol / Terra / Luna)
-  { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", contextWindow: 272e3, reasoning: true },
-  { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", contextWindow: 272e3, reasoning: true },
-  { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", contextWindow: 272e3, reasoning: true, useResponsesLite: true, preferWebSockets: true },
-  // GPT-5.5 family (Pro)
-  { id: "gpt-5.5", name: "GPT-5.5", contextWindow: 272e3, reasoning: true },
-  // GPT-5.4 family
-  { id: "gpt-5.4", name: "GPT-5.4", contextWindow: 272e3 },
-  { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", contextWindow: 272e3 },
-  // GPT-5 base (Pro / Plus)
-  { id: "gpt-5", name: "GPT-5", contextWindow: 272e3, reasoning: true },
-  // o-series reasoning (Plus+)
+  { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", reasoning: true },
+  { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", reasoning: true },
+  { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", reasoning: true, useResponsesLite: true, preferWebSockets: true },
+  { id: "gpt-5.5", name: "GPT-5.5", reasoning: true },
+  { id: "gpt-5.4", name: "GPT-5.4" },
+  { id: "gpt-5.4-mini", name: "GPT-5.4 Mini" },
+  { id: "gpt-5", name: "GPT-5", reasoning: true },
   { id: "o4-mini", name: "o4 Mini", reasoning: true },
   { id: "o3", name: "o3", reasoning: true },
   { id: "o3-mini", name: "o3 Mini", reasoning: true },
@@ -5868,7 +5963,8 @@ function buildOpenAiOAuthModels() {
       upstreamModelId: seed.id,
       family: prefix,
       brand: deriveBrand(prefix),
-      contextWindow: resolveContextWindow(seed.id, seed.contextWindow),
+      contextWindow: void 0,
+      contextWindowUnconfirmed: true,
       modelFormat: "openai",
       npm: "@ai-sdk/openai",
       reasoning: seed.reasoning,
@@ -5890,6 +5986,9 @@ function readCapabilityFlags(m) {
     useResponsesLite: bool(m["use_responses_lite"]),
     preferWebSockets: bool(m["prefer_websockets"])
   };
+}
+function confirmedContextWindow(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : void 0;
 }
 function parseOpenAiModelEntries(body) {
   if (!body || typeof body !== "object") return [];
@@ -5914,10 +6013,12 @@ function parseOpenAiModelEntries(body) {
 }
 function buildDynamicOAuthModel(entry, seedById) {
   const seed = seedById.get(entry.id);
+  const contextWindow = confirmedContextWindow(entry.context_window);
   if (seed) {
     return {
       ...seed,
-      contextWindow: entry.context_window ?? seed.contextWindow,
+      contextWindow,
+      contextWindowUnconfirmed: contextWindow === void 0 ? true : void 0,
       useResponsesLite: entry.useResponsesLite ?? seed.useResponsesLite,
       preferWebSockets: entry.preferWebSockets ?? seed.preferWebSockets
     };
@@ -5930,7 +6031,8 @@ function buildDynamicOAuthModel(entry, seedById) {
     upstreamModelId: id,
     family: prefix,
     brand: deriveBrand(prefix),
-    contextWindow: entry.context_window ?? resolveContextWindow(id),
+    contextWindow,
+    contextWindowUnconfirmed: contextWindow === void 0 ? true : void 0,
     modelFormat: "openai",
     npm: "@ai-sdk/openai",
     reasoning: modelPrefersResponsesApi(id),
@@ -6065,7 +6167,7 @@ async function refreshProviderModelsInner(providerId, apiKey, registry = loadReg
       name: provider.name,
       ok: true,
       skipped: true,
-      reason: "Manual-only provider \u2014 model list is not refreshed automatically."
+      reason: "Manual-only provider. The model list is not refreshed automatically."
     };
   }
   try {
@@ -6079,7 +6181,7 @@ async function refreshProviderModelsInner(providerId, apiKey, registry = loadReg
           id: provider.id,
           name: provider.name,
           ok: false,
-          reason: "OAuth token not available \u2014 try signing in again with leverframe providers auth."
+          reason: "OAuth token not available. Sign in again with leverframe providers auth."
         };
       }
       const oauthResult = await refreshOAuthProvider(provider, apiKey);
@@ -6087,11 +6189,11 @@ async function refreshProviderModelsInner(providerId, apiKey, registry = loadReg
       if (oauthResult.source === "seed" && cachedModelCount(provider) > 0) {
         return skipWithCachedModels(
           provider,
-          `Live model discovery failed${failureDetail} \u2014 kept your existing cached model list instead of overwriting it with leverframe's built-in fallback list. Try refreshing again later.`
+          `Live model discovery failed${failureDetail}. Kept your existing cached model list instead of overwriting it with leverframe's built-in fallback list. Try refreshing again later.`
         );
       }
       if (oauthResult.source === "seed") {
-        oauthFallbackReason = `Live model discovery failed${failureDetail} \u2014 showing leverframe's built-in fallback model list, which may not include the newest models yet. Try refreshing again later.`;
+        oauthFallbackReason = `Live model discovery failed${failureDetail}. Showing leverframe's built-in fallback model list, which may not include the newest models yet. Try refreshing again later.`;
       }
       models = oauthResult.models;
       if (models.length === 0) {
@@ -6099,7 +6201,7 @@ async function refreshProviderModelsInner(providerId, apiKey, registry = loadReg
           id: provider.id,
           name: provider.name,
           ok: false,
-          reason: "No models available for this OAuth provider \u2014 try signing in again."
+          reason: "No models available for this OAuth provider. Sign in again."
         };
       }
     } else {
@@ -6110,14 +6212,14 @@ async function refreshProviderModelsInner(providerId, apiKey, registry = loadReg
         if (cachedModelCount(provider) > 0) {
           return skipWithCachedModels(
             provider,
-            "A placeholder API key is configured \u2014 kept cached model list. Add this provider again via leverframe providers add with a real key to refresh live."
+            "A placeholder API key is configured. Kept cached model list. Add this provider again via leverframe providers add with a real key to refresh live."
           );
         }
         return {
           id: provider.id,
           name: provider.name,
           ok: false,
-          reason: "No usable API key \u2014 add the provider via leverframe providers add with a real key."
+          reason: "No usable API key. Add the provider via leverframe providers add with a real key."
         };
       }
       if (!keyOptional && !effectiveKey) {
@@ -6125,7 +6227,7 @@ async function refreshProviderModelsInner(providerId, apiKey, registry = loadReg
           id: provider.id,
           name: provider.name,
           ok: false,
-          reason: "API key not available \u2014 cannot refresh models."
+          reason: "API key not available. Cannot refresh models."
         };
       }
       const fetched = await refreshApiListProvider(provider, effectiveKey ?? "");
@@ -12674,7 +12776,7 @@ import { createBrotliDecompress, createGunzip, createInflate } from "zlib";
 // src/http-proxy/ca.ts
 import { randomBytes as randomBytes2, randomUUID as randomUUID5 } from "crypto";
 import { constants as fsConstants } from "fs";
-import { chmodSync as chmodSync4, closeSync as closeSync2, linkSync, lstatSync as lstatSync3, mkdirSync as mkdirSync4, openSync as openSync2, readFileSync as readFileSync4, renameSync as renameSync2, rmSync as rmSync2, unlinkSync as unlinkSync2, writeFileSync as writeFileSync4 } from "fs";
+import { chmodSync as chmodSync4, closeSync as closeSync2, linkSync, lstatSync as lstatSync3, mkdirSync as mkdirSync4, openSync as openSync2, readFileSync as readFileSync5, renameSync as renameSync2, rmSync as rmSync2, unlinkSync as unlinkSync2, writeFileSync as writeFileSync4 } from "fs";
 import { dirname as dirname3, join as join6, resolve } from "path";
 import forge from "node-forge";
 var O_NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
@@ -12722,7 +12824,7 @@ function isRegularLockPath(lockPath2) {
 function readLockMetadata(lockPath2) {
   let raw;
   try {
-    raw = readFileSync4(lockPath2, "utf8");
+    raw = readFileSync5(lockPath2, "utf8");
   } catch {
     return null;
   }
@@ -12908,20 +13010,20 @@ function publicKeyMatchesPrivateKey(certificate, privateKey) {
 }
 function readCurrentCertificateSet(paths) {
   try {
-    const setIdBefore = readFileSync4(paths.setId, "utf8");
+    const setIdBefore = readFileSync5(paths.setId, "utf8");
     if (!setIdBefore.trim()) return null;
-    if (readFileSync4(paths.version, "utf8") !== CERT_VERSION) return null;
-    const caCert = readFileSync4(paths.caCert, "utf8");
-    const caKey = readFileSync4(paths.caKey, "utf8");
-    const serverCert = readFileSync4(paths.serverCert, "utf8");
-    const serverKey = readFileSync4(paths.serverKey, "utf8");
+    if (readFileSync5(paths.version, "utf8") !== CERT_VERSION) return null;
+    const caCert = readFileSync5(paths.caCert, "utf8");
+    const caKey = readFileSync5(paths.caKey, "utf8");
+    const serverCert = readFileSync5(paths.serverCert, "utf8");
+    const serverKey = readFileSync5(paths.serverKey, "utf8");
     const ca = forge.pki.certificateFromPem(caCert);
     const caPrivateKey = forge.pki.privateKeyFromPem(caKey);
     const server = forge.pki.certificateFromPem(serverCert);
     const serverPrivateKey = forge.pki.privateKeyFromPem(serverKey);
     const now = Date.now();
     const valid = ca.validity.notBefore.getTime() <= now && ca.validity.notAfter.getTime() > now + RENEWAL_BUFFER_MS && server.validity.notBefore.getTime() <= now && server.validity.notAfter.getTime() > now + RENEWAL_BUFFER_MS && ca.verify(ca) && ca.verify(server) && publicKeyMatchesPrivateKey(ca, caPrivateKey) && publicKeyMatchesPrivateKey(server, serverPrivateKey);
-    if (!valid || readFileSync4(paths.setId, "utf8") !== setIdBefore) return null;
+    if (!valid || readFileSync5(paths.setId, "utf8") !== setIdBefore) return null;
     return { caCertPath: paths.caCert, caCert, serverCert, serverKey };
   } catch {
     return null;
@@ -12947,8 +13049,8 @@ function ensureHttpProxyCaBundle(relayCaCertPath, additionalCaCertPath) {
   if (!additionalCaCertPath?.trim()) return relayCaCertPath;
   try {
     if (resolve(additionalCaCertPath) === resolve(relayCaCertPath)) return relayCaCertPath;
-    const relayCa = readFileSync4(relayCaCertPath, "utf8").trimEnd();
-    const additionalCa = readFileSync4(additionalCaCertPath, "utf8").trim();
+    const relayCa = readFileSync5(relayCaCertPath, "utf8").trimEnd();
+    const additionalCa = readFileSync5(additionalCaCertPath, "utf8").trim();
     if (!additionalCa) return relayCaCertPath;
     const combinedPath = join6(dirname3(relayCaCertPath), "combined-ca.pem");
     writePublic(combinedPath, `${relayCa}
@@ -14721,7 +14823,7 @@ async function runKeyringRepairCommand(accountFilter) {
 
 // src/patcher.ts
 import { createHash as createHash11 } from "crypto";
-import { readFileSync as readFileSync7 } from "fs";
+import { readFileSync as readFileSync8 } from "fs";
 import { join as join8 } from "path";
 
 // src/patch-transforms.ts
@@ -15258,7 +15360,7 @@ var clackPatchPresenter = {
 
 // src/patch-transaction.ts
 import { createHash as createHash9 } from "crypto";
-import { existsSync as existsSync10, readFileSync as readFileSync5, statSync as statSync4, unlinkSync as unlinkSync4 } from "fs";
+import { existsSync as existsSync10, readFileSync as readFileSync6, statSync as statSync4, unlinkSync as unlinkSync4 } from "fs";
 
 // src/patch-injection.ts
 var LEVERFRAME_INJECTION_MARKER = "/*leverframe:patch:v1*/";
@@ -15319,7 +15421,7 @@ function clearPatchJournal(identity) {
   }
 }
 function sha256File(path) {
-  return createHash9("sha256").update(readFileSync5(path)).digest("hex");
+  return createHash9("sha256").update(readFileSync6(path)).digest("hex");
 }
 var defaultPatchRuntime = {
   async inspect(path, knownPatchedSha256) {
@@ -15914,11 +16016,11 @@ async function runLaunchPatchCheckV2(opts = {}, presenter = clackPatchPresenter)
 }
 
 // src/patch-diagnostics.ts
-import { existsSync as existsSync12, readFileSync as readFileSync6 } from "fs";
+import { existsSync as existsSync12, readFileSync as readFileSync7 } from "fs";
 import { createHash as createHash10 } from "crypto";
 function sha256File2(path) {
   try {
-    return createHash10("sha256").update(readFileSync6(path)).digest("hex");
+    return createHash10("sha256").update(readFileSync7(path)).digest("hex");
   } catch {
     return null;
   }
@@ -16119,7 +16221,7 @@ function getPatchManifestPath() {
 }
 function readPatchManifest(path = getPatchManifestPath()) {
   try {
-    const parsed = JSON.parse(readFileSync7(path, "utf8"));
+    const parsed = JSON.parse(readFileSync8(path, "utf8"));
     if (parsed && typeof parsed.binaryPath === "string" && typeof parsed.configHash === "string") {
       return parsed;
     }

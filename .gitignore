@@ -5,6 +5,7 @@
 !/.nvmrc
 !/LICENSE
 !/README.md
+!/CHANGELOG.md
 !/package.json
 !/pnpm-lock.yaml
 !/pnpm-workspace.yaml

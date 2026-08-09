@@ -33,15 +33,20 @@ function nonnegative(value: number, name: string): number {
 export function calculateContextBudget(inputs: ContextBudgetInputs): ContextBudget {
   const window = nonnegative(inputs.modelContextWindow, 'modelContextWindow');
   const reserved = nonnegative(inputs.reservedOutput, 'reservedOutput');
-  const fixed = ['systemEstimate', 'toolsEstimate', 'messageEstimate', 'imageEstimate', 'safetyOverhead', 'estimatorErrorMargin', 'recentTailEstimate']
-    .map(name => nonnegative(inputs[name as keyof ContextBudgetInputs] as number, name));
+  const systemTokens = nonnegative(inputs.systemEstimate, 'systemEstimate');
+  const toolTokens = nonnegative(inputs.toolsEstimate, 'toolsEstimate');
+  const messageTokens = nonnegative(inputs.messageEstimate, 'messageEstimate');
+  const imageTokens = nonnegative(inputs.imageEstimate, 'imageEstimate');
+  const safetyTokens = nonnegative(inputs.safetyOverhead, 'safetyOverhead');
+  const estimatorMarginTokens = nonnegative(inputs.estimatorErrorMargin, 'estimatorErrorMargin');
+  const recentTailTokens = nonnegative(inputs.recentTailEstimate, 'recentTailEstimate');
   const minimumUsefulRoom = inputs.minimumUsefulRoom === undefined ? 1024 : nonnegative(inputs.minimumUsefulRoom, 'minimumUsefulRoom');
-  const availableInput = Math.max(0, window - fixed[0] - fixed[1] - fixed[2] - fixed[3] - fixed[4] - fixed[5] - reserved);
-  const compactionRoom = Math.max(0, availableInput - fixed[6]);
+  const availableInput = Math.max(0, window - systemTokens - toolTokens - messageTokens - imageTokens - safetyTokens - estimatorMarginTokens - reserved);
+  const compactionRoom = Math.max(0, availableInput - recentTailTokens);
   const unableToCompact = compactionRoom < minimumUsefulRoom;
   if (unableToCompact) return { highWatermark: 0, lowWatermark: 0, availableInput, compactionRoom, unableToCompact: true };
   const highWatermark = compactionRoom;
-  const lowStep = Math.max(1, Math.ceil((reserved + fixed[4] + fixed[5]) / 2));
+  const lowStep = Math.max(1, Math.ceil((reserved + safetyTokens + estimatorMarginTokens) / 2));
   const lowWatermark = Math.max(0, highWatermark - lowStep);
   return { highWatermark, lowWatermark: Math.min(lowWatermark, highWatermark - 1), availableInput, compactionRoom, unableToCompact: false };
 }

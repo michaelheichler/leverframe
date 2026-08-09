@@ -359,106 +359,6 @@ var DEFAULT_SERVER_PORT = 17645;
 var VERTEX_ANTHROPIC_NPM = "@ai-sdk/google-vertex/anthropic";
 var VERSION = package_default.version;
 
-// src/context-window.ts
-import { readFileSync as readFileSync2 } from "fs";
-var DEFAULT_CONTEXT_WINDOW = 2e5;
-var CACHE_PROVIDER_PRIORITY = /* @__PURE__ */ new Set(["opencode", "opencode-go"]);
-var HEURISTIC_RULES = [
-  [/gemini-2\.5-pro|gemini-1\.5-pro|gemini-3-pro/i, 2e6],
-  [/gemini/i, 1e6],
-  [/claude-opus-4-[678]|claude-sonnet-4-[678]/i, 1e6],
-  [/claude-haiku-4-[567]/i, 2e5],
-  [/claude.*\[1m\]/i, 1e6],
-  [/claude-opus-4-[56]|claude-sonnet-4-[45]|claude-3/i, 2e5],
-  [/claude/i, 2e5],
-  [/deepseek-v4|deepseek-r1|deepseek-reasoner/i, 1e6],
-  [/deepseek/i, 64e3],
-  [/gpt-5|gpt-4\.1|o3-|o4-/i, 1e6],
-  [/gpt-4o|gpt-4-turbo|gpt-4/i, 128e3],
-  [/gpt-oss/i, 131072],
-  [/qwen3|qwen-3|qwen2\.5-72b|qwen2\.5-32b|qwen-coder/i, 262144],
-  [/qwen/i, 131072],
-  [/^k3$|^k3-|kimi-k3/i, 1048576],
-  [/kimi-k2|kimi-k2\.5|moonshot/i, 262144],
-  [/minimax-m2/i, 204800],
-  [/minimax/i, 128e3],
-  [/mistral-large|ministral|mistral/i, 262144],
-  [/llama-3\.[23]|llama3/i, 131072],
-  [/grok-4\.20/i, 1e6],
-  [/grok-4\.5/i, 5e5],
-  [/grok-3|grok-4/i, 131072],
-  [/nemotron/i, 131072],
-  [/glm-5\.2/i, 1e6],
-  [/glm-5-turbo|glm-4\.7/i, 128e3],
-  [/glm-4/i, 128e3],
-  [/solar-pro3/i, 131072],
-  [/solar-pro2/i, 65536],
-  [/solar/i, 32768]
-];
-var parsedCache;
-var cacheIndex;
-var heuristicCache = /* @__PURE__ */ new Map();
-function loadOpencodeCache() {
-  if (parsedCache === void 0) {
-    try {
-      parsedCache = JSON.parse(readFileSync2(OPENCODE_CACHE_PATH, "utf8"));
-    } catch {
-      parsedCache = null;
-    }
-  }
-  return parsedCache;
-}
-function buildContextWindowIndex(cache) {
-  const index = /* @__PURE__ */ new Map();
-  const allLimits = /* @__PURE__ */ new Map();
-  for (const [providerKey, providerData] of Object.entries(cache)) {
-    const models = providerData?.models;
-    if (!models) continue;
-    for (const [modelId, entry] of Object.entries(models)) {
-      const ctx = entry.limit?.context;
-      if (typeof ctx !== "number" || ctx <= 0) continue;
-      const limits = allLimits.get(modelId) ?? [];
-      limits.push(ctx);
-      allLimits.set(modelId, limits);
-      if (CACHE_PROVIDER_PRIORITY.has(providerKey)) {
-        index.set(modelId, ctx);
-      }
-    }
-  }
-  for (const [modelId, limits] of allLimits) {
-    if (!index.has(modelId)) {
-      index.set(modelId, Math.max(...limits));
-    }
-  }
-  return index;
-}
-function getCacheIndex() {
-  if (cacheIndex === void 0) {
-    const cache = loadOpencodeCache();
-    cacheIndex = cache ? buildContextWindowIndex(cache) : /* @__PURE__ */ new Map();
-  }
-  return cacheIndex;
-}
-function contextWindowFromHeuristics(modelId) {
-  const cached = heuristicCache.get(modelId);
-  if (cached !== void 0) return cached;
-  for (const [pattern, size] of HEURISTIC_RULES) {
-    if (pattern.test(modelId)) {
-      heuristicCache.set(modelId, size);
-      return size;
-    }
-  }
-  heuristicCache.set(modelId, DEFAULT_CONTEXT_WINDOW);
-  return DEFAULT_CONTEXT_WINDOW;
-}
-function lookupContextWindow(modelId) {
-  return getCacheIndex().get(modelId) ?? contextWindowFromHeuristics(modelId);
-}
-function resolveContextWindow(modelId, explicit) {
-  if (typeof explicit === "number" && explicit > 0) return explicit;
-  return lookupContextWindow(modelId);
-}
-
 // src/context-model-id.ts
 var ONE_M_CONTEXT_SUFFIX = "[1m]";
 var ONE_M_CONTEXT_WINDOW = 1e6;
@@ -467,8 +367,7 @@ function stripOneMContextSuffix(modelId) {
 }
 function claudeCodeClientModelId(modelId, contextWindow) {
   const bare = stripOneMContextSuffix(modelId);
-  const window = resolveContextWindow(bare, contextWindow);
-  if (window >= ONE_M_CONTEXT_WINDOW) {
+  if (typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow >= ONE_M_CONTEXT_WINDOW) {
     return `${bare}${ONE_M_CONTEXT_SUFFIX}`;
   }
   return bare;
@@ -741,7 +640,7 @@ import {
   lstatSync,
   mkdirSync as mkdirSync3,
   openSync as openSync2,
-  readFileSync as readFileSync3,
+  readFileSync as readFileSync2,
   renameSync as renameSync2,
   unlinkSync as unlinkSync2,
   writeSync
@@ -798,7 +697,7 @@ function readFileStrict(path, options = {}) {
     if (options.requirePrivateMode && process.platform !== "win32" && (opened.mode & 63) !== 0) {
       throw new Error(`${description} permissions are too broad: ${path}`);
     }
-    return readFileSync3(fd, "utf8");
+    return readFileSync2(fd, "utf8");
   } finally {
     if (fd !== void 0) closeSync2(fd);
   }
@@ -872,7 +771,7 @@ import {
   lstatSync as lstatSync2,
   mkdirSync as mkdirSync4,
   openSync as openSync3,
-  readFileSync as readFileSync4,
+  readFileSync as readFileSync3,
   statSync,
   unlinkSync as unlinkSync3,
   writeFileSync as writeFileSync2
@@ -951,7 +850,7 @@ function readSnapshot(lockPath) {
       throw new Error(`Lock changed while opening: ${lockPath}`);
     }
     return {
-      raw: readFileSync4(fd, "utf8"),
+      raw: readFileSync3(fd, "utf8"),
       device: opened.dev,
       inode: opened.ino,
       modifiedAt: opened.mtimeMs
@@ -1867,9 +1766,11 @@ function buildChildEnv(baseUrl, model, apiKey, proxyPort, contextWindow, enableG
   }
   env["ANTHROPIC_BASE_URL"] = proxyPort ? `http://127.0.0.1:${proxyPort}` : baseUrl;
   env["ANTHROPIC_API_KEY"] = apiKey;
-  const bareModel = stripOneMContextSuffix(model);
   env["ANTHROPIC_MODEL"] = claudeCodeClientModelId(model, contextWindow);
-  env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = String(resolveContextWindow(bareModel, contextWindow));
+  delete env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"];
+  if (typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow > 0) {
+    env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = String(contextWindow);
+  }
   if (enableGatewayDiscovery) {
     env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1";
   }
@@ -2061,7 +1962,7 @@ import {
   lstatSync as lstatSync3,
   mkdirSync as mkdirSync5,
   openSync as openSync4,
-  readFileSync as readFileSync5,
+  readFileSync as readFileSync4,
   unlinkSync as unlinkSync4,
   utimesSync,
   writeFileSync as writeFileSync3
@@ -2162,7 +2063,7 @@ function tryAcquireConfigLock(lockPath = getConfigLockPath(), opts = {}) {
 function readLockMetadata(lockPath) {
   let raw;
   try {
-    raw = readFileSync5(lockPath, "utf8");
+    raw = readFileSync4(lockPath, "utf8");
   } catch {
     return null;
   }
@@ -2226,7 +2127,7 @@ function unlinkLockIfOwned(lockPath, nonce) {
 }
 function releaseConfigLock(lockPath, nonce) {
   try {
-    const current = JSON.parse(readFileSync5(lockPath, "utf8"));
+    const current = JSON.parse(readFileSync4(lockPath, "utf8"));
     if (current.nonce !== nonce) return;
   } catch {
     return;
@@ -2291,7 +2192,7 @@ function readConfig() {
   if (!existsSync3(configPath)) return {};
   let raw;
   try {
-    raw = readFileSync5(configPath, "utf8");
+    raw = readFileSync4(configPath, "utf8");
   } catch (err) {
     throw new CorruptConfigError(configPath, { cause: err });
   }
@@ -2646,11 +2547,11 @@ export {
   CODEX_RESPONSES_LITE_WS_URL,
   CODEX_RESPONSES_LITE_VERSION,
   CODEX_RESPONSES_WEBSOCKETS_BETA,
+  OPENCODE_CACHE_PATH,
   MAX_MODEL_CATALOG,
   DEFAULT_SERVER_PORT,
   VERTEX_ANTHROPIC_NPM,
   VERSION,
-  resolveContextWindow,
   stripOneMContextSuffix,
   claudeCodeClientModelId,
   routeLookupIds,
@@ -2704,4 +2605,4 @@ export {
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-HS4KB2ZM.js.map
+//# sourceMappingURL=chunk-HRR5J3AN.js.map

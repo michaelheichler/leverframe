@@ -1,4 +1,3 @@
-// tests/catalog.test.ts
 import { describe, it, expect } from 'vitest';
 import { MAX_MODEL_CATALOG } from '../src/constants.js';
 import { buildCatalogRoutes, localModelToRoute } from '../src/catalog.js';
@@ -51,7 +50,7 @@ describe('localModelToRoute', () => {
     };
     const route = localModelToRoute(provider, provider.models[0]!);
     expect(route).toMatchObject({
-      aliasId: 'anthropic-openai__gpt-5.5-fast[1m]',
+      aliasId: 'anthropic-openai__gpt-5.5-fast',
       realModelId: 'gpt-5.5',
     });
   });
