@@ -131,7 +131,7 @@ Create an opt-in live test that skips unless `LEVERFRAME_LIVE_CLAUDE_COMPACTION_
 
 Run: `corepack pnpm exec vitest run tests/proxy.test.ts tests/live-claude-haiku.test.ts`
 
-Expected: compact-stream assertion fails before test additions are complete. The live test is skipped and makes no external call.
+Expected: the characterization test passes against the existing proxy behavior. The live test is skipped and makes no external call.
 
 - [ ] **Step 3: Add only test seams and test policy documentation**
 
