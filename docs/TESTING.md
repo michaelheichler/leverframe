@@ -22,3 +22,11 @@ Compaction changes require focused Vitest coverage before production edits. Use 
 ## CI Gates
 
 Run `corepack pnpm exec vitest run tests/context-control.test.ts tests/request-compaction.test.ts tests/openai-oauth-models.test.ts tests/sdk-adapter.test.ts` before a Compaction change.
+
+## Compact Stream Checks
+
+Run `corepack pnpm exec vitest run tests/proxy.test.ts tests/live-claude-haiku.test.ts` to verify the local compact-request stream. It uses only a loopback OpenAI-compatible SSE fixture.
+
+The Claude Code smoke test skips by default. Set `LEVERFRAME_LIVE_CLAUDE_COMPACTION_TEST=1` and set `LEVERFRAME_LIVE_CLAUDE_MODEL` to an identifier matching `^claude-haiku-[a-z0-9.-]+$` to opt in. The test rejects every other model before it invokes Claude Code and forwards that exact identifier with `--model`.
+
+The Haiku smoke test does not validate the ChatGPT OAuth translation route. The local proxy fixture covers that translation boundary without an external provider call.

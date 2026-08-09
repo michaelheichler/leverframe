@@ -663,6 +663,96 @@ describe('SDK translated error logging', () => {
     }
   }, 20_000);
 
+  it('streams a Claude Code compact request as text with upstream tools disabled', async () => {
+    let upstreamRequest: Record<string, unknown> | undefined;
+    const upstream = http.createServer((req, res) => {
+      let body = '';
+      req.setEncoding('utf8');
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        upstreamRequest = JSON.parse(body) as Record<string, unknown>;
+        res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Connection': 'close' });
+        res.end([
+          'data: {"id":"chatcmpl-compact","object":"chat.completion.chunk","created":1,"model":"translated-model","choices":[{"index":0,"delta":{"role":"assistant","content":"Compact summary"},"finish_reason":null}]}',
+          '',
+          'data: {"id":"chatcmpl-compact","object":"chat.completion.chunk","created":1,"model":"translated-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+          '',
+          'data: [DONE]',
+          '',
+        ].join('\n'));
+      });
+    });
+    let handle: Awaited<ReturnType<typeof startProxyCatalog>> | undefined;
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        upstream.once('error', reject);
+        upstream.listen(0, '127.0.0.1', () => resolve());
+      });
+      const address = upstream.address();
+      if (!address || typeof address === 'string') throw new Error('test upstream did not bind');
+      const route: ProxyRoute = {
+        aliasId: 'leverframe:test:compact-model',
+        realModelId: 'translated-model',
+        displayName: 'Compact Model',
+        upstreamUrl: '',
+        apiKey: 'provider-key',
+        modelFormat: 'openai',
+        npm: '@ai-sdk/openai-compatible',
+        baseURL: `http://127.0.0.1:${address.port}/v1`,
+        providerId: 'test-provider',
+      };
+      handle = await startProxyCatalog([route], route.aliasId, false);
+      const compactInstruction = [
+        'CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.',
+        'Your task is to create a detailed summary of the conversation so far.',
+        'REMINDER: Do NOT call any tools. Respond with plain text only.',
+      ].join('\n');
+      const res = await postToProxy(handle.port, handle.token, {
+        model: route.aliasId,
+        max_tokens: 100,
+        messages: [{ role: 'user', content: compactInstruction }],
+        tools: [
+          { name: 'Read', input_schema: { type: 'object' } },
+          { name: 'StructuredOutput', input_schema: { type: 'object' } },
+        ],
+        tool_choice: { type: 'any' },
+        stream: true,
+      });
+
+      expect(res.status).toBe(200);
+      expect(upstreamRequest?.tool_choice).toBe('none');
+      const events = res.body
+        .split('\n\n')
+        .filter(block => block.startsWith('event: '))
+        .map(block => {
+          const [eventLine, dataLine] = block.split('\n');
+          return {
+            event: eventLine!.replace('event: ', ''),
+            data: JSON.parse(dataLine!.replace('data: ', '')) as Record<string, unknown>,
+          };
+        });
+      expect(events.map(event => event.event)).toEqual([
+        'message_start',
+        'content_block_start',
+        'content_block_delta',
+        'content_block_stop',
+        'message_delta',
+        'message_stop',
+      ]);
+      expect(events.some(event => event.data.type === 'content_block_start'
+        && (event.data.content_block as { type?: unknown } | undefined)?.type === 'tool_use')).toBe(false);
+      expect(events.some(event => event.data.type === 'message_delta'
+        && (event.data.delta as { stop_reason?: unknown } | undefined)?.stop_reason === 'tool_use')).toBe(false);
+      const messageDelta = events.find(event => event.event === 'message_delta');
+      expect(messageDelta).toBeDefined();
+      expect((messageDelta!.data.delta as { stop_reason?: unknown }).stop_reason).toBe('end_turn');
+    } finally {
+      handle?.close();
+      if (upstream.listening) await new Promise<void>(resolve => upstream.close(() => resolve()));
+    }
+  }, 20_000);
+
   it('logs SDK input and translated output through successful stream completion', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'leverframe-sdk-success-'));
     const inferenceLogPath = join(dir, 'inference.jsonl');
