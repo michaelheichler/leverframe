@@ -1,6 +1,3 @@
-// Claude Code treats third-party routes as 200K unless the model id ends with [1m].
-import { resolveContextWindow } from './context-window.js';
-
 export const ONE_M_CONTEXT_SUFFIX = '[1m]';
 export const ONE_M_CONTEXT_WINDOW = 1_000_000;
 
@@ -15,8 +12,7 @@ export function hasOneMContextSuffix(modelId: string): boolean {
 /** Model id to pass to Claude Code (--model / ANTHROPIC_MODEL) for accurate context UX. */
 export function claudeCodeClientModelId(modelId: string, contextWindow?: number): string {
   const bare = stripOneMContextSuffix(modelId);
-  const window = resolveContextWindow(bare, contextWindow);
-  if (window >= ONE_M_CONTEXT_WINDOW) {
+  if (typeof contextWindow === 'number' && Number.isFinite(contextWindow) && contextWindow >= ONE_M_CONTEXT_WINDOW) {
     return `${bare}${ONE_M_CONTEXT_SUFFIX}`;
   }
   return bare;

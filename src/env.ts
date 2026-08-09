@@ -1,7 +1,6 @@
 // src/env.ts
 import { CONFLICTING_ENV_VARS } from './constants.js';
-import { claudeCodeClientModelId, stripOneMContextSuffix } from './context-model-id.js';
-import { resolveContextWindow } from './context-window.js';
+import { claudeCodeClientModelId } from './context-model-id.js';
 import {
   oauthCredentialToKeychainJson,
   parseStoredOAuthCredential,
@@ -53,15 +52,17 @@ export function buildChildEnv(
     ? `http://127.0.0.1:${proxyPort}`
     : baseUrl;
   env['ANTHROPIC_API_KEY'] = apiKey;
-  const bareModel = stripOneMContextSuffix(model);
   env['ANTHROPIC_MODEL'] = claudeCodeClientModelId(model, contextWindow);
+  delete env['CLAUDE_CODE_MAX_CONTEXT_TOKENS'];
   // Claude Code defaults to 200K for non-api.anthropic.com base URLs; override with
   // the launch model's real window. NOTE: in switch-menu mode this is fixed at launch
   // and does NOT update on live /model switch — Claude Code's gateway model discovery
   // only carries id + display_name (no context_window), so this env var is the only
   // lever and it reflects the model you started with.
   // Third-party routes also require a `[1m]` model-id suffix for 1M+ windows in the UI.
-  env['CLAUDE_CODE_MAX_CONTEXT_TOKENS'] = String(resolveContextWindow(bareModel, contextWindow));
+  if (typeof contextWindow === 'number' && Number.isFinite(contextWindow) && contextWindow > 0) {
+    env['CLAUDE_CODE_MAX_CONTEXT_TOKENS'] = String(contextWindow);
+  }
   if (enableGatewayDiscovery) {
     env['CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY'] = '1';
   }

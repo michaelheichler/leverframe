@@ -1,5 +1,3 @@
-// src/registry/refresh-models.ts — user-initiated model list refresh per modelSource
-
 import { fetchAnthropicModels } from './custom-endpoint.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
 import { loadRegistry, updateRegistry } from './io.js';
@@ -23,7 +21,6 @@ import type { CachedModel, ProviderRegistry, RegistryProvider } from './types.js
 import { buildOpenAiOAuthModels, CHATGPT_CODEX_UNSUPPORTED_MODELS } from '../data/openai-oauth-models.js';
 import { modelPrefersResponsesApi } from '../provider-factory.js';
 import { deriveBrand } from '../models.js';
-import { resolveContextWindow } from '../context-window.js';
 import { getInstalledClaudeVersion } from '../launch.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 
@@ -41,12 +38,6 @@ export interface RefreshModelsResult {
   refreshed: RefreshProviderResult[];
 }
 
-/**
- * OAuth model refresh:
- * - OpenAI OAuth: Fetch from chatgpt.com/backend-api/models using the OAuth access token.
- *   Falls back to static seed on network failure or unexpected response format.
- *   Note: api.openai.com/v1/models rejects OAuth tokens — never call that endpoint here.
- */
 async function refreshOAuthProvider(
   provider: RegistryProvider,
   accessToken: string,
@@ -56,17 +47,14 @@ async function refreshOAuthProvider(
   throw new Error(`refreshOAuthProvider: unsupported template "${tpl}"`);
 }
 
-/** A parsed model entry, including backend-reported transport capability flags. */
 interface OpenAiModelEntry {
   id: string;
   name: string;
-  context_window?: number;
-  /** Backend flags: model needs the Responses-Lite shape / WebSocket transport. */
+  context_window?: unknown;
   useResponsesLite?: boolean;
   preferWebSockets?: boolean;
 }
 
-/** Read the Responses-Lite / WebSocket capability flags off a raw model entry. */
 function readCapabilityFlags(m: Record<string, unknown>): Pick<OpenAiModelEntry, 'useResponsesLite' | 'preferWebSockets'> {
   const bool = (v: unknown): boolean | undefined => (typeof v === 'boolean' ? v : undefined);
   return {
@@ -75,29 +63,30 @@ function readCapabilityFlags(m: Record<string, unknown>): Pick<OpenAiModelEntry,
   };
 }
 
-/** Parse model entries from OpenAI-standard or ChatGPT-internal response shapes. */
+function confirmedContextWindow(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
 function parseOpenAiModelEntries(body: unknown): OpenAiModelEntry[] {
   if (!body || typeof body !== 'object') return [];
   const b = body as Record<string, unknown>;
 
-  // ChatGPT backend format: { models: [{ slug, title }] }
   if (Array.isArray(b.models)) {
     return (b.models as Array<Record<string, unknown>>)
       .map(m => ({
         id: (m.slug as string) ?? '',
         name: (m.title as string) ?? (m.name as string) ?? (m.slug as string) ?? '',
-        context_window: m.context_window as number | undefined,
+        context_window: m.context_window,
         ...readCapabilityFlags(m),
       }))
       .filter(m => m.id.length > 0);
   }
-  // Standard OpenAI format: { data: [{ id, name }] }
   if (Array.isArray(b.data)) {
     return (b.data as Array<Record<string, unknown>>)
       .map(m => ({
         id: (m.id as string) ?? '',
         name: (m.name as string) ?? (m.id as string) ?? '',
-        context_window: m.context_window as number | undefined,
+        context_window: m.context_window,
         ...readCapabilityFlags(m),
       }))
       .filter(m => m.id.length > 0);
@@ -105,17 +94,14 @@ function parseOpenAiModelEntries(body: unknown): OpenAiModelEntry[] {
   return [];
 }
 
-/**
- * Build a CachedModel for a discovered OpenAI OAuth model. The live backend is
- * authoritative for context and capability flags: when the model is also seeded,
- * live values are merged over the seed (the seed is only a fallback).
- */
 function buildDynamicOAuthModel(entry: OpenAiModelEntry, seedById: Map<string, CachedModel>): CachedModel {
   const seed = seedById.get(entry.id);
+  const contextWindow = confirmedContextWindow(entry.context_window);
   if (seed) {
     return {
       ...seed,
-      contextWindow: entry.context_window ?? seed.contextWindow,
+      contextWindow,
+      contextWindowUnconfirmed: contextWindow === undefined ? true : undefined,
       useResponsesLite: entry.useResponsesLite ?? seed.useResponsesLite,
       preferWebSockets: entry.preferWebSockets ?? seed.preferWebSockets,
     };
@@ -128,7 +114,8 @@ function buildDynamicOAuthModel(entry: OpenAiModelEntry, seedById: Map<string, C
     upstreamModelId: id,
     family: prefix,
     brand: deriveBrand(prefix),
-    contextWindow: entry.context_window ?? resolveContextWindow(id),
+    contextWindow,
+    contextWindowUnconfirmed: contextWindow === undefined ? true : undefined,
     modelFormat: 'openai' as const,
     npm: '@ai-sdk/openai',
     reasoning: modelPrefersResponsesApi(id),
@@ -137,7 +124,6 @@ function buildDynamicOAuthModel(entry: OpenAiModelEntry, seedById: Map<string, C
   };
 }
 
-/** Fetch and parse JSON from a URL with auth and timeout, returning null on any failure. */
 async function fetchJsonWithAuth(
   url: string,
   accessToken: string,
@@ -164,18 +150,6 @@ async function fetchJsonWithAuth(
   }
 }
 
-/**
- * Fetch OpenAI OAuth (ChatGPT) models using a 3-tier strategy:
- *
- * 1. chatgpt.com/backend-api/codex/models — Codex-specific endpoint.
- *    If it exists, it returns ONLY models the Codex API actually supports,
- *    so no filtering is needed. Self-updating as OpenAI changes Codex availability.
- *
- * 2. chatgpt.com/backend-api/models — all ChatGPT models, filtered by the
- *    confirmed-bad set. Used when the Codex endpoint doesn't exist or returns nothing.
- *
- * 3. Static seed — emergency fallback with no network dependency.
- */
 async function refreshOpenAiOAuthModels(
   accessToken: string,
 ): Promise<{ models: CachedModel[]; source: 'live' | 'seed'; failureReason?: string }> {
@@ -186,7 +160,6 @@ async function refreshOpenAiOAuthModels(
 
   const claudeVersion = getInstalledClaudeVersion();
 
-  // Tier 1: Codex-specific model listing — source of truth for Codex availability.
   const codexResult = await fetchJsonWithAuth(
     `https://chatgpt.com/backend-api/codex/models?client_version=${claudeVersion}`,
     accessToken,
@@ -197,7 +170,6 @@ async function refreshOpenAiOAuthModels(
     return { models: toModels(codexEntries), source: 'live' };
   }
 
-  // Tier 2: General ChatGPT model list, filtered by known Codex restrictions.
   const chatGptResult = await fetchJsonWithAuth(
     'https://chatgpt.com/backend-api/models',
     accessToken,
@@ -209,7 +181,6 @@ async function refreshOpenAiOAuthModels(
     return { models: toModels(chatGptEntries), source: 'live' };
   }
 
-  // Tier 3: Static seed — reuse already-built map instead of calling the builder again.
   return {
     models: [...seedById.values()],
     source: 'seed',
@@ -317,7 +288,7 @@ async function refreshProviderModelsInner(
       name: provider.name,
       ok: true,
       skipped: true,
-      reason: 'Manual-only provider — model list is not refreshed automatically.',
+      reason: 'Manual-only provider. The model list is not refreshed automatically.',
     };
   }
 
@@ -328,29 +299,25 @@ async function refreshProviderModelsInner(
     let oauthFallbackReason: string | undefined;
 
     if (provider.authType === 'oauth' && ((provider.templateId ?? provider.id) === 'openai' || provider.id === 'openai-oauth')) {
-      // OAuth tokens are not valid API keys for the developer endpoints.
-      // OpenAI: ChatGPT JWT rejected by api.openai.com; no /v1/models on ChatGPT backend.
       if (!apiKey) {
         return {
           id: provider.id,
           name: provider.name,
           ok: false,
-          reason: 'OAuth token not available — try signing in again with leverframe providers auth.',
+          reason: 'OAuth token not available. Sign in again with leverframe providers auth.',
         };
       }
       const oauthResult = await refreshOAuthProvider(provider, apiKey);
       const failureDetail = oauthResult.failureReason ? ` (${oauthResult.failureReason})` : '';
       if (oauthResult.source === 'seed' && cachedModelCount(provider) > 0) {
-        // Live discovery failed — keep the existing cache (which may already include
-        // models newer than the built-in fallback list) instead of overwriting it.
         return skipWithCachedModels(
           provider,
-          `Live model discovery failed${failureDetail} — kept your existing cached model list instead of `
+          `Live model discovery failed${failureDetail}. Kept your existing cached model list instead of `
           + "overwriting it with leverframe's built-in fallback list. Try refreshing again later.",
         );
       }
       if (oauthResult.source === 'seed') {
-        oauthFallbackReason = `Live model discovery failed${failureDetail} — showing leverframe's built-in fallback `
+        oauthFallbackReason = `Live model discovery failed${failureDetail}. Showing leverframe's built-in fallback `
           + 'model list, which may not include the newest models yet. Try refreshing again later.';
       }
       models = oauthResult.models;
@@ -359,7 +326,7 @@ async function refreshProviderModelsInner(
           id: provider.id,
           name: provider.name,
           ok: false,
-          reason: 'No models available for this OAuth provider — try signing in again.',
+          reason: 'No models available for this OAuth provider. Sign in again.',
         };
       }
     } else {
@@ -370,7 +337,7 @@ async function refreshProviderModelsInner(
         if (cachedModelCount(provider) > 0) {
           return skipWithCachedModels(
             provider,
-            'A placeholder API key is configured — kept cached model list. '
+            'A placeholder API key is configured. Kept cached model list. '
             + 'Add this provider again via leverframe providers add with a real key to refresh live.',
           );
         }
@@ -378,7 +345,7 @@ async function refreshProviderModelsInner(
           id: provider.id,
           name: provider.name,
           ok: false,
-          reason: 'No usable API key — add the provider via leverframe providers add with a real key.',
+          reason: 'No usable API key. Add the provider via leverframe providers add with a real key.',
         };
       }
       if (!keyOptional && !effectiveKey) {
@@ -386,7 +353,7 @@ async function refreshProviderModelsInner(
           id: provider.id,
           name: provider.name,
           ok: false,
-          reason: 'API key not available — cannot refresh models.',
+          reason: 'API key not available. Cannot refresh models.',
         };
       }
       const fetched = await refreshApiListProvider(provider, effectiveKey ?? '');
