@@ -1,0 +1,279 @@
+tests/launch-installation.test.ts
+  s_d52a09b20bec05::t_ead424950fe700 37
+src/context/vector-memory.ts
+  s_ab4746467bd11e::t_724088378f288c 1-30,35,37-41,43-65
+  s_ab4746467bd11e::t_271ff4b5b874bb 42
+  s_ab4746467bd11e::t_06e3792f332160 31-34,36
+tests/memory-retention.test.ts
+  s_ab4746467bd11e::t_06e3792f332160 9
+  s_ab4746467bd11e::t_724088378f288c 1-7,10-28,30-36,47
+  s_ab4746467bd11e::t_5ea47b7d5e22fa 8,29
+  s_ab4746467bd11e::t_271ff4b5b874bb 37-46
+tests/patch-transaction-ordering.test.ts
+  s_d52a09b20bec05::t_eb3c779370fcca 19
+  s_d52a09b20bec05::t_a1834b4a18aa8b 1-18,20-71,73-77,80-86,88-103,105-107,109-120,124
+  s_d52a09b20bec05::t_d7e4ff798aa29a 72,78-79,87
+  s_d52a09b20bec05::t_682e8431152ef4 104,108,121-123
+src/patch-diagnostics.ts
+  s_d52a09b20bec05::t_9cbefe49351316 3-7,29,117-118,121,134-160,196,267
+  s_d52a09b20bec05::t_2c8f4c6292cead 281
+src/context/context-watcher-state.ts
+  s_ab4746467bd11e::t_c1a8805288e539 1-69
+src/context/local-inference-profile.ts
+  s_ab4746467bd11e::t_22046da5c85be0 15-17
+  s_ab4746467bd11e::t_ccd2e9ae90a6a6 147
+  s_ab4746467bd11e::t_f83221f7678558 9,20-28,107-134,154,162-165
+  s_ab4746467bd11e::t_79b4eebd3a7858 1-8,10-14,18-19,29-106,135-146,148-153,155-161,166-191
+src/context/context-budget.ts
+  s_ab4746467bd11e::t_c1a8805288e539 1-59
+tests/trusted-crypto.test.ts
+  s_ab4746467bd11e::t_90ef30878b80dc 27-28
+  s_ab4746467bd11e::t_f57662d5152abe 1-26,29-31
+tests/encrypted-memory.test.ts
+  s_ab4746467bd11e::t_7064159fe4c8ba 1,3-28,42-43
+  s_ab4746467bd11e::t_271ff4b5b874bb 2,29-41
+tests/local-benchmark-scoring.test.ts
+  s_ab4746467bd11e::t_b2641cd3b90e05 15
+  s_ab4746467bd11e::t_8976ba084380a0 122-135
+  s_ab4746467bd11e::t_b18e388d2cf70c 1-14,16-55,66-85,87-106,108-121,136-140
+  s_ab4746467bd11e::t_e795cf248f38d8 56-65,86,107
+tests/local-benchmark-candidates.test.ts
+  s_ab4746467bd11e::t_373501d5e156af 1-53
+tests/fixtures/worker-fixture.mjs
+  s_ab4746467bd11e::t_ae25ca0e8cc0b6 5,19,40,45
+  s_ab4746467bd11e::t_1609d6d33d69f6 44,49
+  s_ab4746467bd11e::t_00d0c6aaba8316 2,36-39
+  s_ab4746467bd11e::t_67a461ce148a54 1,3-4,6-7,9-18,22-26,33-35,41-43,47-48,50-73
+  s_ab4746467bd11e::t_c2b2e3597a0e01 8,27-32
+  s_ab4746467bd11e::t_e55f5e1d9436c4 20-21
+  s_ab4746467bd11e::t_b7b0a8f23a9401 46
+src/context/worker-supervisor.ts
+  s_ab4746467bd11e::t_67a461ce148a54 1-2,4-6,8-42,47-50,55-82,85-98,100-101,111-134,138-145,147-148,150-161,170,172-173,178,180-182,184-198,200-201,210-212,214-218,220-230,233-259,261-266,268-286
+  s_ab4746467bd11e::t_1609d6d33d69f6 3,7,83-84,99,106-110,135-137,146,183,202-209,213,219,231-232
+  s_ab4746467bd11e::t_e6f4e055e6fbbb 51-54,149,162-169,171,174-177,179
+  s_ab4746467bd11e::t_33ddd6e4b6a71d 43-46,199,260,267
+  s_ab4746467bd11e::t_daef60eff3f21c 102-105
+src/context/encrypted-memory.ts
+  s_ab4746467bd11e::t_41b2e78516cf84 117,138,140-142
+  s_ab4746467bd11e::t_06e3792f332160 74-77,79
+  s_ab4746467bd11e::t_271ff4b5b874bb 85,106,114,124,147
+  s_ab4746467bd11e::t_7064159fe4c8ba 1-73,78,80-84,86-105,107-113,115-116,118-123,125-137,139,143-146,148-159
+tests/patch-legacy-recovery.test.ts
+  s_d52a09b20bec05::t_71d92617deeb64 42
+  s_d52a09b20bec05::t_ead424950fe700 29
+  s_d52a09b20bec05::t_a8141b58e21c54 303
+tests/local-hardware-probe.test.ts
+  s_ab4746467bd11e::t_674a90a5d47b61 84
+  s_ab4746467bd11e::t_22046da5c85be0 1-48,50-79,95-96
+  s_ab4746467bd11e::t_f83221f7678558 49,80-83,85-94
+.gitignore
+  s_769841def7b2d1::t_b8ac98bb2f371b 29-31
+tests/context-control.test.ts
+  s_ab4746467bd11e::t_7eaf1fdf1851ef 26
+  s_ab4746467bd11e::t_9d48ee0858bfb5 8-14,28-65,82-90
+  s_ab4746467bd11e::t_650ad254262828 66-81
+  s_ab4746467bd11e::t_eb7b95fea2baa2 98
+  s_ab4746467bd11e::t_c1a8805288e539 1-7,15-25,27,91-97,99-137
+src/patch-transforms.ts
+  s_d52a09b20bec05::t_6111ea7f491edf 61,129
+  s_d52a09b20bec05::t_2697cac6e9b941 79,102-106,210-211
+  s_d52a09b20bec05::t_636e1af615a0f2 31,69,75,77,126,143,193,241,285
+  s_d52a09b20bec05::t_7b015d74476fe4 9,23
+  s_d52a09b20bec05::t_d13613c1f951b2 280,288
+  s_d52a09b20bec05::t_bcc736d0fab620 7,45,47,71,73,164,204
+  s_d52a09b20bec05::t_6de053f27ff50d 279,282
+  s_d52a09b20bec05::t_66660efb548397 2,68,72,74
+  s_d52a09b20bec05::t_be21cd37afbda5 1
+tests/patch-v2.test.ts
+  s_d52a09b20bec05::t_a63444e5bf6aa8 143-144
+  s_d52a09b20bec05::t_a8141b58e21c54 476
+  s_d52a09b20bec05::t_ead424950fe700 36
+  s_d52a09b20bec05::t_fcc4be5b411bd7 294,309
+tests/local-inference-profile.test.ts
+  s_ab4746467bd11e::t_f83221f7678558 14,28-32,125-131,133-153
+  s_ab4746467bd11e::t_d523cf55da4079 132
+  s_ab4746467bd11e::t_79b4eebd3a7858 1-13,15-27,33-57,65-124,154-156
+  s_ab4746467bd11e::t_ccd2e9ae90a6a6 58-64
+src/context/trusted-metadata.ts
+  s_ab4746467bd11e::t_eed30da41fec9e 102-103,115,128
+  s_ab4746467bd11e::t_c961b4ac874b49 1-101,104-113,116-126,129-143
+  s_ab4746467bd11e::t_04875de200e1c4 114,127
+  s_ab4746467bd11e::t_99f4abbbb5f5c4 144
+CLAUDE.md
+  s_ab4746467bd11e::t_9c553d9616da7d 4
+src/context/local-benchmark-scoring.ts
+  s_ab4746467bd11e::t_224bd92df9fefb 182
+  s_ab4746467bd11e::t_8976ba084380a0 117-133
+  s_ab4746467bd11e::t_b18e388d2cf70c 1-23,25-116,134-181,183-198
+  s_ab4746467bd11e::t_e795cf248f38d8 24
+tests/patch-lifecycle-fixture.test.ts
+  s_d52a09b20bec05::t_ead424950fe700 42
+src/context/local-hardware-probe.ts
+  s_ab4746467bd11e::t_22046da5c85be0 1-66,74-96,99-107,111-122
+  s_ab4746467bd11e::t_f83221f7678558 67-73
+  s_ab4746467bd11e::t_ccd2e9ae90a6a6 97-98,108-110
+.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md
+  s_769841def7b2d1::t_a68acdac237b1b 1-97
+tests/patch-version-policy.test.ts
+  s_d52a09b20bec05::t_eb3c779370fcca 2,14,174-219
+  s_d52a09b20bec05::t_567c9a63edd2c0 1,8,15,18,24-25,78-111,113-120,140-147,220-266
+  s_d52a09b20bec05::t_6517878610226b 287
+  s_d52a09b20bec05::t_2710045b263df8 3-7,9-13,16-17,20-23,26-77,112,148-173,267-286,288-299
+  s_d52a09b20bec05::t_787d2e3e89ab7d 19
+  s_d52a09b20bec05::t_4f4986bf8a5854 121-139
+tests/worker-protocol.test.ts
+  s_ab4746467bd11e::t_1609d6d33d69f6 5,36-38
+  s_ab4746467bd11e::t_4fa0349ed73840 11
+  s_ab4746467bd11e::t_ab97d293211969 1-4,6-10,12-35,39-49
+tests/patch-prototype-alias.test.ts
+  s_d52a09b20bec05::t_62473efd087e4d 1-31,33,37-44,73
+  s_d52a09b20bec05::t_6de053f27ff50d 32,34-36
+  s_d52a09b20bec05::t_116f672bdff1db 45-49,51-57
+  s_d52a09b20bec05::t_6dcb72677d8e8e 58-72
+  s_d52a09b20bec05::t_20dbb21d30c4bc 50
+src/context/worker-protocol.ts
+  s_ab4746467bd11e::t_ab97d293211969 1-4,6-108,110-116,118-150,152-158
+  s_ab4746467bd11e::t_604eec29be6e4c 109,117
+  s_ab4746467bd11e::t_b7b0a8f23a9401 5
+  s_ab4746467bd11e::t_1609d6d33d69f6 151
+src/context/local-benchmark-candidates.ts
+  s_ab4746467bd11e::t_373501d5e156af 1-76
+src/context/summary-planning.ts
+  s_ab4746467bd11e::t_25575f79d514db 37-39,47,49-52,64-75,111,113-121,124-127,129-130,146-148,150
+  s_ab4746467bd11e::t_8fb8f79ec6ebc7 1-36,40-46,48,53-63,76-110,112,122-123,137-145,149,151
+  s_ab4746467bd11e::t_b31d2ff52b28d9 128
+  s_ab4746467bd11e::t_95652b9f93f0ae 131-136
+src/context/trusted-crypto.ts
+  s_ab4746467bd11e::t_99f4abbbb5f5c4 1-26
+tests/patcher.test.ts
+  s_d52a09b20bec05::t_66660efb548397 653
+  s_d52a09b20bec05::t_785ceba9380065 413,415,476-477
+.claude/skills/gitnexus/gitnexus-exploring/SKILL.md
+  s_769841def7b2d1::t_a68acdac237b1b 1-78
+.claude/skills/gitnexus/gitnexus-guide/SKILL.md
+  s_769841def7b2d1::t_a68acdac237b1b 1-138
+.claude/skills/gitnexus/gitnexus-cli/SKILL.md
+  s_769841def7b2d1::t_a68acdac237b1b 1-86
+src/patch-reconcile.ts
+  s_d52a09b20bec05::t_511ba9332e5560 203
+  s_d52a09b20bec05::t_9cbefe49351316 2-7,198,204-207,272,274-278
+src/patch-transaction.ts
+  s_d52a09b20bec05::t_c8cf3014e66528 333,340,343,356
+  s_d52a09b20bec05::t_952b829cefd9b3 374,392
+  s_d52a09b20bec05::t_d5bfa62f9efc3e 11-14,244-246
+  s_d52a09b20bec05::t_d8b5fdb42a4469 10
+tests/phase4-summary.test.ts
+  s_ab4746467bd11e::t_5968104411b83a 39
+  s_ab4746467bd11e::t_25575f79d514db 44,56-58,61-76,78-89
+  s_ab4746467bd11e::t_ddbc98117c1752 29,32,77
+  s_ab4746467bd11e::t_95652b9f93f0ae 9,53
+  s_ab4746467bd11e::t_8fb8f79ec6ebc7 1-8,10-28,30-31,33-38,40-43,45-52,54-55,59-60,90-91
+dist/cli.js
+  s_d52a09b20bec05::t_5869781ce9d9ed 304,309-329,14728,14751,14753-14754,14757,14777-14781,14802,14875-14876,14931-14933,14937,15395-15397,15469,15476,15479,15491,15508,15524,15827,15832-15836,15885,15887-15891,15962-15963,15966,15973,15978-16002,16029,16096,16110
+src/context/memory-retention.ts
+  s_ab4746467bd11e::t_724088378f288c 2-19,22,24-33,35-41,50,52-65,67-92
+  s_ab4746467bd11e::t_274ed6de3dce9b 34
+  s_ab4746467bd11e::t_271ff4b5b874bb 1,20-21,23,42-49,51,66
+src/context/request-compaction.ts
+  s_ab4746467bd11e::t_f790775ade0a9d 389
+  s_ab4746467bd11e::t_17f9af282f29f9 162,186,269
+  s_ab4746467bd11e::t_b70af7c6702c06 96-98,134-156,209,212-215,217-218,220,222-233,245-247,284-305,307-308
+  s_ab4746467bd11e::t_0afc431b06815e 1-95,99-133,157-161,163-164,178-185,187-208,210-211,216,219,221,234-244,248-268,270-283,306,309-311,313-315,317-319,322-323,325,327-332,345-348,351,353-360,367-388,390
+  s_ab4746467bd11e::t_0677ee8db68e6d 165-177,312,316,320-321,324,326,333-344,349-350,352,361-366
+tests/trusted-metadata.test.ts
+  s_ab4746467bd11e::t_8a9ac8f910f958 31
+  s_ab4746467bd11e::t_c961b4ac874b49 1-30,32-41
+tests/patch-transforms-claude-2-1-226.test.ts
+  s_d52a09b20bec05::t_edfe2f6014ecc1 1-4,6-9,14-15,17-19,31,53,55
+  s_d52a09b20bec05::t_e3ad589ce6a378 10-13,16,20-30,32-37,39-43,45-52
+  s_d52a09b20bec05::t_3ed0f429fb664e 5,38,44
+  s_d52a09b20bec05::t_aae262ae3c0ea9 54
+src/context/local-benchmark-fixtures.ts
+  s_ab4746467bd11e::t_b18e388d2cf70c 1-41
+.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md
+  s_769841def7b2d1::t_a68acdac237b1b 1-121
+src/claude-installation.ts
+  s_d52a09b20bec05::t_b2395f7b7ae707 72
+  s_d52a09b20bec05::t_9cbefe49351316 78-102
+src/context/summary-schema.ts
+  s_ab4746467bd11e::t_95652b9f93f0ae 54,228-229
+  s_ab4746467bd11e::t_62742713b11138 227
+  s_ab4746467bd11e::t_8fb8f79ec6ebc7 1-53,55-226,230-232
+.claude/skills/gitnexus/gitnexus-debugging/SKILL.md
+  s_769841def7b2d1::t_a68acdac237b1b 1-101
+tests/vector-memory.test.ts
+  s_ab4746467bd11e::t_271ff4b5b874bb 20-23
+  s_ab4746467bd11e::t_06e3792f332160 9,17-18
+  s_ab4746467bd11e::t_724088378f288c 1-8,10-16,19,24
+tests/worker-supervisor.test.ts
+  s_ab4746467bd11e::t_c2b2e3597a0e01 99-106
+  s_ab4746467bd11e::t_1609d6d33d69f6 7,12,40-60,79-80
+  s_ab4746467bd11e::t_00d0c6aaba8316 1-6,8-11,13-39,67-78,81-98,107-111
+  s_ab4746467bd11e::t_daef60eff3f21c 61-66
+src/context/anthropic-context-groups.ts
+  s_ab4746467bd11e::t_9d48ee0858bfb5 126-127,133-139,152,162-167,169-170,178,182
+  s_ab4746467bd11e::t_c1a8805288e539 1-12,14-71,77-125,128-132,140-151,153-161,168,174-177,179,181,183,189-210,215-216,218-224
+  s_ab4746467bd11e::t_7eaf1fdf1851ef 211-214,217
+  s_ab4746467bd11e::t_b83f7f97361a0b 171,173,184
+  s_ab4746467bd11e::t_650ad254262828 13,172,185-188
+  s_ab4746467bd11e::t_11711f754fd55c 72-76
+  s_ab4746467bd11e::t_d13e80222909f9 180
+src/context/workspace-digest-key.ts
+  s_ab4746467bd11e::t_99f4abbbb5f5c4 1-5,7-59,61-74
+  s_ab4746467bd11e::t_6062294268c8a7 6,60
+tests/request-compaction.test.ts
+  s_ab4746467bd11e::t_0afc431b06815e 2-38,41-51,53,55-61,63-86,88-101,105
+  s_ab4746467bd11e::t_5f189ade3e1067 163,165-172
+  s_ab4746467bd11e::t_f790775ade0a9d 52,54,62,102-104,150-152,173
+  s_ab4746467bd11e::t_f6a7e12263bd8b 1,110-112,121,159-162,164
+  s_ab4746467bd11e::t_786f0047fd1784 39-40,107,113-115,135,137-141
+  s_ab4746467bd11e::t_f572912bc53e91 87,106,108-109,116-120,122-134,136,142-149,153-158
+tests/cli.test.ts
+  s_d52a09b20bec05::t_45f7cbae6ec45e 2,296-298,301,309,313
+tests/workspace-digest-key.test.ts
+  s_ab4746467bd11e::t_25cc8d5f018130 75
+  s_ab4746467bd11e::t_f57662d5152abe 1-74,76-88
+.claude/skills/github-actions-templates
+  s_769841def7b2d1::t_6dd31339e0b003 1
+.claude/skills/typescript-advanced-types
+  s_769841def7b2d1::t_ed3a562ec9df8d 1
+.claude/skills/vitest
+  s_769841def7b2d1::t_38f96eaa3a1eda 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "e6b17ae883c69835d5ef55fe11b98876384ec4d4",
+  "prompts": {},
+  "humans": {
+    "h_49622c3802c0ed": {
+      "author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  },
+  "sessions": {
+    "s_769841def7b2d1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c884f834-7285-4cbe-a9e4-b025eb3f74d0",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    },
+    "s_ab4746467bd11e": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "67f91c10-cba5-4ab4-a6da-a7d937722123",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    },
+    "s_d52a09b20bec05": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fe62b-64dd-7501-94e4-4f8bcfbfea26",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}
