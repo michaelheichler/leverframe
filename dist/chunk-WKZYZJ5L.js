@@ -242,7 +242,7 @@ import { join as join3 } from "path";
 // package.json
 var package_default = {
   name: "@michaelheichler/leverframe",
-  version: "0.3.2",
+  version: "0.3.3",
   description: "Bridge Claude Code to OpenAI-compatible providers, including OpenAI, ChatGPT/Codex OAuth, Kimi, Moonshot, and z.ai",
   author: "Michael Heichler",
   license: "MIT",
@@ -2605,4 +2605,4 @@ export {
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-HRR5J3AN.js.map
+//# sourceMappingURL=chunk-WKZYZJ5L.js.map

@@ -67,7 +67,7 @@ import {
   withProviderMutationLock,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-HRR5J3AN.js";
+} from "./chunk-WKZYZJ5L.js";
 
 // src/cli.ts
 import pc14 from "picocolors";
