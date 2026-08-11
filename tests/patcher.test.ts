@@ -8,7 +8,7 @@ import {
   computePatchConfigHash,
   reasoningEffortForPatch,
 } from '../src/patcher.js';
-import { applyLeverframePatches, PatchApplyError, PATCH_TRANSFORMS_VERSION, projectNativeEffort } from '../src/patch-transforms.js';
+import { applyLeverframePatches, formatPatchSiteLine, PatchApplyError, PATCH_TRANSFORMS_VERSION, projectNativeEffort } from '../src/patch-transforms.js';
 import type { CachedModel, RegistryProvider } from '../src/registry/types.js';
 
 describe('buildPatchModelConfig', () => {
@@ -456,6 +456,7 @@ describe('patch script identity naming', () => {
       ['PATCH 4: Agent tool model description', 'OK'],
       ['PATCH 7: per-model context window', 'OK'],
       ['PATCH 10: routing notice', 'SKIP'],
+      ['PATCH 10d: agent description indicator', 'SKIP'],
     ]);
     const rerun = applyLeverframePatches(fresh.content, config);
     expect(rerun.results.map(r => [r.name, r.status])).toEqual([
@@ -467,6 +468,7 @@ describe('patch script identity naming', () => {
       ['PATCH 4: Agent tool model description', 'SKIP'],
       ['PATCH 7: per-model context window (refresh)', 'SKIP'],
       ['PATCH 10: routing notice', 'SKIP'],
+      ['PATCH 10d: agent description indicator', 'SKIP'],
     ]);
   });
 
@@ -653,7 +655,23 @@ describe('PATCH 8/9 effort capability gates', () => {
 });
 
 describe('PATCH_TRANSFORMS_VERSION', () => {
-  it('is bumped for the no-global-scope cache_control patch', () => {
-    expect(PATCH_TRANSFORMS_VERSION).toBe(5);
+  it('is bumped for the agent description indicator (PATCH 10d)', () => {
+    expect(PATCH_TRANSFORMS_VERSION).toBe(6);
+  });
+});
+
+describe('formatPatchSiteLine', () => {
+  it('formats an OK result with no extra detail', () => {
+    expect(formatPatchSiteLine({ status: 'OK', name: 'PATCH 1: example' })).toBe('  OK   PATCH 1: example');
+  });
+
+  it('formats a SKIP result with extra detail text appended after a colon', () => {
+    expect(formatPatchSiteLine({ status: 'SKIP', name: 'PATCH 2: example', extra: 'anchor not recognized' }))
+      .toBe('  SKIP PATCH 2: example: anchor not recognized');
+  });
+
+  it('formats a FAIL result with extra detail text appended after a colon', () => {
+    expect(formatPatchSiteLine({ status: 'FAIL', name: 'PATCH 3: example', extra: 'could not be patched' }))
+      .toBe('  FAIL PATCH 3: example: could not be patched');
   });
 });

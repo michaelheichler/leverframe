@@ -17,10 +17,37 @@
 // this file threads the call-site model id across the function boundary via
 // a new `ccRoutingModelId` property on the shared options object instead of
 // guessing a runner-local variable name.
+//
+// Agent description indicator (PATCH 10d, optional/independent of PATCH
+// 10a-10c above): verified in the installed 2.1.227 bundle that the Agent
+// tool's synchronous `call()` method (not the async generator runner) is
+// where both the resolved model id (the same `nle(...)`/`XP(l)` call-site
+// binding captured by callSiteAnchor) and the *unmutated* task description
+// local are in scope together, right after `agentLifecycle.markTypeInvoked`.
+// That description local (destructured as `description:(descVar)` in the
+// `call()` signature — matched by callSignatureAnchor on the schema's own
+// property-key literals, which are not minifier-renamed) flows unchanged
+// into the async-launch tool result (`description:r`) and the teammate-spawn
+// payload (`description:r`), both of which the TUI uses to keep the
+// persistent "Agent(description)" invocation line up to date for the life of
+// the call — mutating it here, before those later reads, is early enough to
+// be reflected. Re-verify this per release the same way as the other four
+// anchors: grep for `async call({prompt:`, confirm callSignatureAnchor still
+// captures a single description identifier, and confirm that identifier
+// still reaches the `description:` field of the async-launch/teammate-spawn
+// result objects unmutated before this site's injection point.
 import type { PatchScriptModelConfig, PatchSiteResult } from './patch-transforms.js';
 
 export const ROUTING_NOTICE_MARKER = '/*ccpatch:routing-notice*/';
 export const ROUTING_NOTICE_HANDOFF_MARKER = '/*ccpatch:routing-notice-handoff*/';
+// PATCH 10d: appends " · <display> · <effort>" to the Agent tool's own
+// `description` local (the same value that flows into the async-launch tool
+// result and the teammate-spawn payload) so the invocation line the TUI
+// renders (e.g. "Agent(description)") carries a persistent routing
+// indicator for the agent's whole lifetime. Independent, optional site: it
+// SKIPs (never FAILs) when its anchors drift, and never blocks PATCH
+// 10a-10c. See "Agent description indicator" in the file header below.
+export const AGENT_DESCRIPTION_MARKER = '/*ccpatch:agent-description*/';
 
 export interface RoutingNoticePatchOutcome {
   content: string;
@@ -117,6 +144,19 @@ const runnerContextAnchor = new RegExp(
   + ',[^{}]*?permissionLayers:' + IDENT + ',[^{}]*?contentReplacementState:' + IDENT + '\\}\\);',
 );
 
+// PATCH 10d anchor: the Agent tool's `call()` method signature, destructuring
+// the raw tool input. `description:(descVar)` is the same local that flows,
+// unmutated elsewhere, into the async-launch result (`description:r`) and
+// the teammate-spawn payload (`description:r`) — see file header. Property
+// key literals (`prompt:`, `subagent_type:`, `description:`, `model:`,
+// `run_in_background:`, `name:`, `isolation:`, `cwd:`) come straight from the
+// tool's zod schema and are not minifier-renamed.
+const callSignatureAnchor = new RegExp(
+  'async call\\(\\{prompt:' + IDENT + ',subagent_type:' + IDENT + ',description:(' + IDENT + '),model:' + IDENT
+  + ',run_in_background:' + IDENT + ',name:' + IDENT + ',isolation:' + IDENT + ',cwd:' + IDENT + '\\},' + IDENT
+  + ',' + IDENT + ',' + IDENT + ',' + IDENT + '\\)\\{',
+);
+
 interface RunnerCaptures {
   runnerFn: string;
   requiresStructuredOutputParam: string;
@@ -167,6 +207,105 @@ function handoffPattern(): RegExp {
       + 'if\\(d\\?\\.replHydration\\?\\.kind!=="resume"\\)\\{[\\s\\S]*?'
       + 'ccRoutingNotice\\?\\.\\(\\{type:"notification",notification:\\{[\\s\\S]*?timeoutMs:1e4\\}\\}\\)\\}',
   );
+}
+
+// Middle dot separator matching the requested indicator format
+// "<description> · <display> · <effort>". Not a regex metacharacter, so it
+// needs no escaping in the patterns built below.
+const AGENT_DESCRIPTION_SEP = '·';
+
+interface AgentDescriptionOptions {
+  descVar: string;
+  modelIdVar: string;
+  table: Record<string, string>;
+  effortTable: Record<string, string>;
+}
+
+// Why: computing _ccad (the resolved display text) BEFORE the guard, then
+// gating the append on an exact-suffix check (`" · "+_ccad` not already
+// present), avoids false-suppressing the indicator for a user-written
+// description that happens to already contain " · " for unrelated reasons
+// (e.g. "check A · B"). Only a genuinely already-appended indicator (the
+// exact display value we're about to append) skips re-append. Everything is
+// wrapped in an anonymous block so `_ccat`/`_ccad`/`_ccae` never leak into
+// the rest of `call()`'s scope even when the inner guard is false.
+function agentDescriptionSnippet(options: AgentDescriptionOptions): string {
+  const { descVar, modelIdVar, table, effortTable } = options;
+  const serializedTable = JSON.stringify(table).replaceAll('/*ccpatch:', '\\u002f*ccpatch:');
+  const serializedEffort = JSON.stringify(effortTable).replaceAll('/*ccpatch:', '\\u002f*ccpatch:');
+  return `${AGENT_DESCRIPTION_MARKER}{`
+    + `let _ccat=Object.assign(Object.create(null),${serializedTable})[String(${modelIdVar}||"").trim().toLowerCase()],`
+    + `_ccad=_ccat!==void 0?_ccat:String(${modelIdVar}||""),`
+    + `_ccae=Object.assign(Object.create(null),${serializedEffort})[String(${modelIdVar}||"").trim().toLowerCase()]||"";`
+    + `_ccad=String(_ccad).trim().replace(/\\s+/g," ");_ccae=String(_ccae).trim().replace(/\\s+/g," ");`
+    + `if(${descVar}.indexOf(" ${AGENT_DESCRIPTION_SEP} "+_ccad)===-1){`
+    + `${descVar}=${descVar}+" ${AGENT_DESCRIPTION_SEP} "+_ccad+(_ccae?" ${AGENT_DESCRIPTION_SEP} "+_ccae:"");}}`;
+}
+
+// Broad marker+literal-tail match (mirrors handoffPattern's approach): the
+// serialized display/effort tables embed `{`/`}`, so a bare lazy `[\s\S]*?\}`
+// would stop at the first table brace instead of the block's real close.
+// Anchoring on the distinctive closing literal avoids that, and because the
+// snippet is appended *after* callSiteAnchor/callSignatureAnchor (not inside
+// them), those anchors still match fresh source for refresh, so this pattern
+// never needs to capture/backreference the inner variable names. The tail
+// now closes two braces: the guard `if` and the wrapping anonymous block.
+function agentDescriptionPattern(): RegExp {
+  return new RegExp(
+    escaped(AGENT_DESCRIPTION_MARKER)
+      + '\\{let _ccat=Object\\.assign\\(Object\\.create\\(null\\),[\\s\\S]*?'
+      + '\\+\\(_ccae\\?" ' + AGENT_DESCRIPTION_SEP + ' "\\+_ccae:""\\);\\}\\}',
+  );
+}
+
+function agentDescriptionOutcome(status: PatchSiteResult['status'], extra?: string): PatchSiteResult {
+  return { status, name: 'PATCH 10d: agent description indicator', ...(extra === undefined ? {} : { extra }) };
+}
+
+function matchCallSignatureDescVar(source: string): string | undefined {
+  if (count(source, callSignatureAnchor) !== 1) return undefined;
+  return source.match(callSignatureAnchor)?.[1];
+}
+
+function matchCallSiteModelIdVar(source: string): string | undefined {
+  if (count(source, callSiteAnchor) !== 1) return undefined;
+  return source.match(callSiteAnchor)?.[1];
+}
+
+// Why: split fresh-patch from refresh so each stays within the hook's
+// 50-line function limit and mirrors refreshRoutingNotice's structure.
+function refreshAgentDescription(source: string, config: PatchScriptModelConfig): { content: string; result: PatchSiteResult } {
+  const modelIdVar = matchCallSiteModelIdVar(source);
+  const descVar = matchCallSignatureDescVar(source);
+  if (modelIdVar === undefined || descVar === undefined) {
+    return { content: source, result: agentDescriptionOutcome('SKIP', 'generated block could not be refreshed') };
+  }
+  const snippet = agentDescriptionSnippet({ descVar, modelIdVar, table: buildRoutingDisplayTable(config), effortTable: buildRoutingEffortTable(config) });
+  const refreshed = replaceOnce(source, agentDescriptionPattern(), snippet);
+  if (refreshed === undefined) return { content: source, result: agentDescriptionOutcome('SKIP', 'generated block could not be refreshed') };
+  if (refreshed === source) return { content: source, result: agentDescriptionOutcome('SKIP', 'already patched') };
+  return { content: refreshed, result: { status: 'OK', name: 'PATCH 10d: agent description indicator (refresh)' } };
+}
+
+function patchFreshAgentDescription(source: string, config: PatchScriptModelConfig): { content: string; result: PatchSiteResult } {
+  const modelIdVar = matchCallSiteModelIdVar(source);
+  if (modelIdVar === undefined) return { content: source, result: agentDescriptionOutcome('SKIP', 'call-site anchor not recognized') };
+  const descVar = matchCallSignatureDescVar(source);
+  if (descVar === undefined) return { content: source, result: agentDescriptionOutcome('SKIP', 'call signature anchor not recognized') };
+
+  const snippet = agentDescriptionSnippet({ descVar, modelIdVar, table: buildRoutingDisplayTable(config), effortTable: buildRoutingEffortTable(config) });
+  const patched = replaceOnce(source, callSiteAnchor, (match: string) => `${match}${snippet}`);
+  if (patched === undefined) return { content: source, result: agentDescriptionOutcome('SKIP', 'could not inject description indicator') };
+  return { content: patched, result: { status: 'OK', name: 'PATCH 10d: agent description indicator' } };
+}
+
+// Why: this site is optional (per PATCH 10d design) — it must SKIP, never
+// FAIL, and must never block PATCH 10a-10c even when its own anchors drift.
+function applyAgentDescriptionSite(source: string, config: PatchScriptModelConfig): { content: string; result: PatchSiteResult } {
+  const existingCount = count(source, agentDescriptionPattern());
+  if (existingCount > 1) return { content: source, result: agentDescriptionOutcome('SKIP', 'ambiguous patch markers found') };
+  if (existingCount === 1) return refreshAgentDescription(source, config);
+  return patchFreshAgentDescription(source, config);
 }
 
 function outcome(source: string, status: PatchSiteResult['status'], extra?: string): RoutingNoticePatchOutcome {
@@ -273,5 +412,7 @@ export function applyRoutingNoticeTransform(
   source: string,
   config: PatchScriptModelConfig,
 ): RoutingNoticePatchOutcome {
-  return existingRoutingNoticeOutcome(source, config) ?? patchFreshRoutingNotice(source, config);
+  const base = existingRoutingNoticeOutcome(source, config) ?? patchFreshRoutingNotice(source, config);
+  const described = applyAgentDescriptionSite(base.content, config);
+  return { content: described.content, results: [...base.results, described.result] };
 }

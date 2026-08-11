@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AGENT_DESCRIPTION_MARKER,
   applyRoutingNoticeTransform,
   ROUTING_NOTICE_HANDOFF_MARKER,
   ROUTING_NOTICE_MARKER,
@@ -17,6 +18,11 @@ const CONFIG = {
     display: 'GPT-5.6 Sol',
   },
 };
+// The Agent tool's `call()` method signature, verbatim from the 2.1.227
+// binary. Same property-key literals as 2.1.226 (schema-derived, not
+// minifier-renamed); the description local is `r` here too.
+const AGENT_CALL_SIGNATURE =
+  'async call({prompt:e,subagent_type:t,description:r,model:n,run_in_background:o,name:i,isolation:s,cwd:a},l,c,u,d){';
 const AGENT_CALL =
   'let Z=XP(l),se=nle(_tt(G,Z),Z,M?void 0:f,T);l.agentLifecycle.markTypeInvoked(G.agentType);';
 const AGENT_CALLBACK =
@@ -27,7 +33,7 @@ const CHILD_CONTEXT =
   'It=S4o(r,{options:ar,session:j,agentId:ne,isBackgroundAgent:o,agentType:e.agentType,agentContext:d?.agentContext,requireCanUseTool:d?.requireCanUseTool,spawnedByWorkflowRunId:D,teammateContext:z,messages:K,readFileState:ce,abortController:cr,getAppState:Je,permissionLayers:We,shareSetAppState:!o,shareFileHistory:d?.shareFileHistory,criticalSystemReminder_EXPERIMENTAL:e.criticalSystemReminder_EXPERIMENTAL,contentReplacementState:T});';
 
 function agentLaunchFixture(): string {
-  return [AGENT_CALL, AGENT_CALLBACK, AGENT_RUNNER, CHILD_CONTEXT].join('\n');
+  return [AGENT_CALL_SIGNATURE, AGENT_CALL, AGENT_CALLBACK, AGENT_RUNNER, CHILD_CONTEXT].join('\n');
 }
 
 describe('Claude Code 2.1.227 routing notice compatibility', () => {
@@ -38,9 +44,11 @@ describe('Claude Code 2.1.227 routing notice compatibility', () => {
       { status: 'OK', name: 'PATCH 10a: routing notice callback' },
       { status: 'OK', name: 'PATCH 10b: routing notice signature' },
       { status: 'OK', name: 'PATCH 10c: routing notice handoff' },
+      { status: 'OK', name: 'PATCH 10d: agent description indicator' },
     ]);
     expect(result.content.split(ROUTING_NOTICE_MARKER)).toHaveLength(2);
     expect(result.content.split(ROUTING_NOTICE_HANDOFF_MARKER)).toHaveLength(2);
+    expect(result.content.split(AGENT_DESCRIPTION_MARKER)).toHaveLength(2);
     expect(result.content).toContain('/*ccpatch:routing-notice*/onRoutingNotice:d,ccRoutingModelId:se');
     expect(result.content).toContain('requiresStructuredOutput:V,onRoutingNotice:ccRoutingNotice,ccRoutingModelId})');
     // Model id threads from the call site (se) across the function boundary;
@@ -50,11 +58,21 @@ describe('Claude Code 2.1.227 routing notice compatibility', () => {
     expect(result.content).not.toContain('sJe(');
     expect(result.content).not.toContain('qce(');
     expect(result.content).not.toContain('e.effort');
+    // PATCH 10d: the description indicator lives in the same call() scope
+    // and uses the call-site model id (se), independent of the runner's own
+    // agentId (ne) used by the toast handoff above. The append is guarded
+    // by an exact-suffix check against the freshly-computed display
+    // (`_ccad`), not a bare middle-dot probe, so it never false-suppresses
+    // on a user-written description that happens to contain " · " already.
+    expect(result.content).toContain('String(se||"").trim().toLowerCase()');
+    expect(result.content).toContain('if(r.indexOf(" · "+_ccad)===-1){r=r+" · "+_ccad+(_ccae?" · "+_ccae:"");}}');
+    expect(result.content).not.toMatch(/if\(!\/ [^"]*\/\.test\(r\)\)/);
 
     const reapplied = applyRoutingNoticeTransform(result.content, CONFIG);
     expect(reapplied.content).toBe(result.content);
     expect(reapplied.results).toEqual([
       { status: 'SKIP', name: 'PATCH 10: routing notice', extra: 'already patched' },
+      { status: 'SKIP', name: 'PATCH 10d: agent description indicator', extra: 'already patched' },
     ]);
   });
 
@@ -84,9 +102,26 @@ describe('Claude Code 2.1.227 routing notice compatibility', () => {
     const drifted = agentLaunchFixture().replace(CHILD_CONTEXT, '');
     const result = applyRoutingNoticeTransform(drifted, CONFIG);
 
-    expect(result).toEqual({
-      content: drifted,
-      results: [{ status: 'SKIP', name: 'PATCH 10: routing notice', extra: 'runner anchor not recognized' }],
-    });
+    // Main product SKIPs as a unit; PATCH 10d is independent of the
+    // runner-context anchor and still applies.
+    expect(result.results).toEqual([
+      { status: 'SKIP', name: 'PATCH 10: routing notice', extra: 'runner anchor not recognized' },
+      { status: 'OK', name: 'PATCH 10d: agent description indicator' },
+    ]);
+    expect(result.content).not.toBe(drifted);
+    expect(result.content).toContain(AGENT_DESCRIPTION_MARKER);
+  });
+
+  it('SKIPs the description site cleanly when the call() signature anchor is absent', () => {
+    const withoutSignature = [AGENT_CALL, AGENT_CALLBACK, AGENT_RUNNER, CHILD_CONTEXT].join('\n');
+    const result = applyRoutingNoticeTransform(withoutSignature, CONFIG);
+
+    expect(result.results).toEqual([
+      { status: 'OK', name: 'PATCH 10a: routing notice callback' },
+      { status: 'OK', name: 'PATCH 10b: routing notice signature' },
+      { status: 'OK', name: 'PATCH 10c: routing notice handoff' },
+      { status: 'SKIP', name: 'PATCH 10d: agent description indicator', extra: 'call signature anchor not recognized' },
+    ]);
+    expect(result.content).not.toContain(AGENT_DESCRIPTION_MARKER);
   });
 });

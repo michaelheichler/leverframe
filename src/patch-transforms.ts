@@ -1,7 +1,7 @@
 
 import { applyRoutingNoticeTransform } from './patch-transforms-routing-notice.js';
 
-export const PATCH_TRANSFORMS_VERSION = 5;
+export const PATCH_TRANSFORMS_VERSION = 6;
 
 export interface PatchScriptModelEntry {
   alias?: string;

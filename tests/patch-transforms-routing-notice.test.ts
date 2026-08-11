@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AGENT_DESCRIPTION_MARKER,
   applyRoutingNoticeTransform,
   buildRoutingDisplayTable,
   ROUTING_NOTICE_HANDOFF_MARKER,
 } from '../src/patch-transforms-routing-notice.js';
+const AGENT_CALL_SIGNATURE =
+  'async call({prompt:e,subagent_type:t,description:r,model:n,run_in_background:o,name:i,isolation:s,cwd:a},l,c,u,d){';
 const AGENT_CALL = [
   'let Y=eP(l),ne=fse(aZe(V,Y),Y,H?void 0:f,S);l.agentLifecycle.markTypeInvoked(V.agentType);',
   'let qe={onModelRestricted:(Je,rt)=>d?.({type:"notification",notification:{key:`agent-model-restricted-${V.agentType}-${Hbe(Je)}`,text:`${V.agentType} agent: ${XF(Je,rt)}`,priority:"medium",color:"warning",timeoutMs:1e4}})},tt=',
@@ -14,10 +17,17 @@ const CONFIG = {
   'leverframe:openai-oauth:gpt-5.6-sol': { alias: 'sol', display: ' GPT  Sol\n' },
 };
 function fixture(): string {
-  return [AGENT_CALL, G5_SIGNATURE, G5_CONTEXT].join('\n');
+  return [AGENT_CALL_SIGNATURE, AGENT_CALL, G5_SIGNATURE, G5_CONTEXT].join('\n');
 }
 function handoff(content: string): string {
   return content.slice(content.indexOf(ROUTING_NOTICE_HANDOFF_MARKER));
+}
+// Extracts the generated PATCH 10d block (marker through the closing
+// `if(...)...}}` pair) for structural inspection of the guard logic.
+function descriptionBlock(content: string): string {
+  const match = content.match(/\/\*ccpatch:agent-description\*\/\{[\s\S]*?\+\(_ccae\?" · "\+_ccae:""\);\}\}/);
+  if (!match) throw new Error('description block not found');
+  return match[0];
 }
 function defineDisplayTableTests(): void {
   describe('routing notice display table', () => {
@@ -33,10 +43,10 @@ function defineDisplayTableTests(): void {
 }
 function defineInjectionTests(): void {
   describe('routing notice injection', () => {
-    it('injects the callback and handoff sites', () => {
+    it('injects the callback, handoff, and description sites', () => {
       const result = applyRoutingNoticeTransform(fixture(), CONFIG);
 
-      expect(result.results.map(item => item.status)).toEqual(['OK', 'OK', 'OK']);
+      expect(result.results.map(item => item.status)).toEqual(['OK', 'OK', 'OK', 'OK']);
       expect(result.content.match(/ccpatch:routing-notice\*\//g)).toHaveLength(1);
       expect(result.content.match(/ccpatch:routing-notice-handoff\*\//g)).toHaveLength(1);
       expect(result.content).toContain('/*ccpatch:routing-notice*/onRoutingNotice:d');
@@ -84,9 +94,15 @@ function defineLifecycleTests(): void {
       const skipped = applyRoutingNoticeTransform(drifted, CONFIG);
 
       expect(second.content).toBe(first.content);
-      expect(second.results).toEqual([{ status: 'SKIP', name: 'PATCH 10: routing notice', extra: 'already patched' }]);
+      expect(second.results).toEqual([
+        { status: 'SKIP', name: 'PATCH 10: routing notice', extra: 'already patched' },
+        { status: 'SKIP', name: 'PATCH 10d: agent description indicator', extra: 'already patched' },
+      ]);
       expect(skipped.content).toBe(drifted);
-      expect(skipped.results).toEqual([{ status: 'SKIP', name: 'PATCH 10: routing notice', extra: 'generated block could not be refreshed' }]);
+      expect(skipped.results).toEqual([
+        { status: 'SKIP', name: 'PATCH 10: routing notice', extra: 'generated block could not be refreshed' },
+        { status: 'SKIP', name: 'PATCH 10d: agent description indicator', extra: 'already patched' },
+      ]);
     });
 
     it('refreshes changed display data without duplicating blocks', () => {
@@ -95,11 +111,75 @@ function defineLifecycleTests(): void {
         'leverframe:openai-oauth:gpt-5.6-sol': { alias: 'sol', display: 'GPT Updated /*ccpatch:routing-notice*/onRoutingNotice:d' },
       });
 
-      expect(second.results).toEqual([{ status: 'OK', name: 'PATCH 10: routing notice (refresh)' }]);
+      expect(second.results).toEqual([
+        { status: 'OK', name: 'PATCH 10: routing notice (refresh)' },
+        { status: 'OK', name: 'PATCH 10d: agent description indicator (refresh)' },
+      ]);
       expect(second.content.split('/*ccpatch:routing-notice*/onRoutingNotice:d')).toHaveLength(2);
       expect(second.content.split('/*ccpatch:routing-notice-handoff*/if(d?.replHydration?.kind!=="resume"){')).toHaveLength(2);
       expect(second.content).toContain('GPT Updated \\u002f*ccpatch:routing-notice*/onRoutingNotice:d');
       expect(second.content).not.toContain('GPT Sol');
+      expect(second.content.match(new RegExp(AGENT_DESCRIPTION_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))).toHaveLength(1);
+    });
+  });
+}
+
+function defineAgentDescriptionTests(): void {
+  describe('agent description indicator', () => {
+    it('appends the resolved display and effort to the description local, once', () => {
+      const withEffort = {
+        'leverframe:openai-oauth:gpt-5.6-sol': { alias: 'sol', display: 'GPT Sol', effort: { levels: ['low', 'high'], defaultLevel: 'high' } },
+      };
+      const result = applyRoutingNoticeTransform(fixture(), withEffort);
+
+      expect(result.results).toContainEqual({ status: 'OK', name: 'PATCH 10d: agent description indicator' });
+      expect(result.content).toContain(`${AGENT_DESCRIPTION_MARKER}{let _ccat=Object.assign(Object.create(null),`);
+      expect(result.content).toContain('if(r.indexOf(" · "+_ccad)===-1){r=r+" · "+_ccad+(_ccae?" · "+_ccae:"");}}');
+      expect(result.content).toContain('"sol":"high"');
+    });
+
+    it('falls back to the raw model id and omits effort when the model is absent from the config table', () => {
+      const result = applyRoutingNoticeTransform(fixture(), {});
+
+      expect(result.content).toContain('_ccad=_ccat!==void 0?_ccat:String(ne||"")');
+      expect(result.content).toContain('if(r.indexOf(" · "+_ccad)===-1){r=r+" · "+_ccad+(_ccae?" · "+_ccae:"");}}');
+    });
+
+    it('guards the append with the exact resolved display suffix, not a bare middle-dot check, so a user description already containing " · " for unrelated reasons still gets the indicator appended', () => {
+      const result = applyRoutingNoticeTransform(fixture(), CONFIG);
+      const block = descriptionBlock(result.content);
+
+      // The guard tests for the freshly-computed `_ccad` value as an exact
+      // suffix candidate (`" · "+_ccad`), not a bare `/ · /` probe against the
+      // description — so "check A · B" (which contains " · " but not the
+      // computed display text) does not false-suppress the append.
+      expect(block).toMatch(/if\(r\.indexOf\(" · "\+_ccad\)===-1\)\{/);
+      expect(block).not.toMatch(/if\(!\/ [^"]*\/\.test\(r\)\)/);
+      // _ccad/_ccae are computed unconditionally, before the guard.
+      expect(block.indexOf('_ccad=_ccat!==void 0')).toBeLessThan(block.indexOf('if(r.indexOf('));
+      // Both declarations stay scoped inside the wrapping block so nothing
+      // leaks into the rest of call() when the guard is false.
+      expect(block.startsWith(`${AGENT_DESCRIPTION_MARKER}{let _ccat=`)).toBe(true);
+      expect(block.endsWith('}}')).toBe(true);
+    });
+
+    it('is idempotent on re-apply and SKIPs cleanly when the call signature anchor is absent', () => {
+      const first = applyRoutingNoticeTransform(fixture(), CONFIG);
+      const second = applyRoutingNoticeTransform(first.content, CONFIG);
+      expect(second.content).toBe(first.content);
+      expect(second.results).toContainEqual({ status: 'SKIP', name: 'PATCH 10d: agent description indicator', extra: 'already patched' });
+
+      const withoutSignature = applyRoutingNoticeTransform([AGENT_CALL, G5_SIGNATURE, G5_CONTEXT].join('\n'), CONFIG);
+      expect(withoutSignature.results).toContainEqual({ status: 'SKIP', name: 'PATCH 10d: agent description indicator', extra: 'call signature anchor not recognized' });
+      expect(withoutSignature.content).not.toContain(AGENT_DESCRIPTION_MARKER);
+    });
+
+    it('never blocks or fails PATCH 10a-10c when its own anchor drifts', () => {
+      const noSignature = [AGENT_CALL, G5_SIGNATURE, G5_CONTEXT].join('\n');
+      const result = applyRoutingNoticeTransform(noSignature, CONFIG);
+
+      expect(result.results[0]).toEqual({ status: 'OK', name: 'PATCH 10a: routing notice callback' });
+      expect(result.results.every(item => item.status !== 'FAIL')).toBe(true);
     });
   });
 }
@@ -110,18 +190,32 @@ function defineAnchorTests(): void {
       const withoutRunner = applyRoutingNoticeTransform(AGENT_CALL, CONFIG);
       const withoutCallSite = applyRoutingNoticeTransform([G5_SIGNATURE, G5_CONTEXT].join('\n'), CONFIG);
 
-      expect(withoutRunner).toEqual({ content: AGENT_CALL, results: [{ status: 'SKIP', name: 'PATCH 10: routing notice', extra: 'runner anchor not recognized' }] });
-      expect(withoutCallSite.results).toEqual([{ status: 'SKIP', name: 'PATCH 10: routing notice', extra: 'Agent call-site anchor not recognized' }]);
+      expect(withoutRunner).toEqual({
+        content: AGENT_CALL,
+        results: [
+          { status: 'SKIP', name: 'PATCH 10: routing notice', extra: 'runner anchor not recognized' },
+          { status: 'SKIP', name: 'PATCH 10d: agent description indicator', extra: 'call signature anchor not recognized' },
+        ],
+      });
+      expect(withoutCallSite.results).toEqual([
+        { status: 'SKIP', name: 'PATCH 10: routing notice', extra: 'Agent call-site anchor not recognized' },
+        { status: 'SKIP', name: 'PATCH 10d: agent description indicator', extra: 'call-site anchor not recognized' },
+      ]);
     });
 
     it('does not duplicate a structurally orphaned callback marker', () => {
       const orphaned = fixture().replace('}})},tt=', '}}),/*ccpatch:routing-notice*/onRoutingNotice:drifted},tt=');
       const result = applyRoutingNoticeTransform(orphaned, CONFIG);
 
-      expect(result).toEqual({
-        content: orphaned,
-        results: [{ status: 'SKIP', name: 'PATCH 10: routing notice', extra: 'partial or ambiguous patch markers found' }],
-      });
+      // PATCH 10a-10c stay blocked by the orphaned marker, but the
+      // independent, optional description site is unaffected and still
+      // applies — it must never be blocked by the other sites' partial state.
+      expect(result.results).toEqual([
+        { status: 'SKIP', name: 'PATCH 10: routing notice', extra: 'partial or ambiguous patch markers found' },
+        { status: 'OK', name: 'PATCH 10d: agent description indicator' },
+      ]);
+      expect(result.content).not.toBe(orphaned);
+      expect(result.content).toContain(AGENT_DESCRIPTION_MARKER);
     });
   });
 }
@@ -129,4 +223,5 @@ function defineAnchorTests(): void {
 defineDisplayTableTests();
 defineInjectionTests();
 defineLifecycleTests();
+defineAgentDescriptionTests();
 defineAnchorTests();
