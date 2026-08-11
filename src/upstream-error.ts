@@ -98,11 +98,16 @@ export function isContextLengthExceededError(err: unknown, formattedMessage = ''
     rec?.lastError?.message,
     ...(rec?.errors?.map(error => error.message) ?? []),
   ].filter((value): value is string => typeof value === 'string');
+  // "context window" and "prompt is too long" are common phrases outside of
+  // context-length errors (marketing copy, 503 overload bodies, leverframe's own
+  // wording used elsewhere). Only classify them when the same candidate string
+  // also carries token-count language, matching the shape real context errors use.
+  const hasTokenCount = (value: string) => /\d+\s*tokens?/i.test(value);
   return candidates.some(value => (
     /context_length_exceeded/i.test(value)
-    || /context window/i.test(value)
     || /maximum context length/i.test(value)
-    || /prompt is too long/i.test(value)
+    || (/context window/i.test(value) && hasTokenCount(value))
+    || (/prompt is too long/i.test(value) && hasTokenCount(value))
   ));
 }
 

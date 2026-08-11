@@ -5,10 +5,12 @@ import {
 } from '../src/provider-error.js';
 import {
   formatUpstreamError,
+  isContextLengthExceededError,
   sdkUpstreamErrorDetails,
   sdkUpstreamResponseHeaders,
   upstreamHttpStatus,
 } from '../src/upstream-error.js';
+import { anthropicPromptTooLongMessage } from '../src/anthropic-endpoints.js';
 
 describe('typed provider transport errors', () => {
   const error = new ProviderTransportError({
@@ -76,5 +78,53 @@ describe('typed provider transport errors', () => {
       'Retry-After': '3',
       'X-Provider-Request-Id': 'provider-request-123',
     });
+  });
+});
+
+describe('isContextLengthExceededError', () => {
+  it('classifies an OpenAI-style context_length_exceeded body as true', () => {
+    const err = {
+      message: 'Bad request',
+      data: {
+        error: {
+          code: 'context_length_exceeded',
+          type: 'invalid_request_error',
+          message: 'This model\'s maximum context length is 128000 tokens.',
+        },
+      },
+    };
+    expect(isContextLengthExceededError(err)).toBe(true);
+  });
+
+  it('does not classify marketing-ish "context window" copy with no token numbers', () => {
+    const err = { message: 'This model supports a large context window.' };
+    expect(isContextLengthExceededError(err)).toBe(false);
+  });
+
+  it('classifies "context window" phrasing when it co-occurs with a token count', () => {
+    const err = { message: 'Request exceeds the context window: 300000 tokens provided.' };
+    expect(isContextLengthExceededError(err)).toBe(true);
+  });
+
+  it('round-trips leverframe\'s own synthesized prompt-too-long message as true', () => {
+    const synthesized = anthropicPromptTooLongMessage(
+      { messages: [{ role: 'user', content: 'hello' }] },
+      10,
+    );
+    expect(isContextLengthExceededError({ message: synthesized })).toBe(true);
+  });
+
+  it('does not classify an unrelated 503 overload body', () => {
+    const err = {
+      message: 'Upstream overloaded',
+      data: {
+        error: {
+          code: 'server_is_overloaded',
+          type: 'overloaded_error',
+          message: 'The server is temporarily overloaded, please retry.',
+        },
+      },
+    };
+    expect(isContextLengthExceededError(err)).toBe(false);
   });
 });
