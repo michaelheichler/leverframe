@@ -1,0 +1,55 @@
+src/patch-diagnostics.ts
+  s_ce91eafca03888::t_e8c08b63bbddb5 12,80,131,156,176-184,187-189,191,254,294-297
+src/patch-reconcile.ts
+  s_7f0a1b9543677d::t_db20370ee54f03 248-251,259-260
+src/patch-transaction.ts
+  s_7f0a1b9543677d::t_1b730f158a212a 242,392
+src/patch-transforms-routing-notice.ts
+  s_ce91eafca03888::t_710e6711e090f7 2-19,21,24,29-32,37,52-71,75,80,87-140,142-146,149-162,180-187,196-209,213-214,216,219-223,225,227-228,232,235-237,241,262-264,266
+tests/patch-transforms-routing-notice-claude-2-1-226.test.ts
+  s_7f0a1b9543677d::t_c05455b35767b3 38-43
+tests/patch-transforms-routing-notice-claude-2-1-227.test.ts
+  s_221548bf1b2879::t_8fe9a18228f4ac 1-92
+tests/patch-transforms-routing-notice.test.ts
+  s_7f70a4bfc6d347::t_96a955e41375bb 43-44,47,50-51,53-55,83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "5432addd48671899b425e0d32f460b5952829e47",
+  "prompts": {},
+  "sessions": {
+    "s_221548bf1b2879": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "38b13e1a-a187-4ff8-90c7-aa68837d667f",
+        "model": "unknown"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    },
+    "s_7f0a1b9543677d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a3566c730904c2419",
+        "model": "unknown"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    },
+    "s_7f70a4bfc6d347": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "47adf024-83c0-476c-b69c-e19e0b032a52",
+        "model": "unknown"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    },
+    "s_ce91eafca03888": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a60ed959b141a936d",
+        "model": "unknown"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}
