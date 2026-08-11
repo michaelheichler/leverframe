@@ -8602,6 +8602,32 @@ function emptyCompletionError(modelId, inputTokens, contextWindow, rawFinishReas
     safeMessage
   });
 }
+function toolJsonRunawayError(options) {
+  return new ProviderTransportError({
+    provider: "sdk-adapter",
+    model: options.modelId,
+    phase: "stream",
+    category: "tool_call_protocol",
+    retryable: true,
+    outputEmitted: options.outputEmitted,
+    safeMessage: `Tool call ${options.toolName} exceeded the max buffered JSON size (${options.bufferedBytes} bytes)`
+  });
+}
+function outputStallTimeoutError(options) {
+  return new ProviderTransportError({
+    provider: "sdk-adapter",
+    model: options.modelId,
+    phase: "stream",
+    category: "output_stall_timeout",
+    retryable: true,
+    outputEmitted: options.outputEmitted,
+    safeMessage: `Provider produced no client-visible output for ${Math.round(options.timeoutMs / 1e3)}s despite stream activity`
+  });
+}
+function isOutputStallAbort(signal) {
+  const reason = signal?.reason;
+  return ProviderTransportError.isInstance(reason) && reason.category === "output_stall_timeout";
+}
 function positiveEnvMs(name, fallback) {
   const raw = process.env[name]?.trim() ?? "";
   if (!/^\d+$/.test(raw)) return fallback;
@@ -8613,6 +8639,18 @@ function sdkStreamIdleTimeoutMs() {
 }
 function nonStreamRequestTimeoutMs() {
   return positiveEnvMs("LEVERFRAME_SDK_REQUEST_TIMEOUT_MS", 60 * 6e4);
+}
+function toolEarlyFlushByteThreshold() {
+  return positiveEnvMs("LEVERFRAME_TOOL_EARLY_FLUSH_BYTES", 8e3);
+}
+function toolEarlyFlushOpenMs() {
+  return positiveEnvMs("LEVERFRAME_TOOL_EARLY_FLUSH_MS", 5e3);
+}
+function toolJsonMaxBytes() {
+  return positiveEnvMs("LEVERFRAME_TOOL_JSON_MAX_BYTES", 2e6);
+}
+function outputIdleTimeoutMs() {
+  return positiveEnvMs("LEVERFRAME_OUTPUT_IDLE_TIMEOUT_MS", 45e3);
 }
 function streamAbortError(signal) {
   if (signal?.reason instanceof Error) return signal.reason;
@@ -8648,6 +8686,7 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
   const toolJsonBuffer = /* @__PURE__ */ new Map();
   const emittedToolLengths = /* @__PURE__ */ new Map();
   const toolFlushTimers = /* @__PURE__ */ new Map();
+  const toolOpenedAt = /* @__PURE__ */ new Map();
   const flushedTools = /* @__PURE__ */ new Set();
   let openToolId = null;
   let finishReason = "end_turn";
@@ -8663,6 +8702,18 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
   const toolCanFlushEarly = (id) => {
     const rules = inputRules.get(toolNameById.get(id) ?? "");
     return rules === void 0 || rules.required.size === 0 && Object.keys(rules.properties).length === 0 && rules.omitEmptyArrays.size === 0;
+  };
+  const toolExemptFromEarlyFlushOverride = (id) => {
+    const rules = inputRules.get(toolNameById.get(id) ?? "");
+    return rules !== void 0 && rules.omitEmptyArrays.size > 0;
+  };
+  const toolShouldEarlyFlush = (id) => {
+    if (toolCanFlushEarly(id)) return true;
+    if (toolExemptFromEarlyFlushOverride(id)) return false;
+    const buffered = toolJsonBuffer.get(id)?.length ?? 0;
+    if (buffered >= toolEarlyFlushByteThreshold()) return true;
+    const openedAt = toolOpenedAt.get(id);
+    return openedAt !== void 0 && Date.now() - openedAt >= toolEarlyFlushOpenMs();
   };
   const clearToolTimer = (id) => {
     const timer = toolFlushTimers.get(id);
@@ -8691,9 +8742,11 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
       delta: { type: "input_json_delta", partial_json: suffix }
     });
     emittedToolLengths.set(id, output.length);
+    observer?.lifecycle?.markOutputEmitted();
+    observer?.onOutputByte?.();
   };
   const flushToolJson = (id) => {
-    if (!toolCanFlushEarly(id) || flushedTools.has(id)) return;
+    if (flushedTools.has(id) || !toolShouldEarlyFlush(id)) return;
     emitToolJson(id, toolJsonBuffer.get(id) ?? "");
   };
   const ensureStart = () => {
@@ -8761,7 +8814,7 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
       observer?.onPart?.(part.type);
       observer?.lifecycle?.markStreamActivity();
       if (observer?.abortSignal?.aborted) {
-        if (deliverTruncated()) return;
+        if (!isOutputStallAbort(observer.abortSignal) && deliverTruncated()) return;
         throw streamAbortError(observer.abortSignal);
       }
       switch (part.type) {
@@ -8775,7 +8828,7 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
         // message_start/message_delta/message_stop after the client disconnected.
         // Throw so the HTTP layer follows its cancellation path and emits nothing.
         case "abort":
-          if (deliverTruncated()) return;
+          if (!isOutputStallAbort(observer?.abortSignal) && deliverTruncated()) return;
           throw streamAbortError(observer?.abortSignal);
         case "reasoning-start":
           openBlock("thinking", { type: "thinking", thinking: "", signature: "" });
@@ -8787,6 +8840,7 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
             index: blockIndex,
             delta: { type: "thinking_delta", thinking: part.text ?? "" }
           });
+          observer?.onOutputByte?.();
           break;
         case "reasoning-end": {
           const sig = grabRoundTripSignature(part);
@@ -8804,6 +8858,7 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
             delta: { type: "text_delta", text: part.text ?? "" }
           });
           observer?.lifecycle?.markOutputEmitted();
+          observer?.onOutputByte?.();
           break;
         case "text-end":
           break;
@@ -8821,17 +8876,25 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
           toolJsonBuffer.set(id, "");
           emittedToolLengths.set(id, 0);
           openToolId = id;
-          if (toolCanFlushEarly(id)) {
-            const timer = setInterval(() => flushToolJson(id), 2e3);
-            timer.unref?.();
-            toolFlushTimers.set(id, timer);
-          }
+          toolOpenedAt.set(id, Date.now());
+          const timer = setInterval(() => flushToolJson(id), 2e3);
+          timer.unref?.();
+          toolFlushTimers.set(id, timer);
           observer?.lifecycle?.markToolCallEmitted();
           break;
         }
         case "tool-input-delta": {
           const id = part.id ?? "";
-          toolJsonBuffer.set(id, (toolJsonBuffer.get(id) ?? "") + (part.delta ?? part.text ?? ""));
+          const appended = (toolJsonBuffer.get(id) ?? "") + (part.delta ?? part.text ?? "");
+          if (appended.length > toolJsonMaxBytes()) {
+            throw toolJsonRunawayError({
+              modelId,
+              toolName: toolNameById.get(id) ?? "",
+              bufferedBytes: appended.length,
+              outputEmitted: started
+            });
+          }
+          toolJsonBuffer.set(id, appended);
           break;
         }
         case "tool-input-end":
@@ -8901,7 +8964,7 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
       }
     }
     if (observer?.abortSignal?.aborted) {
-      if (deliverTruncated()) return;
+      if (!isOutputStallAbort(observer.abortSignal) && deliverTruncated()) return;
       throw streamAbortError(observer.abortSignal);
     }
     if (!started && blockIndex === -1 && finishReason === "end_turn" && usage.output_tokens === 0) {
@@ -8927,6 +8990,19 @@ async function streamAnthropicResponse(model, params, modelId, write, log12, obs
     () => idleAbort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1e3)}s`)),
     idleTimeoutMs
   );
+  const outputIdleMs = observer?.outputIdleTimeoutMs ?? outputIdleTimeoutMs();
+  let outputEmittedOnce = false;
+  const abortOutputStall = () => idleAbort.abort(outputStallTimeoutError({
+    modelId,
+    timeoutMs: outputIdleMs,
+    outputEmitted: outputEmittedOnce
+  }));
+  let outputIdleTimer = setTimeout(abortOutputStall, outputIdleMs);
+  const resetOutputIdleTimer = () => {
+    outputEmittedOnce = true;
+    clearTimeout(outputIdleTimer);
+    outputIdleTimer = setTimeout(abortOutputStall, outputIdleMs);
+  };
   const result = streamText({
     model,
     ...sdkParams,
@@ -8954,11 +9030,16 @@ async function streamAnthropicResponse(model, params, modelId, write, log12, obs
       abortSignal,
       clientAbortSignal: observer?.clientAbortSignal,
       inputTokensIncludeCache,
-      promptCacheKeyHash: sdkPromptCacheKeyHash(params) ?? observer?.promptCacheKeyHash
+      promptCacheKeyHash: sdkPromptCacheKeyHash(params) ?? observer?.promptCacheKeyHash,
+      onOutputByte: () => {
+        resetOutputIdleTimer();
+        observer?.onOutputByte?.();
+      }
     }, params.tools);
   } finally {
     stopForwardingAbort();
     clearTimeout(idleTimer);
+    clearTimeout(outputIdleTimer);
     if (!idleAbort.signal.aborted) idleAbort.abort();
   }
 }
@@ -14899,6 +14980,8 @@ import { join as join8 } from "path";
 // src/patch-transforms-routing-notice.ts
 var ROUTING_NOTICE_MARKER = "/*ccpatch:routing-notice*/";
 var ROUTING_NOTICE_HANDOFF_MARKER = "/*ccpatch:routing-notice-handoff*/";
+var AGENT_DESCRIPTION_MARKER = "/*ccpatch:agent-description*/";
+var IDENT = "[$A-Za-z_][$\\w]*";
 function displayKeys(value) {
   const bare = String(value).trim().toLowerCase().replace(/\[1m\]$/i, "");
   return [.../* @__PURE__ */ new Set([bare, bare + "[1m]"])];
@@ -14916,6 +14999,19 @@ function buildRoutingDisplayTable(config) {
   }
   return table;
 }
+function buildRoutingEffortTable(config) {
+  const table = /* @__PURE__ */ Object.create(null);
+  for (const [identity, rawEntry] of Object.entries(config)) {
+    const entry = rawEntry && typeof rawEntry === "object" ? rawEntry : {};
+    const level = entry.effort && typeof entry.effort.defaultLevel === "string" ? entry.effort.defaultLevel.trim() : "";
+    if (level === "") continue;
+    for (const key of displayKeys(identity)) table[key] = level;
+    if (entry.alias !== void 0) {
+      for (const key of displayKeys(String(entry.alias))) table[key] = level;
+    }
+  }
+  return table;
+}
 function escaped(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -14928,25 +15024,97 @@ function replaceOnce(source, pattern, replacement) {
   if (typeof replacement === "string") return source.replace(pattern, replacement);
   return source.replace(pattern, replacement);
 }
-function callbackSnippet() {
-  return `${ROUTING_NOTICE_MARKER}onRoutingNotice:d`;
+var callSiteAnchor = new RegExp(
+  "let " + IDENT + "=" + IDENT + "\\(" + IDENT + "\\),(" + IDENT + ")=" + IDENT + "\\([^;{}]*?\\);" + IDENT + "\\.agentLifecycle\\.markTypeInvoked\\(" + IDENT + "\\.agentType\\);"
+);
+var callbackAnchor = new RegExp(
+  "onModelRestricted:\\((" + IDENT + "),(" + IDENT + ")\\)=>" + IDENT + '\\?\\.\\(\\{type:"notification",notification:\\{key:`agent-model-restricted-\\$\\{(' + IDENT + ")\\.agentType\\}-\\$\\{" + IDENT + "\\(\\1\\)\\}`,text:`\\$\\{\\3\\.agentType\\} agent: \\$\\{" + IDENT + '\\(\\1,\\2\\)\\}`,priority:"medium",color:"warning",timeoutMs:1e4\\}\\}\\)'
+);
+var runnerSignatureAnchor = new RegExp(
+  "async function\\*(" + IDENT + ")\\(\\{agentDefinition:" + IDENT + ",promptMessages:" + IDENT + ",toolUseContext:" + IDENT + ",[^{}]*?requiresStructuredOutput:(" + IDENT + ")\\}\\)"
+);
+var runnerSignaturePatched = new RegExp(
+  "async function\\*(" + IDENT + ")\\(\\{agentDefinition:" + IDENT + ",promptMessages:" + IDENT + ",toolUseContext:" + IDENT + ",[^{}]*?requiresStructuredOutput:(" + IDENT + "),onRoutingNotice:ccRoutingNotice,ccRoutingModelId\\}\\)"
+);
+var runnerContextAnchor = new RegExp(
+  "(" + IDENT + ")=" + IDENT + "\\(r,\\{options:" + IDENT + ",[^{}]*?agentId:(" + IDENT + "),isBackgroundAgent:" + IDENT + ",[^{}]*?permissionLayers:" + IDENT + ",[^{}]*?contentReplacementState:" + IDENT + "\\}\\);"
+);
+var callSignatureAnchor = new RegExp(
+  "async call\\(\\{prompt:" + IDENT + ",subagent_type:" + IDENT + ",description:(" + IDENT + "),model:" + IDENT + ",run_in_background:" + IDENT + ",name:" + IDENT + ",isolation:" + IDENT + ",cwd:" + IDENT + "\\}," + IDENT + "," + IDENT + "," + IDENT + "," + IDENT + "\\)\\{"
+);
+function callbackSnippet(modelIdVar) {
+  return `${ROUTING_NOTICE_MARKER}onRoutingNotice:d,ccRoutingModelId:${modelIdVar}`;
+}
+function signatureSnippet(requiresStructuredOutputParam) {
+  return {
+    from: `requiresStructuredOutput:${requiresStructuredOutputParam}})`,
+    to: `requiresStructuredOutput:${requiresStructuredOutputParam},onRoutingNotice:ccRoutingNotice,ccRoutingModelId})`
+  };
 }
 function handoffPrefix() {
   return `${ROUTING_NOTICE_HANDOFF_MARKER}if(d?.replHydration?.kind!=="resume"){`;
 }
-function handoffSnippet(table) {
+function handoffSnippet(options) {
+  const { table, effortTable, agentIdVar } = options;
   const serializedTable = JSON.stringify(table).replaceAll("/*ccpatch:", "\\u002f*ccpatch:");
-  return handoffPrefix() + `let _ccm=Object.assign(Object.create(null),${serializedTable})[String(ne||"").trim().toLowerCase()],_ccd=_ccm!==void 0?_ccm:qce(ne)||String(ne||""),_ccr=nS(st);_ccr=_ccr===void 0?sJe(ne):_ccr;_ccd=String(_ccd).trim().replace(/\\s+/g," ");_ccr=String(_ccr).trim().replace(/\\s+/g," ");ccRoutingNotice?.({type:"notification",notification:{key:\`leverframe-routing-success-\${se}\`,text:\`Routing successful. Model \${_ccd} with Reasoning \${_ccr}\`,segments:[{text:"Routing successful. Model "},{text:_ccd,color:"suggestion",bold:!0},{text:" with Reasoning "},{text:_ccr,color:"success",bold:!0}],priority:"high",timeoutMs:1e4}})}`;
+  const serializedEffort = JSON.stringify(effortTable).replaceAll("/*ccpatch:", "\\u002f*ccpatch:");
+  return handoffPrefix() + `let _ccm=Object.assign(Object.create(null),${serializedTable})[String(ccRoutingModelId||"").trim().toLowerCase()],_ccd=_ccm!==void 0?_ccm:String(ccRoutingModelId||""),_ccr=Object.assign(Object.create(null),${serializedEffort})[String(ccRoutingModelId||"").trim().toLowerCase()]||"";_ccd=String(_ccd).trim().replace(/\\s+/g," ");_ccr=String(_ccr).trim().replace(/\\s+/g," ");ccRoutingNotice?.({type:"notification",notification:{key:\`leverframe-routing-success-\${${agentIdVar}}\`,text:\`Routing successful. Model \${_ccd} with Reasoning \${_ccr}\`,segments:[{text:"Routing successful. Model "},{text:_ccd,color:"suggestion",bold:!0},{text:" with Reasoning "},{text:_ccr,color:"success",bold:!0}],priority:"high",timeoutMs:1e4}})}`;
 }
-var callSiteAnchor = /let Y=eP\(l\),ne=fse\(aZe\(V,Y\),Y,H\?void 0:f,S\);l\.agentLifecycle\.markTypeInvoked\(V\.agentType\);/;
-var callbackAnchor = /onModelRestricted:\(Je,rt\)=>d\?\.\(\{type:"notification",notification:\{key:`agent-model-restricted-\$\{V\.agentType\}-\$\{Hbe\(Je\)\}`,text:`\$\{V\.agentType\} agent: \$\{XF\(Je,rt\)\}`,priority:"medium",color:"warning",timeoutMs:1e4\}\}\)/;
-var runnerSignatureAnchor = /async function\*g5\(\{agentDefinition:e,promptMessages:t,toolUseContext:r,[^{}]*?requiresStructuredOutput:W\}\)/;
-var runnerSignaturePatched = /async function\*g5\(\{agentDefinition:e,promptMessages:t,toolUseContext:r,[^{}]*?requiresStructuredOutput:W,onRoutingNotice:ccRoutingNotice\}\)/;
-var runnerContextAnchor = /st=Q4o\(r,\{options:je,agentId:se,isBackgroundAgent:o,[^{}]*?permissionLayers:yt,[^{}]*?contentReplacementState:S\}\);/;
 function handoffPattern() {
   return new RegExp(
     escaped(ROUTING_NOTICE_HANDOFF_MARKER) + 'if\\(d\\?\\.replHydration\\?\\.kind!=="resume"\\)\\{[\\s\\S]*?ccRoutingNotice\\?\\.\\(\\{type:"notification",notification:\\{[\\s\\S]*?timeoutMs:1e4\\}\\}\\)\\}'
   );
+}
+var AGENT_DESCRIPTION_SEP = "\xB7";
+function agentDescriptionSnippet(options) {
+  const { descVar, modelIdVar, table, effortTable } = options;
+  const serializedTable = JSON.stringify(table).replaceAll("/*ccpatch:", "\\u002f*ccpatch:");
+  const serializedEffort = JSON.stringify(effortTable).replaceAll("/*ccpatch:", "\\u002f*ccpatch:");
+  return `${AGENT_DESCRIPTION_MARKER}{let _ccat=Object.assign(Object.create(null),${serializedTable})[String(${modelIdVar}||"").trim().toLowerCase()],_ccad=_ccat!==void 0?_ccat:String(${modelIdVar}||""),_ccae=Object.assign(Object.create(null),${serializedEffort})[String(${modelIdVar}||"").trim().toLowerCase()]||"";_ccad=String(_ccad).trim().replace(/\\s+/g," ");_ccae=String(_ccae).trim().replace(/\\s+/g," ");if(${descVar}.indexOf(" ${AGENT_DESCRIPTION_SEP} "+_ccad)===-1){${descVar}=${descVar}+" ${AGENT_DESCRIPTION_SEP} "+_ccad+(_ccae?" ${AGENT_DESCRIPTION_SEP} "+_ccae:"");}}`;
+}
+function agentDescriptionPattern() {
+  return new RegExp(
+    escaped(AGENT_DESCRIPTION_MARKER) + '\\{let _ccat=Object\\.assign\\(Object\\.create\\(null\\),[\\s\\S]*?\\+\\(_ccae\\?" ' + AGENT_DESCRIPTION_SEP + ' "\\+_ccae:""\\);\\}\\}'
+  );
+}
+function agentDescriptionOutcome(status, extra) {
+  return { status, name: "PATCH 10d: agent description indicator", ...extra === void 0 ? {} : { extra } };
+}
+function matchCallSignatureDescVar(source) {
+  if (count(source, callSignatureAnchor) !== 1) return void 0;
+  return source.match(callSignatureAnchor)?.[1];
+}
+function matchCallSiteModelIdVar(source) {
+  if (count(source, callSiteAnchor) !== 1) return void 0;
+  return source.match(callSiteAnchor)?.[1];
+}
+function refreshAgentDescription(source, config) {
+  const modelIdVar = matchCallSiteModelIdVar(source);
+  const descVar = matchCallSignatureDescVar(source);
+  if (modelIdVar === void 0 || descVar === void 0) {
+    return { content: source, result: agentDescriptionOutcome("SKIP", "generated block could not be refreshed") };
+  }
+  const snippet = agentDescriptionSnippet({ descVar, modelIdVar, table: buildRoutingDisplayTable(config), effortTable: buildRoutingEffortTable(config) });
+  const refreshed = replaceOnce(source, agentDescriptionPattern(), snippet);
+  if (refreshed === void 0) return { content: source, result: agentDescriptionOutcome("SKIP", "generated block could not be refreshed") };
+  if (refreshed === source) return { content: source, result: agentDescriptionOutcome("SKIP", "already patched") };
+  return { content: refreshed, result: { status: "OK", name: "PATCH 10d: agent description indicator (refresh)" } };
+}
+function patchFreshAgentDescription(source, config) {
+  const modelIdVar = matchCallSiteModelIdVar(source);
+  if (modelIdVar === void 0) return { content: source, result: agentDescriptionOutcome("SKIP", "call-site anchor not recognized") };
+  const descVar = matchCallSignatureDescVar(source);
+  if (descVar === void 0) return { content: source, result: agentDescriptionOutcome("SKIP", "call signature anchor not recognized") };
+  const snippet = agentDescriptionSnippet({ descVar, modelIdVar, table: buildRoutingDisplayTable(config), effortTable: buildRoutingEffortTable(config) });
+  const patched = replaceOnce(source, callSiteAnchor, (match) => `${match}${snippet}`);
+  if (patched === void 0) return { content: source, result: agentDescriptionOutcome("SKIP", "could not inject description indicator") };
+  return { content: patched, result: { status: "OK", name: "PATCH 10d: agent description indicator" } };
+}
+function applyAgentDescriptionSite(source, config) {
+  const existingCount = count(source, agentDescriptionPattern());
+  if (existingCount > 1) return { content: source, result: agentDescriptionOutcome("SKIP", "ambiguous patch markers found") };
+  if (existingCount === 1) return refreshAgentDescription(source, config);
+  return patchFreshAgentDescription(source, config);
 }
 function outcome(source, status, extra) {
   return {
@@ -14955,9 +15123,13 @@ function outcome(source, status, extra) {
   };
 }
 function refreshRoutingNotice(source, config) {
-  const refreshedCallback = replaceOnce(source, new RegExp(escaped(callbackSnippet())), callbackSnippet());
-  const refreshedSignature = refreshedCallback === void 0 ? void 0 : replaceOnce(refreshedCallback, runnerSignaturePatched, (match) => match);
-  const refreshedHandoff = refreshedSignature === void 0 ? void 0 : replaceOnce(refreshedSignature, handoffPattern(), handoffSnippet(buildRoutingDisplayTable(config)));
+  if (count(source, runnerSignaturePatched) !== 1) return outcome(source, "SKIP", "generated block could not be refreshed");
+  const contextMatch = source.match(runnerContextAnchor);
+  if (!contextMatch) return outcome(source, "SKIP", "generated block could not be refreshed");
+  const agentIdVar = contextMatch[2];
+  const table = buildRoutingDisplayTable(config);
+  const effortTable = buildRoutingEffortTable(config);
+  const refreshedHandoff = replaceOnce(source, handoffPattern(), handoffSnippet({ table, effortTable, agentIdVar }));
   if (refreshedHandoff === void 0) return outcome(source, "SKIP", "generated block could not be refreshed");
   if (refreshedHandoff === source) return outcome(source, "SKIP", "already patched");
   return {
@@ -14965,28 +15137,46 @@ function refreshRoutingNotice(source, config) {
     results: [{ status: "OK", name: "PATCH 10: routing notice (refresh)" }]
   };
 }
+function matchRunnerSignature(source) {
+  if (count(source, runnerSignatureAnchor) !== 1) return void 0;
+  const match = source.match(runnerSignatureAnchor);
+  if (!match) return void 0;
+  return { runnerFn: match[1], requiresStructuredOutputParam: match[2] };
+}
+function matchRunnerContext(source) {
+  if (count(source, runnerContextAnchor) !== 1) return void 0;
+  const match = source.match(runnerContextAnchor);
+  if (!match) return void 0;
+  return { contextVar: match[1], agentIdVar: match[2] };
+}
 function patchFreshRoutingNotice(source, config) {
   const callCount = count(source, callSiteAnchor);
   const callbackCount = count(source, callbackAnchor);
-  const signatureCount = count(source, runnerSignatureAnchor);
-  const contextCount = count(source, runnerContextAnchor);
+  const signature = matchRunnerSignature(source);
+  const context = matchRunnerContext(source);
   const callPresent = callCount > 0 || callbackCount > 0;
-  const runnerPresent = signatureCount > 0 || contextCount > 0;
+  const runnerPresent = signature !== void 0 || context !== void 0;
   if (!callPresent && !runnerPresent) return outcome(source, "SKIP", "Agent launch anchor not recognized");
   if (callCount !== 1 || callbackCount !== 1) return outcome(source, "SKIP", "Agent call-site anchor not recognized");
-  if (signatureCount !== 1 || contextCount !== 1) return outcome(source, "SKIP", "runner anchor not recognized");
-  const callbackPatched = replaceOnce(source, callbackAnchor, (match) => `${match},${callbackSnippet()}`);
+  if (signature === void 0 || context === void 0) return outcome(source, "SKIP", "runner anchor not recognized");
+  const callSiteMatch = source.match(callSiteAnchor);
+  if (!callSiteMatch) return outcome(source, "SKIP", "Agent call-site anchor not recognized");
+  const modelIdVar = callSiteMatch[1];
+  const callbackPatched = replaceOnce(source, callbackAnchor, (match) => `${match},${callbackSnippet(modelIdVar)}`);
   if (callbackPatched === void 0) return outcome(source, "FAIL", "Agent callback site could not be patched");
+  const { from, to } = signatureSnippet(signature.requiresStructuredOutputParam);
   const signaturePatched = replaceOnce(
     callbackPatched,
     runnerSignatureAnchor,
-    (match) => match.replace("requiresStructuredOutput:W})", "requiresStructuredOutput:W,onRoutingNotice:ccRoutingNotice})")
+    (match) => match.replace(from, to)
   );
   if (signaturePatched === void 0) return outcome(source, "FAIL", "runner signature could not be patched");
+  const table = buildRoutingDisplayTable(config);
+  const effortTable = buildRoutingEffortTable(config);
   const handoffPatched = replaceOnce(
     signaturePatched,
     runnerContextAnchor,
-    (match) => `${match}${handoffSnippet(buildRoutingDisplayTable(config))}`
+    (match) => `${match}${handoffSnippet({ table, effortTable, agentIdVar: context.agentIdVar })}`
   );
   if (handoffPatched === void 0) return outcome(source, "FAIL", "runner handoff could not be patched");
   return {
@@ -15002,19 +15192,23 @@ function existingRoutingNoticeOutcome(source, config) {
   const primaryMarkerCount = count(source, new RegExp(callbackAnchor.source + "," + escaped(ROUTING_NOTICE_MARKER)));
   const handoffMarkerCount = count(source, new RegExp(runnerContextAnchor.source + escaped(ROUTING_NOTICE_HANDOFF_MARKER)));
   if (primaryMarkerCount === 0 && handoffMarkerCount === 0) return void 0;
-  const primaryCount = count(source, new RegExp(callbackAnchor.source + "," + escaped(callbackSnippet())));
+  const primaryPattern = new RegExp(
+    callbackAnchor.source + "," + escaped(ROUTING_NOTICE_MARKER) + "onRoutingNotice:d,ccRoutingModelId:" + IDENT
+  );
   const handoffCount = count(source, new RegExp(runnerContextAnchor.source + escaped(handoffPrefix())));
-  if (primaryCount !== 1 || handoffCount !== 1) {
+  if (count(source, primaryPattern) !== 1 || handoffCount !== 1) {
     return outcome(source, "SKIP", "partial or ambiguous patch markers found");
   }
   return refreshRoutingNotice(source, config);
 }
 function applyRoutingNoticeTransform(source, config) {
-  return existingRoutingNoticeOutcome(source, config) ?? patchFreshRoutingNotice(source, config);
+  const base = existingRoutingNoticeOutcome(source, config) ?? patchFreshRoutingNotice(source, config);
+  const described = applyAgentDescriptionSite(base.content, config);
+  return { content: described.content, results: [...base.results, described.result] };
 }
 
 // src/patch-transforms.ts
-var PATCH_TRANSFORMS_VERSION = 5;
+var PATCH_TRANSFORMS_VERSION = 6;
 var RESERVED_MODEL_ALIASES = /* @__PURE__ */ new Set(["sonnet", "opus", "haiku", "fable", "opusplan", "best", "default"]);
 var NATIVE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 var BASE_EFFORT_LEVELS = ["low", "medium", "high"];
@@ -15034,6 +15228,9 @@ var PatchApplyError = class extends Error {
     this.results = results;
   }
 };
+function formatPatchSiteLine(result) {
+  return "  " + result.status.padEnd(4) + " " + result.name + (result.extra ? ": " + result.extra : "");
+}
 function applyLeverframePatches(source, config) {
   let js = source;
   const MODEL_CONFIG = config;
@@ -15696,7 +15893,7 @@ async function validatePristineBaseline(input) {
   return null;
 }
 async function applyPatchTransactionV2(input, runtime = defaultPatchRuntime) {
-  const { installation, desiredConfig, configHash, manifest, recoveryBaseline, trace } = input;
+  const { installation, desiredConfig, configHash, manifest, recoveryBaseline } = input;
   const { identity, canonicalPath, version } = installation;
   if (!isClaudeCodeVersionSupportedForBinaryPatching(version)) {
     return { ok: false, message: unsupportedClaudeCodeBinaryPatchingMessage(version) };
@@ -15827,7 +16024,7 @@ async function applyPatchTransactionV2(input, runtime = defaultPatchRuntime) {
   return {
     ok: true,
     message: `Patched claude ${version}: ${modelCount} model${modelCount === 1 ? "" : "s"} configured.`,
-    detailLines: trace ? results.map((r) => `${r.status} ${r.name}${r.extra ? ` (${r.extra})` : ""}`) : void 0
+    detailLines: results.map((r) => `${r.status} ${r.name}${r.extra ? ` (${r.extra})` : ""}`)
   };
 }
 async function restorePatchTransactionV2(input, runtime = defaultPatchRuntime) {
@@ -16173,6 +16370,9 @@ async function runPatchCommandV2(opts = {}, presenter = clackPatchPresenter) {
     return 1;
   });
 }
+function isSkipOrFailDetailLine(line) {
+  return line.startsWith("SKIP ") || line.startsWith("FAIL ");
+}
 function reportOutcome(outcome2, trace, presenter) {
   if (!outcome2.ok) {
     presenter.error(outcome2.message);
@@ -16180,8 +16380,8 @@ function reportOutcome(outcome2, trace, presenter) {
     return 1;
   }
   presenter.success(outcome2.message);
-  if (!trace) {
-    for (const line of outcome2.detailLines ?? []) presenter.detail(line);
+  for (const line of outcome2.detailLines ?? []) {
+    if (trace || isSkipOrFailDetailLine(line)) presenter.detail(line);
   }
   return 0;
 }
@@ -16277,6 +16477,7 @@ async function diagnosePatchV2(target, runtime = defaultPatchRuntime) {
       transaction: { pending: false },
       lock: { path: "", held: false },
       migration: { ...legacyDiag2, eligible: false, reason: "No installation resolved." },
+      patchSites: [],
       state: "not_resolved",
       nextAction: nextActionFor("not_resolved")
     };
@@ -16300,6 +16501,7 @@ async function diagnosePatchV2(target, runtime = defaultPatchRuntime) {
       transaction: { pending: false },
       lock: { path: "", held: false },
       migration: { legacyManifestPresent: false, eligible: false, reason: "Binary patching is not supported for this Claude Code version." },
+      patchSites: [],
       state: "unsupported",
       nextAction: unsupportedClaudeCodeBinaryPatchingMessage(installation.version)
     };
@@ -16315,12 +16517,18 @@ async function diagnosePatchV2(target, runtime = defaultPatchRuntime) {
   const desired = buildDesiredPatchConfig();
   const configHash = computePatchConfigHash(desired.config);
   let semanticSitesComplete = null;
-  if (live.readable && observedSha256 && live.injection.state === "present" && (!manifest || observedSha256 !== manifest.patchedSha256)) {
+  let patchSites = [];
+  const wantsSemanticVerdict = Boolean(
+    live.readable && observedSha256 && live.injection.state === "present" && (!manifest || observedSha256 !== manifest.patchedSha256)
+  );
+  if (live.readable) {
     try {
       const content = await runtime.readContent(installation.canonicalPath);
-      semanticSitesComplete = verifyPatchSites(content, desired.config).complete;
+      const verification = verifyPatchSites(content, desired.config);
+      patchSites = verification.results;
+      if (wantsSemanticVerdict) semanticSitesComplete = verification.complete;
     } catch {
-      semanticSitesComplete = false;
+      if (wantsSemanticVerdict) semanticSitesComplete = false;
     }
   }
   const state = evaluatePatchStateV2({
@@ -16379,6 +16587,7 @@ async function diagnosePatchV2(target, runtime = defaultPatchRuntime) {
       eligible: true,
       mode: legacyRecovery.kind
     },
+    patchSites,
     state,
     nextAction: nextActionFor(state, legacyRecovery)
   };
@@ -16416,6 +16625,10 @@ function formatPatchDiagnosticsText(report) {
   lines.push(`${pad("legacy migration")}${report.migration.eligible ? `eligible - ${report.migration.mode}` : report.migration.legacyManifestPresent ? `not eligible - ${report.migration.reason}` : "no legacy state"}`);
   lines.push(`${pad("state")}${report.state}`);
   lines.push(`${pad("next action")}${report.nextAction}`);
+  if (report.patchSites.length) {
+    lines.push("  patch sites:");
+    for (const site of report.patchSites) lines.push(formatPatchSiteLine(site));
+  }
   return lines;
 }
 
