@@ -1851,7 +1851,10 @@ var HEURISTIC_RULES = [
   [/claude/i, 2e5],
   [/deepseek-v4|deepseek-r1|deepseek-reasoner/i, 1e6],
   [/deepseek/i, 64e3],
-  [/gpt-5|gpt-4\.1|o3-|o4-/i, 1e6],
+  [/gpt-4\.1/i, 1e6],
+  // gpt-5 family: 400K total window, 272K max input — Claude Code budgets input tokens.
+  [/gpt-5/i, 272e3],
+  [/o3-|o4-/i, 2e5],
   [/gpt-4o|gpt-4-turbo|gpt-4/i, 128e3],
   [/gpt-oss/i, 131072],
   [/qwen3|qwen-3|qwen2\.5-72b|qwen2\.5-32b|qwen-coder/i, 262144],
@@ -1932,8 +1935,9 @@ function contextWindowFromHeuristics(modelId) {
 function lookupContextWindow(modelId) {
   return getCacheIndex().get(modelId) ?? contextWindowFromHeuristics(modelId);
 }
-function resolveContextWindow(modelId, explicit) {
+function resolveContextWindow(modelId, explicit, unconfirmed) {
   if (typeof explicit === "number" && explicit > 0) return explicit;
+  if (unconfirmed) return DEFAULT_CONTEXT_WINDOW;
   return lookupContextWindow(modelId);
 }
 
@@ -2301,6 +2305,7 @@ function localProvidersToServerModels(localProviders) {
       authType: provider.authType,
       oauthAccountId: provider.oauthAccountId,
       contextWindow: model.contextWindow,
+      contextWindowUnconfirmed: model.contextWindowUnconfirmed,
       supportedParameters: model.supportedParameters,
       reasoning: model.reasoning,
       interleavedReasoningField: model.interleavedReasoningField,
@@ -7239,6 +7244,7 @@ function localModelToRoute(lp, model) {
     apiKey: lp.apiKey,
     modelFormat: model.modelFormat,
     contextWindow: model.contextWindow,
+    contextWindowUnconfirmed: model.contextWindowUnconfirmed,
     npm: model.npm,
     baseURL: model.apiBaseUrl,
     providerId: lp.id,
@@ -7384,12 +7390,13 @@ function maskGatewayModelId(aliasId) {
 // src/server/models.ts
 var CREATED_AT_ISO = "2025-01-01T00:00:00Z";
 var CREATED_AT_UNIX = 1735689600;
-function formatAnthropicModelEntry(id, displayName, contextWindow) {
-  const maxInput = resolveContextWindow(id, contextWindow);
+function formatAnthropicModelEntry(entry) {
+  const { id, name, contextWindow, contextWindowUnconfirmed } = entry;
+  const maxInput = resolveContextWindow(id, contextWindow, contextWindowUnconfirmed);
   return {
     id,
     type: "model",
-    display_name: displayName,
+    display_name: name,
     created_at: CREATED_AT_ISO,
     context_window: maxInput,
     max_input_tokens: maxInput
@@ -7397,7 +7404,7 @@ function formatAnthropicModelEntry(id, displayName, contextWindow) {
 }
 function formatAnthropicModelList(entries) {
   return {
-    data: entries.map((entry) => formatAnthropicModelEntry(entry.id, entry.name, entry.contextWindow)),
+    data: entries.map((entry) => formatAnthropicModelEntry(entry)),
     has_more: false,
     first_id: entries[0]?.id ?? null,
     last_id: entries.at(-1)?.id ?? null
@@ -7425,7 +7432,8 @@ function formatGatewayAnthropicModels(models, opts) {
     models.map((model) => ({
       id: exposedGatewayAliasId(model, opts),
       name: gatewayDisplayName(model, opts),
-      contextWindow: model.contextWindow
+      contextWindow: model.contextWindow,
+      contextWindowUnconfirmed: model.contextWindowUnconfirmed
     }))
   );
 }
@@ -10845,7 +10853,12 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
   process.on("uncaughtException", onException);
   const modelsPayload = JSON.stringify(
     formatAnthropicModelList(
-      routes.map((r) => ({ id: r.aliasId, name: r.displayName, contextWindow: r.contextWindow }))
+      routes.map((r) => ({
+        id: r.aliasId,
+        name: r.displayName,
+        contextWindow: r.contextWindow,
+        contextWindowUnconfirmed: r.contextWindowUnconfirmed
+      }))
     )
   );
   const server = createServer(async (req, res) => {
@@ -10863,7 +10876,12 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
           const route = lookupRoute(byAlias, id);
           if (route) {
             res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(formatAnthropicModelEntry(route.aliasId, route.displayName, route.contextWindow)));
+            res.end(JSON.stringify(formatAnthropicModelEntry({
+              id: route.aliasId,
+              name: route.displayName,
+              contextWindow: route.contextWindow,
+              contextWindowUnconfirmed: route.contextWindowUnconfirmed
+            })));
           } else {
             res.writeHead(404, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ error: { type: "not_found_error", message: `Model '${id}' not found` } }));
@@ -11256,7 +11274,7 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
             const contextLengthExceeded = upstreamStatus === 400 && isContextLengthExceededError(err, message2);
             const clientMessage = contextLengthExceeded ? anthropicPromptTooLongMessage(
               anthropicBody,
-              resolveContextWindow(route.realModelId, route.contextWindow)
+              resolveContextWindow(route.realModelId, route.contextWindow, route.contextWindowUnconfirmed)
             ) : message2;
             plog(() => `sdk error: ${message2}${details?.errorContent ? ` \u2014 body: ${details.errorContent}` : ""}`);
             if (inferenceLogPath && upstreamStatus >= 400) {
@@ -12321,7 +12339,7 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
               abortSignal: clientAbort.signal,
               clientAbortSignal: clientAbort.signal,
               lifecycle: requestExecution,
-              contextWindow: resolveContextWindow(upstreamModelId(model), model.contextWindow)
+              contextWindow: resolveContextWindow(upstreamModelId(model), model.contextWindow, model.contextWindowUnconfirmed)
             })
           );
           requestExecution.markStreamActivity();
@@ -12340,7 +12358,7 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
             abortSignal: clientAbort.signal,
             onUsage,
             lifecycle: requestExecution,
-            contextWindow: resolveContextWindow(upstreamModelId(model), model.contextWindow)
+            contextWindow: resolveContextWindow(upstreamModelId(model), model.contextWindow, model.contextWindowUnconfirmed)
           })
         );
         requestExecution.markStreamActivity();
@@ -12360,7 +12378,7 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
       const contextLengthExceeded = status === 400 && isContextLengthExceededError(err, message2);
       const clientMessage = contextLengthExceeded ? anthropicPromptTooLongMessage(
         body,
-        resolveContextWindow(upstreamModelId(model), model.contextWindow)
+        resolveContextWindow(upstreamModelId(model), model.contextWindow, model.contextWindowUnconfirmed)
       ) : message2;
       plog(() => `sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message2}${details?.errorContent ? `, body: ${details.errorContent}` : ""}`);
       if (!res.headersSent) {
