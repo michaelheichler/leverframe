@@ -451,11 +451,6 @@ describe('patch script identity naming', () => {
       ['PATCH 1: Agent tool model enum', 'OK'],
       ['PATCH 3: known-alias validator list', 'OK'],
       ['PATCH 11: session-restore model family allowlist', 'SKIP'],
-      ['PATCH 12: honor skipGlobalCacheForSystemPrompt with boundary marker present', 'SKIP'],
-      [
-        'PATCH 13: never emit cache_control scope global (custom system prompts fail server-side content recognition)',
-        'SKIP',
-      ],
       ['PATCH 6: alias resolver switch', 'OK'],
       ['PATCH 5: model picker options', 'OK'],
       ['PATCH 4: Agent tool model description', 'OK'],
@@ -467,11 +462,6 @@ describe('patch script identity naming', () => {
       ['PATCH 1: Agent tool model enum', 'SKIP'],
       ['PATCH 3: known-alias validator list', 'SKIP'],
       ['PATCH 11: session-restore model family allowlist', 'SKIP'],
-      ['PATCH 12: honor skipGlobalCacheForSystemPrompt with boundary marker present', 'SKIP'],
-      [
-        'PATCH 13: never emit cache_control scope global (custom system prompts fail server-side content recognition)',
-        'SKIP',
-      ],
       ['PATCH 6: alias resolver switch', 'SKIP'],
       ['PATCH 5: model picker options', 'SKIP'],
       ['PATCH 4: Agent tool model description', 'SKIP'],
