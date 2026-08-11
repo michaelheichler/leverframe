@@ -1595,3 +1595,51 @@ describe('translateRequest openai promptCacheKey', () => {
     expect(keyOf(req(), '@ai-sdk/xai')).toBeUndefined();
   });
 });
+
+// ── usage propagation to the terminal message_delta ─────────────────────────
+// Claude Code's context accounting reads input usage from the last usage-bearing
+// event. message_start necessarily carries the local bytes/4 estimate (real usage
+// does not exist yet); the terminal message_delta must replace it with provider
+// numbers whenever the finish part delivers them — otherwise the statusline shows
+// the inflated estimate (observed as 297K used vs a 239K budget).
+describe('writeAnthropicStream usage propagation', () => {
+  const textParts = [
+    { type: 'start' },
+    { type: 'text-start', id: 't1' },
+    { type: 'text-delta', id: 't1', text: 'ok' },
+    { type: 'text-end', id: 't1' },
+  ];
+  const byEvent = (events: Awaited<ReturnType<typeof collect>>['events'], name: string) =>
+    events.filter(e => e.event === name);
+
+  it('replaces the message_start estimate with provider usage in message_delta', async () => {
+    const { events } = await collect(
+      [...textParts, {
+        type: 'finish',
+        finishReason: 'stop',
+        totalUsage: { inputTokens: 239_000, outputTokens: 10, cachedInputTokens: 100_000 },
+      }],
+      'gpt-5.6-terra',
+      { initialInputTokens: 297_000, inputTokensIncludeCache: true },
+    );
+    const finalUsage = byEvent(events, 'message_delta').at(-1)!.data.usage;
+    expect(finalUsage.input_tokens).toBe(139_000);
+    expect(finalUsage.cache_read_input_tokens).toBe(100_000);
+    expect(finalUsage.input_tokens + finalUsage.cache_read_input_tokens).toBe(239_000);
+  });
+
+  it('keeps the estimate when the finish part carries no input usage', async () => {
+    const { events } = await collect(
+      [...textParts, {
+        type: 'finish',
+        finishReason: 'stop',
+        totalUsage: { outputTokens: 10 },
+      }],
+      'gpt-5.6-terra',
+      { initialInputTokens: 297_000, inputTokensIncludeCache: true },
+    );
+    const finalUsage = byEvent(events, 'message_delta').at(-1)!.data.usage;
+    expect(finalUsage.input_tokens).toBe(297_000);
+    expect(finalUsage.output_tokens).toBe(10);
+  });
+});
