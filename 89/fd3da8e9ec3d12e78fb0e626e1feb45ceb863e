@@ -1,0 +1,54 @@
+tests/patch-transforms-routing-notice-claude-2-1-226.test.ts
+  s_7ed7c2f63b0d4d::t_3e856d3bcb20b3 3,15-19,30,41,45,57-58,63,71,79-101
+  s_7ed7c2f63b0d4d::t_32577779583a7e 59-62,64-65
+tests/patcher.test.ts
+  s_7ed7c2f63b0d4d::t_09c7e3cc82fdf0 660,662-675
+  s_7ed7c2f63b0d4d::t_c70eb6078f5df7 658-659
+  s_7ed7c2f63b0d4d::t_96f680c0d50df6 459,471
+  s_7ed7c2f63b0d4d::t_8e9312f9930102 11
+  s_c58a2f31002b33::t_6b7739556eaf4c 661
+src/patch-transforms-routing-notice.ts
+  s_7ed7c2f63b0d4d::t_d4fffe5de15c7f 296
+  s_7ed7c2f63b0d4d::t_1db5f769d33349 415-417
+  s_7ed7c2f63b0d4d::t_1db0fbe1578502 43-50
+  s_7ed7c2f63b0d4d::t_97b3c5d24e85ce 20-38
+  s_7ed7c2f63b0d4d::t_c0fc754eb2832f 212-216,234-235,237-240,243-250,253-255,258-282,284-295,297-310
+  s_7ed7c2f63b0d4d::t_d72d6af50822d7 147-159
+  s_7ed7c2f63b0d4d::t_477d6989c463d6 224-231,236,241-242,251-252,256-257
+  s_7ed7c2f63b0d4d::t_3f19863d4838e4 217-223,232-233
+  s_7ed7c2f63b0d4d::t_3256a6f636f115 283
+src/patch-transforms.ts
+  s_7ed7c2f63b0d4d::t_3774d1cf7b8c14 4
+tests/patch-transforms-routing-notice.test.ts
+  s_7ed7c2f63b0d4d::t_d4f4c1419988f0 3,8-9,20,46,49,97-100,102-105,114-117,122-135,138-144,164-182,193-203,210-218,226
+  s_7ed7c2f63b0d4d::t_c763efe2963a7d 26
+  s_7ed7c2f63b0d4d::t_673a2ef931ed11 25,27-31
+  s_7ed7c2f63b0d4d::t_51ac762518d42f 136-137,145-163
+tests/patch-transforms-routing-notice-claude-2-1-227.test.ts
+  s_7ed7c2f63b0d4d::t_46dcd31f9275ea 3,21-25,36,47,51,61-62,67,75,105-125
+  s_7ed7c2f63b0d4d::t_ac19a46e0f3b2d 63-66,68-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "89fd3da8e9ec3d12e78fb0e626e1feb45ceb863e",
+  "prompts": {},
+  "sessions": {
+    "s_7ed7c2f63b0d4d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4124bfab-1b0c-4f94-92c8-6b3a28716b9d",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    },
+    "s_c58a2f31002b33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "29947296-faac-43ce-a53e-2e686a357269",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}
