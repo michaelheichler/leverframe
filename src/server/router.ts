@@ -812,6 +812,7 @@ async function handleAnthropicMessages(
               abortSignal: clientAbort.signal,
               clientAbortSignal: clientAbort.signal,
               lifecycle: requestExecution,
+              contextWindow: resolveContextWindow(upstreamModelId(model), model.contextWindow),
             }),
           );
           requestExecution.markStreamActivity();
@@ -831,6 +832,7 @@ async function handleAnthropicMessages(
             abortSignal: clientAbort.signal,
             onUsage,
             lifecycle: requestExecution,
+            contextWindow: resolveContextWindow(upstreamModelId(model), model.contextWindow),
           }),
         );
         requestExecution.markStreamActivity();
@@ -855,7 +857,7 @@ async function handleAnthropicMessages(
             resolveContextWindow(upstreamModelId(model), model.contextWindow),
           )
         : message;
-      plog(`sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message}`);
+      plog(() => `sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message}${details?.errorContent ? `, body: ${details.errorContent}` : ''}`);
       if (!res.headersSent) {
         for (const [name, value] of Object.entries(sdkUpstreamResponseHeaders(details))) {
           res.setHeader(name, value);
@@ -1122,7 +1124,7 @@ async function handleOpenAIChatCompletions(
     const message = formatUpstreamError(err);
     const details = sdkUpstreamErrorDetails(err);
     const status = auditSdkError(options, body.model, model, err, message);
-    plog(`sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message}`);
+    plog(() => `sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message}${details?.errorContent ? `, body: ${details.errorContent}` : ''}`);
     if (!res.headersSent) {
       sendJson(res, status === 500 ? 502 : status, { error: { message } });
     } else {

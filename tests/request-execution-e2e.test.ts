@@ -8,6 +8,9 @@
 import { describe, it, expect } from 'vitest';
 import http from 'node:http';
 import { aliasModelId, startProxyCatalog, type ProxyRoute } from '../src/proxy.js';
+import { useIsolatedTestHome } from './isolated-test-home.js';
+
+useIsolatedTestHome('leverframe-request-execution');
 
 interface PostToProxyRequest {
   port: number;

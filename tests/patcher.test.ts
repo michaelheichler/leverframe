@@ -450,6 +450,12 @@ describe('patch script identity naming', () => {
     expect(fresh.results.map(r => [r.name, r.status])).toEqual([
       ['PATCH 1: Agent tool model enum', 'OK'],
       ['PATCH 3: known-alias validator list', 'OK'],
+      ['PATCH 11: session-restore model family allowlist', 'SKIP'],
+      ['PATCH 12: honor skipGlobalCacheForSystemPrompt with boundary marker present', 'SKIP'],
+      [
+        'PATCH 13: never emit cache_control scope global (custom system prompts fail server-side content recognition)',
+        'SKIP',
+      ],
       ['PATCH 6: alias resolver switch', 'OK'],
       ['PATCH 5: model picker options', 'OK'],
       ['PATCH 4: Agent tool model description', 'OK'],
@@ -460,6 +466,12 @@ describe('patch script identity naming', () => {
     expect(rerun.results.map(r => [r.name, r.status])).toEqual([
       ['PATCH 1: Agent tool model enum', 'SKIP'],
       ['PATCH 3: known-alias validator list', 'SKIP'],
+      ['PATCH 11: session-restore model family allowlist', 'SKIP'],
+      ['PATCH 12: honor skipGlobalCacheForSystemPrompt with boundary marker present', 'SKIP'],
+      [
+        'PATCH 13: never emit cache_control scope global (custom system prompts fail server-side content recognition)',
+        'SKIP',
+      ],
       ['PATCH 6: alias resolver switch', 'SKIP'],
       ['PATCH 5: model picker options', 'SKIP'],
       ['PATCH 4: Agent tool model description', 'SKIP'],
@@ -651,7 +663,7 @@ describe('PATCH 8/9 effort capability gates', () => {
 });
 
 describe('PATCH_TRANSFORMS_VERSION', () => {
-  it('is bumped for Agent routing notice wiring and capability reconciliation', () => {
-    expect(PATCH_TRANSFORMS_VERSION).toBe(4);
+  it('is bumped for the no-global-scope cache_control patch', () => {
+    expect(PATCH_TRANSFORMS_VERSION).toBe(5);
   });
 });

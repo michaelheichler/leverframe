@@ -107,12 +107,15 @@ describe('credential cleanup reconciliation', () => {
     await queueCredentialDelete('keyring:provider:test');
     vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockResolvedValue({ ok: false, error: 'backend uncertain' });
     const warnings: string[] = [];
+    const stderrWarning = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const first = await reconcilePendingCredentialDeletes(message => warnings.push(message));
     const second = await reconcilePendingCredentialDeletes(message => warnings.push(message));
 
     expect(first.pending).toEqual(['keyring:provider:test']);
     expect(second.pending).toEqual(['keyring:provider:test']);
-    expect(warnings.filter(message => message.includes('could not be confirmed'))).toHaveLength(1);
+    expect(warnings).toEqual(['Cleanup for keyring:provider:test: credential deletion could not be confirmed']);
+    expect(stderrWarning).toHaveBeenCalledWith('leverframe: keyring error: backend uncertain');
+    expect(stderrWarning).toHaveBeenCalledTimes(1);
   });
 });

@@ -503,12 +503,10 @@ export function writeWebSocketDiagnosticLog(
   }));
 }
 
-/** Append an upstream HTTP failure; response content follows the request-preview opt-in. */
 export function writeInferenceResponseErrorLog(
   path: string,
   entry: InferenceResponseErrorLogEntry,
 ): void {
-  const includeContent = process.env[REQUEST_PREVIEW_ENV] === '1' && entry.errorContent;
   writeSecureLogLine(path, JSON.stringify({
     timestamp: new Date().toISOString(),
     event: 'upstream_error',
@@ -519,7 +517,7 @@ export function writeInferenceResponseErrorLog(
     statusCode: entry.statusCode,
     ...(entry.isRetryable !== undefined ? { isRetryable: entry.isRetryable } : {}),
     ...(entry.attemptCount !== undefined ? { attemptCount: entry.attemptCount } : {}),
-    ...(includeContent ? { errorContent: compactLogValueWithMarker(entry.errorContent!, RESPONSE_ERROR_MAX) } : {}),
+    ...(entry.errorContent ? { errorContent: compactLogValueWithMarker(entry.errorContent, RESPONSE_ERROR_MAX) } : {}),
   }));
 }
 

@@ -1,4 +1,3 @@
-// src/launch.ts
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -64,10 +63,8 @@ export function getInstalledClaudeVersion(claudePathOverride?: string): string {
     });
     const match = result.match(/(\d+\.\d+\.\d+)/);
     if (match) return match[1];
-  } catch {
-    // fallback
-  }
-  return '2.1.183'; // default fallback version known to work
+  } catch {}
+  return '2.1.183';
 }
 
 export function buildClaudeArgs(model: string | undefined, extraArgs: string[]): string[] {
@@ -84,7 +81,12 @@ export interface LaunchClaudeOptions {
 export function launchClaude(options: LaunchClaudeOptions): Promise<number> {
   const { installation, env, model, extraArgs } = options;
   return new Promise((resolve) => {
-    const claudePath = installation.canonicalPath;
+    const launchOverride = env['LEVERFRAME_CLAUDE_LAUNCH_PATH']?.trim();
+    const claudePath = launchOverride
+      && existsSync(launchOverride)
+      && (!isWindows || !CMD_PATH_METACHARACTERS.test(launchOverride))
+      ? launchOverride
+      : installation.canonicalPath;
     const args = buildClaudeArgs(model, extraArgs);
 
     const debugFileIdx = extraArgs.indexOf('--debug-file');
@@ -104,9 +106,7 @@ export function launchClaude(options: LaunchClaudeOptions): Promise<number> {
         try {
           const str = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
           appendFileSync(debugLogPath, `[parent] ${str}`);
-        } catch {
-          // ignore
-        }
+        } catch {}
       }
       done?.();
       return true;

@@ -21,7 +21,7 @@ import { resolveUpstreamTools } from './tool-search.js';
 import type { AnthropicRequestMessage, AnthropicToolDefinition } from './proxy-types.js';
 import { anthropicErrorType, upstreamHttpStatus } from './upstream-error.js';
 import { CLAUDE_CODE_BILLING_HEADER_PREFIX } from './oauth/claude-identity.js';
-import { ToolResultImageError } from './provider-error.js';
+import { ToolResultImageError, ProviderTransportError } from './provider-error.js';
 import type { RequestExecutionObserver } from './request-execution-context.js';
 import { VERTEX_ANTHROPIC_NPM } from './constants.js';
 
@@ -753,6 +753,37 @@ export interface AnthropicStreamObserver {
   lifecycle?: RequestExecutionObserver;
   /** @why Deadline aborts must remain distinct from downstream disconnects. */
   clientAbortSignal?: AbortSignal;
+  contextWindow?: number;
+}
+
+function safeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value)?.slice(0, 500) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function emptyCompletionError(
+  modelId: string,
+  inputTokens: number,
+  contextWindow?: number,
+  rawFinishReason?: string,
+): ProviderTransportError {
+  const overLimit = contextWindow !== undefined && inputTokens > contextWindow;
+  const safeMessage = overLimit
+    ? `prompt is too long for model ${modelId} (${inputTokens} > ${contextWindow} context)`
+    : `Upstream returned no content for model ${modelId} (input_tokens=${inputTokens}, finishReason=${rawFinishReason ?? 'unknown'})`;
+  return new ProviderTransportError({
+    provider: 'openai-oauth',
+    model: modelId,
+    phase: 'completion',
+    category: overLimit ? 'context_length' : 'upstream',
+    httpStatus: 400,
+    retryable: false,
+    outputEmitted: false,
+    safeMessage,
+  });
 }
 
 /** @why Malformed durations must retain the configured fallback. */
@@ -822,6 +853,8 @@ export async function writeAnthropicStream(
   const flushedTools = new Set<string>();
   let openToolId: string | null = null;
   let finishReason = 'end_turn';
+  let rawFinishReason: string | undefined;
+  const seenPartTypes: string[] = [];
   let usage: AnthropicUsage = {
     input_tokens: observer?.initialInputTokens ?? 0,
     output_tokens: 0,
@@ -931,6 +964,7 @@ export async function writeAnthropicStream(
 
   try {
   for await (const part of stream) {
+    seenPartTypes.push(part.type);
     observer?.onPart?.(part.type);
     observer?.lifecycle?.markStreamActivity();
     if (observer?.abortSignal?.aborted) {
@@ -1063,6 +1097,7 @@ export async function writeAnthropicStream(
         if (part.finishReason === 'tool-calls') finishReason = 'tool_use';
         else if (part.finishReason === 'length') finishReason = 'max_tokens';
         else if (part.finishReason === 'stop' && finishReason !== 'tool_use') finishReason = 'end_turn';
+        rawFinishReason = part.finishReason;
         break;
 
       case 'error': {
@@ -1077,7 +1112,9 @@ export async function writeAnthropicStream(
           : new Error(errMsg);
       }
 
-      default: break;
+      default:
+        log?.(() => `sdk stream unrecognized part type=${part.type} keys=${Object.keys(part).join(',')} sample=${safeJson(part)}`);
+        break;
     }
   }
   // Some SDK transports end the iterator without yielding an explicit abort
@@ -1085,6 +1122,11 @@ export async function writeAnthropicStream(
   if (observer?.abortSignal?.aborted) {
     if (deliverTruncated()) return;
     throw streamAbortError(observer.abortSignal);
+  }
+
+  if (!started && blockIndex === -1 && finishReason === 'end_turn' && usage.output_tokens === 0) {
+    log?.(() => `sdk stream produced no content: seen part types=${seenPartTypes.join(',')} rawFinishReason=${rawFinishReason}`);
+    throw emptyCompletionError(modelId, usage.input_tokens, observer?.contextWindow, rawFinishReason);
   }
 
   closeOpen();
@@ -1169,12 +1211,15 @@ export async function generateAnthropicResponse(
     idleTimeoutMs?: number;
     /** See {@link AnthropicStreamObserver.lifecycle}. */
     lifecycle?: RequestExecutionObserver;
+    contextWindow?: number;
+    log?: LogFn;
   },
 ): Promise<Record<string, unknown>> {
   let text: string;
   let toolCalls: Array<{ toolCallId: string; toolName: string; input: unknown }>;
   let finishReason: string;
   let usage: SdkUsage | undefined;
+  const seenPartTypes: string[] = [];
   const { inputTokensIncludeCache = false, ...sdkParams } = params;
 
   if (options?.forceStream) {
@@ -1208,6 +1253,7 @@ export async function generateAnthropicResponse(
           () => forceAbort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1000)}s`)),
           idleTimeoutMs,
         );
+        seenPartTypes.push(part.type);
         options.onPart?.(part.type);
         options.lifecycle?.markStreamActivity();
         if (abortSignal.aborted || part.type === 'abort') {
@@ -1231,6 +1277,8 @@ export async function generateAnthropicResponse(
         } else if (part.type === 'finish') {
           streamedFinishReason = part.finishReason ?? streamedFinishReason;
           streamedUsage = part.totalUsage;
+        } else if (part.type !== 'start') {
+          options.log?.(() => `sdk generate unrecognized part type=${part.type} keys=${Object.keys(part).join(',')} sample=${safeJson(part)}`);
         }
       }
       if (abortSignal.aborted) throw streamAbortError(abortSignal);
@@ -1269,6 +1317,11 @@ export async function generateAnthropicResponse(
       clearTimeout(totalTimer);
       if (!generateAbort.signal.aborted) generateAbort.abort();
     }
+  }
+
+  if (!text && toolCalls.length === 0 && finishReason !== 'tool-calls' && !usage?.outputTokens) {
+    options?.log?.(() => `sdk generate produced no content: seen part types=${seenPartTypes.join(',')} rawFinishReason=${finishReason}`);
+    throw emptyCompletionError(modelId, usage?.inputTokens ?? 0, options?.contextWindow, finishReason);
   }
 
   const inputRules = toolInputRules(params.tools);

@@ -10,12 +10,24 @@ import { generateAnthropicResponse } from '../src/sdk-adapter.js';
 import { generateOpenAiResponse } from '../src/openai-adapter.js';
 import { revalidateCustomEndpointUrl } from '../src/registry/url-security.js';
 import { ProviderTransportError } from '../src/provider-error.js';
+import { resolveProviderCredential } from '../src/env.js';
+import { useIsolatedTestHome } from './isolated-test-home.js';
+
+useIsolatedTestHome('leverframe-server-router');
 
 vi.mock('../src/provider-factory.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/provider-factory.js')>();
   return {
     ...actual,
     createLanguageModel: vi.fn(async (spec: unknown) => ({ spec })),
+  };
+});
+
+vi.mock('../src/env.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/env.js')>();
+  return {
+    ...actual,
+    resolveProviderCredential: vi.fn(actual.resolveProviderCredential),
   };
 });
 
@@ -973,6 +985,33 @@ describe('server router', () => {
     expect(await response.json()).toMatchObject({
       error: { message: expect.stringContaining('Unsupported model format') },
     });
+  });
+
+  it('rejects a canonical unknown candidate before credential resolution or upstream forwarding', async () => {
+    const upstream = await startUpstream({ id: 'must-not-be-reached' });
+    handles.push(upstream);
+    const server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      apiKey: 'real-opencode-key',
+      serverPassword: null,
+      catalog: defaultCatalog(upstream.baseUrl),
+    });
+    handles.push(server);
+    vi.mocked(resolveProviderCredential).mockClear();
+
+    const response = await fetch(`${server.url}/anthropic/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'leverframe:opencode-go:unknown-candidate', messages: [] }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: { message: 'Unknown model: leverframe:opencode-go:unknown-candidate' },
+    });
+    expect(resolveProviderCredential).not.toHaveBeenCalled();
+    expect(upstream.requests).toHaveLength(0);
   });
 
   describe('saved alias and masked-id request resolution', () => {

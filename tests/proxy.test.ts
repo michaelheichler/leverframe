@@ -8,6 +8,9 @@ import { aliasModelId, startProxyCatalog, type ProxyRoute } from '../src/proxy.j
 import { getProxyDebugLogPath } from '../src/trace-log.js';
 import { buildClaudeCodeBillingSystemLine } from '../src/oauth/claude-identity.js';
 import { anthropicMessagesEndpoint, estimateAnthropicInputTokens } from '../src/anthropic-endpoints.js';
+import { useIsolatedTestHome } from './isolated-test-home.js';
+
+useIsolatedTestHome('leverframe-proxy');
 
 vi.mock('../src/registry/url-security.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/registry/url-security.js')>();

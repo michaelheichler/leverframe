@@ -275,6 +275,7 @@ var package_default = {
   },
   scripts: {
     build: "tsup",
+    "build:test-candidate": "tsup $(find src -name 'candidate-?li.ts' -print) --format esm --target node22 --out-dir dist-${LEVERFRAME_CANDIDATE_OUTPUT:-test} --sourcemap false --clean",
     "check:package": "node scripts/verify-package-contents.mjs",
     dev: "tsup --watch",
     lint: "oxlint src tests",
@@ -2488,7 +2489,8 @@ function buildClaudeArgs(model, extraArgs) {
 function launchClaude(options) {
   const { installation, env, model, extraArgs } = options;
   return new Promise((resolve) => {
-    const claudePath = installation.canonicalPath;
+    const launchOverride = env["LEVERFRAME_CLAUDE_LAUNCH_PATH"]?.trim();
+    const claudePath = launchOverride && existsSync5(launchOverride) && (!isWindows || !CMD_PATH_METACHARACTERS.test(launchOverride)) ? launchOverride : installation.canonicalPath;
     const args = buildClaudeArgs(model, extraArgs);
     const debugFileIdx = extraArgs.indexOf("--debug-file");
     const debugLogPath = debugFileIdx !== -1 && extraArgs[debugFileIdx + 1] ? extraArgs[debugFileIdx + 1] : void 0;
@@ -2605,4 +2607,4 @@ export {
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-WKZYZJ5L.js.map
+//# sourceMappingURL=chunk-WU32VF5B.js.map

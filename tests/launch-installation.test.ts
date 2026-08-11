@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -117,5 +117,35 @@ describe('resolved Claude installation launch invariant', () => {
     });
     expect(exitCode).toBe(0);
     expect(readFileSync(marker, 'utf8')).toBe('candidate-a');
+  });
+
+  posixIt('spawns an explicit launch path without changing the resolved installation', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'leverframe-launch-wrapper-'));
+    dirs.push(dir);
+    const claude = join(dir, 'claude');
+    const wrapper = join(dir, 'claude-wrapper');
+    const marker = join(dir, 'spawned-candidate');
+    writeCandidate(claude, 'claude');
+    writeCandidate(wrapper, 'wrapper');
+
+    process.env['LEVERFRAME_CLAUDE_PATH'] = claude;
+    const installation = resolveClaudeInstallation();
+    expect(installation).not.toBeNull();
+    if (!installation) throw new Error('fixture Claude installation did not resolve');
+
+    const exitCode = await launchClaude({
+      installation,
+      env: {
+        ...process.env,
+        LEVERFRAME_CLAUDE_LAUNCH_PATH: wrapper,
+        LEVERFRAME_TEST_LAUNCH_MARKER: marker,
+      },
+      model: undefined,
+      extraArgs: [],
+    });
+
+    expect(exitCode).toBe(0);
+    expect(readFileSync(marker, 'utf8')).toBe('wrapper');
+    expect(installation.canonicalPath).toBe(realpathSync(claude));
   });
 });

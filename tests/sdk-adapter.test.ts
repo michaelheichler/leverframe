@@ -848,7 +848,10 @@ describe('streamAnthropicResponse idle timeout', () => {
     vi.resetModules();
     async function* stream() {
       yield { type: 'start' };
-      yield { type: 'finish', finishReason: 'stop' };
+      yield { type: 'text-start', id: 't1' };
+      yield { type: 'text-delta', id: 't1', text: 'ok' };
+      yield { type: 'text-end', id: 't1' };
+      yield { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 1, outputTokens: 1 } };
     }
     const result: Record<string, unknown> = { stream: stream() };
     for (const property of ['text', 'toolCalls', 'toolResults', 'finishReason', 'usage']) {
@@ -1086,6 +1089,9 @@ describe('writeAnthropicStream', () => {
   it('sanitizes malformed usage and retains the local input fallback', async () => {
     const { events } = await collect([
       { type: 'start' },
+      { type: 'text-start', id: 't1' },
+      { type: 'text-delta', id: 't1', text: 'ok' },
+      { type: 'text-end', id: 't1' },
       {
         type: 'finish',
         finishReason: 'stop',

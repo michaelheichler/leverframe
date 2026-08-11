@@ -907,6 +907,7 @@ export async function startProxyCatalog(
                   abortSignal: clientAbort.signal,
                   onPart: partType => translationLifecycle?.onPart(partType),
                   lifecycle: requestExecution,
+                  log: plog,
                 },
               ),
             );

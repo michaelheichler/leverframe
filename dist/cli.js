@@ -67,7 +67,7 @@ import {
   withProviderMutationLock,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-WKZYZJ5L.js";
+} from "./chunk-WU32VF5B.js";
 
 // src/cli.ts
 import pc14 from "picocolors";
@@ -2204,7 +2204,7 @@ async function loadRegistryProviders(diag, opts) {
       const key = await resolveProviderCredential(provider.id, provider.authRef, diag);
       if (key) keys.set(provider.id, key);
     } catch (err) {
-      diag?.(`${provider.id}: credential unavailable \u2014 ${err instanceof Error ? err.message : String(err)}`);
+      diag?.(`${provider.id}: credential unavailable: ${err instanceof Error ? err.message : String(err)}`);
     }
     if (provider.authType === "oauth") {
       try {
@@ -5176,7 +5176,6 @@ function writeWebSocketDiagnosticLog(path, entry) {
   }));
 }
 function writeInferenceResponseErrorLog(path, entry) {
-  const includeContent = process.env[REQUEST_PREVIEW_ENV] === "1" && entry.errorContent;
   writeSecureLogLine(path, JSON.stringify({
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
     event: "upstream_error",
@@ -5187,7 +5186,7 @@ function writeInferenceResponseErrorLog(path, entry) {
     statusCode: entry.statusCode,
     ...entry.isRetryable !== void 0 ? { isRetryable: entry.isRetryable } : {},
     ...entry.attemptCount !== void 0 ? { attemptCount: entry.attemptCount } : {},
-    ...includeContent ? { errorContent: compactLogValueWithMarker(entry.errorContent, RESPONSE_ERROR_MAX) } : {}
+    ...entry.errorContent ? { errorContent: compactLogValueWithMarker(entry.errorContent, RESPONSE_ERROR_MAX) } : {}
   }));
 }
 function makeTraceLogger(logPath, secrets = []) {
@@ -8574,6 +8573,27 @@ function sdkPromptCacheKeyHash(params) {
   const key = params.providerOptions?.openai?.promptCacheKey;
   return typeof key === "string" ? createHash5("sha256").update(key).digest("hex").slice(0, 16) : void 0;
 }
+function safeJson(value) {
+  try {
+    return JSON.stringify(value)?.slice(0, 500) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+function emptyCompletionError(modelId, inputTokens, contextWindow, rawFinishReason) {
+  const overLimit = contextWindow !== void 0 && inputTokens > contextWindow;
+  const safeMessage = overLimit ? `prompt is too long for model ${modelId} (${inputTokens} > ${contextWindow} context)` : `Upstream returned no content for model ${modelId} (input_tokens=${inputTokens}, finishReason=${rawFinishReason ?? "unknown"})`;
+  return new ProviderTransportError({
+    provider: "openai-oauth",
+    model: modelId,
+    phase: "completion",
+    category: overLimit ? "context_length" : "upstream",
+    httpStatus: 400,
+    retryable: false,
+    outputEmitted: false,
+    safeMessage
+  });
+}
 function positiveEnvMs(name, fallback) {
   const raw = process.env[name]?.trim() ?? "";
   if (!/^\d+$/.test(raw)) return fallback;
@@ -8623,6 +8643,8 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
   const flushedTools = /* @__PURE__ */ new Set();
   let openToolId = null;
   let finishReason = "end_turn";
+  let rawFinishReason;
+  const seenPartTypes = [];
   let usage = {
     input_tokens: observer?.initialInputTokens ?? 0,
     output_tokens: 0,
@@ -8727,6 +8749,7 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
   };
   try {
     for await (const part of stream) {
+      seenPartTypes.push(part.type);
       observer?.onPart?.(part.type);
       observer?.lifecycle?.markStreamActivity();
       if (observer?.abortSignal?.aborted) {
@@ -8853,6 +8876,7 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
           if (part.finishReason === "tool-calls") finishReason = "tool_use";
           else if (part.finishReason === "length") finishReason = "max_tokens";
           else if (part.finishReason === "stop" && finishReason !== "tool_use") finishReason = "end_turn";
+          rawFinishReason = part.finishReason;
           break;
         case "error": {
           const e = part.error;
@@ -8864,12 +8888,17 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
           throw part.error instanceof Error || part.error && typeof part.error === "object" ? part.error : new Error(errMsg);
         }
         default:
+          log12?.(() => `sdk stream unrecognized part type=${part.type} keys=${Object.keys(part).join(",")} sample=${safeJson(part)}`);
           break;
       }
     }
     if (observer?.abortSignal?.aborted) {
       if (deliverTruncated()) return;
       throw streamAbortError(observer.abortSignal);
+    }
+    if (!started && blockIndex === -1 && finishReason === "end_turn" && usage.output_tokens === 0) {
+      log12?.(() => `sdk stream produced no content: seen part types=${seenPartTypes.join(",")} rawFinishReason=${rawFinishReason}`);
+      throw emptyCompletionError(modelId, usage.input_tokens, observer?.contextWindow, rawFinishReason);
     }
     closeOpen();
     ensureStart();
@@ -8930,6 +8959,7 @@ async function generateAnthropicResponse(model, params, modelId, options) {
   let toolCalls;
   let finishReason;
   let usage;
+  const seenPartTypes = [];
   const { inputTokensIncludeCache = false, ...sdkParams } = params;
   if (options?.forceStream) {
     const forceAbort = new AbortController();
@@ -8958,6 +8988,7 @@ async function generateAnthropicResponse(model, params, modelId, options) {
           () => forceAbort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1e3)}s`)),
           idleTimeoutMs
         );
+        seenPartTypes.push(part.type);
         options.onPart?.(part.type);
         options.lifecycle?.markStreamActivity();
         if (abortSignal.aborted || part.type === "abort") {
@@ -8979,6 +9010,8 @@ async function generateAnthropicResponse(model, params, modelId, options) {
         } else if (part.type === "finish") {
           streamedFinishReason = part.finishReason ?? streamedFinishReason;
           streamedUsage = part.totalUsage;
+        } else if (part.type !== "start") {
+          options.log?.(() => `sdk generate unrecognized part type=${part.type} keys=${Object.keys(part).join(",")} sample=${safeJson(part)}`);
         }
       }
       if (abortSignal.aborted) throw streamAbortError(abortSignal);
@@ -9015,6 +9048,10 @@ async function generateAnthropicResponse(model, params, modelId, options) {
       clearTimeout(totalTimer);
       if (!generateAbort.signal.aborted) generateAbort.abort();
     }
+  }
+  if (!text3 && toolCalls.length === 0 && finishReason !== "tool-calls" && !usage?.outputTokens) {
+    options?.log?.(() => `sdk generate produced no content: seen part types=${seenPartTypes.join(",")} rawFinishReason=${finishReason}`);
+    throw emptyCompletionError(modelId, usage?.inputTokens ?? 0, options?.contextWindow, finishReason);
   }
   const inputRules = toolInputRules(params.tools);
   const finalUsage = toAnthropicUsage(usage, inputTokensIncludeCache);
@@ -11188,7 +11225,8 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
                     forceStream: openAiOAuth,
                     abortSignal: clientAbort.signal,
                     onPart: (partType) => translationLifecycle?.onPart(partType),
-                    lifecycle: requestExecution
+                    lifecycle: requestExecution,
+                    log: plog
                   }
                 )
               );
@@ -12282,7 +12320,8 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
               initialInputTokens: estimateAnthropicInputTokens(body),
               abortSignal: clientAbort.signal,
               clientAbortSignal: clientAbort.signal,
-              lifecycle: requestExecution
+              lifecycle: requestExecution,
+              contextWindow: resolveContextWindow(upstreamModelId(model), model.contextWindow)
             })
           );
           requestExecution.markStreamActivity();
@@ -12300,7 +12339,8 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
             forceStream: openAiOAuth,
             abortSignal: clientAbort.signal,
             onUsage,
-            lifecycle: requestExecution
+            lifecycle: requestExecution,
+            contextWindow: resolveContextWindow(upstreamModelId(model), model.contextWindow)
           })
         );
         requestExecution.markStreamActivity();
@@ -12322,7 +12362,7 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
         body,
         resolveContextWindow(upstreamModelId(model), model.contextWindow)
       ) : message2;
-      plog(`sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message2}`);
+      plog(() => `sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message2}${details?.errorContent ? `, body: ${details.errorContent}` : ""}`);
       if (!res.headersSent) {
         for (const [name, value] of Object.entries(sdkUpstreamResponseHeaders(details))) {
           res.setHeader(name, value);
@@ -12566,7 +12606,7 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
     const message2 = formatUpstreamError(err);
     const details = sdkUpstreamErrorDetails(err);
     const status = auditSdkError(options, body.model, model, err, message2);
-    plog(`sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message2}`);
+    plog(() => `sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message2}${details?.errorContent ? `, body: ${details.errorContent}` : ""}`);
     if (!res.headersSent) {
       sendJson(res, status === 500 ? 502 : status, { error: { message: message2 } });
     } else {
@@ -14944,7 +14984,7 @@ function applyRoutingNoticeTransform(source, config) {
 }
 
 // src/patch-transforms.ts
-var PATCH_TRANSFORMS_VERSION = 4;
+var PATCH_TRANSFORMS_VERSION = 5;
 var RESERVED_MODEL_ALIASES = /* @__PURE__ */ new Set(["sonnet", "opus", "haiku", "fable", "opusplan", "best", "default"]);
 var NATIVE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 var BASE_EFFORT_LEVELS = ["low", "medium", "high"];
@@ -15101,6 +15141,20 @@ function applyLeverframePatches(source, config) {
     (m) => extendAliasArray(m),
     { required: true, noopIsSkip: true }
   );
+  {
+    const RESUME_MODEL_MARKER = "/*ccpatch:resume-model*/";
+    const RESUME_MODEL_NAME = "PATCH 11: session-restore model family allowlist";
+    if (!js.includes('?"unknown_family":')) {
+      log12("SKIP", RESUME_MODEL_NAME, "not present in this Claude Code version");
+    } else {
+      applyOnce(
+        RESUME_MODEL_NAME,
+        /!\(([\w$]+)\.has\(([\w$]+)\(([\w$]+)\)\)\|\|([\w$]+)\(\3\)\|\|([\w$]+)\(\3\)===([\w$]+)\)\?"unknown_family":!([\w$]+)\(\3\)&&!([\w$]+)\(\3\)\?"not_allowed":([\w$]+)\(\3\)\?"retired":void 0;/,
+        (_m, r, Eo, a, tJe, dd, o, Ek, vc, ypr) => `!(${r}.has(${Eo}(${a}))||${tJe}(${a})||${dd}(${a})===${o}||${RESUME_MODEL_MARKER}${vc}(${a}))?"unknown_family":!${Ek}(${a})&&!${vc}(${a})?"not_allowed":${ypr}(${a})?"retired":void 0;`,
+        { marker: RESUME_MODEL_MARKER, required: false }
+      );
+    }
+  }
   {
     const missing = ALIASES.filter((a) => !new RegExp("case" + reEsc(q(a)) + ":return").test(js));
     const cases = missing.map((a) => "case" + q(a) + ":return " + q(a) + ";").join("");

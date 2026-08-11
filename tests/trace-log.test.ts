@@ -238,7 +238,7 @@ describe('inference request log', () => {
     }
   });
 
-  it('logs upstream status always and redacted error content only when previews are enabled', () => {
+  it('logs upstream status and redacted error content regardless of the preview flag', () => {
     const dir = mkdtempSync(join(tmpdir(), 'leverframe-inference-error-'));
     const path = join(dir, 'requests.jsonl');
     const previous = process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'];
@@ -278,7 +278,9 @@ describe('inference request log', () => {
         isRetryable: true,
         attemptCount: 3,
       });
-      expect(entries[0]).not.toHaveProperty('errorContent');
+      expect(entries[0].errorContent).toContain('rate limited');
+      expect(entries[0].errorContent).toContain('[REDACTED]');
+      expect(entries[0].errorContent).not.toContain('secret123456789');
       expect(entries[1].errorContent).toContain('rate limited');
       expect(entries[1].errorContent).toContain('[REDACTED]');
       expect(entries[1].errorContent).not.toContain('secret123456789');
