@@ -1,0 +1,39 @@
+CLAUDE.md
+  s_e926dcf0b7aec4::t_dc28ebd10d0218 4
+dist/cli.js
+  s_7ed7c2f63b0d4d::t_2821f7e7933a54 8605-8630,8643-8654,8689,8706-8717,8745-8746,8749,8817,8831,8843,8861,8879-8882,8888-8897,8967,8993-9005,9033-9037,9042,14983-14984,15002-15014,15027-15052,15057-15058,15060-15061,15068-15118,15126-15132,15140-15151,15155-15156,15158,15161-15165,15167,15171,15174-15175,15179,15195-15197,15199,15205-15207,15211,15231-15233,15896,16027,16373-16375,16383-16384,16480,16504,16520-16524,16527-16529,16531,16590,16628-16631
+.craftsman-baseline.json
+  s_d07a416973659a::t_bda4cb574b12e1 40,62,64,135,137-138,141,146-147
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "bc295a59e5466af2bf604618e0bb621ddaa49fbe",
+  "prompts": {},
+  "sessions": {
+    "s_7ed7c2f63b0d4d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4124bfab-1b0c-4f94-92c8-6b3a28716b9d",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    },
+    "s_d07a416973659a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9982d385-acb3-4d98-aae4-a2c3c2ca2eaf",
+        "model": "unknown"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    },
+    "s_e926dcf0b7aec4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b12c0bed-752b-4b32-9908-0ce177ef8f43",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}
