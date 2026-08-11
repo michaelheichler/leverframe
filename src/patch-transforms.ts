@@ -1,7 +1,7 @@
 
 import { applyRoutingNoticeTransform } from './patch-transforms-routing-notice.js';
 
-export const PATCH_TRANSFORMS_VERSION = 4;
+export const PATCH_TRANSFORMS_VERSION = 5;
 
 export interface PatchScriptModelEntry {
   alias?: string;
@@ -220,6 +220,22 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     (m) => extendAliasArray(m),
     { required: true, noopIsSkip: true }
   );
+
+  {
+    const RESUME_MODEL_MARKER = '/*ccpatch:resume-model*/';
+    const RESUME_MODEL_NAME = 'PATCH 11: session-restore model family allowlist';
+    if (!js.includes('?"unknown_family":')) {
+      log('SKIP', RESUME_MODEL_NAME, 'not present in this Claude Code version');
+    } else {
+      applyOnce(
+        RESUME_MODEL_NAME,
+        /!\(([\w$]+)\.has\(([\w$]+)\(([\w$]+)\)\)\|\|([\w$]+)\(\3\)\|\|([\w$]+)\(\3\)===([\w$]+)\)\?"unknown_family":!([\w$]+)\(\3\)&&!([\w$]+)\(\3\)\?"not_allowed":([\w$]+)\(\3\)\?"retired":void 0;/,
+        (_m, r, Eo, a, tJe, dd, o, Ek, vc, ypr) =>
+          `!(${r!}.has(${Eo!}(${a!}))||${tJe!}(${a!})||${dd!}(${a!})===${o!}||${RESUME_MODEL_MARKER}${vc!}(${a!}))?"unknown_family":!${Ek!}(${a!})&&!${vc!}(${a!})?"not_allowed":${ypr!}(${a!})?"retired":void 0;`,
+        { marker: RESUME_MODEL_MARKER, required: false }
+      );
+    }
+  }
 
   {
     const missing = ALIASES.filter((a) => !new RegExp('case' + reEsc(q(a)) + ':return').test(js));
