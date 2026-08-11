@@ -245,6 +245,10 @@ export async function runPatchCommandV2(
   });
 }
 
+function isSkipOrFailDetailLine(line: string): boolean {
+  return line.startsWith('SKIP ') || line.startsWith('FAIL ');
+}
+
 function reportOutcome(outcome: ApplyOutcome, trace: boolean, presenter: PatchPresenter): number {
   if (!outcome.ok) {
     presenter.error(outcome.message);
@@ -252,8 +256,8 @@ function reportOutcome(outcome: ApplyOutcome, trace: boolean, presenter: PatchPr
     return 1;
   }
   presenter.success(outcome.message);
-  if (!trace) {
-    for (const line of outcome.detailLines ?? []) presenter.detail(line);
+  for (const line of outcome.detailLines ?? []) {
+    if (trace || isSkipOrFailDetailLine(line)) presenter.detail(line);
   }
   return 0;
 }

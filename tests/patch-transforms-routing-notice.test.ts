@@ -40,15 +40,19 @@ function defineInjectionTests(): void {
       expect(result.content.match(/ccpatch:routing-notice\*\//g)).toHaveLength(1);
       expect(result.content.match(/ccpatch:routing-notice-handoff\*\//g)).toHaveLength(1);
       expect(result.content).toContain('/*ccpatch:routing-notice*/onRoutingNotice:d');
-      expect(result.content).toContain('requiresStructuredOutput:W,onRoutingNotice:ccRoutingNotice})');
+      expect(result.content).toContain('requiresStructuredOutput:W,onRoutingNotice:ccRoutingNotice,ccRoutingModelId})');
+      expect(result.content).toContain('ccRoutingModelId:ne');
     });
 
-    it('uses effective effort and resolves model display by table, native value, then identity', () => {
+    it('resolves model display from the config table, falling back to the raw model id', () => {
       const injected = handoff(applyRoutingNoticeTransform(fixture(), CONFIG).content);
 
-      expect(injected).toContain('_ccr=nS(st);_ccr=_ccr===void 0?sJe(ne):_ccr');
-      expect(injected).toContain('_ccm!==void 0?_ccm:qce(ne)||String(ne||"")');
+      expect(injected).toContain('String(ccRoutingModelId||"").trim().toLowerCase()');
+      expect(injected).toContain('_ccd=_ccm!==void 0?_ccm:String(ccRoutingModelId||"")');
       expect(injected).not.toContain('e.effort');
+      expect(injected).not.toContain('nS(');
+      expect(injected).not.toContain('sJe(');
+      expect(injected).not.toContain('qce(');
     });
 
     it('emits a styled, output-safe notification with normalized values', () => {
@@ -76,7 +80,7 @@ function defineLifecycleTests(): void {
     it('skips unchanged and drifted generated blocks', () => {
       const first = applyRoutingNoticeTransform(fixture(), CONFIG);
       const second = applyRoutingNoticeTransform(first.content, CONFIG);
-      const drifted = first.content.replace('requiresStructuredOutput:W,onRoutingNotice:ccRoutingNotice})', 'requiresStructuredOutput:W,onRoutingNotice:drifted})');
+      const drifted = first.content.replace('requiresStructuredOutput:W,onRoutingNotice:ccRoutingNotice,ccRoutingModelId})', 'requiresStructuredOutput:W,onRoutingNotice:drifted})');
       const skipped = applyRoutingNoticeTransform(drifted, CONFIG);
 
       expect(second.content).toBe(first.content);

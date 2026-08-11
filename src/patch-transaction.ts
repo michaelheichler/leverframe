@@ -239,7 +239,7 @@ export async function applyPatchTransactionV2(
   input: ApplyPatchInput,
   runtime: PatchRuntime = defaultPatchRuntime,
 ): Promise<ApplyOutcome> {
-  const { installation, desiredConfig, configHash, manifest, recoveryBaseline, trace } = input;
+  const { installation, desiredConfig, configHash, manifest, recoveryBaseline } = input;
   const { identity, canonicalPath, version } = installation;
   if (!isClaudeCodeVersionSupportedForBinaryPatching(version)) {
     return { ok: false, message: unsupportedClaudeCodeBinaryPatchingMessage(version) };
@@ -389,7 +389,7 @@ export async function applyPatchTransactionV2(
   return {
     ok: true,
     message: `Patched claude ${version}: ${modelCount} model${modelCount === 1 ? '' : 's'} configured.`,
-    detailLines: trace ? results.map(r => `${r.status} ${r.name}${r.extra ? ` (${r.extra})` : ''}`) : undefined,
+    detailLines: results.map(r => `${r.status} ${r.name}${r.extra ? ` (${r.extra})` : ''}`),
   };
 }
 

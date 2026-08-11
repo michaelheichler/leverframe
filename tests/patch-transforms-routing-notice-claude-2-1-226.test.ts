@@ -35,9 +35,12 @@ describe('Claude Code 2.1.226 routing notice compatibility', () => {
     ]);
     expect(result.content.split(ROUTING_NOTICE_MARKER)).toHaveLength(2);
     expect(result.content.split(ROUTING_NOTICE_HANDOFF_MARKER)).toHaveLength(2);
-    expect(result.content).toContain('/*ccpatch:routing-notice*/onRoutingNotice:d');
-    expect(result.content).toContain('requiresStructuredOutput:W,onRoutingNotice:ccRoutingNotice})');
-    expect(result.content).toContain('_ccr=nS(st);_ccr=_ccr===void 0?sJe(ne):_ccr');
+    expect(result.content).toContain('/*ccpatch:routing-notice*/onRoutingNotice:d,ccRoutingModelId:ne');
+    expect(result.content).toContain('requiresStructuredOutput:W,onRoutingNotice:ccRoutingNotice,ccRoutingModelId})');
+    expect(result.content).toContain('key:`leverframe-routing-success-${se}`');
+    expect(result.content).not.toContain('nS(');
+    expect(result.content).not.toContain('sJe(');
+    expect(result.content).not.toContain('qce(');
     expect(result.content).not.toContain('e.effort');
     expect(result.content).toContain('{text:_ccd,color:"suggestion",bold:!0}');
     expect(result.content).toContain('{text:_ccr,color:"success",bold:!0}');

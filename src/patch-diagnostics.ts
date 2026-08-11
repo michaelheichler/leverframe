@@ -9,6 +9,7 @@ import { getPatchTargetLockPath } from './patch-lock.js';
 import { readPatchJournal, verifyPatchSites, defaultPatchRuntime, type PatchRuntime } from './patch-transaction.js';
 import { currentTransformVersion, readManifestV2, type PatchManifestV2 } from './patch-state.js';
 import { evaluatePatchStateV2, type PatchStateV2 } from './patch-classify.js';
+import { formatPatchSiteLine, type PatchSiteResult } from './patch-transforms.js';
 import {
   inspectLegacyPatchRecovery,
   type LegacyPatchRecoveryInspection,
@@ -76,6 +77,7 @@ export interface PatchDiagnosticsReport {
     mode?: Extract<LegacyPatchRecoveryInspection['kind'], 'exact-adoption' | 'baseline-recovery'>;
     reason?: string;
   };
+  patchSites: PatchSiteResult[];
   state: PatchStateV2 | 'not_resolved';
   nextAction: string;
 }
@@ -126,6 +128,7 @@ export async function diagnosePatchV2(
       transaction: { pending: false },
       lock: { path: '', held: false },
       migration: { ...legacyDiag, eligible: false, reason: 'No installation resolved.' },
+      patchSites: [],
       state: 'not_resolved',
       nextAction: nextActionFor('not_resolved'),
     };
@@ -150,6 +153,7 @@ export async function diagnosePatchV2(
       transaction: { pending: false },
       lock: { path: '', held: false },
       migration: { legacyManifestPresent: false, eligible: false, reason: 'Binary patching is not supported for this Claude Code version.' },
+      patchSites: [],
       state: 'unsupported',
       nextAction: unsupportedClaudeCodeBinaryPatchingMessage(installation.version),
     };
@@ -169,17 +173,22 @@ export async function diagnosePatchV2(
   const configHash = computePatchConfigHash(desired.config);
 
   let semanticSitesComplete: boolean | null = null;
-  if (
-    live.readable
-    && observedSha256
-    && live.injection.state === 'present'
-    && (!manifest || observedSha256 !== manifest.patchedSha256)
-  ) {
+  let patchSites: PatchSiteResult[] = [];
+  const wantsSemanticVerdict = Boolean(
+    live.readable && observedSha256 && live.injection.state === 'present'
+    && (!manifest || observedSha256 !== manifest.patchedSha256),
+  );
+  // Read content whenever the binary is at least readable, not only when a
+  // semantic verdict is needed, so the per-site status section below always
+  // has something to show for a resolved, supported target.
+  if (live.readable) {
     try {
       const content = await runtime.readContent(installation.canonicalPath);
-      semanticSitesComplete = verifyPatchSites(content, desired.config).complete;
+      const verification = verifyPatchSites(content, desired.config);
+      patchSites = verification.results;
+      if (wantsSemanticVerdict) semanticSitesComplete = verification.complete;
     } catch {
-      semanticSitesComplete = false;
+      if (wantsSemanticVerdict) semanticSitesComplete = false;
     }
   }
 
@@ -242,6 +251,7 @@ export async function diagnosePatchV2(
           eligible: true,
           mode: legacyRecovery.kind,
         },
+    patchSites,
     state,
     nextAction: nextActionFor(state, legacyRecovery),
   };
@@ -281,5 +291,9 @@ export function formatPatchDiagnosticsText(report: PatchDiagnosticsReport): stri
   lines.push(`${pad('legacy migration')}${report.migration.eligible ? `eligible - ${report.migration.mode}` : (report.migration.legacyManifestPresent ? `not eligible - ${report.migration.reason}` : 'no legacy state')}`);
   lines.push(`${pad('state')}${report.state}`);
   lines.push(`${pad('next action')}${report.nextAction}`);
+  if (report.patchSites.length) {
+    lines.push('  patch sites:');
+    for (const site of report.patchSites) lines.push(formatPatchSiteLine(site));
+  }
   return lines;
 }
