@@ -55,13 +55,32 @@ export function readPatchManifest(path = getPatchManifestPath()): PatchManifest 
 }
 
 
+/**
+ * Per-favorite context-window provenance, surfaced for `--trace` and used
+ * internally to decide whether a missing context belongs in `unknownWindows`
+ * (truly missing metadata) versus a deliberate provider-unconfirmed value
+ * (materialize.ts:83's rule: unconfirmed is withheld from the patch, not
+ * reported as "missing").
+ */
+export type PatchContextProvenance = 'confirmed' | 'unconfirmed' | 'missing';
+
 export interface DesiredPatchConfig {
   config: PatchScriptModelConfig;
   unknownWindows: string[];
+  provenance: Record<string, PatchContextProvenance>;
 }
 
 export interface PatchModelMeta {
   contextWindow?: number;
+  /**
+   * True when the cached model's context window is a heuristic guess rather
+   * than provider-confirmed (mirrors `CachedModel.contextWindowUnconfirmed`,
+   * src/registry/types.ts). When set, `contextWindow` here is expected to
+   * already read `undefined` (see materialize.ts:83's rule) — this flag is
+   * what lets `buildPatchModelConfig` tell "deliberately unconfirmed" apart
+   * from "genuinely missing" so only the latter lands in `unknownWindows`.
+   */
+  contextWindowUnconfirmed?: boolean;
   displayName?: string;
   /**
    * Raw supplier reasoning-capability ladder (pre-projection), e.g. straight
@@ -100,6 +119,22 @@ export function reasoningEffortForPatch(provider: RegistryProvider, model: Cache
   return { levels: [...caps.levels], defaultLevel: caps.defaultLevel };
 }
 
+/**
+ * Decide the context value (if any) to bake for one favorite and its
+ * provenance, keeping `buildPatchModelConfig`'s loop guard-clause-flat.
+ * `missing` (no known window, not deliberately unconfirmed) is the only
+ * provenance that should land in `unknownWindows` — see materialize.ts:83.
+ */
+function resolveContextForPatch(
+  meta: PatchModelMeta | undefined,
+): { context?: number; provenance: PatchContextProvenance } {
+  const context = meta?.contextWindow;
+  if (context === undefined || context <= 0) {
+    return { provenance: meta?.contextWindowUnconfirmed ? 'unconfirmed' : 'missing' };
+  }
+  return { context: context === 200_000 ? undefined : context, provenance: 'confirmed' };
+}
+
 export function buildPatchModelConfig(
   favorites: Array<{ providerId: string; modelId: string }>,
   aliases: Array<{ name: string; providerId: string; modelId: string }>,
@@ -107,25 +142,27 @@ export function buildPatchModelConfig(
 ): DesiredPatchConfig {
   const config: PatchScriptModelConfig = {};
   const unknownWindows: string[] = [];
+  const provenance: Record<string, PatchContextProvenance> = {};
   const aliasByFavorite = new Map(aliases.map(a => [`${a.providerId}:${a.modelId}`, a.name]));
 
   for (const favorite of favorites) {
     const id = stripOneMContextSuffix(httpProxyModelId(favorite.providerId, favorite.modelId));
     if (config[id]) continue;
     const meta = modelMetaFor(favorite.providerId, favorite.modelId);
-    const context = meta?.contextWindow;
     const alias = aliasByFavorite.get(`${favorite.providerId}:${favorite.modelId}`);
     const entry: PatchScriptModelConfig[string] = {};
     if (alias) entry.alias = alias;
-    if (context === undefined || context <= 0) unknownWindows.push(id);
-    else if (context !== 200_000) entry.context = context;
+    const { context, provenance: contextProvenance } = resolveContextForPatch(meta);
+    if (context !== undefined) entry.context = context;
+    provenance[id] = contextProvenance;
+    if (contextProvenance === 'missing') unknownWindows.push(id);
     const display = meta?.displayName?.trim();
     if (display) entry.display = display;
     const projectedEffort = projectNativeEffort(meta?.effort);
     if (projectedEffort) entry.effort = projectedEffort;
     config[id] = entry;
   }
-  return { config, unknownWindows };
+  return { config, unknownWindows, provenance };
 }
 
 export function computePatchConfigHash(
@@ -157,7 +194,13 @@ export function buildDesiredPatchConfig(): DesiredPatchConfig {
   for (const provider of registry.providers) {
     for (const model of provider.modelsCache?.models ?? []) {
       meta.set(`${provider.id}:${model.id}`, {
-        contextWindow: model.contextWindow && model.contextWindow > 0 ? model.contextWindow : undefined,
+        // Mirror materialize.ts:83's provenance rule: an unconfirmed window
+        // is withheld here too, so it never gets baked into the binary as
+        // if provider-confirmed.
+        contextWindow: !model.contextWindowUnconfirmed && model.contextWindow && model.contextWindow > 0
+          ? model.contextWindow
+          : undefined,
+        contextWindowUnconfirmed: model.contextWindowUnconfirmed,
         displayName: httpProxyDisplayName(model, provider.name),
         effort: reasoningEffortForPatch(provider, model),
       });

@@ -219,6 +219,16 @@ export async function runPatchCommandV2(
     for (const id of desired.unknownWindows) {
       presenter.warn(`No context window metadata for ${id}. Claude Code will assume the 200k default.`);
     }
+    for (const [id, prov] of Object.entries(desired.provenance)) {
+      if (prov !== 'unconfirmed') continue;
+      presenter.warn(`Context window for ${id} is provider-unconfirmed; Claude Code will assume the 200k default.`);
+    }
+    if (opts.trace) {
+      for (const id of Object.keys(desired.config)) {
+        const context = desired.config[id]?.context ?? '-';
+        presenter.detail(`trace: model=${id} context=${context} provenance=${desired.provenance[id] ?? 'missing'}`);
+      }
+    }
     if (isCurrentPatchState(state)) {
       const detail = state === 'modified_but_injected'
         ? ' Exact bytes changed after publication, but all current semantic sites verify.'

@@ -238,6 +238,89 @@ describe('buildDesiredPatchConfig', () => {
 
     expect(desired.config['leverframe:openai-oauth:gpt-4o']?.effort).toBeUndefined();
   });
+
+  it('bakes a provider-confirmed context window and marks it confirmed', () => {
+    writeInputs({
+      id: 'gpt-5.6-sol',
+      upstreamModelId: 'gpt-5.6-sol',
+      name: 'GPT-5.6 Sol',
+      contextWindow: 272_000,
+      modelFormat: 'openai',
+    });
+
+    const desired = buildDesiredPatchConfig();
+
+    expect(desired.config['leverframe:openai-oauth:gpt-5.6-sol']?.context).toBe(272_000);
+    expect(desired.unknownWindows).toEqual([]);
+    expect(desired.provenance['leverframe:openai-oauth:gpt-5.6-sol']).toBe('confirmed');
+  });
+
+  it('withholds an unconfirmed context window instead of baking a guess, and does not call it "missing"', () => {
+    writeInputs({
+      id: 'gpt-5.6-sol',
+      upstreamModelId: 'gpt-5.6-sol',
+      name: 'GPT-5.6 Sol',
+      contextWindow: 272_000,
+      contextWindowUnconfirmed: true,
+      modelFormat: 'openai',
+    });
+
+    const desired = buildDesiredPatchConfig();
+
+    expect(desired.config['leverframe:openai-oauth:gpt-5.6-sol']).not.toHaveProperty('context');
+    expect(desired.unknownWindows).toEqual([]);
+    expect(desired.provenance['leverframe:openai-oauth:gpt-5.6-sol']).toBe('unconfirmed');
+  });
+
+  it('reports a genuinely missing context window in unknownWindows with no context key', () => {
+    writeInputs({
+      id: 'gpt-4o',
+      upstreamModelId: 'gpt-4o',
+      name: 'GPT-4o',
+      modelFormat: 'openai',
+    });
+
+    const desired = buildDesiredPatchConfig();
+
+    expect(desired.config['leverframe:openai-oauth:gpt-4o']).not.toHaveProperty('context');
+    expect(desired.unknownWindows).toEqual(['leverframe:openai-oauth:gpt-4o']);
+    expect(desired.provenance['leverframe:openai-oauth:gpt-4o']).toBe('missing');
+  });
+});
+
+describe('buildPatchModelConfig context provenance', () => {
+  it('marks a confirmed context window with provenance "confirmed" and bakes it', () => {
+    const { config, unknownWindows, provenance } = buildPatchModelConfig(
+      [{ providerId: 'openai-oauth', modelId: 'gpt-5.6-sol' }],
+      [],
+      () => ({ contextWindow: 272_000 }),
+    );
+    expect(config['leverframe:openai-oauth:gpt-5.6-sol']?.context).toBe(272_000);
+    expect(unknownWindows).toEqual([]);
+    expect(provenance['leverframe:openai-oauth:gpt-5.6-sol']).toBe('confirmed');
+  });
+
+  it('marks an unconfirmed context window with provenance "unconfirmed", omits context, and skips unknownWindows', () => {
+    const { config, unknownWindows, provenance } = buildPatchModelConfig(
+      [{ providerId: 'openai-oauth', modelId: 'gpt-5.6-sol' }],
+      [],
+      () => ({ contextWindow: undefined, contextWindowUnconfirmed: true }),
+    );
+    expect(config['leverframe:openai-oauth:gpt-5.6-sol']).not.toHaveProperty('context');
+    expect(unknownWindows).toEqual([]);
+    expect(provenance['leverframe:openai-oauth:gpt-5.6-sol']).toBe('unconfirmed');
+  });
+
+  it('marks a genuinely missing context window with provenance "missing" and pushes it to unknownWindows', () => {
+    const { config, unknownWindows, provenance } = buildPatchModelConfig(
+      [{ providerId: 'openai', modelId: 'davinci-002' }],
+      [],
+      () => ({ contextWindow: undefined }),
+    );
+    expect(config['leverframe:openai:davinci-002']).not.toHaveProperty('context');
+    expect(unknownWindows).toEqual(['leverframe:openai:davinci-002']);
+    expect(provenance['leverframe:openai:davinci-002']).toBe('missing');
+  });
 });
 
 describe('computePatchConfigHash', () => {
