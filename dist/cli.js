@@ -7685,7 +7685,8 @@ function isContextLengthExceededError(err, formattedMessage = "") {
     rec?.lastError?.message,
     ...rec?.errors?.map((error) => error.message) ?? []
   ].filter((value) => typeof value === "string");
-  return candidates.some((value) => /context_length_exceeded/i.test(value) || /context window/i.test(value) || /maximum context length/i.test(value) || /prompt is too long/i.test(value));
+  const hasTokenCount = (value) => /\d+\s*tokens?/i.test(value);
+  return candidates.some((value) => /context_length_exceeded/i.test(value) || /maximum context length/i.test(value) || /context window/i.test(value) && hasTokenCount(value) || /prompt is too long/i.test(value) && hasTokenCount(value));
 }
 function formatUpstreamError(err) {
   if (!err || typeof err !== "object") return "Upstream model request failed.";
@@ -9205,15 +9206,21 @@ function estimateAnthropicInputTokens(body) {
     Object.entries(body).filter(([key]) => !NON_CONTEXT_FIELDS.has(key))
   );
   let imageCount = 0;
+  let textBytes = 0;
   const serialized = JSON.stringify(contextBody, (_key, value) => {
     if (isAnthropicImageBlock(value)) {
       imageCount += 1;
       return { type: "image" };
     }
+    if (typeof value === "string") {
+      textBytes += Buffer.byteLength(value, "utf8");
+    }
     return value;
   });
   if (!serialized || serialized === "{}") return 0;
-  const textTokens = Math.ceil(Buffer.byteLength(serialized, "utf8") / 4);
+  const totalBytes = Buffer.byteLength(serialized, "utf8");
+  const structuralBytes = Math.max(0, totalBytes - textBytes);
+  const textTokens = Math.ceil(textBytes / 4) + Math.ceil(structuralBytes / 6);
   return Math.max(1, textTokens + imageCount * IMAGE_INPUT_TOKEN_ESTIMATE);
 }
 function anthropicPromptTooLongMessage(body, contextWindow) {
@@ -16349,6 +16356,16 @@ async function runPatchCommandV2(opts = {}, presenter = clackPatchPresenter) {
     for (const id of desired.unknownWindows) {
       presenter.warn(`No context window metadata for ${id}. Claude Code will assume the 200k default.`);
     }
+    for (const [id, prov] of Object.entries(desired.provenance)) {
+      if (prov !== "unconfirmed") continue;
+      presenter.warn(`Context window for ${id} is provider-unconfirmed; Claude Code will assume the 200k default.`);
+    }
+    if (opts.trace) {
+      for (const id of Object.keys(desired.config)) {
+        const context = desired.config[id]?.context ?? "-";
+        presenter.detail(`trace: model=${id} context=${context} provenance=${desired.provenance[id] ?? "missing"}`);
+      }
+    }
     if (isCurrentPatchState(state)) {
       const detail = state === "modified_but_injected" ? " Exact bytes changed after publication, but all current semantic sites verify." : "";
       presenter.success(`claude ${installation.version} is already patched with the current model config.${detail} Nothing to do.`);
@@ -16661,27 +16678,36 @@ function reasoningEffortForPatch(provider, model) {
   if (!caps.defaultLevel || caps.levels.length === 0) return void 0;
   return { levels: [...caps.levels], defaultLevel: caps.defaultLevel };
 }
+function resolveContextForPatch(meta) {
+  const context = meta?.contextWindow;
+  if (context === void 0 || context <= 0) {
+    return { provenance: meta?.contextWindowUnconfirmed ? "unconfirmed" : "missing" };
+  }
+  return { context: context === 2e5 ? void 0 : context, provenance: "confirmed" };
+}
 function buildPatchModelConfig(favorites, aliases, modelMetaFor) {
   const config = {};
   const unknownWindows = [];
+  const provenance = {};
   const aliasByFavorite = new Map(aliases.map((a) => [`${a.providerId}:${a.modelId}`, a.name]));
   for (const favorite of favorites) {
     const id = stripOneMContextSuffix(httpProxyModelId(favorite.providerId, favorite.modelId));
     if (config[id]) continue;
     const meta = modelMetaFor(favorite.providerId, favorite.modelId);
-    const context = meta?.contextWindow;
     const alias = aliasByFavorite.get(`${favorite.providerId}:${favorite.modelId}`);
     const entry = {};
     if (alias) entry.alias = alias;
-    if (context === void 0 || context <= 0) unknownWindows.push(id);
-    else if (context !== 2e5) entry.context = context;
+    const { context, provenance: contextProvenance } = resolveContextForPatch(meta);
+    if (context !== void 0) entry.context = context;
+    provenance[id] = contextProvenance;
+    if (contextProvenance === "missing") unknownWindows.push(id);
     const display = meta?.displayName?.trim();
     if (display) entry.display = display;
     const projectedEffort = projectNativeEffort(meta?.effort);
     if (projectedEffort) entry.effort = projectedEffort;
     config[id] = entry;
   }
-  return { config, unknownWindows };
+  return { config, unknownWindows, provenance };
 }
 function computePatchConfigHash(config, transformVersion = PATCH_TRANSFORMS_VERSION) {
   const canonical = Object.keys(config).sort().map((key) => {
@@ -16705,7 +16731,11 @@ function buildDesiredPatchConfig() {
   for (const provider of registry.providers) {
     for (const model of provider.modelsCache?.models ?? []) {
       meta.set(`${provider.id}:${model.id}`, {
-        contextWindow: model.contextWindow && model.contextWindow > 0 ? model.contextWindow : void 0,
+        // Mirror materialize.ts:83's provenance rule: an unconfirmed window
+        // is withheld here too, so it never gets baked into the binary as
+        // if provider-confirmed.
+        contextWindow: !model.contextWindowUnconfirmed && model.contextWindow && model.contextWindow > 0 ? model.contextWindow : void 0,
+        contextWindowUnconfirmed: model.contextWindowUnconfirmed,
         displayName: httpProxyDisplayName(model, provider.name),
         effort: reasoningEffortForPatch(provider, model)
       });

@@ -142,7 +142,9 @@
 {"complexity":2,"fan_out":1,"file_lines":129,"ignores":0,"max_fn_lines":34,"path":"tests/patch-transforms-routing-notice.test.ts"},
 {"complexity":13,"fan_out":12,"file_lines":911,"ignores":0,"max_fn_lines":454,"path":"tests/patch-v2.test.ts"},
 {"complexity":0,"fan_out":6,"file_lines":660,"ignores":0,"max_fn_lines":22,"path":"tests/patcher.test.ts"},
+{"complexity":0,"fan_out":10,"file_lines":1344,"ignores":0,"max_fn_lines":22,"path":"tests/proxy.test.ts"},
 {"complexity":1,"fan_out":2,"file_lines":47,"ignores":0,"max_fn_lines":47,"path":"tests/routing-notice.test.ts"},
 {"complexity":1,"fan_out":1,"file_lines":1646,"ignores":0,"max_fn_lines":16,"path":"tests/sdk-adapter.test.ts"},
+{"complexity":0,"fan_out":2,"file_lines":83,"ignores":0,"max_fn_lines":83,"path":"tests/upstream-error.test.ts"},
 {"complexity":0,"fan_out":2,"file_lines":44,"ignores":0,"max_fn_lines":1,"path":"tests/zzdebug.test.ts"}
 ]
