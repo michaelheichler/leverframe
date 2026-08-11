@@ -78,6 +78,31 @@ describe('Anthropic endpoint routing', () => {
     })).toBe(base);
   });
 
+  it('weights JSON structural overhead lower than prose text (two-weight estimate)', () => {
+    const text = 'The quick brown fox jumps over the lazy dog. '.repeat(200);
+    const body = {
+      model: 'leverframe:test:model',
+      system: text,
+      messages: [
+        { role: 'user', content: text },
+        { role: 'assistant', content: text },
+      ],
+    };
+    const contextBody = { system: body.system, messages: body.messages };
+    const serializedBytes = Buffer.byteLength(JSON.stringify(contextBody), 'utf8');
+    const textBytes = Buffer.byteLength(text, 'utf8') * 3; // system + 2 message contents
+    const oldFormula = Math.ceil(serializedBytes / 4);
+    const textFloor = Math.ceil(textBytes / 4);
+
+    const estimate = estimateAnthropicInputTokens(body);
+
+    // The new two-weight formula must land strictly between the old
+    // bytes/4-over-everything estimate (over-counts JSON structure) and the
+    // pure-text bytes/4 floor (would ignore structure entirely).
+    expect(estimate).toBeLessThan(oldFormula);
+    expect(estimate).toBeGreaterThan(textFloor);
+  });
+
   it('counts images at a flat vision estimate instead of base64 bytes/4', () => {
     const data = 'A'.repeat(400_000);
     const withImage = estimateAnthropicInputTokens({

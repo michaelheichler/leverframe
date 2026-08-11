@@ -56,19 +56,41 @@ export function estimateAnthropicInputTokens(body: object): number {
     Object.entries(body).filter(([key]) => !NON_CONTEXT_FIELDS.has(key)),
   );
   let imageCount = 0;
+  let textBytes = 0;
   const serialized = JSON.stringify(contextBody, (_key, value: unknown) => {
     if (isAnthropicImageBlock(value)) {
       imageCount += 1;
       return { type: 'image' };
     }
+    if (typeof value === 'string') {
+      textBytes += Buffer.byteLength(value, 'utf8');
+    }
     return value;
   });
   if (!serialized || serialized === '{}') return 0;
-  const textTokens = Math.ceil(Buffer.byteLength(serialized, 'utf8') / 4);
+  // Two-weight estimate: prose (string values) tokenizes near bytes/4, but JSON
+  // structural overhead (keys, quotes, braces, escaping) tokenizes denser than
+  // that — a flat bytes/4 over the whole serialized body over-counted ~20-25%
+  // against real provider counts (observed 297K displayed vs ~239K real). Weight
+  // the non-text bytes at /6 instead of /4 while still counting them, not
+  // dropping them.
+  const totalBytes = Buffer.byteLength(serialized, 'utf8');
+  const structuralBytes = Math.max(0, totalBytes - textBytes);
+  const textTokens = Math.ceil(textBytes / 4) + Math.ceil(structuralBytes / 6);
   return Math.max(1, textTokens + imageCount * IMAGE_INPUT_TOKEN_ESTIMATE);
 }
 
-/** Anthropic-compatible message for an upstream context-length rejection. */
+/**
+ * Anthropic-compatible message for an upstream context-length rejection.
+ *
+ * Contract: Claude Code parses this exact shape client-side —
+ * `prompt is too long: (\d+) tokens > (\d+) maximum` — and only triggers its
+ * compaction/truncation handling when the parsed N (tokens) is strictly greater
+ * than M (maximum). `promptTokens` below is therefore a synthetic lower bound
+ * (`max(estimate, maximum + 1)`), not a real token count: it exists solely to
+ * guarantee N > M so Claude Code's parser fires. Do not "fix" this into the raw
+ * estimate — doing so can produce N <= M and silently break compaction.
+ */
 export function anthropicPromptTooLongMessage(body: object, contextWindow: number): string {
   const maximum = Math.max(1, Math.floor(contextWindow));
   // The translated providers do not expose an exact token-count endpoint. Keep the
