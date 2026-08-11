@@ -907,6 +907,10 @@ describe('streamAnthropicResponse idle timeout', () => {
 });
 
 // ── streaming translation ────────────────────────────────────────────────────
+// craftsman-ignore: TS001 — `data` mirrors arbitrary Anthropic SSE event
+// payloads (message_start/message_delta/content_block_*), read ad hoc by ~80
+// tests below; a precise union would need to cover every event shape used
+// across the whole file for no behavioral benefit.
 async function collect(
   parts: any[],
   model = 'm',
@@ -1388,13 +1392,20 @@ describe('writeAnthropicStream', () => {
     },
   }]);
 
-  function toolInputFromEvents(events: Array<{ event: string; data: any }>): any {
-    const start = events.find(e => e.event === 'content_block_start' && e.data.content_block.type === 'tool_use')!;
+  /** Narrow shape covering only the fields the progressive-flush assertions below need. */
+  interface SseEventData {
+    index?: number;
+    delta?: { type?: string; partial_json?: string };
+    content_block?: { id?: string; type?: string };
+  }
+
+  function toolInputFromEvents(events: Array<{ event: string; data: SseEventData }>): Record<string, unknown> {
+    const start = events.find(e => e.event === 'content_block_start' && e.data.content_block?.type === 'tool_use')!;
     const json = events
-      .filter(e => e.event === 'content_block_delta' && e.data.index === start.data.index && e.data.delta.type === 'input_json_delta')
-      .map(e => e.data.delta.partial_json)
+      .filter(e => e.event === 'content_block_delta' && e.data.index === start.data.index && e.data.delta?.type === 'input_json_delta')
+      .map(e => e.data.delta?.partial_json ?? '')
       .join('');
-    return JSON.parse(json || '{}');
+    return JSON.parse(json || '{}') as Record<string, unknown>;
   }
 
   it('strips WebSearch empty-array filler while preserving unknown values in streamed tool input', async () => {
@@ -1518,6 +1529,301 @@ describe('writeAnthropicStream', () => {
     const sigDelta = events.find(e => e.event === 'content_block_delta' && e.data.delta.type === 'signature_delta')!;
     expect(sigDelta.data.delta.signature).toBe('enc_xyz');
   });
+
+  // ── progressive tool-JSON flush (stall-fix Task 1) ─────────────────────────
+  // `strictTools` has both `required` and `properties`, so toolCanFlushEarly()
+  // is false — the size/time override is what has to do the flushing.
+  const strictTools = translateTools([{
+    name: 'Write',
+    description: 'Write a file',
+    input_schema: {
+      type: 'object',
+      properties: { path: { type: 'string' }, content: { type: 'string' } },
+      required: ['path', 'content'],
+    },
+  }]);
+
+  // Parses raw SSE bytes into typed events for the progressive-flush assertions below.
+  function eventsFromChunks(chunks: string[]): Array<{ event: string; data: SseEventData }> {
+    return chunks.join('').split('\n\n').filter(Boolean).map(block => {
+      const [event, data] = block.split('\n');
+      return { event: event.replace('event: ', ''), data: JSON.parse(data.replace('data: ', '')) as SseEventData };
+    });
+  }
+
+  function withEnv(name: string, value: string, fn: () => Promise<void>): Promise<void> {
+    const prev = process.env[name];
+    process.env[name] = value;
+    return fn().finally(() => {
+      if (prev === undefined) delete process.env[name];
+      else process.env[name] = prev;
+    });
+  }
+
+  /** @why The generator body up to its `await paused` gate settles over several microtask turns, not one. */
+  async function flushMicrotasks(turns = 8): Promise<void> {
+    for (let i = 0; i < turns; i++) await Promise.resolve();
+  }
+
+  it('flushes early once buffered tool JSON crosses the size threshold', () => withEnv('LEVERFRAME_TOOL_EARLY_FLUSH_BYTES', '5', async () => {
+    vi.useFakeTimers();
+    let release: (() => void) | undefined;
+    const paused = new Promise<void>(resolve => { release = resolve; });
+    const chunks: string[] = [];
+    async function* stream() {
+      yield { type: 'start' };
+      yield { type: 'tool-input-start', id: 'call_1', toolName: 'Write' };
+      yield { type: 'tool-input-delta', id: 'call_1', delta: '{"path":"x.txt"' };
+      await paused;
+      yield { type: 'tool-input-delta', id: 'call_1', delta: ',"content":"hi"}' };
+      yield { type: 'tool-call', toolCallId: 'call_1', toolName: 'Write', input: { path: 'x.txt', content: 'hi' } };
+      yield { type: 'finish', finishReason: 'tool-calls' };
+    }
+    const running = writeAnthropicStream(
+      stream() as unknown as AsyncIterable<never>, 'm', chunk => chunks.push(chunk), undefined, undefined, strictTools,
+    );
+    await flushMicrotasks();
+    vi.advanceTimersByTime(2_000);
+    expect(chunks.join('')).toContain('input_json_delta');
+    release?.();
+    await running;
+    vi.useRealTimers();
+    expect(toolInputFromEvents(eventsFromChunks(chunks))).toEqual({ path: 'x.txt', content: 'hi' });
+  }));
+
+  it('flushes early once a tool call has been open past the time threshold, even with a small buffer', () => withEnv('LEVERFRAME_TOOL_EARLY_FLUSH_MS', '500', async () => {
+    vi.useFakeTimers();
+    let release: (() => void) | undefined;
+    const paused = new Promise<void>(resolve => { release = resolve; });
+    const chunks: string[] = [];
+    async function* stream() {
+      yield { type: 'start' };
+      yield { type: 'tool-input-start', id: 'call_1', toolName: 'Write' };
+      yield { type: 'tool-input-delta', id: 'call_1', delta: '{"a":1' };
+      await paused;
+      yield { type: 'tool-input-delta', id: 'call_1', delta: ',"b":2}' };
+      yield { type: 'tool-call', toolCallId: 'call_1', toolName: 'Write', input: { a: 1, b: 2 } };
+      yield { type: 'finish', finishReason: 'tool-calls' };
+    }
+    const running = writeAnthropicStream(
+      stream() as unknown as AsyncIterable<never>, 'm', chunk => chunks.push(chunk), undefined, undefined, strictTools,
+    );
+    await flushMicrotasks();
+    // The 2s timer tick is itself well past the 500ms open-time threshold,
+    // even though the buffer (6 bytes) is far under the default byte threshold.
+    vi.advanceTimersByTime(2_000);
+    expect(chunks.join('')).toContain('input_json_delta');
+    release?.();
+    await running;
+    vi.useRealTimers();
+    expect(toolInputFromEvents(eventsFromChunks(chunks))).toEqual({ a: 1, b: 2 });
+  }));
+
+  it('never early-flushes an omitEmptyArrays tool (WebSearch) even past both override thresholds', async () => {
+    await withEnv('LEVERFRAME_TOOL_EARLY_FLUSH_BYTES', '1', () => withEnv('LEVERFRAME_TOOL_EARLY_FLUSH_MS', '1', async () => {
+      vi.useFakeTimers();
+      let release: (() => void) | undefined;
+      const paused = new Promise<void>(resolve => { release = resolve; });
+      const chunks: string[] = [];
+      const input = { query: 'who won', allowed_domains: ['fifa.com'], blocked_domains: [] };
+      async function* stream() {
+        yield { type: 'start' };
+        yield { type: 'tool-input-start', id: 'call_1', toolName: 'WebSearch' };
+        yield { type: 'tool-input-delta', id: 'call_1', delta: JSON.stringify(input) };
+        await paused;
+        yield { type: 'tool-call', toolCallId: 'call_1', toolName: 'WebSearch', input };
+        yield { type: 'finish', finishReason: 'tool-calls' };
+      }
+      const running = writeAnthropicStream(
+        stream() as unknown as AsyncIterable<never>, 'm', chunk => chunks.push(chunk), undefined, undefined, webSearchTools,
+      );
+      await flushMicrotasks();
+      vi.advanceTimersByTime(6_000);
+      expect(chunks.join('')).not.toContain('input_json_delta');
+      release?.();
+      await running;
+      vi.useRealTimers();
+      expect(toolInputFromEvents(eventsFromChunks(chunks))).toEqual({ query: 'who won', allowed_domains: ['fifa.com'] });
+    }));
+  });
+
+  it('rejects tool-input-delta once buffered JSON exceeds the runaway byte cap', () => withEnv('LEVERFRAME_TOOL_JSON_MAX_BYTES', '10', async () => {
+    async function* stream() {
+      yield { type: 'start' };
+      yield { type: 'tool-input-start', id: 'call_1', toolName: 'Read' };
+      yield { type: 'tool-input-delta', id: 'call_1', delta: '{"path":"way more than ten bytes of JSON"}' };
+    }
+    await expect(
+      writeAnthropicStream(stream() as unknown as AsyncIterable<never>, 'm', () => {}),
+    ).rejects.toMatchObject({ category: 'tool_call_protocol', retryable: true });
+  }));
+
+  // Anthropic's SSE protocol only allows one open content_block at a time, so
+  // "concurrent" here means two tool calls in the same turn each get their own
+  // independently-tracked buffer/timer/threshold — not that their SSE blocks
+  // literally overlap on the wire.
+  it('flushes only the over-threshold tool among two tool calls sharing a turn, and both reconcile', () => withEnv('LEVERFRAME_TOOL_EARLY_FLUSH_BYTES', '20', async () => {
+    vi.useFakeTimers();
+    let releaseBig: (() => void) | undefined;
+    const pausedBig = new Promise<void>(resolve => { releaseBig = resolve; });
+    let releaseSmall: (() => void) | undefined;
+    const pausedSmall = new Promise<void>(resolve => { releaseSmall = resolve; });
+    const chunks: string[] = [];
+    const bigContent = 'a'.repeat(40);
+    async function* stream() {
+      yield { type: 'start' };
+      yield { type: 'tool-input-start', id: 'call_big', toolName: 'Write' };
+      yield { type: 'tool-input-delta', id: 'call_big', delta: `{"path":"big.txt","content":"${bigContent}"}` };
+      await pausedBig;
+      yield { type: 'tool-call', toolCallId: 'call_big', toolName: 'Write', input: { path: 'big.txt', content: bigContent } };
+      yield { type: 'tool-input-start', id: 'call_small', toolName: 'Write' };
+      yield { type: 'tool-input-delta', id: 'call_small', delta: '{"pa' };
+      await pausedSmall;
+      yield { type: 'tool-call', toolCallId: 'call_small', toolName: 'Write', input: { path: 'small.txt', content: 'b' } };
+      yield { type: 'finish', finishReason: 'tool-calls' };
+    }
+    const running = writeAnthropicStream(
+      stream() as unknown as AsyncIterable<never>, 'm', chunk => chunks.push(chunk), undefined, undefined, strictTools,
+    );
+    await flushMicrotasks();
+    vi.advanceTimersByTime(2_000);
+    const afterBigTick = eventsFromChunks(chunks);
+    const bigIndex = afterBigTick.find(e => e.event === 'content_block_start' && e.data.content_block?.id === 'call_big')!.data.index!;
+    const flushed = (events: ReturnType<typeof eventsFromChunks>, index: number) => events.some(
+      e => e.event === 'content_block_delta' && e.data.index === index && e.data.delta?.type === 'input_json_delta',
+    );
+    expect(flushed(afterBigTick, bigIndex)).toBe(true);
+    releaseBig?.();
+    await flushMicrotasks();
+    vi.advanceTimersByTime(2_000);
+    const afterSmallTick = eventsFromChunks(chunks);
+    const smallIndex = afterSmallTick.find(e => e.event === 'content_block_start' && e.data.content_block?.id === 'call_small')!.data.index!;
+    expect(flushed(afterSmallTick, smallIndex)).toBe(false);
+    releaseSmall?.();
+    await running;
+    vi.useRealTimers();
+    const after = eventsFromChunks(chunks);
+    const toolInputAtIndex = (index: number): Record<string, unknown> => {
+      const json = after
+        .filter(e => e.event === 'content_block_delta' && e.data.index === index && e.data.delta?.type === 'input_json_delta')
+        .map(e => e.data.delta?.partial_json ?? '')
+        .join('');
+      return JSON.parse(json || '{}') as Record<string, unknown>;
+    };
+    expect(toolInputAtIndex(bigIndex)).toEqual({ path: 'big.txt', content: bigContent });
+    expect(toolInputAtIndex(smallIndex)).toEqual({ path: 'small.txt', content: 'b' });
+  }));
+
+  it('does not duplicate already-flushed tool JSON or emit an error when the client aborts mid-flush', () => withEnv('LEVERFRAME_TOOL_EARLY_FLUSH_BYTES', '5', async () => {
+    vi.useFakeTimers();
+    let release: (() => void) | undefined;
+    const paused = new Promise<void>(resolve => { release = resolve; });
+    const deadline = new AbortController();
+    const client = new AbortController();
+    const chunks: string[] = [];
+    async function* stream() {
+      yield { type: 'start' };
+      yield { type: 'tool-input-start', id: 'call_1', toolName: 'Write' };
+      yield { type: 'tool-input-delta', id: 'call_1', delta: '{"path":"x.txt"' };
+      await paused;
+      deadline.abort(new Error('deadline'));
+      yield { type: 'abort' };
+    }
+    const running = writeAnthropicStream(
+      stream() as unknown as AsyncIterable<never>,
+      'm',
+      chunk => chunks.push(chunk),
+      undefined,
+      { abortSignal: deadline.signal, clientAbortSignal: client.signal },
+      strictTools,
+    );
+    await flushMicrotasks();
+    vi.advanceTimersByTime(2_000);
+    release?.();
+    await running;
+    vi.useRealTimers();
+    const events = eventsFromChunks(chunks);
+    expect(events.map(e => e.event)).not.toContain('error');
+    const toolIndex = events.find(e => e.event === 'content_block_start' && e.data.content_block?.type === 'tool_use')!.data.index;
+    const combined = events
+      .filter(e => e.event === 'content_block_delta' && e.data.index === toolIndex && e.data.delta?.type === 'input_json_delta')
+      .map(e => e.data.delta?.partial_json ?? '')
+      .join('');
+    expect(combined).toBe('{"path":"x.txt"');
+  }));
+});
+
+describe('streamAnthropicResponse output-idle watchdog', () => {
+  it('rejects with output_stall_timeout when tool-input deltas keep arriving but no output reaches the client', async () => {
+    vi.resetModules();
+    const streamTextMock = vi.fn((options: { abortSignal: AbortSignal }) => {
+      async function* gen() {
+        yield { type: 'start' };
+        yield { type: 'tool-input-start', id: 'call_1', toolName: 'Write' };
+        yield { type: 'tool-input-delta', id: 'call_1', delta: '{"path":"x"' };
+        await new Promise((_resolve, reject) => {
+          options.abortSignal.addEventListener('abort', () => reject(options.abortSignal.reason));
+        });
+      }
+      return { stream: gen() };
+    });
+    vi.doMock('ai', () => ({
+      generateText: vi.fn(),
+      streamText: streamTextMock,
+      tool: vi.fn((spec: unknown) => spec),
+      jsonSchema: vi.fn((schema: unknown) => schema),
+    }));
+
+    const { streamAnthropicResponse: freshStreamAnthropicResponse } = await import('../src/sdk-adapter.js');
+    await expect(freshStreamAnthropicResponse(
+      {} as never,
+      { messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] as never },
+      'test-model',
+      () => {},
+      undefined,
+      { idleTimeoutMs: 10_000, outputIdleTimeoutMs: 50 },
+    )).rejects.toMatchObject({ category: 'output_stall_timeout', retryable: true });
+
+    vi.doUnmock('ai');
+    vi.resetModules();
+  }, 10_000);
+
+  it('does not trip while reasoning-deltas keep arriving within the watchdog window', async () => {
+    vi.resetModules();
+    const streamTextMock = vi.fn(() => {
+      async function* gen() {
+        yield { type: 'start' };
+        for (let i = 0; i < 4; i++) {
+          await new Promise(resolve => setTimeout(resolve, 20));
+          yield { type: 'reasoning-delta', id: 'r1', text: `thinking ${i}` };
+        }
+        yield { type: 'reasoning-end', id: 'r1' };
+        yield { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 1, outputTokens: 1 } };
+      }
+      return { stream: gen() };
+    });
+    vi.doMock('ai', () => ({
+      generateText: vi.fn(),
+      streamText: streamTextMock,
+      tool: vi.fn((spec: unknown) => spec),
+      jsonSchema: vi.fn((schema: unknown) => schema),
+    }));
+
+    const { streamAnthropicResponse: freshStreamAnthropicResponse } = await import('../src/sdk-adapter.js');
+    let raw = '';
+    await expect(freshStreamAnthropicResponse(
+      {} as never,
+      { messages: [] },
+      'test-model',
+      chunk => { raw += chunk; },
+      undefined,
+      { outputIdleTimeoutMs: 50 },
+    )).resolves.toBeUndefined();
+    expect(raw).toContain('thinking 0');
+
+    vi.doUnmock('ai');
+    vi.resetModules();
+  }, 10_000);
 });
 
 describe('translateRequest openai promptCacheKey', () => {

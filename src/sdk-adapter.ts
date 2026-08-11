@@ -754,6 +754,15 @@ export interface AnthropicStreamObserver {
   /** @why Deadline aborts must remain distinct from downstream disconnects. */
   clientAbortSignal?: AbortSignal;
   contextWindow?: number;
+  /**
+   * Fired for every client-visible byte written downstream (text-delta,
+   * reasoning-delta, non-empty tool-JSON flush). Drives the output-idle
+   * watchdog in {@link streamAnthropicResponse}, which is reset only by
+   * output — unlike `idleTimeoutMs`, which resets on any SDK part.
+   */
+  onOutputByte?: () => void;
+  /** Overrides `LEVERFRAME_OUTPUT_IDLE_TIMEOUT_MS`, mirroring `idleTimeoutMs`. */
+  outputIdleTimeoutMs?: number;
 }
 
 function safeJson(value: unknown): string {
@@ -786,6 +795,50 @@ function emptyCompletionError(
   });
 }
 
+/** @why A runaway tool-input-delta stream is a protocol violation, not a content problem. */
+function toolJsonRunawayError(options: {
+  modelId: string;
+  toolName: string;
+  bufferedBytes: number;
+  outputEmitted: boolean;
+}): ProviderTransportError {
+  return new ProviderTransportError({
+    provider: 'sdk-adapter',
+    model: options.modelId,
+    phase: 'stream',
+    category: 'tool_call_protocol',
+    retryable: true,
+    outputEmitted: options.outputEmitted,
+    safeMessage: `Tool call ${options.toolName} exceeded the max buffered JSON size `
+      + `(${options.bufferedBytes} bytes)`,
+  });
+}
+
+/** @why An output-idle abort must carry a distinct, retryable category from the SDK-part idle timeout. */
+function outputStallTimeoutError(options: {
+  modelId: string;
+  timeoutMs: number;
+  outputEmitted: boolean;
+}): ProviderTransportError {
+  return new ProviderTransportError({
+    provider: 'sdk-adapter',
+    model: options.modelId,
+    phase: 'stream',
+    category: 'output_stall_timeout',
+    retryable: true,
+    outputEmitted: options.outputEmitted,
+    safeMessage: `Provider produced no client-visible output for `
+      + `${Math.round(options.timeoutMs / 1000)}s despite stream activity`,
+  });
+}
+
+/** @why Output-stall aborts must reject immediately, not degrade into a truncated completion. */
+function isOutputStallAbort(signal?: AbortSignal): boolean {
+  const reason: unknown = signal?.reason;
+  return ProviderTransportError.isInstance(reason)
+    && (reason as ProviderTransportError).category === 'output_stall_timeout';
+}
+
 /** @why Malformed durations must retain the configured fallback. */
 export function positiveEnvMs(name: string, fallback: number): number {
   const raw = process.env[name]?.trim() ?? '';
@@ -801,6 +854,22 @@ function sdkStreamIdleTimeoutMs(): number {
 /** @why Non-stream requests need a backstop while streams rely on idle activity. */
 function nonStreamRequestTimeoutMs(): number {
   return positiveEnvMs('LEVERFRAME_SDK_REQUEST_TIMEOUT_MS', 60 * 60_000);
+}
+/** @why Tool JSON that never reaches the progressive-flush byte threshold still needs a size trigger. */
+function toolEarlyFlushByteThreshold(): number {
+  return positiveEnvMs('LEVERFRAME_TOOL_EARLY_FLUSH_BYTES', 8_000);
+}
+/** @why A tool call open this long should flush even under the byte threshold. */
+function toolEarlyFlushOpenMs(): number {
+  return positiveEnvMs('LEVERFRAME_TOOL_EARLY_FLUSH_MS', 5_000);
+}
+/** @why Bounds a runaway tool-input-delta stream independent of the flush thresholds above. */
+function toolJsonMaxBytes(): number {
+  return positiveEnvMs('LEVERFRAME_TOOL_JSON_MAX_BYTES', 2_000_000);
+}
+/** @why Distinguishes "no client-visible output" from the SDK-part idle timeout above. */
+function outputIdleTimeoutMs(): number {
+  return positiveEnvMs('LEVERFRAME_OUTPUT_IDLE_TIMEOUT_MS', 45_000);
 }
 
 function streamAbortError(signal?: AbortSignal): Error {
@@ -850,6 +919,7 @@ export async function writeAnthropicStream(
   const toolJsonBuffer = new Map<string, string>();
   const emittedToolLengths = new Map<string, number>();
   const toolFlushTimers = new Map<string, ReturnType<typeof setInterval>>();
+  const toolOpenedAt = new Map<string, number>();
   const flushedTools = new Set<string>();
   let openToolId: string | null = null;
   let finishReason = 'end_turn';
@@ -870,6 +940,20 @@ export async function writeAnthropicStream(
       || (rules.required.size === 0
         && Object.keys(rules.properties).length === 0
         && rules.omitEmptyArrays.size === 0);
+  };
+  /** @why omitEmptyArrays tools (e.g. WebSearch) must stay fully buffered — an unsanitized array is an upstream 400. */
+  const toolExemptFromEarlyFlushOverride = (id: string): boolean => {
+    const rules = inputRules.get(toolNameById.get(id) ?? '');
+    return rules !== undefined && rules.omitEmptyArrays.size > 0;
+  };
+  /** @why A tool that can't safely flush early may still need to, once it has buffered enough or been open long enough. */
+  const toolShouldEarlyFlush = (id: string): boolean => {
+    if (toolCanFlushEarly(id)) return true;
+    if (toolExemptFromEarlyFlushOverride(id)) return false;
+    const buffered = toolJsonBuffer.get(id)?.length ?? 0;
+    if (buffered >= toolEarlyFlushByteThreshold()) return true;
+    const openedAt = toolOpenedAt.get(id);
+    return openedAt !== undefined && Date.now() - openedAt >= toolEarlyFlushOpenMs();
   };
   /** @why Each tool must stop scheduling work once its block closes. */
   const clearToolTimer = (id: string): void => {
@@ -900,10 +984,12 @@ export async function writeAnthropicStream(
       delta: { type: 'input_json_delta', partial_json: suffix },
     });
     emittedToolLengths.set(id, output.length);
+    observer?.lifecycle?.markOutputEmitted();
+    observer?.onOutputByte?.();
   };
-  /** @why Timers should only expose raw text when sanitization is identity-safe. */
+  /** @why Timers flush once early-flush is safe (identity-safe tool, or over the size/time override). */
   const flushToolJson = (id: string): void => {
-    if (!toolCanFlushEarly(id) || flushedTools.has(id)) return;
+    if (flushedTools.has(id) || !toolShouldEarlyFlush(id)) return;
     emitToolJson(id, toolJsonBuffer.get(id) ?? '');
   };
   const ensureStart = () => {
@@ -968,7 +1054,7 @@ export async function writeAnthropicStream(
     observer?.onPart?.(part.type);
     observer?.lifecycle?.markStreamActivity();
     if (observer?.abortSignal?.aborted) {
-      if (deliverTruncated()) return;
+      if (!isOutputStallAbort(observer.abortSignal) && deliverTruncated()) return;
       throw streamAbortError(observer.abortSignal);
     }
     switch (part.type) {
@@ -981,7 +1067,7 @@ export async function writeAnthropicStream(
       // message_start/message_delta/message_stop after the client disconnected.
       // Throw so the HTTP layer follows its cancellation path and emits nothing.
       case 'abort':
-        if (deliverTruncated()) return;
+        if (!isOutputStallAbort(observer?.abortSignal) && deliverTruncated()) return;
         throw streamAbortError(observer?.abortSignal);
 
       case 'reasoning-start':
@@ -993,6 +1079,7 @@ export async function writeAnthropicStream(
           type: 'content_block_delta', index: blockIndex,
           delta: { type: 'thinking_delta', thinking: part.text ?? '' },
         });
+        observer?.onOutputByte?.();
         break;
       case 'reasoning-end': {
         const sig = grabRoundTripSignature(part);
@@ -1010,6 +1097,7 @@ export async function writeAnthropicStream(
           delta: { type: 'text_delta', text: part.text ?? '' },
         });
         observer?.lifecycle?.markOutputEmitted();
+        observer?.onOutputByte?.();
         break;
       case 'text-end': break;
 
@@ -1024,11 +1112,13 @@ export async function writeAnthropicStream(
         toolJsonBuffer.set(id, '');
         emittedToolLengths.set(id, 0);
         openToolId = id;
-        if (toolCanFlushEarly(id)) {
-          const timer = setInterval(() => flushToolJson(id), 2_000);
-          timer.unref?.();
-          toolFlushTimers.set(id, timer);
-        }
+        toolOpenedAt.set(id, Date.now());
+        // Armed for every tool, not only flush-eligible ones: the interval is a
+        // no-op via toolShouldEarlyFlush() until the size/time override (or
+        // eligibility) allows a flush — see the progressive-flush design above.
+        const timer = setInterval(() => flushToolJson(id), 2_000);
+        timer.unref?.();
+        toolFlushTimers.set(id, timer);
         // The tool_use content block is now externally visible on the wire —
         // this permanently closes the automatic-replay barrier even though
         // the tool's input is still streaming.
@@ -1037,7 +1127,13 @@ export async function writeAnthropicStream(
       }
       case 'tool-input-delta': {
         const id = part.id ?? '';
-        toolJsonBuffer.set(id, (toolJsonBuffer.get(id) ?? '') + (part.delta ?? part.text ?? ''));
+        const appended = (toolJsonBuffer.get(id) ?? '') + (part.delta ?? part.text ?? '');
+        if (appended.length > toolJsonMaxBytes()) {
+          throw toolJsonRunawayError({
+            modelId, toolName: toolNameById.get(id) ?? '', bufferedBytes: appended.length, outputEmitted: started,
+          });
+        }
+        toolJsonBuffer.set(id, appended);
         break;
       }
       case 'tool-input-end': break;
@@ -1120,7 +1216,7 @@ export async function writeAnthropicStream(
   // Some SDK transports end the iterator without yielding an explicit abort
   // part. Never synthesize completion frames for an already-cancelled request.
   if (observer?.abortSignal?.aborted) {
-    if (deliverTruncated()) return;
+    if (!isOutputStallAbort(observer.abortSignal) && deliverTruncated()) return;
     throw streamAbortError(observer.abortSignal);
   }
 
@@ -1156,6 +1252,21 @@ export async function streamAnthropicResponse(
     () => idleAbort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1000)}s`)),
     idleTimeoutMs,
   );
+  // Backstop distinct from idleTimer above: idleTimer resets on any SDK part
+  // (including thousands of buffered tool-input-delta parts that never reach
+  // the client), so a provider can starve the client for many minutes without
+  // ever tripping it. This timer resets only on client-visible output.
+  const outputIdleMs = observer?.outputIdleTimeoutMs ?? outputIdleTimeoutMs();
+  let outputEmittedOnce = false;
+  const abortOutputStall = () => idleAbort.abort(outputStallTimeoutError({
+    modelId, timeoutMs: outputIdleMs, outputEmitted: outputEmittedOnce,
+  }));
+  let outputIdleTimer = setTimeout(abortOutputStall, outputIdleMs);
+  const resetOutputIdleTimer = () => {
+    outputEmittedOnce = true;
+    clearTimeout(outputIdleTimer);
+    outputIdleTimer = setTimeout(abortOutputStall, outputIdleMs);
+  };
   // Do not combine streamText's total/chunk timeout signals here. In AI SDK
   // 7.0.22 that composition retains completed StreamTextResult graphs. Relay
   // owns the timers and explicitly settles its controller after consumption.
@@ -1188,10 +1299,15 @@ export async function streamAnthropicResponse(
       clientAbortSignal: observer?.clientAbortSignal,
       inputTokensIncludeCache,
       promptCacheKeyHash: sdkPromptCacheKeyHash(params) ?? observer?.promptCacheKeyHash,
+      onOutputByte: () => {
+        resetOutputIdleTimer();
+        observer?.onOutputByte?.();
+      },
     }, params.tools);
   } finally {
     stopForwardingAbort();
     clearTimeout(idleTimer);
+    clearTimeout(outputIdleTimer);
     // Settle the direct Relay-owned signal only after stream consumption. Do not
     // replace this with AbortSignal.any(): source-driven abort leaves Node's
     // dependent composite rooted in gcPersistentSignals on Node 24.

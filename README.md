@@ -178,6 +178,9 @@ For agents view and background-agent setup, see [docs/background-agents.md](docs
 - `LEVERFRAME_NO_DISCOVERY=1` prevents a standalone server from registering in `~/.leverframe/server-runtime.json`.
 - Provider-specific environment keys use `LEVERFRAME_KEY_<PROVIDER_ID>`.
 - `LEVERFRAME_AUTO_REPLAY_MAX_RETRIES` caps automatic replays of streams that fail before any output reached the client (default 2, max 10).
+- `LEVERFRAME_TOOL_EARLY_FLUSH_BYTES` (default 8000) and `LEVERFRAME_TOOL_EARLY_FLUSH_MS` (default 5000) let a still-open tool call's buffered JSON flush progressively to the client once it crosses either threshold, instead of waiting for the call to finish.
+- `LEVERFRAME_TOOL_JSON_MAX_BYTES` (default 2,000,000) bounds a single tool call's buffered input JSON; exceeding it fails the request rather than growing the buffer without limit.
+- `LEVERFRAME_OUTPUT_IDLE_TIMEOUT_MS` (default 45000) aborts a stream that has produced no client-visible output (text, reasoning, or tool JSON) for this long, even while the provider keeps sending other stream activity.
 - Credentials use the OS credential store service `leverframe`.
 
 On the first normal run, if `~/.leverframe` does not exist, Leverframe copies persisted state from legacy `~/.clodex` without changing or deleting the source. It can also read older relay-ai state. Credential lookup checks the `leverframe` keychain service, then legacy `clodex`, then `relay-ai`, and copies the first legacy hit into `leverframe`.

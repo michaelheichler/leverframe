@@ -35,6 +35,7 @@ export type ProviderErrorCategory =
   | 'header_timeout'
   | 'idle_timeout'
   | 'total_timeout'
+  | 'output_stall_timeout'
   | 'protocol'
   | 'truncated_stream'
   | 'tool_call_protocol'
@@ -64,6 +65,7 @@ const PROVIDER_ERROR_CATEGORIES = new Set<ProviderErrorCategory>([
   'header_timeout',
   'idle_timeout',
   'total_timeout',
+  'output_stall_timeout',
   'protocol',
   'truncated_stream',
   'tool_call_protocol',
