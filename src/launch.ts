@@ -2,7 +2,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { getAppPathOverride } from './config.js';
+import { getAppPathOverride, loadPreferences } from './config.js';
 import { findBinaryOnPath } from './binary-lookup.js';
 import type { ClaudeInstallation } from './claude-installation.js';
 
@@ -67,8 +67,24 @@ export function getInstalledClaudeVersion(claudePathOverride?: string): string {
   return '2.1.183';
 }
 
-export function buildClaudeArgs(model: string | undefined, extraArgs: string[]): string[] {
-  return model ? ['--model', model, ...extraArgs] : [...extraArgs];
+export interface BuildClaudeArgsOptions {
+  /** Append --dangerously-skip-permissions unless the user already passed a permission flag. */
+  bypassPermissions?: boolean;
+}
+
+const PERMISSION_OVERRIDE_FLAGS = ['--dangerously-skip-permissions', '--permission-mode'];
+
+export function buildClaudeArgs(
+  model: string | undefined,
+  extraArgs: string[],
+  options: BuildClaudeArgsOptions = {},
+): string[] {
+  const args = model ? ['--model', model, ...extraArgs] : [...extraArgs];
+  const userOverrodePermissions = extraArgs.some(arg => PERMISSION_OVERRIDE_FLAGS.includes(arg));
+  if (options.bypassPermissions && !userOverrodePermissions) {
+    args.push('--dangerously-skip-permissions');
+  }
+  return args;
 }
 
 export interface LaunchClaudeOptions {
@@ -87,7 +103,8 @@ export function launchClaude(options: LaunchClaudeOptions): Promise<number> {
       && (!isWindows || !CMD_PATH_METACHARACTERS.test(launchOverride))
       ? launchOverride
       : installation.canonicalPath;
-    const args = buildClaudeArgs(model, extraArgs);
+    const bypassPermissions = loadPreferences().launch?.bypassPermissions === true;
+    const args = buildClaudeArgs(model, extraArgs, { bypassPermissions });
 
     const debugFileIdx = extraArgs.indexOf('--debug-file');
     const debugLogPath = debugFileIdx !== -1 && extraArgs[debugFileIdx + 1] ? extraArgs[debugFileIdx + 1] : undefined;

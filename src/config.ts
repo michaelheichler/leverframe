@@ -35,6 +35,18 @@ interface ConfigLockContent {
   nonce: string;
 }
 
+/**
+ * Defensively parse the `launch` config section: unknown/non-boolean values
+ * are ignored rather than propagated, so a hand-edited config.json can never
+ * crash preference loading.
+ */
+function validateLaunchConfig(raw: unknown): UserPreferences['launch'] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const candidate = raw as { bypassPermissions?: unknown };
+  if (typeof candidate.bypassPermissions !== 'boolean') return undefined;
+  return { bypassPermissions: candidate.bypassPermissions };
+}
+
 function pidIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -343,6 +355,7 @@ export function loadPreferences(): UserPreferences {
     serverBridgeMode: config.serverBridgeMode,
     appPathOverrides: config.appPathOverrides,
     recentLaunchFolders: config.recentLaunchFolders,
+    launch: validateLaunchConfig(config.launch),
     server: config.server,
   };
 }

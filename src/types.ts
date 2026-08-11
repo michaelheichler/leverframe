@@ -86,6 +86,11 @@ export interface UserPreferences {
   /** Manual binary path overrides (e.g. the claude binary). */
   appPathOverrides?: Record<string, string>;
   recentLaunchFolders?: string[];
+  /** Launch behavior for `leverframe claude`. */
+  launch?: {
+    /** Append --dangerously-skip-permissions unless the user already passed a permission flag. */
+    bypassPermissions?: boolean;
+  };
   server?: {
     savedPassword?: string;
     /** Provider ids exposed by `leverframe server`. */

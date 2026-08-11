@@ -132,6 +132,18 @@ leverframe executions [list|show|reconcile]
 
 `leverframe patch` makes favorites and aliases first-class Claude Code models. It updates model validation, the `/model` picker, aliases, context-window metadata, and supported effort levels.
 
+### Bypass permissions by default
+
+`leverframe claude -- --dangerously-skip-permissions` passes the flag through for a single run. To make every `leverframe claude` launch start in bypass-permissions mode, set it in `~/.leverframe/config.json`:
+
+```json
+{
+  "launch": { "bypassPermissions": true }
+}
+```
+
+This only affects `leverframe claude` launches. A `--permission-mode` or `--dangerously-skip-permissions` flag you pass explicitly always wins over the saved setting.
+
 ### Agent launch routing notice
 
 On Claude Code 2.1.226, each new local Agent launch shows:

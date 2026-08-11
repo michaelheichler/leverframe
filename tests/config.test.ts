@@ -118,6 +118,44 @@ describe('dotfolder config', () => {
     ]);
   });
 
+  it('returns undefined when no launch section is saved', () => {
+    savePreferences({ lastModel: 'gpt-5.6-sol' });
+
+    expect(loadPreferences().launch).toBeUndefined();
+  });
+
+  it('reads a valid launch.bypassPermissions from a hand-edited config.json', () => {
+    const configPath = getConfigPath();
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(
+      configPath,
+      JSON.stringify({ launch: { bypassPermissions: true } }),
+      { encoding: 'utf8', mode: 0o600 },
+    );
+
+    expect(loadPreferences().launch).toEqual({ bypassPermissions: true });
+  });
+
+  it('ignores a non-boolean launch.bypassPermissions rather than propagating it', () => {
+    const configPath = getConfigPath();
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(
+      configPath,
+      JSON.stringify({ launch: { bypassPermissions: 'yes' } }),
+      { encoding: 'utf8', mode: 0o600 },
+    );
+
+    expect(loadPreferences().launch).toBeUndefined();
+  });
+
+  it('ignores a non-object launch section rather than propagating it', () => {
+    const configPath = getConfigPath();
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(configPath, JSON.stringify({ launch: 'true' }), { encoding: 'utf8', mode: 0o600 });
+
+    expect(loadPreferences().launch).toBeUndefined();
+  });
+
   it('returns absent status when no server password is saved', async () => {
     delete process.env['DBUS_SESSION_BUS_ADDRESS'];
     const result = await getSavedServerPassword();

@@ -1976,6 +1976,12 @@ var CONFIG_LOCK_MALFORMED_GRACE_MS = 500;
 var CONFIG_LOCK_FUTURE_SKEW_MS = 5e3;
 var CONFIG_LOCK_BUSY_ERROR = "ConfigLockBusyError";
 var O_NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
+function validateLaunchConfig(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return void 0;
+  const candidate = raw;
+  if (typeof candidate.bypassPermissions !== "boolean") return void 0;
+  return { bypassPermissions: candidate.bypassPermissions };
+}
 function pidIsAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -2237,6 +2243,7 @@ function loadPreferences() {
     serverBridgeMode: config.serverBridgeMode,
     appPathOverrides: config.appPathOverrides,
     recentLaunchFolders: config.recentLaunchFolders,
+    launch: validateLaunchConfig(config.launch),
     server: config.server
   };
 }
@@ -2483,15 +2490,22 @@ function getInstalledClaudeVersion(claudePathOverride) {
   }
   return "2.1.183";
 }
-function buildClaudeArgs(model, extraArgs) {
-  return model ? ["--model", model, ...extraArgs] : [...extraArgs];
+var PERMISSION_OVERRIDE_FLAGS = ["--dangerously-skip-permissions", "--permission-mode"];
+function buildClaudeArgs(model, extraArgs, options = {}) {
+  const args = model ? ["--model", model, ...extraArgs] : [...extraArgs];
+  const userOverrodePermissions = extraArgs.some((arg) => PERMISSION_OVERRIDE_FLAGS.includes(arg));
+  if (options.bypassPermissions && !userOverrodePermissions) {
+    args.push("--dangerously-skip-permissions");
+  }
+  return args;
 }
 function launchClaude(options) {
   const { installation, env, model, extraArgs } = options;
   return new Promise((resolve) => {
     const launchOverride = env["LEVERFRAME_CLAUDE_LAUNCH_PATH"]?.trim();
     const claudePath = launchOverride && existsSync5(launchOverride) && (!isWindows || !CMD_PATH_METACHARACTERS.test(launchOverride)) ? launchOverride : installation.canonicalPath;
-    const args = buildClaudeArgs(model, extraArgs);
+    const bypassPermissions = loadPreferences().launch?.bypassPermissions === true;
+    const args = buildClaudeArgs(model, extraArgs, { bypassPermissions });
     const debugFileIdx = extraArgs.indexOf("--debug-file");
     const debugLogPath = debugFileIdx !== -1 && extraArgs[debugFileIdx + 1] ? extraArgs[debugFileIdx + 1] : void 0;
     const originalStdoutWrite = process.stdout.write;
@@ -2607,4 +2621,4 @@ export {
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-WU32VF5B.js.map
+//# sourceMappingURL=chunk-PQYK4YB3.js.map

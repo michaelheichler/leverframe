@@ -37,6 +37,40 @@ describe('buildClaudeArgs', () => {
       'hello',
     ]);
   });
+
+  it('appends --dangerously-skip-permissions when bypassPermissions is on', () => {
+    expect(buildClaudeArgs('claude-sonnet-4-6', ['-c'], { bypassPermissions: true })).toEqual([
+      '--model',
+      'claude-sonnet-4-6',
+      '-c',
+      '--dangerously-skip-permissions',
+    ]);
+  });
+
+  it('does not append the bypass flag when bypassPermissions is off or absent', () => {
+    expect(buildClaudeArgs('claude-sonnet-4-6', ['-c'], { bypassPermissions: false })).toEqual([
+      '--model',
+      'claude-sonnet-4-6',
+      '-c',
+    ]);
+    expect(buildClaudeArgs('claude-sonnet-4-6', ['-c'])).toEqual([
+      '--model',
+      'claude-sonnet-4-6',
+      '-c',
+    ]);
+  });
+
+  it('defers to a user-supplied --permission-mode instead of appending the bypass flag', () => {
+    expect(
+      buildClaudeArgs('claude-sonnet-4-6', ['--permission-mode', 'plan'], { bypassPermissions: true }),
+    ).toEqual(['--model', 'claude-sonnet-4-6', '--permission-mode', 'plan']);
+  });
+
+  it('defers to a user-supplied --dangerously-skip-permissions instead of duplicating it', () => {
+    expect(
+      buildClaudeArgs('claude-sonnet-4-6', ['--dangerously-skip-permissions'], { bypassPermissions: true }),
+    ).toEqual(['--model', 'claude-sonnet-4-6', '--dangerously-skip-permissions']);
+  });
 });
 
 describe('findBinaryOnPath', () => {
