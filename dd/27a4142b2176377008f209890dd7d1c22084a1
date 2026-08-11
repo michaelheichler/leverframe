@@ -1,0 +1,71 @@
+README.md
+  s_7ed7c2f63b0d4d::t_e4d9df3ba977d5 181-183
+src/sdk-adapter.ts
+  s_7ed7c2f63b0d4d::t_760125d5352d19 837-839
+  s_1435467b546181::t_34f89b75694bdc 757-765,798-836,840-841,858-873,922,944-957,987-988,990,992,1057,1070,1082,1100,1115-1121,1130-1136,1219,1255-1269,1302-1305,1310
+tests/sdk-adapter.test.ts
+  s_7ed7c2f63b0d4d::t_53c5895950059d 1691
+  s_7ed7c2f63b0d4d::t_f403849ca7ada1 1700
+  s_7ed7c2f63b0d4d::t_52331d0c97cdd2 1706-1714
+  s_7ed7c2f63b0d4d::t_b49d4d24986944 1406,1747-1750
+  s_7ed7c2f63b0d4d::t_55a575b306c15a 910-913
+  s_7ed7c2f63b0d4d::t_eb018963bd0c0e 1395-1401,1552,1561,1566
+  s_7ed7c2f63b0d4d::t_e8c55e3ac43319 1585-1586,1611,1614,1661-1690,1693-1699,1701-1702,1740-1741
+  s_7ed7c2f63b0d4d::t_f95bcd07033cfa 1402-1403
+  s_7ed7c2f63b0d4d::t_91e3a6f4671789 1405
+  s_7ed7c2f63b0d4d::t_85bb92bf0eb2f1 1549-1551
+  s_7ed7c2f63b0d4d::t_4045bc47c977c8 1553-1555,1558-1560
+  s_7ed7c2f63b0d4d::t_e88fda9bfdd883 1562-1565
+  s_7ed7c2f63b0d4d::t_c87ff6c75114f7 1567-1569,1582-1584
+  s_7ed7c2f63b0d4d::t_2314d81f868025 1587-1589,1608-1610
+  s_7ed7c2f63b0d4d::t_6762b1f52aa342 1612-1613
+  s_7ed7c2f63b0d4d::t_bca3c429aab34a 1615-1617,1658-1660
+  s_7ed7c2f63b0d4d::t_2a7aeace2e69dd 1692
+  s_7ed7c2f63b0d4d::t_96bea143b4c878 1703-1705
+  s_7ed7c2f63b0d4d::t_daff23a286fa5f 1715-1717,1737-1739
+  s_7ed7c2f63b0d4d::t_1e2411e906129b 1742-1746
+  s_7ed7c2f63b0d4d::t_00fec857dc48af 1751-1753
+  s_7e9ca15ec12b25::t_d259e9b006d510 1408,1532-1548,1556-1557,1570-1581,1590-1607,1618-1657,1718-1736,1754-1826
+src/provider-error.ts
+  s_748a1ec8ef3efb::t_bca3f4946c7a07 38,68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "dd27a4142b2176377008f209890dd7d1c22084a1",
+  "prompts": {},
+  "sessions": {
+    "s_1435467b546181": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "209822dc-2c44-4767-9b95-b7c02ffb1511",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    },
+    "s_748a1ec8ef3efb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4265fe64-a4b2-4f4d-a3a9-d4b93e7b59d1",
+        "model": "unknown"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    },
+    "s_7e9ca15ec12b25": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55fb27a3-8367-4a63-9c81-a140f6016de0",
+        "model": "unknown"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    },
+    "s_7ed7c2f63b0d4d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4124bfab-1b0c-4f94-92c8-6b3a28716b9d",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}
