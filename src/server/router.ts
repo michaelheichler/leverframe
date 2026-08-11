@@ -812,7 +812,7 @@ async function handleAnthropicMessages(
               abortSignal: clientAbort.signal,
               clientAbortSignal: clientAbort.signal,
               lifecycle: requestExecution,
-              contextWindow: resolveContextWindow(upstreamModelId(model), model.contextWindow),
+              contextWindow: resolveContextWindow(upstreamModelId(model), model.contextWindow, model.contextWindowUnconfirmed),
             }),
           );
           requestExecution.markStreamActivity();
@@ -832,7 +832,7 @@ async function handleAnthropicMessages(
             abortSignal: clientAbort.signal,
             onUsage,
             lifecycle: requestExecution,
-            contextWindow: resolveContextWindow(upstreamModelId(model), model.contextWindow),
+            contextWindow: resolveContextWindow(upstreamModelId(model), model.contextWindow, model.contextWindowUnconfirmed),
           }),
         );
         requestExecution.markStreamActivity();
@@ -854,7 +854,7 @@ async function handleAnthropicMessages(
       const clientMessage = contextLengthExceeded
         ? anthropicPromptTooLongMessage(
             body,
-            resolveContextWindow(upstreamModelId(model), model.contextWindow),
+            resolveContextWindow(upstreamModelId(model), model.contextWindow, model.contextWindowUnconfirmed),
           )
         : message;
       plog(() => `sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message}${details?.errorContent ? `, body: ${details.errorContent}` : ''}`);

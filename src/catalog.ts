@@ -18,6 +18,7 @@ export function localModelToRoute(lp: LocalProvider, model: LocalProviderModel):
     apiKey: lp.apiKey,
     modelFormat: model.modelFormat,
     contextWindow: model.contextWindow,
+    contextWindowUnconfirmed: model.contextWindowUnconfirmed,
     npm: model.npm,
     baseURL: model.apiBaseUrl,
     providerId: lp.id,

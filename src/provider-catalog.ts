@@ -111,6 +111,7 @@ export function localProvidersToServerModels(localProviders: LocalProvider[]): S
       authType: provider.authType,
       oauthAccountId: provider.oauthAccountId,
       contextWindow: model.contextWindow,
+      contextWindowUnconfirmed: model.contextWindowUnconfirmed,
       supportedParameters: model.supportedParameters,
       reasoning: model.reasoning,
       interleavedReasoningField: model.interleavedReasoningField,

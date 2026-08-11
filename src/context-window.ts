@@ -37,7 +37,10 @@ const HEURISTIC_RULES: Array<[RegExp, number]> = [
   [/claude/i, 200_000],
   [/deepseek-v4|deepseek-r1|deepseek-reasoner/i, 1_000_000],
   [/deepseek/i, 64_000],
-  [/gpt-5|gpt-4\.1|o3-|o4-/i, 1_000_000],
+  [/gpt-4\.1/i, 1_000_000],
+  // gpt-5 family: 400K total window, 272K max input — Claude Code budgets input tokens.
+  [/gpt-5/i, 272_000],
+  [/o3-|o4-/i, 200_000],
   [/gpt-4o|gpt-4-turbo|gpt-4/i, 128_000],
   [/gpt-oss/i, 131_072],
   [/qwen3|qwen-3|qwen2\.5-72b|qwen2\.5-32b|qwen-coder/i, 262_144],
@@ -132,8 +135,16 @@ export function lookupContextWindow(modelId: string): number {
   return getCacheIndex().get(modelId) ?? contextWindowFromHeuristics(modelId);
 }
 
-/** Prefer an explicit limit.context (or pre-resolved value), else resolve from cache/heuristics. */
-export function resolveContextWindow(modelId: string, explicit?: number): number {
+/**
+ * Prefer an explicit limit.context (or pre-resolved value), else resolve from cache/heuristics.
+ *
+ * `unconfirmed` marks provenance: the provider did not confirm a context window
+ * (e.g. ChatGPT OAuth seeds). Heuristic guesses must not be advertised for these
+ * models — over-reporting makes Claude Code overfill the real window — so they
+ * resolve to the conservative 200K default instead.
+ */
+export function resolveContextWindow(modelId: string, explicit?: number, unconfirmed?: boolean): number {
   if (typeof explicit === 'number' && explicit > 0) return explicit;
+  if (unconfirmed) return DEFAULT_CONTEXT_WINDOW;
   return lookupContextWindow(modelId);
 }

@@ -345,6 +345,8 @@ export interface ProxyRoute {
   apiKey: string;
   modelFormat: 'anthropic' | 'openai';
   contextWindow?: number;
+  /** Provider never confirmed a context window — resolve to the conservative default, never a heuristic. */
+  contextWindowUnconfirmed?: boolean;
   npm?: string;      // OpenCode api.npm — when SDK-migrated, routes via the adapter
   baseURL?: string;  // base URL for openai-compatible / openrouter SDK providers
   providerId?: string;
@@ -450,7 +452,12 @@ export async function startProxyCatalog(
 
   const modelsPayload = JSON.stringify(
     formatAnthropicModelList(
-      routes.map(r => ({ id: r.aliasId, name: r.displayName, contextWindow: r.contextWindow })),
+      routes.map(r => ({
+        id: r.aliasId,
+        name: r.displayName,
+        contextWindow: r.contextWindow,
+        contextWindowUnconfirmed: r.contextWindowUnconfirmed,
+      })),
     ),
   );
 
@@ -473,7 +480,12 @@ export async function startProxyCatalog(
         const route = lookupRoute(byAlias, id);
         if (route) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(formatAnthropicModelEntry(route.aliasId, route.displayName, route.contextWindow)));
+          res.end(JSON.stringify(formatAnthropicModelEntry({
+            id: route.aliasId,
+            name: route.displayName,
+            contextWindow: route.contextWindow,
+            contextWindowUnconfirmed: route.contextWindowUnconfirmed,
+          })));
         } else {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: { type: 'not_found_error', message: `Model '${id}' not found` } }));
@@ -939,7 +951,7 @@ export async function startProxyCatalog(
           const clientMessage = contextLengthExceeded
             ? anthropicPromptTooLongMessage(
                 anthropicBody,
-                resolveContextWindow(route.realModelId, route.contextWindow),
+                resolveContextWindow(route.realModelId, route.contextWindow, route.contextWindowUnconfirmed),
               )
             : message;
           plog(() => `sdk error: ${message}${details?.errorContent ? ` — body: ${details.errorContent}` : ''}`);

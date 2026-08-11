@@ -46,6 +46,8 @@ export interface ServerModelInfo {
   /** Fallback reasoning effort when the client omits output_config.effort. */
   defaultEffort?: string;
   contextWindow?: number;
+  /** Provider never confirmed a context window — advertise the conservative default, never a heuristic. */
+  contextWindowUnconfirmed?: boolean;
   /** Picker label for gateway aliases, e.g. "OpenCode Go" or local provider name. */
   providerLabel?: string;
   /** Provider id for filtering. */
@@ -64,16 +66,13 @@ export interface ModelCatalog {
 const CREATED_AT_ISO = '2025-01-01T00:00:00Z';
 const CREATED_AT_UNIX = 1735689600;
 
-export function formatAnthropicModelEntry(
-  id: string,
-  displayName: string,
-  contextWindow?: number,
-) {
-  const maxInput = resolveContextWindow(id, contextWindow);
+export function formatAnthropicModelEntry(entry: ModelDisplayEntry) {
+  const { id, name, contextWindow, contextWindowUnconfirmed } = entry;
+  const maxInput = resolveContextWindow(id, contextWindow, contextWindowUnconfirmed);
   return {
     id,
     type: 'model' as const,
-    display_name: displayName,
+    display_name: name,
     created_at: CREATED_AT_ISO,
     context_window: maxInput,
     max_input_tokens: maxInput,
@@ -93,11 +92,12 @@ export interface ModelDisplayEntry {
   id: string;
   name: string;
   contextWindow?: number;
+  contextWindowUnconfirmed?: boolean;
 }
 
 export function formatAnthropicModelList(entries: ModelDisplayEntry[]) {
   return {
-    data: entries.map(entry => formatAnthropicModelEntry(entry.id, entry.name, entry.contextWindow)),
+    data: entries.map(entry => formatAnthropicModelEntry(entry)),
     has_more: false,
     first_id: entries[0]?.id ?? null,
     last_id: entries.at(-1)?.id ?? null,
@@ -106,7 +106,12 @@ export function formatAnthropicModelList(entries: ModelDisplayEntry[]) {
 
 export function formatAnthropicModels(models: ServerModelInfo[]) {
   return formatAnthropicModelList(
-    models.map(model => ({ id: model.id, name: model.name, contextWindow: model.contextWindow })),
+    models.map(model => ({
+      id: model.id,
+      name: model.name,
+      contextWindow: model.contextWindow,
+      contextWindowUnconfirmed: model.contextWindowUnconfirmed,
+    })),
   );
 }
 
@@ -141,6 +146,7 @@ export function formatGatewayAnthropicModels(models: ServerModelInfo[], opts?: G
       id: exposedGatewayAliasId(model, opts),
       name: gatewayDisplayName(model, opts),
       contextWindow: model.contextWindow,
+      contextWindowUnconfirmed: model.contextWindowUnconfirmed,
     })),
   );
 }
