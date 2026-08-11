@@ -433,6 +433,15 @@ export async function startProxyCatalog(
     const route = byAlias.get(alias.routeId);
     if (route && !byAlias.has(alias.name)) byAlias.set(alias.name, route);
   }
+  // Agent-tool child sessions (e.g. Claude Code's Agent tool) send the bare upstream
+  // model id in the request body instead of the canonical alias id. Register realModelId
+  // as a lowest-precedence fallback (lookupRoute expands via routeLookupIds at query time,
+  // but byAlias itself is only ever keyed by literal aliasId/alias.name) so those requests
+  // still resolve instead of falling through to Anthropic passthrough. Never override an
+  // alias/canonical key already set.
+  for (const route of routes) {
+    if (!byAlias.has(route.realModelId)) byAlias.set(route.realModelId, route);
+  }
   const defaultRoute = byAlias.get(defaultAliasId) ?? routes[0]!;
 
   const plog = makeProxyLog(debug, debugLogPath);

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type * as http from 'node:http';
 import type { ProxyRoute } from '../src/proxy.js';
 import { decideHttpProxyRoute, type HttpProxyRouteInput } from '../src/http-proxy/routing-decision.js';
+import { buildProxyRoutesById } from '../src/http-proxy/server.js';
 
 const SESSION_ID = '11111111-2222-4333-8444-555555555555';
 
@@ -170,5 +171,54 @@ describe('decideHttpProxyRoute logging and privacy', () => {
 
   afterAll(() => {
     rmSync(testHome, { recursive: true, force: true });
+  });
+});
+
+describe('buildProxyRoutesById (bare Agent-tool model ids)', () => {
+  it('resolves a bare realModelId sent by an Agent-tool child session to its route', () => {
+    const matched = route({ aliasId: 'leverframe:openai-oauth:gpt-5.6-luna', realModelId: 'gpt-5.6-luna' });
+    const routesById = buildProxyRoutesById([matched]);
+    const decision = decideHttpProxyRoute(baseInput({
+      routesById,
+      hasAdapter: true,
+      rawBody: Buffer.from(JSON.stringify({ model: 'gpt-5.6-luna' })),
+    }));
+    expect(decision.action).toBe('translated');
+    if (decision.action === 'translated') {
+      expect(decision.route).toBe(matched);
+    }
+  });
+
+  it('never lets a bare realModelId override an existing canonical alias or saved alias name', () => {
+    const canonical = route({ aliasId: 'shared-id', realModelId: 'gpt-primary', displayName: 'Canonical' });
+    const collidingByRealModelId = route({
+      aliasId: 'leverframe:openai-oauth:collider',
+      realModelId: 'shared-id',
+      displayName: 'Collider (real id collides with canonical alias)',
+    });
+    const routesById = buildProxyRoutesById([canonical, collidingByRealModelId]);
+    expect(routesById.get('shared-id')).toBe(canonical);
+
+    const savedAliasName = route({ aliasId: 'leverframe:openai-oauth:second', realModelId: 'aliased-name' });
+    const collidingByRealModelId2 = route({
+      aliasId: 'leverframe:openai-oauth:collider-2',
+      realModelId: 'aliased-name',
+    });
+    const routesByIdWithAlias = buildProxyRoutesById(
+      [savedAliasName, collidingByRealModelId2],
+      [{ name: 'aliased-name', routeId: 'leverframe:openai-oauth:second', displayName: 'Aliased' }],
+    );
+    expect(routesByIdWithAlias.get('aliased-name')).toBe(savedAliasName);
+  });
+
+  it('still fails closed to passthrough for a truly unknown model id', () => {
+    const matched = route({ aliasId: 'leverframe:openai-oauth:gpt-5.6-luna', realModelId: 'gpt-5.6-luna' });
+    const routesById = buildProxyRoutesById([matched]);
+    const decision = decideHttpProxyRoute(baseInput({
+      routesById,
+      hasAdapter: true,
+      rawBody: Buffer.from(JSON.stringify({ model: 'totally-unknown-model' })),
+    }));
+    expect(decision.action).toBe('passthrough-messages');
   });
 });

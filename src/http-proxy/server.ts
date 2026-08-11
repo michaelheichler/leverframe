@@ -793,18 +793,45 @@ function forwardPlainHttp(req: http.IncomingMessage, res: http.ServerResponse): 
   req.pipe(upstream);
 }
 
-export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpProxyHandle> {
-  const certificates = ensureHttpProxyCertificates();
-  const proxyAuthToken = options.proxyAuthToken ?? randomBytes(32).toString('base64url');
+/**
+ * Positive allowlist of relay routes, keyed by every id a client may send.
+ *
+ * Precedence (highest first, later passes never override earlier keys):
+ *   1. Canonical route aliasId (and its routeLookupIds variants).
+ *   2. Saved model-alias names, resolved against the routeId they name.
+ *   3. Bare realModelId. Claude Code's Agent tool spawns child sessions that send the
+ *      bare upstream model id (e.g. "gpt-5.6-luna") instead of the canonical alias id;
+ *      without this fallback those requests miss the route map, routing fails closed to
+ *      Anthropic passthrough, and Anthropic 404s the unknown model.
+ *
+ * Mirrors the precedence contract documented on createGatewayModelCatalog in
+ * src/server/models.ts.
+ */
+export function buildProxyRoutesById(
+  routes: ProxyRoute[],
+  modelAliases?: ResolvedHttpProxyAlias[],
+): Map<string, ProxyRoute> {
   const routesById = new Map<string, ProxyRoute>();
-  for (const route of options.routes) {
+  for (const route of routes) {
     for (const id of routeLookupIds(route.aliasId)) routesById.set(id, route);
   }
-  for (const alias of options.modelAliases ?? []) {
+  for (const alias of modelAliases ?? []) {
     const route = routesById.get(alias.routeId);
     if (!route) continue;
     for (const id of routeLookupIds(alias.name)) routesById.set(id, route);
   }
+  for (const route of routes) {
+    for (const id of routeLookupIds(route.realModelId)) {
+      if (!routesById.has(id)) routesById.set(id, route);
+    }
+  }
+  return routesById;
+}
+
+export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpProxyHandle> {
+  const certificates = ensureHttpProxyCertificates();
+  const proxyAuthToken = options.proxyAuthToken ?? randomBytes(32).toString('base64url');
+  const routesById = buildProxyRoutesById(options.routes, options.modelAliases);
   const anthropicOrigin = new URL(options.anthropicOrigin ?? 'https://api.anthropic.com');
   let adapter: ProxyHandle | null = options.adapterHandle ?? null;
   if (options.routes.length > 0) {

@@ -10837,6 +10837,9 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
     const route = byAlias.get(alias.routeId);
     if (route && !byAlias.has(alias.name)) byAlias.set(alias.name, route);
   }
+  for (const route of routes) {
+    if (!byAlias.has(route.realModelId)) byAlias.set(route.realModelId, route);
+  }
   const defaultRoute = byAlias.get(defaultAliasId) ?? routes[0];
   const plog = makeProxyLog(debug, debugLogPath);
   const startupRecovery = reconcileExecutionsAtStartup();
@@ -13823,18 +13826,27 @@ function forwardPlainHttp(req, res) {
   });
   req.pipe(upstream);
 }
-async function startHttpProxy(options) {
-  const certificates = ensureHttpProxyCertificates();
-  const proxyAuthToken = options.proxyAuthToken ?? randomBytes3(32).toString("base64url");
+function buildProxyRoutesById(routes, modelAliases) {
   const routesById = /* @__PURE__ */ new Map();
-  for (const route of options.routes) {
+  for (const route of routes) {
     for (const id of routeLookupIds(route.aliasId)) routesById.set(id, route);
   }
-  for (const alias of options.modelAliases ?? []) {
+  for (const alias of modelAliases ?? []) {
     const route = routesById.get(alias.routeId);
     if (!route) continue;
     for (const id of routeLookupIds(alias.name)) routesById.set(id, route);
   }
+  for (const route of routes) {
+    for (const id of routeLookupIds(route.realModelId)) {
+      if (!routesById.has(id)) routesById.set(id, route);
+    }
+  }
+  return routesById;
+}
+async function startHttpProxy(options) {
+  const certificates = ensureHttpProxyCertificates();
+  const proxyAuthToken = options.proxyAuthToken ?? randomBytes3(32).toString("base64url");
+  const routesById = buildProxyRoutesById(options.routes, options.modelAliases);
   const anthropicOrigin = new URL2(options.anthropicOrigin ?? "https://api.anthropic.com");
   let adapter = options.adapterHandle ?? null;
   if (options.routes.length > 0) {
