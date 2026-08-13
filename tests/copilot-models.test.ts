@@ -59,6 +59,46 @@ describe('parseCopilotModelInfo', () => {
     expect(model.defaultReasoningEffort).toBeUndefined();
   });
 
+  it('accepts SDK records with optional capability groups omitted', () => {
+    const model = parseCopilotModelInfo(modelInfo({
+      capabilities: {},
+      supportedReasoningEfforts: undefined,
+      defaultReasoningEffort: undefined,
+    }));
+
+    expect(model).toEqual(expect.objectContaining({
+      id: 'claude-sonnet-fixture',
+      contextWindowUnconfirmed: true,
+    }));
+    expect(model.vision).toBeUndefined();
+    expect(model.reasoning).toBeUndefined();
+  });
+
+  it('keeps omitted capability booleans unconfirmed', () => {
+    const model = parseCopilotModelInfo(modelInfo({
+      capabilities: {
+        supports: {},
+        limits: { max_context_window_tokens: 128_000 },
+      },
+    }));
+
+    expect(model.contextWindow).toBe(128_000);
+    expect(model.vision).toBeUndefined();
+    expect(model.reasoning).toBeUndefined();
+  });
+
+  it('treats the SDK normalized zero context window as unconfirmed', () => {
+    const model = parseCopilotModelInfo(modelInfo({
+      capabilities: {
+        supports: { vision: false, reasoningEffort: false },
+        limits: { max_context_window_tokens: 0 },
+      },
+    }));
+
+    expect(model.contextWindow).toBeUndefined();
+    expect(model.contextWindowUnconfirmed).toBe(true);
+  });
+
   it.each([
     null,
     {},
@@ -66,7 +106,11 @@ describe('parseCopilotModelInfo', () => {
     modelInfo({ name: 42 }),
     modelInfo({ capabilities: null }),
     modelInfo({ capabilities: { supports: { vision: 'yes', reasoningEffort: true }, limits: {} } }),
+    modelInfo({ capabilities: { supports: [], limits: {} } }),
+    modelInfo({ capabilities: { supports: {}, limits: 'unknown' } }),
     modelInfo({ capabilities: { supports: { vision: true, reasoningEffort: true }, limits: { max_context_window_tokens: -1 } } }),
+    modelInfo({ capabilities: { supports: { vision: true, reasoningEffort: true }, limits: { max_context_window_tokens: Number.NaN } } }),
+    modelInfo({ capabilities: { supports: { vision: true, reasoningEffort: true }, limits: { max_context_window_tokens: '128000' } } }),
     modelInfo({ supportedReasoningEfforts: ['medium', 'extreme'] }),
     modelInfo({ defaultReasoningEffort: 'extreme' }),
   ])('rejects malformed model metadata %#', record => {
@@ -82,6 +126,16 @@ describe('mapCopilotModels', () => {
     ]);
 
     expect(models.map(model => model.id)).toEqual(['first', 'second']);
+  });
+
+  it('keeps the complete list when one valid record has sparse SDK capabilities', () => {
+    const models = mapCopilotModels([
+      modelInfo({ id: 'sparse', name: 'Sparse', capabilities: { supports: {}, limits: { max_context_window_tokens: 0 } } }),
+      modelInfo({ id: 'complete', name: 'Complete' }),
+    ]);
+
+    expect(models.map(model => model.id)).toEqual(['sparse', 'complete']);
+    expect(models[0]).toEqual(expect.objectContaining({ contextWindowUnconfirmed: true }));
   });
 
 

@@ -58,6 +58,16 @@ function parseProvider(raw: unknown): RegistryProvider | null {
       };
     }
   }
+  if (p.modelDiscoveryError && typeof p.modelDiscoveryError === 'object' && !Array.isArray(p.modelDiscoveryError)) {
+    const failure = p.modelDiscoveryError as Record<string, unknown>;
+    if (
+      typeof failure.failedAt === 'string'
+      && typeof failure.kind === 'string'
+      && typeof failure.reason === 'string'
+    ) {
+      provider.modelDiscoveryError = failure as RegistryProvider['modelDiscoveryError'];
+    }
+  }
   return provider;
 }
 
@@ -97,6 +107,13 @@ function strictOptionalFields(raw: unknown): boolean {
     const fields = cache as Record<string, unknown>;
     if (typeof fields.fetchedAt !== 'string' || !Array.isArray(fields.models)) return false;
     if (fields.models.some(model => !model || typeof model !== 'object' || Array.isArray(model))) return false;
+  }
+  if (hasOwn(provider, 'modelDiscoveryError')) {
+    const failure = provider.modelDiscoveryError;
+    if (!failure || typeof failure !== 'object' || Array.isArray(failure)) return false;
+    const fields = failure as Record<string, unknown>;
+    if (typeof fields.failedAt !== 'string' || typeof fields.reason !== 'string') return false;
+    if (!['authentication', 'empty', 'policy', 'runtime', 'schema', 'sdk'].includes(String(fields.kind))) return false;
   }
   return true;
 }

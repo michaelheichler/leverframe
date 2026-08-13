@@ -23,7 +23,12 @@ import { modelPrefersResponsesApi } from '../provider-factory.js';
 import { deriveBrand } from '../models.js';
 import { getInstalledClaudeVersion } from '../launch.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
-import { refreshCopilotModels } from '../copilot/models.js';
+import { redactTraceLine } from '../trace-log.js';
+import {
+  classifyCopilotModelFailure,
+  refreshCopilotModels,
+  type CopilotModelFailureKind,
+} from '../copilot/models.js';
 import {
   createDefaultCopilotRuntime,
   type CopilotRuntimeHandle,
@@ -37,6 +42,8 @@ export interface RefreshProviderResult {
   previousModelCount?: number;
   skipped?: boolean;
   reason?: string;
+  failureKind?: CopilotModelFailureKind;
+  failureReason?: string;
 }
 
 export interface RefreshModelsResult {
@@ -48,8 +55,10 @@ type OAuthModelRefreshResult = {
   baseUrl?: string;
   source: 'live' | 'seed' | 'cache';
   failureReason?: string;
-  failureKind?: 'runtime' | 'schema';
+  failureKind?: CopilotModelFailureKind;
 };
+
+const MAX_DISCOVERY_ERROR_LENGTH = 500;
 
 /** Collects graceful and forced shutdown failures without masking the caller's error. */
 
@@ -337,8 +346,9 @@ function updateProviderCache(
   if (idx < 0) return;
   const now = new Date().toISOString();
   const existing = registry.providers[idx]!;
+  const { modelDiscoveryError: _previousDiscoveryError, ...provider } = existing;
   registry.providers[idx] = {
-    ...existing,
+    ...provider,
     refreshedAt: now,
     api: baseUrl ? { ...existing.api, url: baseUrl } : existing.api,
     modelsCache: {
@@ -346,6 +356,63 @@ function updateProviderCache(
       models,
     },
   };
+}
+
+function recordCopilotDiscoveryError(
+  providerId: string,
+  kind: CopilotModelFailureKind,
+  reason: string,
+  previousRefreshedAt: string | undefined,
+): void {
+  updateRegistry(registry => {
+    const provider = registry.providers.find(entry => entry.id === providerId);
+    if (provider?.templateId !== 'github-copilot') return;
+    if (provider.refreshedAt !== previousRefreshedAt) return;
+    provider.modelDiscoveryError = {
+      failedAt: new Date().toISOString(),
+      kind,
+      reason,
+    };
+  });
+}
+
+function safeCopilotDiscoveryReason(reason: string, accessToken: string | null): string {
+  const redacted = redactTraceLine(reason, accessToken === null ? [] : [accessToken]);
+  const withoutControlCharacters = Array.from(redacted, character => {
+    const code = character.charCodeAt(0);
+    return code <= 31 || code >= 127 && code <= 159 ? ' ' : character;
+  }).join('');
+  const compact = withoutControlCharacters.replace(/\s+/gu, ' ').trim();
+  if (compact.length <= MAX_DISCOVERY_ERROR_LENGTH) return compact;
+  const marker = ' [truncated]';
+  return compact.slice(0, MAX_DISCOVERY_ERROR_LENGTH - marker.length) + marker;
+}
+
+function copilotDiscoveryFailureMessage(
+  kind: CopilotModelFailureKind,
+  reason: string,
+  cachedModelCount: number,
+): string {
+  const detail = reason.length === 0 ? '' : ` (${reason})`;
+  const cache = cachedModelCount === 0
+    ? ''
+    : ` Kept ${cachedModelCount} cached model${cachedModelCount === 1 ? '' : 's'}.`;
+  if (kind === 'sdk') {
+    return `GitHub Copilot runtime is unavailable${detail}.${cache} Install @github/copilot-sdk@1.0.9 and refresh models.`;
+  }
+  if (kind === 'authentication') {
+    return `GitHub Copilot authentication or subscription validation failed${detail}.${cache} Sign in again with leverframe providers auth github-copilot.`;
+  }
+  if (kind === 'policy') {
+    return `GitHub Copilot exposes no policy-enabled models${detail}.${cache} Check your organization model policy.`;
+  }
+  if (kind === 'empty') {
+    return `GitHub Copilot returned no models${detail}.${cache} Confirm this account has an eligible Copilot subscription.`;
+  }
+  if (kind === 'schema') {
+    return `GitHub Copilot returned unexpected model data${detail}.${cache} Update Leverframe or @github/copilot-sdk before retrying.`;
+  }
+  return `GitHub Copilot model discovery failed${detail}.${cache} Try refreshing again later.`;
 }
 
 async function refreshProviderModelsInner(
@@ -380,11 +447,13 @@ async function refreshProviderModelsInner(
       && ['openai', 'openai-oauth', 'github-copilot'].includes(oauthTemplateId);
     if (supportsOAuthDiscovery) {
       if (!apiKey) {
+        const reason = 'OAuth token not available. Sign in again with leverframe providers auth.';
         return {
           id: provider.id,
           name: provider.name,
           ok: false,
-          reason: 'OAuth token not available. Sign in again with leverframe providers auth.',
+          reason,
+          failureKind: 'authentication',
         };
       }
       const oauthResult = await refreshOAuthProvider(provider, apiKey);
@@ -393,7 +462,11 @@ async function refreshProviderModelsInner(
         const reason = oauthResult.failureKind === 'schema'
           ? `Copilot returned unexpected model data${failureDetail}. Kept your existing cached model list. Update Leverframe or its Copilot SDK before retrying.`
           : `Live model discovery failed${failureDetail}. Kept your existing cached model list. Try refreshing again later.`;
-        return skipWithCachedModels(provider, reason);
+        return {
+          ...skipWithCachedModels(provider, reason),
+          failureKind: oauthResult.failureKind,
+          failureReason: oauthResult.failureReason,
+        };
       }
       if (oauthResult.source === 'seed' && cachedModelCount(provider) > 0) {
         return skipWithCachedModels(
@@ -478,11 +551,16 @@ async function refreshProviderModelsInner(
       reason: oauthFallbackReason,
     };
   } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
     return {
       id: provider.id,
       name: provider.name,
       ok: false,
-      reason: err instanceof Error ? err.message : String(err),
+      reason,
+      failureReason: reason,
+      failureKind: (provider.templateId ?? provider.id) === 'github-copilot'
+        ? classifyCopilotModelFailure(err)
+        : undefined,
     };
   }
 }
@@ -493,7 +571,29 @@ export async function refreshProviderModels(
   registry = loadRegistry(),
 ): Promise<RefreshProviderResult> {
   try {
-    return await refreshProviderModelsInner(providerId, apiKey, registry);
+    let result = await refreshProviderModelsInner(providerId, apiKey, registry);
+    const provider = registry.providers.find(entry => entry.id === providerId);
+    if (
+      provider?.templateId === 'github-copilot'
+      && (!result.ok || result.skipped)
+      && result.reason
+    ) {
+      const kind = result.failureKind ?? classifyCopilotModelFailure(result.failureReason ?? result.reason);
+      const failureReason = safeCopilotDiscoveryReason(result.failureReason ?? result.reason, apiKey);
+      result = {
+        ...result,
+        reason: copilotDiscoveryFailureMessage(kind, failureReason, cachedModelCount(provider)),
+        failureKind: kind,
+        failureReason,
+      };
+      recordCopilotDiscoveryError(
+        providerId,
+        kind,
+        failureReason,
+        provider.refreshedAt,
+      );
+    }
+    return result;
   } finally {
     await reconcilePendingCredentialDeletes();
   }

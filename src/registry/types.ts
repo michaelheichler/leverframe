@@ -7,6 +7,13 @@ export const REGISTRY_SCHEMA_VERSION = 1;
 export type RegistrySubscriptionFilter = 'free';
 
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type ModelDiscoveryFailureKind =
+  | 'authentication'
+  | 'empty'
+  | 'policy'
+  | 'runtime'
+  | 'schema'
+  | 'sdk';
 
 export interface CachedModel {
   id: string;
@@ -64,6 +71,11 @@ export interface RegistryProvider {
   modelsCache?: {
     fetchedAt: string;
     models: CachedModel[];
+  };
+  modelDiscoveryError?: {
+    failedAt: string;
+    kind: ModelDiscoveryFailureKind;
+    reason: string;
   };
   addedAt: string;
   refreshedAt?: string;

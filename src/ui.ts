@@ -214,10 +214,12 @@ export function printProviderDetailPanel(
   name: string,
   modelCount: number,
   authLabel: string,
+  discoveryError: string | undefined,
 ): void {
   printPanel(fmtProvider(name), [
     `${pc.bold('Models')}  ${pc.cyan(String(modelCount))} cached`,
     `${pc.bold('Auth')}    ${pc.white(authLabel)}`,
+    ...(discoveryError === undefined ? [] : [`${pc.bold('Discovery error')}  ${pc.yellow(discoveryError)}`]),
   ]);
 }
 

@@ -3,15 +3,31 @@
  * It never infers capabilities or limits that `listModels()` did not confirm.
  */
 
-import type { CachedModel, ReasoningEffort } from '../registry/types.js';
+import type {
+  CachedModel,
+  ModelDiscoveryFailureKind,
+  ReasoningEffort,
+} from '../registry/types.js';
 
 type JsonRecord = Record<string, unknown>;
+
+export type CopilotModelFailureKind = ModelDiscoveryFailureKind;
 
 /** Distinguishes SDK schema drift from runtime transport failures. */
 class CopilotModelValidationError extends TypeError {
   constructor(message: string) {
     super(message);
     this.name = 'CopilotModelValidationError';
+  }
+}
+
+class CopilotModelDiscoveryError extends Error {
+  readonly kind: CopilotModelFailureKind;
+
+  constructor(kind: CopilotModelFailureKind, message: string) {
+    super(message);
+    this.name = 'CopilotModelDiscoveryError';
+    this.kind = kind;
   }
 }
 
@@ -38,12 +54,17 @@ function requireNonEmptyString(record: JsonRecord, field: string): string {
   return value;
 }
 
-function requireBoolean(record: JsonRecord, field: string): boolean {
+function optionalBoolean(record: JsonRecord, field: string): boolean | undefined {
   const value = record[field];
+  if (value === undefined) return undefined;
   if (typeof value !== 'boolean') {
     throw new CopilotModelValidationError(`Copilot model ${field} must be a boolean`);
   }
   return value;
+}
+
+function optionalRecord(value: unknown, field: string): JsonRecord {
+  return value === undefined ? {} : requireRecord(value, field);
 }
 
 /** Validates SDK policy and excludes models unavailable to the authenticated account. */
@@ -59,9 +80,9 @@ function policyAllowsModel(value: unknown): boolean {
 
 function parseContextWindow(limits: JsonRecord): number | undefined {
   const value = limits.max_context_window_tokens;
-  if (value === undefined) return undefined;
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    throw new CopilotModelValidationError('Copilot model max_context_window_tokens must be a positive number');
+  if (value === undefined || value === 0) return undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new CopilotModelValidationError('Copilot model max_context_window_tokens must be zero or a positive number');
   }
   return value;
 }
@@ -95,10 +116,10 @@ export function parseCopilotModelInfo(record: unknown): CachedModel {
   const name = requireNonEmptyString(model, 'name');
   policyAllowsModel(model.policy);
   const capabilities = requireRecord(model.capabilities, 'capabilities');
-  const supports = requireRecord(capabilities.supports, 'capabilities.supports');
-  const limits = requireRecord(capabilities.limits, 'capabilities.limits');
-  const vision = requireBoolean(supports, 'vision');
-  const reasoning = requireBoolean(supports, 'reasoningEffort');
+  const supports = optionalRecord(capabilities.supports, 'capabilities.supports');
+  const limits = optionalRecord(capabilities.limits, 'capabilities.limits');
+  const vision = optionalBoolean(supports, 'vision');
+  const reasoning = optionalBoolean(supports, 'reasoningEffort');
   const contextWindow = parseContextWindow(limits);
   const supportedReasoningEfforts = parseReasoningEfforts(model.supportedReasoningEfforts);
   const defaultReasoningEffort = parseReasoningEffort(
@@ -111,8 +132,8 @@ export function parseCopilotModelInfo(record: unknown): CachedModel {
     name,
     upstreamModelId: id,
     modelFormat: 'openai' as const,
-    vision,
-    reasoning,
+    ...(vision === undefined ? {} : { vision }),
+    ...(reasoning === undefined ? {} : { reasoning }),
     ...(contextWindow === undefined
       ? { contextWindowUnconfirmed: true }
       : { contextWindow }),
@@ -121,7 +142,6 @@ export function parseCopilotModelInfo(record: unknown): CachedModel {
   };
 }
 
-/** Validates and maps the complete `CopilotClient.listModels()` result. */
 /** Validates and maps the complete `CopilotClient.listModels()` result. */
 export function mapCopilotModels(records: unknown): CachedModel[] {
   if (!Array.isArray(records)) {
@@ -134,9 +154,39 @@ export function mapCopilotModels(records: unknown): CachedModel[] {
   });
 }
 
+function errorChain(error: unknown): unknown[] {
+  const chain: unknown[] = [];
+  let current: unknown = error;
+  while (current !== undefined) {
+    chain.push(current);
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  return chain;
+}
+
+export function classifyCopilotModelFailure(error: unknown): CopilotModelFailureKind {
+  const chain = errorChain(error);
+  const discovery = chain.find(entry => entry instanceof CopilotModelDiscoveryError);
+  if (discovery instanceof CopilotModelDiscoveryError) return discovery.kind;
+  if (chain.some(entry => entry instanceof CopilotModelValidationError)) return 'schema';
+  const errors = chain.map(entry => ({
+    name: entry instanceof Error ? entry.name : '',
+    message: entry instanceof Error ? entry.message : String(entry),
+  }));
+  if (errors.some(({ name, message }) => (
+    name === 'CopilotSdkNotInstalledError'
+    || name === 'CopilotSdkIncompatibleError'
+    || /Copilot CLI not found|Copilot support is not installed|Copilot platform package/i.test(message)
+  ))) return 'sdk';
+  if (errors.some(({ message }) => /\b401\b|\b403\b|unauthori[sz]ed|forbidden|authentication|access token|subscription|entitlement|eligible/i.test(message))) {
+    return 'authentication';
+  }
+  return 'runtime';
+}
+
 export type CopilotModelRefreshResult =
   | { models: CachedModel[]; source: 'live' }
-  | { models: CachedModel[]; source: 'cache'; failureReason: string; failureKind: 'runtime' | 'schema' };
+  | { models: CachedModel[]; source: 'cache'; failureReason: string; failureKind: CopilotModelFailureKind };
 
 /** Discovers models while preserving a valid cache on runtime failure. */
 export async function refreshCopilotModels(input: {
@@ -144,9 +194,20 @@ export async function refreshCopilotModels(input: {
   cachedModels: CachedModel[];
 }): Promise<CopilotModelRefreshResult> {
   try {
-    const models = mapCopilotModels(await input.listModels());
+    const records = await input.listModels();
+    const recordCount = Array.isArray(records) ? records.length : 0;
+    const models = mapCopilotModels(records);
     if (models.length === 0) {
-      throw new Error('Copilot model discovery returned no models');
+      if (recordCount > 0) {
+        throw new CopilotModelDiscoveryError(
+          'policy',
+          'Copilot model discovery returned no policy-enabled models',
+        );
+      }
+      throw new CopilotModelDiscoveryError(
+        'empty',
+        'Copilot model discovery returned no models',
+      );
     }
     return { models, source: 'live' };
   } catch (error) {
@@ -155,7 +216,7 @@ export async function refreshCopilotModels(input: {
       models: input.cachedModels,
       source: 'cache',
       failureReason: error instanceof Error ? error.message : String(error),
-      failureKind: error instanceof CopilotModelValidationError ? 'schema' : 'runtime',
+      failureKind: classifyCopilotModelFailure(error),
     };
   }
 }

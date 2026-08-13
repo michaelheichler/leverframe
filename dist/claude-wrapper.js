@@ -4,7 +4,7 @@ import {
   findClaudeBinary,
   orderWrapperServerCandidates,
   readLiveServerRuntimeStates
-} from "./chunk-5JPNJX45.js";
+} from "./chunk-GBE65LA6.js";
 
 // src/claude-wrapper.ts
 import { spawn } from "child_process";

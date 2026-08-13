@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseProvidersArgs, providerHubChoiceValue, providersHelpText, runProvidersAdd } from '../src/providers-command.js';
+import { parseProvidersArgs, providerHubChoiceValue, providersHelpText, runProvidersAdd, runProvidersHub } from '../src/providers-command.js';
 import {
   removeProviderFromRegistry,
   toggleProviderEnabled,
@@ -212,5 +212,54 @@ describe('providers add menu', () => {
       'api:opencode-go',
       'api:zai',
     ]);
+  });
+});
+
+describe('provider detail', () => {
+  let home: string;
+  const prevHome = process.env.LEVERFRAME_HOME;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'leverframe-provider-detail-'));
+    process.env.LEVERFRAME_HOME = home;
+    selectMock.mockReset();
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.LEVERFRAME_HOME;
+    else process.env.LEVERFRAME_HOME = prevHome;
+    rmSync(home, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  it('shows a zero-model discovery error with refresh and re-auth actions', async () => {
+    const registry = emptyRegistry();
+    registry.providers.push({
+      id: 'github-copilot',
+      templateId: 'github-copilot',
+      name: 'GitHub Copilot',
+      enabled: true,
+      authType: 'oauth',
+      authRef: 'keyring:oauth:provider:github-copilot',
+      api: { npm: '@github/copilot-sdk' },
+      addedAt: new Date().toISOString(),
+      modelDiscoveryError: {
+        failedAt: new Date().toISOString(),
+        kind: 'runtime',
+        reason: 'GitHub Copilot support is not installed.',
+      },
+    });
+    saveRegistry(registry);
+    selectMock
+      .mockResolvedValueOnce('provider:github-copilot')
+      .mockResolvedValueOnce('back')
+      .mockResolvedValueOnce('done');
+    const output = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+    await runProvidersHub();
+
+    expect(output.mock.calls.flat().join('')).toContain('GitHub Copilot support is not installed.');
+    const detailOptions = selectMock.mock.calls[1]?.[0].options as Array<{ value: string }>;
+    expect(detailOptions.map(option => option.value)).toEqual(expect.arrayContaining(['refresh', 'auth']));
   });
 });

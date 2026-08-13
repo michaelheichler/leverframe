@@ -215,10 +215,12 @@ async function authenticateProviderInner(
   refreshSpinner.start('Refreshing model list...');
   try {
     const refreshResult = await refreshProviderModels(registryId, cred.access);
-    if (!refreshResult.ok) {
-      throw new Error(refreshResult.reason ?? 'Model discovery failed without a reason');
+    if (!refreshResult.ok || refreshResult.skipped) {
+      const reason = refreshResult.reason ?? 'Model discovery failed without a reason';
+      refreshSpinner.stop(`Could not refresh models: ${reason} - run leverframe providers refresh-models later`);
+    } else {
+      refreshSpinner.stop('Models refreshed');
     }
-    refreshSpinner.stop('Models refreshed');
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     refreshSpinner.stop(`Could not refresh models: ${reason} - run leverframe providers refresh-models later`);

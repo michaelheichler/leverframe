@@ -215,7 +215,7 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed'> {
 
   const modelCount = provider.modelsCache?.models.length ?? 0;
   const authLabel = formatRegistryAuthLabel(provider);
-  printProviderDetailPanel(provider.name, modelCount, authLabel);
+  printProviderDetailPanel(provider.name, modelCount, authLabel, provider.modelDiscoveryError?.reason);
 
   const detailOptions: Array<{ value: string; label: string; hint?: string }> = [];
   if (modelCount > 0) {

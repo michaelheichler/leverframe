@@ -60,9 +60,13 @@ vi.mock('../src/registry/credential-lifecycle.js', () => ({
   journalCredentialWrite: boundary.journalCredentialWrite,
   reconcilePendingCredentialDeletes: boundary.reconcilePendingCredentialDeletes,
 }));
-vi.mock('../src/registry/refresh-models.js', () => ({
-  refreshProviderModels: boundary.refreshProviderModels,
-}));
+vi.mock('../src/registry/refresh-models.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/registry/refresh-models.js')>();
+  return {
+    ...actual,
+    refreshProviderModels: boundary.refreshProviderModels,
+  };
+});
 
 let home: string;
 const previousHome = process.env.LEVERFRAME_HOME;
@@ -214,6 +218,22 @@ describe('authenticateProvider github-copilot failure safety', () => {
     expect(loadRegistry().providers).toContainEqual(expect.objectContaining({ id: 'github-copilot' }));
     expect(boundary.spinnerStop).not.toHaveBeenCalledWith('Models refreshed');
     expect(boundary.spinnerStop).toHaveBeenCalledWith(expect.stringContaining('runtime unavailable'));
+  });
+
+  it('does not claim cached models were refreshed after live discovery fails', async () => {
+    boundary.refreshProviderModels.mockResolvedValue({
+      id: 'github-copilot',
+      name: 'GitHub Copilot',
+      ok: true,
+      skipped: true,
+      modelCount: 1,
+      reason: 'Live model discovery failed. Kept your existing cached model list.',
+    });
+
+    await authenticateProvider('github-copilot');
+
+    expect(boundary.spinnerStop).not.toHaveBeenCalledWith('Models refreshed');
+    expect(boundary.spinnerStop).toHaveBeenCalledWith(expect.stringContaining('Live model discovery failed'));
   });
 
   it('warns instead of failing when the credential is saved but model discovery throws', async () => {

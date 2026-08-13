@@ -34,4 +34,5 @@ describe('createDefaultCopilotRuntime', () => {
     expect(existsSync(directories.baseDirectory)).toBe(true);
     expect(existsSync(directories.workingDirectory)).toBe(true);
   });
+
 });

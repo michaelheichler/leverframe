@@ -70,7 +70,7 @@ import {
   withProviderMutationLock,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-5JPNJX45.js";
+} from "./chunk-GBE65LA6.js";
 
 // src/cli.ts
 import pc18 from "picocolors";
@@ -243,10 +243,11 @@ function printEnvConflictPanel(conflicts) {
     ...conflicts.map((c) => `  ${pc.dim(c.name)}${pc.white("=")}${pc.yellow(c.value)}`)
   ]);
 }
-function printProviderDetailPanel(name, modelCount, authLabel) {
+function printProviderDetailPanel(name, modelCount, authLabel, discoveryError) {
   printPanel(fmtProvider(name), [
     `${pc.bold("Models")}  ${pc.cyan(String(modelCount))} cached`,
-    `${pc.bold("Auth")}    ${pc.white(authLabel)}`
+    `${pc.bold("Auth")}    ${pc.white(authLabel)}`,
+    ...discoveryError === void 0 ? [] : [`${pc.bold("Discovery error")}  ${pc.yellow(discoveryError)}`]
   ]);
 }
 function printOAuthStepsPanel(title, providerLabel3) {
@@ -342,6 +343,12 @@ function parseProvider(raw) {
       };
     }
   }
+  if (p16.modelDiscoveryError && typeof p16.modelDiscoveryError === "object" && !Array.isArray(p16.modelDiscoveryError)) {
+    const failure = p16.modelDiscoveryError;
+    if (typeof failure.failedAt === "string" && typeof failure.kind === "string" && typeof failure.reason === "string") {
+      provider.modelDiscoveryError = failure;
+    }
+  }
   return provider;
 }
 function parseRegistry(raw) {
@@ -371,6 +378,13 @@ function strictOptionalFields(raw) {
     const fields = cache;
     if (typeof fields.fetchedAt !== "string" || !Array.isArray(fields.models)) return false;
     if (fields.models.some((model) => !model || typeof model !== "object" || Array.isArray(model))) return false;
+  }
+  if (hasOwn(provider, "modelDiscoveryError")) {
+    const failure = provider.modelDiscoveryError;
+    if (!failure || typeof failure !== "object" || Array.isArray(failure)) return false;
+    const fields = failure;
+    if (typeof fields.failedAt !== "string" || typeof fields.reason !== "string") return false;
+    if (!["authentication", "empty", "policy", "runtime", "schema", "sdk"].includes(String(fields.kind))) return false;
   }
   return true;
 }
@@ -15185,6 +15199,14 @@ var CopilotModelValidationError = class extends TypeError {
     this.name = "CopilotModelValidationError";
   }
 };
+var CopilotModelDiscoveryError = class extends Error {
+  kind;
+  constructor(kind, message2) {
+    super(message2);
+    this.name = "CopilotModelDiscoveryError";
+    this.kind = kind;
+  }
+};
 var REASONING_EFFORTS2 = /* @__PURE__ */ new Set([
   "low",
   "medium",
@@ -15205,12 +15227,16 @@ function requireNonEmptyString2(record, field) {
   }
   return value;
 }
-function requireBoolean(record, field) {
+function optionalBoolean(record, field) {
   const value = record[field];
+  if (value === void 0) return void 0;
   if (typeof value !== "boolean") {
     throw new CopilotModelValidationError(`Copilot model ${field} must be a boolean`);
   }
   return value;
+}
+function optionalRecord(value, field) {
+  return value === void 0 ? {} : requireRecord2(value, field);
 }
 function policyAllowsModel(value) {
   if (value === void 0) return true;
@@ -15223,9 +15249,9 @@ function policyAllowsModel(value) {
 }
 function parseContextWindow(limits) {
   const value = limits.max_context_window_tokens;
-  if (value === void 0) return void 0;
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    throw new CopilotModelValidationError("Copilot model max_context_window_tokens must be a positive number");
+  if (value === void 0 || value === 0) return void 0;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new CopilotModelValidationError("Copilot model max_context_window_tokens must be zero or a positive number");
   }
   return value;
 }
@@ -15255,10 +15281,10 @@ function parseCopilotModelInfo(record) {
   const name = requireNonEmptyString2(model, "name");
   policyAllowsModel(model.policy);
   const capabilities = requireRecord2(model.capabilities, "capabilities");
-  const supports = requireRecord2(capabilities.supports, "capabilities.supports");
-  const limits = requireRecord2(capabilities.limits, "capabilities.limits");
-  const vision = requireBoolean(supports, "vision");
-  const reasoning = requireBoolean(supports, "reasoningEffort");
+  const supports = optionalRecord(capabilities.supports, "capabilities.supports");
+  const limits = optionalRecord(capabilities.limits, "capabilities.limits");
+  const vision = optionalBoolean(supports, "vision");
+  const reasoning = optionalBoolean(supports, "reasoningEffort");
   const contextWindow = parseContextWindow(limits);
   const supportedReasoningEfforts = parseReasoningEfforts(model.supportedReasoningEfforts);
   const defaultReasoningEffort = parseReasoningEffort(
@@ -15270,8 +15296,8 @@ function parseCopilotModelInfo(record) {
     name,
     upstreamModelId: id,
     modelFormat: "openai",
-    vision,
-    reasoning,
+    ...vision === void 0 ? {} : { vision },
+    ...reasoning === void 0 ? {} : { reasoning },
     ...contextWindow === void 0 ? { contextWindowUnconfirmed: true } : { contextWindow },
     ...supportedReasoningEfforts === void 0 ? {} : { supportedReasoningEfforts },
     ...defaultReasoningEffort === void 0 ? {} : { defaultReasoningEffort }
@@ -15287,11 +15313,46 @@ function mapCopilotModels(records) {
     return policyAllowsModel(policy) ? [model] : [];
   });
 }
+function errorChain(error) {
+  const chain = [];
+  let current = error;
+  while (current !== void 0) {
+    chain.push(current);
+    current = current instanceof Error ? current.cause : void 0;
+  }
+  return chain;
+}
+function classifyCopilotModelFailure(error) {
+  const chain = errorChain(error);
+  const discovery = chain.find((entry) => entry instanceof CopilotModelDiscoveryError);
+  if (discovery instanceof CopilotModelDiscoveryError) return discovery.kind;
+  if (chain.some((entry) => entry instanceof CopilotModelValidationError)) return "schema";
+  const errors = chain.map((entry) => ({
+    name: entry instanceof Error ? entry.name : "",
+    message: entry instanceof Error ? entry.message : String(entry)
+  }));
+  if (errors.some(({ name, message: message2 }) => name === "CopilotSdkNotInstalledError" || name === "CopilotSdkIncompatibleError" || /Copilot CLI not found|Copilot support is not installed|Copilot platform package/i.test(message2))) return "sdk";
+  if (errors.some(({ message: message2 }) => /\b401\b|\b403\b|unauthori[sz]ed|forbidden|authentication|access token|subscription|entitlement|eligible/i.test(message2))) {
+    return "authentication";
+  }
+  return "runtime";
+}
 async function refreshCopilotModels(input) {
   try {
-    const models = mapCopilotModels(await input.listModels());
+    const records = await input.listModels();
+    const recordCount = Array.isArray(records) ? records.length : 0;
+    const models = mapCopilotModels(records);
     if (models.length === 0) {
-      throw new Error("Copilot model discovery returned no models");
+      if (recordCount > 0) {
+        throw new CopilotModelDiscoveryError(
+          "policy",
+          "Copilot model discovery returned no policy-enabled models"
+        );
+      }
+      throw new CopilotModelDiscoveryError(
+        "empty",
+        "Copilot model discovery returned no models"
+      );
     }
     return { models, source: "live" };
   } catch (error) {
@@ -15300,12 +15361,13 @@ async function refreshCopilotModels(input) {
       models: input.cachedModels,
       source: "cache",
       failureReason: error instanceof Error ? error.message : String(error),
-      failureKind: error instanceof CopilotModelValidationError ? "schema" : "runtime"
+      failureKind: classifyCopilotModelFailure(error)
     };
   }
 }
 
 // src/registry/refresh-models.ts
+var MAX_DISCOVERY_ERROR_LENGTH = 500;
 async function disposeCopilotRuntime(runtime) {
   const errors = [];
   try {
@@ -15530,8 +15592,9 @@ function updateProviderCache(registry, providerId, models, baseUrl) {
   if (idx < 0) return;
   const now = (/* @__PURE__ */ new Date()).toISOString();
   const existing = registry.providers[idx];
+  const { modelDiscoveryError: _previousDiscoveryError, ...provider } = existing;
   registry.providers[idx] = {
-    ...existing,
+    ...provider,
     refreshedAt: now,
     api: baseUrl ? { ...existing.api, url: baseUrl } : existing.api,
     modelsCache: {
@@ -15539,6 +15602,49 @@ function updateProviderCache(registry, providerId, models, baseUrl) {
       models
     }
   };
+}
+function recordCopilotDiscoveryError(providerId, kind, reason, previousRefreshedAt) {
+  updateRegistry((registry) => {
+    const provider = registry.providers.find((entry) => entry.id === providerId);
+    if (provider?.templateId !== "github-copilot") return;
+    if (provider.refreshedAt !== previousRefreshedAt) return;
+    provider.modelDiscoveryError = {
+      failedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      kind,
+      reason
+    };
+  });
+}
+function safeCopilotDiscoveryReason(reason, accessToken) {
+  const redacted = redactTraceLine(reason, accessToken === null ? [] : [accessToken]);
+  const withoutControlCharacters = Array.from(redacted, (character) => {
+    const code = character.charCodeAt(0);
+    return code <= 31 || code >= 127 && code <= 159 ? " " : character;
+  }).join("");
+  const compact = withoutControlCharacters.replace(/\s+/gu, " ").trim();
+  if (compact.length <= MAX_DISCOVERY_ERROR_LENGTH) return compact;
+  const marker = " [truncated]";
+  return compact.slice(0, MAX_DISCOVERY_ERROR_LENGTH - marker.length) + marker;
+}
+function copilotDiscoveryFailureMessage(kind, reason, cachedModelCount2) {
+  const detail = reason.length === 0 ? "" : ` (${reason})`;
+  const cache = cachedModelCount2 === 0 ? "" : ` Kept ${cachedModelCount2} cached model${cachedModelCount2 === 1 ? "" : "s"}.`;
+  if (kind === "sdk") {
+    return `GitHub Copilot runtime is unavailable${detail}.${cache} Install @github/copilot-sdk@1.0.9 and refresh models.`;
+  }
+  if (kind === "authentication") {
+    return `GitHub Copilot authentication or subscription validation failed${detail}.${cache} Sign in again with leverframe providers auth github-copilot.`;
+  }
+  if (kind === "policy") {
+    return `GitHub Copilot exposes no policy-enabled models${detail}.${cache} Check your organization model policy.`;
+  }
+  if (kind === "empty") {
+    return `GitHub Copilot returned no models${detail}.${cache} Confirm this account has an eligible Copilot subscription.`;
+  }
+  if (kind === "schema") {
+    return `GitHub Copilot returned unexpected model data${detail}.${cache} Update Leverframe or @github/copilot-sdk before retrying.`;
+  }
+  return `GitHub Copilot model discovery failed${detail}.${cache} Try refreshing again later.`;
 }
 async function refreshProviderModelsInner(providerId, apiKey, registry = loadRegistry()) {
   const provider = registry.providers.find((p16) => p16.id === providerId);
@@ -15564,18 +15670,24 @@ async function refreshProviderModelsInner(providerId, apiKey, registry = loadReg
     const supportsOAuthDiscovery = provider.authType === "oauth" && ["openai", "openai-oauth", "github-copilot"].includes(oauthTemplateId);
     if (supportsOAuthDiscovery) {
       if (!apiKey) {
+        const reason = "OAuth token not available. Sign in again with leverframe providers auth.";
         return {
           id: provider.id,
           name: provider.name,
           ok: false,
-          reason: "OAuth token not available. Sign in again with leverframe providers auth."
+          reason,
+          failureKind: "authentication"
         };
       }
       const oauthResult = await refreshOAuthProvider(provider, apiKey);
       const failureDetail = oauthResult.failureReason ? ` (${oauthResult.failureReason})` : "";
       if (oauthResult.source === "cache") {
         const reason = oauthResult.failureKind === "schema" ? `Copilot returned unexpected model data${failureDetail}. Kept your existing cached model list. Update Leverframe or its Copilot SDK before retrying.` : `Live model discovery failed${failureDetail}. Kept your existing cached model list. Try refreshing again later.`;
-        return skipWithCachedModels(provider, reason);
+        return {
+          ...skipWithCachedModels(provider, reason),
+          failureKind: oauthResult.failureKind,
+          failureReason: oauthResult.failureReason
+        };
       }
       if (oauthResult.source === "seed" && cachedModelCount(provider) > 0) {
         return skipWithCachedModels(
@@ -15650,17 +15762,38 @@ async function refreshProviderModelsInner(providerId, apiKey, registry = loadReg
       reason: oauthFallbackReason
     };
   } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
     return {
       id: provider.id,
       name: provider.name,
       ok: false,
-      reason: err instanceof Error ? err.message : String(err)
+      reason,
+      failureReason: reason,
+      failureKind: (provider.templateId ?? provider.id) === "github-copilot" ? classifyCopilotModelFailure(err) : void 0
     };
   }
 }
 async function refreshProviderModels(providerId, apiKey, registry = loadRegistry()) {
   try {
-    return await refreshProviderModelsInner(providerId, apiKey, registry);
+    let result = await refreshProviderModelsInner(providerId, apiKey, registry);
+    const provider = registry.providers.find((entry) => entry.id === providerId);
+    if (provider?.templateId === "github-copilot" && (!result.ok || result.skipped) && result.reason) {
+      const kind = result.failureKind ?? classifyCopilotModelFailure(result.failureReason ?? result.reason);
+      const failureReason = safeCopilotDiscoveryReason(result.failureReason ?? result.reason, apiKey);
+      result = {
+        ...result,
+        reason: copilotDiscoveryFailureMessage(kind, failureReason, cachedModelCount(provider)),
+        failureKind: kind,
+        failureReason
+      };
+      recordCopilotDiscoveryError(
+        providerId,
+        kind,
+        failureReason,
+        provider.refreshedAt
+      );
+    }
+    return result;
   } finally {
     await reconcilePendingCredentialDeletes();
   }
@@ -15801,10 +15934,12 @@ async function authenticateProviderInner(providerId, options = {}) {
   refreshSpinner.start("Refreshing model list...");
   try {
     const refreshResult = await refreshProviderModels(registryId, cred.access);
-    if (!refreshResult.ok) {
-      throw new Error(refreshResult.reason ?? "Model discovery failed without a reason");
+    if (!refreshResult.ok || refreshResult.skipped) {
+      const reason = refreshResult.reason ?? "Model discovery failed without a reason";
+      refreshSpinner.stop(`Could not refresh models: ${reason} - run leverframe providers refresh-models later`);
+    } else {
+      refreshSpinner.stop("Models refreshed");
     }
-    refreshSpinner.stop("Models refreshed");
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     refreshSpinner.stop(`Could not refresh models: ${reason} - run leverframe providers refresh-models later`);
@@ -16604,7 +16739,7 @@ async function runProviderDetail(id) {
   if (!provider) return "back";
   const modelCount = provider.modelsCache?.models.length ?? 0;
   const authLabel = formatRegistryAuthLabel(provider);
-  printProviderDetailPanel(provider.name, modelCount, authLabel);
+  printProviderDetailPanel(provider.name, modelCount, authLabel, provider.modelDiscoveryError?.reason);
   const detailOptions = [];
   if (modelCount > 0) {
     detailOptions.push({
