@@ -5,8 +5,8 @@ import { deriveBrand } from '../models.js';
 import { resolveContextWindow } from '../context-window.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
 import { loadRegistryStrict, updateRegistry } from './io.js';
-import { journalCredentialWrite, reconcilePendingCredentialDeletes } from './credential-lifecycle.js';
-import { withProviderMutationLock } from './lock.js';
+import { cancelCredentialDelete, journalCredentialWrite, reconcilePendingCredentialDeletes } from './credential-lifecycle.js';
+import { withCredentialMutationLock, withProviderMutationLock } from './lock.js';
 import type { CachedModel, RegistryProvider } from './types.js';
 import { customProviderId, isValidProviderId, slugifyProviderId } from './validate.js';
 import { revalidateCustomEndpointUrl, validateCustomEndpointUrl } from './url-security.js';
@@ -21,7 +21,7 @@ export interface AddCustomEndpointInput {
   apiKey: string;
   kind: CustomEndpointKind;
   allowInsecureLocal?: boolean;
-  /** Static headers this endpoint requires on every request (e.g. a plan/auth-tracking header). */
+  /** Static headers sent with every endpoint request, such as plan or auth tracking. */
   headers?: Record<string, string>;
 }
 
@@ -192,14 +192,6 @@ async function addCustomEndpointProviderLocked(input: AddCustomEndpointInput): P
   }
 
   const authRef = anonymous ? 'none:anonymous' : `keyring:provider:${providerId}`;
-  if (apiKey !== 'local') {
-    await journalCredentialWrite(authRef);
-    const saved = await saveProviderCredential(authRef, apiKey);
-    if (!saved) {
-      return { added: false, error: 'Could not save API key to credential storage.', hint: 'Check Keychain access and leverframe home permissions, then try again.' };
-    }
-  }
-
   const now = new Date().toISOString();
   const entry: RegistryProvider = {
     id: providerId,
@@ -222,12 +214,31 @@ async function addCustomEndpointProviderLocked(input: AddCustomEndpointInput): P
     },
   };
 
-  updateRegistry(current => {
+  const publish = (): void => updateRegistry(current => {
     if (current.providers.some(provider => provider.id === entry.id)) {
       throw new Error(`Provider id became active while adding endpoint: ${entry.id}`);
     }
     current.providers.push(entry);
   });
+
+  if (!anonymous && apiKey !== 'local') {
+    const saved = await withCredentialMutationLock(authRef, async () => {
+      await journalCredentialWrite(authRef);
+      if (!await saveProviderCredential(authRef, apiKey)) return false;
+      publish();
+      try {
+        await cancelCredentialDelete(authRef);
+      } catch {
+        return true;
+      }
+      return true;
+    });
+    if (!saved) {
+      return { added: false, error: 'Could not save API key to credential storage.', hint: 'Check Keychain access and leverframe home permissions, then try again.' };
+    }
+  } else {
+    publish();
+  }
 
   return { added: true, provider: entry, modelCount: fetched.models.length };
 }

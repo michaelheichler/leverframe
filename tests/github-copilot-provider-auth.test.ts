@@ -9,11 +9,13 @@ import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { authenticateProvider } from '../src/registry/provider-auth.js';
 import { emptyRegistry, loadRegistry, saveRegistry } from '../src/registry/io.js';
+import { withCredentialMutationLock } from '../src/registry/lock.js';
 
 const ACCESS_TOKEN = ['fixture', 'github', 'oauth', 'token'].join('-');
 
 const boundary = vi.hoisted(() => ({
   diagnoseCredentialStorage: vi.fn(),
+  cancelCredentialDelete: vi.fn(),
   journalCredentialWrite: vi.fn(),
   reconcilePendingCredentialDeletes: vi.fn(),
   refreshProviderModels: vi.fn(),
@@ -54,6 +56,7 @@ vi.mock('../src/oauth/github-copilot.js', async importOriginal => {
   };
 });
 vi.mock('../src/registry/credential-lifecycle.js', () => ({
+  cancelCredentialDelete: boundary.cancelCredentialDelete,
   journalCredentialWrite: boundary.journalCredentialWrite,
   reconcilePendingCredentialDeletes: boundary.reconcilePendingCredentialDeletes,
 }));
@@ -71,6 +74,7 @@ function registerProviderAuthTestLifecycle(): void {
     saveRegistry(emptyRegistry());
     vi.clearAllMocks();
     boundary.diagnoseCredentialStorage.mockResolvedValue([]);
+    boundary.cancelCredentialDelete.mockResolvedValue(undefined);
     boundary.journalCredentialWrite.mockResolvedValue(undefined);
     boundary.reconcilePendingCredentialDeletes.mockResolvedValue(undefined);
     boundary.refreshProviderModels.mockResolvedValue({
@@ -128,6 +132,35 @@ describe('authenticateProvider github-copilot success', () => {
     await authenticateProvider('github-copilot');
 
     expect(boundary.refreshProviderModels).toHaveBeenCalledWith('github-copilot', ACCESS_TOKEN);
+  });
+
+  it('holds the credential lock until registry activation and cleanup cancellation complete', async () => {
+    let releaseSave: (() => void) | undefined;
+    let saveStarted: (() => void) | undefined;
+    const saveGate = new Promise<void>(resolve => { releaseSave = resolve; });
+    const saveStart = new Promise<void>(resolve => { saveStarted = resolve; });
+    boundary.saveProviderCredential.mockImplementation(async () => {
+      saveStarted?.();
+      await saveGate;
+      return true;
+    });
+    const authentication = authenticateProvider('github-copilot');
+    await saveStart;
+    let contenderEntered = false;
+    const contender = withCredentialMutationLock(
+      'keyring:oauth:provider:github-copilot',
+      async () => { contenderEntered = true; },
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(contenderEntered).toBe(false);
+    releaseSave?.();
+    await authentication;
+    await contender;
+    expect(contenderEntered).toBe(true);
+    expect(loadRegistry().providers).toContainEqual(expect.objectContaining({ id: 'github-copilot' }));
+    expect(boundary.cancelCredentialDelete).toHaveBeenCalledWith('keyring:oauth:provider:github-copilot');
   });
 });
 

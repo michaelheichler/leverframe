@@ -242,7 +242,7 @@ import { join as join3 } from "path";
 // package.json
 var package_default = {
   name: "@michaelheichler/leverframe",
-  version: "0.3.3",
+  version: "0.3.4",
   description: "Bridge Claude Code to OpenAI-compatible providers, including OpenAI, ChatGPT/Codex OAuth, Kimi, Moonshot, and z.ai",
   author: "Michael Heichler",
   license: "MIT",
@@ -670,7 +670,9 @@ function withProviderMutationLock(providerSlot, operation) {
 
 // src/keyring-operations.ts
 import { spawn } from "child_process";
+import { statSync as statSync2 } from "fs";
 import { createRequire } from "module";
+import { join as join5 } from "path";
 import { pathToFileURL } from "url";
 var KEYRING_TIMEOUT_MS = process.platform === "linux" ? 3e3 : 45e3;
 var KEYRING_CHILD_SOURCE = String.raw`
@@ -702,7 +704,7 @@ try {
   };
   const set = (service, account, value) => {
     new Entry(service, account).setPassword(value);
-    if (raw(service, account) !== value) throw new Error('keyring write verification failed');
+    if (raw(service, account) !== value) throw integrity('keyring write verification failed');
   };
   const remove = (service, account) => {
     const entry = new Entry(service, account);
@@ -881,25 +883,65 @@ try {
   };
   const activeValue = () => raw(input.service, input.account);
   const finalJournal = descriptor => ({ schemaVersion: 1, mode: 'active', active: descriptor, retired: [] });
+  const readGuard = () => {
+    const guard = raw(DELETED_SERVICE, input.account);
+    if (guard === null || guard === 'v1:pending' || guard === 'v1:deleted') return guard;
+    throw integrity('keyring deletion guard is invalid');
+  };
+
+  const completeDelete = journal => {
+    const descriptors = journal?.mode === 'delete' ? journal.retired : [];
+    set(DELETED_SERVICE, input.account, 'v1:pending');
+    const current = activeValue();
+    if (current !== null) {
+      if (!current.startsWith(DELETE_TOMBSTONE_PREFIX)) {
+        set(input.service, input.account, DELETE_TOMBSTONE_PREFIX + randomUUID());
+      }
+      if (!remove(input.service, input.account)) {
+        throw integrity('keyring credential deletion could not be verified');
+      }
+    }
+    for (const descriptor of descriptors) {
+      if (!deleteDescriptor(descriptor)) {
+        throw integrity('keyring credential chunk deletion could not be verified');
+      }
+    }
+    for (const item of inventoryChunks()) {
+      if (!remove(item.service, item.account)) {
+        throw integrity('keyring credential inventory deletion could not be verified');
+      }
+    }
+    if (activeValue() !== null) throw integrity('keyring credential deletion could not be verified');
+    writeJournal({ schemaVersion: 1, mode: 'deleted', retired: [] });
+    set(DELETED_SERVICE, input.account, 'v1:deleted');
+    return true;
+  };
 
   const reconcile = () => {
-    const guard = raw(DELETED_SERVICE, input.account);
+    const guard = readGuard();
     const journal = readJournal();
     let current = activeValue();
-    if (journal?.mode === 'deleted' || guard === 'v1:deleted') return { deleted: true, active: null };
-    if (journal?.mode === 'delete' || guard === 'v1:pending') return { deleting: true, journal };
+    if (journal?.mode === 'deleted') {
+      if (guard === 'v1:deleted') return { deleted: true, active: null };
+      if (guard === null || guard === 'v1:pending') return { deleting: true, journal };
+    }
+    if (journal?.mode === 'delete') {
+      if (guard === 'v1:deleted') throw integrity('keyring deletion metadata is inconsistent');
+      return { deleting: true, journal };
+    }
+    if (guard !== null) throw integrity('keyring deletion metadata is inconsistent');
     if (journal?.mode === 'preparing') {
       if (descriptorMatches(journal.candidate, current)) {
         const retired = [journal.previous, ...journal.retired].filter(Boolean);
         writeJournal({ schemaVersion: 1, mode: 'active', active: journal.candidate, retired });
         for (const descriptor of retired) {
-          if (!deleteDescriptor(descriptor)) throw new Error('keyring credential cleanup is incomplete');
+          if (!deleteDescriptor(descriptor)) throw integrity('keyring credential cleanup is incomplete');
         }
         writeJournal(finalJournal(journal.candidate));
         return { active: journal.candidate };
       }
       if (descriptorMatches(journal.previous, current)) {
-        if (!deleteDescriptor(journal.candidate)) throw new Error('keyring credential cleanup is incomplete');
+        if (!deleteDescriptor(journal.candidate)) throw integrity('keyring credential cleanup is incomplete');
         writeJournal(finalJournal(journal.previous));
         return { active: journal.previous };
       }
@@ -915,14 +957,14 @@ try {
           .slice(0, MAX_JOURNAL_CHUNKS);
         writeJournal({ schemaVersion: 1, mode: 'active', active: adopted, retired: stale });
         for (const descriptor of stale) {
-          if (!deleteDescriptor(descriptor)) throw new Error('keyring credential cleanup is incomplete');
+          if (!deleteDescriptor(descriptor)) throw integrity('keyring credential cleanup is incomplete');
         }
         writeJournal(finalJournal(adopted));
         return { active: adopted, adopted: true };
       }
       if (journal.active?.kind === 'chunks') readMarker(input.account, journal.active.marker);
       for (const descriptor of journal.retired) {
-        if (!deleteDescriptor(descriptor)) throw new Error('keyring credential cleanup is incomplete');
+        if (!deleteDescriptor(descriptor)) throw integrity('keyring credential cleanup is incomplete');
       }
       if (journal.retired.length) writeJournal(finalJournal(journal.active));
       return { active: journal.active };
@@ -935,7 +977,10 @@ try {
 
   const publish = value => {
     const state = reconcile();
-    if (state.deleting) throw integrity('keyring credential deletion is pending');
+    if (state.deleting) completeDelete(state.journal);
+    if (!remove(DELETED_SERVICE, input.account)) {
+      throw integrity('keyring deletion guard could not be cleared');
+    }
     const previousValue = activeValue();
     const previous = descriptorFor(previousValue);
     const retired = previous?.kind === 'chunks' ? [previous] : [];
@@ -970,10 +1015,9 @@ try {
     writeJournal({ schemaVersion: 1, mode: 'active', active: candidate, retired });
     for (const descriptor of retired) {
       if (descriptorMatches(candidate, markerValue(descriptor.marker))) continue;
-      if (!deleteDescriptor(descriptor)) throw new Error('keyring credential cleanup is pending');
+      if (!deleteDescriptor(descriptor)) throw integrity('keyring credential cleanup is pending');
     }
     writeJournal(finalJournal(candidate));
-    if (!remove(DELETED_SERVICE, input.account)) throw new Error('keyring deletion guard could not be cleared');
     return true;
   };
 
@@ -990,39 +1034,30 @@ try {
   };
 
   const deleteCredential = () => {
-    const guard = raw(DELETED_SERVICE, input.account);
+    const guard = readGuard();
     let journal = readJournal();
-    if (journal?.mode === 'deleted' || guard === 'v1:deleted') return true;
-    let current = activeValue();
-    let descriptors = [];
+    if (journal?.mode === 'deleted' && guard === 'v1:deleted') return true;
+    if (guard === 'v1:deleted' && journal?.mode !== 'deleted') {
+      throw integrity('keyring deletion metadata is inconsistent');
+    }
+    if (guard === 'v1:pending' && journal?.mode !== 'delete' && journal?.mode !== 'deleted') {
+      throw integrity('keyring deletion metadata is inconsistent');
+    }
+    const current = activeValue();
+    if (journal?.mode === 'deleted') return completeDelete(journal);
     if (journal?.mode === 'delete') {
-      descriptors = journal.retired;
-    } else {
-      const descriptor = descriptorFor(current);
-      if (descriptor?.kind === 'chunks') descriptors.push(descriptor);
-      if (journal?.active?.kind === 'chunks') descriptors.push(journal.active);
-      descriptors.push(...(journal?.retired ?? []));
-      const unique = new Map(descriptors.map(value => [markerKey(value.marker), value]));
-      descriptors = [...unique.values()];
-      writeJournal({ schemaVersion: 1, mode: 'delete', active: descriptor, retired: descriptors });
+      return completeDelete(journal);
     }
-    set(DELETED_SERVICE, input.account, 'v1:pending');
-    current = activeValue();
-    if (current !== null) {
-      const tombstone = DELETE_TOMBSTONE_PREFIX + randomUUID();
-      set(input.service, input.account, tombstone);
-      if (!remove(input.service, input.account)) throw new Error('keyring credential deletion could not be verified');
-    }
-    for (const descriptor of descriptors) {
-      if (!deleteDescriptor(descriptor)) throw new Error('keyring credential chunk deletion could not be verified');
-    }
-    for (const item of inventoryChunks()) {
-      if (!remove(item.service, item.account)) throw new Error('keyring credential inventory deletion could not be verified');
-    }
-    if (activeValue() !== null) throw new Error('keyring credential deletion could not be verified');
-    writeJournal({ schemaVersion: 1, mode: 'deleted', retired: [] });
-    set(DELETED_SERVICE, input.account, 'v1:deleted');
-    return true;
+    const descriptors = [];
+    const descriptor = descriptorFor(current);
+    if (descriptor?.kind === 'chunks') descriptors.push(descriptor);
+    if (journal?.active?.kind === 'chunks') descriptors.push(journal.active);
+    descriptors.push(...(journal?.retired ?? []));
+    const unique = new Map(descriptors.map(value => [markerKey(value.marker), value]));
+    const retired = [...unique.values()];
+    journal = { schemaVersion: 1, mode: 'delete', active: descriptor, retired };
+    writeJournal(journal);
+    return completeDelete(journal);
   };
 
   const repairCredential = () => {
@@ -1046,7 +1081,7 @@ try {
   else if (input.operation === 'delete') deleteCredential();
   else if (input.operation === 'repair') value = repairCredential();
   else throw new Error('Unsupported keyring operation');
-  const deleted = input.operation === 'read' && raw(DELETED_SERVICE, input.account) !== null;
+  const deleted = input.operation === 'read' && readGuard() !== null;
   process.stdout.write(JSON.stringify({ ok: true, value, ...(deleted ? { deleted: true } : {}) }));
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
@@ -1059,10 +1094,13 @@ function classifyKeyringError(err) {
   const lower = msg.toLowerCase();
   if (lower.includes("timed out")) return "keyring operation timed out";
   if (lower.includes("integrity:")) return msg.replace(/^integrity:\s*/i, "keyring integrity error: ");
+  if (lower.includes("d-bus session is unavailable")) {
+    return "D-Bus session is unavailable (preserve XDG_RUNTIME_DIR or provide DBUS_SESSION_BUS_ADDRESS)";
+  }
   if (lower.includes("cannot find module") || lower.includes("module not found") || lower.includes("failed to load")) {
     return "native keyring module not available on this system";
   }
-  if (lower.includes("secret service") || lower.includes("dbus") || lower.includes("daemon")) {
+  if (lower.includes("secret service") || lower.includes("org.freedesktop.secrets") || lower.includes("dbus") || lower.includes("d-bus") || lower.includes("daemon")) {
     return "Secret Service daemon is not running (start GNOME Keyring or KWallet, or provide a D-Bus session)";
   }
   if (lower.includes("denied") || lower.includes("locked") || lower.includes("cancelled") || lower.includes("user refused")) {
@@ -1103,6 +1141,20 @@ var KEYRING_ENV_NAMES = [
 function buildKeyringHelperEnv(source = process.env) {
   const env = {};
   for (const name of KEYRING_ENV_NAMES) if (source[name] !== void 0) env[name] = source[name];
+  if (process.platform === "linux" && !env.DBUS_SESSION_BUS_ADDRESS?.trim()) {
+    const uid = process.getuid?.();
+    if (uid === void 0) return env;
+    const runtimeDir = env.XDG_RUNTIME_DIR?.trim() || `/run/user/${uid}`;
+    const socketPath = join5(runtimeDir, "bus");
+    try {
+      const socket = statSync2(socketPath);
+      if (socket.isSocket() && socket.uid === uid) {
+        env.DBUS_SESSION_BUS_ADDRESS = `unix:path=${socketPath}`;
+      }
+    } catch {
+      delete env.DBUS_SESSION_BUS_ADDRESS;
+    }
+  }
   return env;
 }
 function missingDbusReason(env) {
@@ -1111,8 +1163,9 @@ function missingDbusReason(env) {
 }
 function runIsolatedKeyringOperation(input, options = {}) {
   const sourceEnv = options.env ?? process.env;
+  const helperEnv = buildKeyringHelperEnv(sourceEnv);
   if (!options.skipAvailabilityCheck) {
-    const reason = missingDbusReason(sourceEnv);
+    const reason = missingDbusReason(helperEnv);
     if (reason) return Promise.resolve({ ok: false, error: reason });
   }
   let moduleUrl;
@@ -1125,7 +1178,7 @@ function runIsolatedKeyringOperation(input, options = {}) {
     let child;
     try {
       child = (options.spawnImpl ?? spawn)(process.execPath, ["--input-type=module", "--eval", KEYRING_CHILD_SOURCE], {
-        env: buildKeyringHelperEnv(sourceEnv),
+        env: helperEnv,
         stdio: ["pipe", "pipe", "ignore"],
         windowsHide: true
       });
@@ -1187,7 +1240,7 @@ function runIsolatedKeyringOperation(input, options = {}) {
 
 // src/credential-fallback-store.ts
 import { existsSync as existsSync2 } from "fs";
-import { dirname as dirname4, join as join5 } from "path";
+import { dirname as dirname4, join as join6 } from "path";
 
 // src/durable-io.ts
 import { randomUUID as randomUUID2 } from "crypto";
@@ -1323,7 +1376,7 @@ function durableAtomicWrite(path, content, options = {}) {
 var FALLBACK_FILE_NAME = "credentials-fallback.json";
 var MAX_FALLBACK_BYTES = 16 * 1024 * 1024;
 function getCredentialFallbackPath(env = process.env) {
-  return join5(getAppHome(env), FALLBACK_FILE_NAME);
+  return join6(getAppHome(env), FALLBACK_FILE_NAME);
 }
 function emptyFallbackFile() {
   return { schemaVersion: 1, credentials: /* @__PURE__ */ Object.create(null) };
@@ -1405,11 +1458,52 @@ function readKeyringService(service, account) {
 function isIntegrityError(error) {
   return /^integrity:/i.test(error);
 }
+function fallbackWarning() {
+  return `${FALLBACK_WARNING}: ${getCredentialFallbackPath()}`;
+}
+function removeFallbackCredential(account, diag) {
+  try {
+    deleteFallbackCredential(account);
+    if (readFallbackCredential(account) !== null) {
+      reportWarning(diag, "Credential fallback deletion could not be verified");
+      return false;
+    }
+    return true;
+  } catch (error) {
+    reportWarning(diag, `Could not verify credential fallback deletion: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
+async function promoteFallbackCredential(account, value, diag) {
+  const published = await _credentialStoreInternals.keyringOperation({
+    operation: "write",
+    service: KEYRING_SERVICE,
+    account,
+    value
+  });
+  if (!published.ok) {
+    reportWarning(diag, classifyKeyringError(published.error));
+    if (isIntegrityError(published.error)) return null;
+    reportWarning(diag, fallbackWarning());
+    return value;
+  }
+  const verified = await readKeyringService(KEYRING_SERVICE, account);
+  if (!verified.ok) {
+    reportWarning(diag, classifyKeyringError(verified.error));
+    if (isIntegrityError(verified.error)) return null;
+    reportWarning(diag, fallbackWarning());
+    return value;
+  }
+  if (verified.deleted || verified.value !== value) {
+    reportWarning(diag, "Keyring promotion could not be verified");
+    return null;
+  }
+  if (!removeFallbackCredential(account, diag)) return null;
+  return value;
+}
 async function readStoredCredential(account, diag) {
   return withCredentialMutationLock(`keyring:${account}`, async () => {
     const primary = await readKeyringService(KEYRING_SERVICE, account);
-    if (primary.ok && primary.deleted) return null;
-    if (primary.ok && primary.value !== null) return primary.value;
     if (!primary.ok) {
       if (isIntegrityError(primary.error)) {
         reportWarning(diag, `${classifyKeyringError(primary.error)} (account ${account}); run \`leverframe keyring repair\` to rebuild the journal`);
@@ -1417,6 +1511,16 @@ async function readStoredCredential(account, diag) {
       }
       reportWarning(diag, classifyKeyringError(primary.error));
     }
+    let fallback;
+    try {
+      fallback = readFallbackCredential(account);
+    } catch (error) {
+      reportWarning(diag, `Could not read credential fallback: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+    if (fallback !== null) return promoteFallbackCredential(account, fallback, diag);
+    if (primary.ok && primary.deleted) return null;
+    if (primary.ok && primary.value !== null) return primary.value;
     for (const service of LEGACY_KEYRING_SERVICES) {
       const legacy = await readKeyringService(service, account);
       if (legacy.ok && legacy.value !== null) {
@@ -1428,26 +1532,30 @@ async function readStoredCredential(account, diag) {
         if (isIntegrityError(legacy.error)) return null;
       }
     }
-    const fallback = readFallbackCredential(account);
-    if (fallback !== null) reportWarning(diag, `${FALLBACK_WARNING}: ${getCredentialFallbackPath()}`);
-    return fallback;
+    return null;
   });
 }
 async function writeStoredCredentialUnlocked(account, value, diag) {
+  let staged = false;
+  try {
+    staged = readFallbackCredential(account) !== null;
+    if (staged) writeFallbackCredential(account, value);
+  } catch (error) {
+    reportWarning(diag, `Could not update credential fallback: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
   const result = await _credentialStoreInternals.keyringOperation({ operation: "write", service: KEYRING_SERVICE, account, value });
   if (result.ok) {
-    try {
-      deleteFallbackCredential(account);
-    } catch (error) {
-      reportWarning(diag, `Keyring save succeeded, but stale fallback material was not removed: ${error instanceof Error ? error.message : String(error)}`);
+    if (!removeFallbackCredential(account, diag)) {
+      reportWarning(diag, "Keyring save succeeded, but stale fallback material remains queued for removal");
     }
     return true;
   }
   reportWarning(diag, classifyKeyringError(result.error));
   if (isIntegrityError(result.error)) return false;
   try {
-    writeFallbackCredential(account, value);
-    reportWarning(diag, `${FALLBACK_WARNING}: ${getCredentialFallbackPath()}`);
+    if (!staged) writeFallbackCredential(account, value);
+    reportWarning(diag, fallbackWarning());
     return true;
   } catch (error) {
     reportWarning(diag, `Could not write credential fallback: ${error instanceof Error ? error.message : String(error)}`);
@@ -1462,16 +1570,10 @@ function writeStoredCredential(account, value, diag) {
 }
 function deleteStoredCredential(account, diag) {
   return withCredentialMutationLock(`keyring:${account}`, async () => {
+    if (!removeFallbackCredential(account, diag)) return false;
     const result = await _credentialStoreInternals.keyringOperation({ operation: "delete", service: KEYRING_SERVICE, account });
     if (!result.ok) reportWarning(diag, classifyKeyringError(result.error));
-    let fallbackAbsent = false;
-    try {
-      deleteFallbackCredential(account);
-      fallbackAbsent = readFallbackCredential(account) === null;
-    } catch (error) {
-      reportWarning(diag, `Could not verify credential fallback deletion: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    return result.ok && fallbackAbsent;
+    return result.ok;
   });
 }
 function repairStoredCredential(account) {
@@ -1485,8 +1587,9 @@ async function diagnoseCredentialStorage(env = process.env) {
   const headless = Boolean(env.SSH_CONNECTION || env.SSH_TTY || !env.DISPLAY && !env.WAYLAND_DISPLAY);
   const diagnostics = [];
   if (headless) diagnostics.push({ level: "info", message: "Headless/SSH session detected; OpenAI device-code sign-in does not require a GUI." });
-  const dbusReason = missingDbusReason(env);
-  const probe = dbusReason ? { ok: false, error: dbusReason } : await runIsolatedKeyringOperation({ operation: "read", service: KEYRING_SERVICE, account: "__leverframe_probe__" }, { env });
+  const helperEnv = buildKeyringHelperEnv(env);
+  const dbusReason = missingDbusReason(helperEnv);
+  const probe = dbusReason ? { ok: false, error: dbusReason } : await runIsolatedKeyringOperation({ operation: "read", service: KEYRING_SERVICE, account: "__leverframe_probe__" }, { env: helperEnv });
   if (!probe.ok) {
     diagnostics.push({
       level: "warn",
@@ -1499,7 +1602,7 @@ async function diagnoseCredentialStorage(env = process.env) {
 // src/config-lock.ts
 import { randomUUID as randomUUID3 } from "crypto";
 import { constants as fsConstants } from "fs";
-import { dirname as dirname5, join as join6 } from "path";
+import { dirname as dirname5, join as join7 } from "path";
 import {
   closeSync as closeSync4,
   lstatSync as lstatSync3,
@@ -1526,10 +1629,10 @@ function pidIsAlive(pid) {
   }
 }
 function getConfigLockPath() {
-  return join6(getAppHome(), "config.lock");
+  return join7(getAppHome(), "config.lock");
 }
 function getServerPasswordLockPath() {
-  return join6(getAppHome(), "server-password.lock");
+  return join7(getAppHome(), "server-password.lock");
 }
 var ConfigLockBusyError = class extends Error {
   lockPath;
@@ -1960,7 +2063,7 @@ function setServerListenMode(listenMode) {
 import { execFileSync as execFileSync2, spawn as spawn2 } from "child_process";
 import { existsSync as existsSync5, appendFileSync } from "fs";
 import { homedir as homedir3 } from "os";
-import { join as join7 } from "path";
+import { join as join8 } from "path";
 
 // src/binary-lookup.ts
 import { execFileSync } from "child_process";
@@ -1988,12 +2091,12 @@ function findBinaryOnPath(name, fallbackPaths, options = {}) {
 var isWindows = process.platform === "win32";
 var CMD_PATH_METACHARACTERS = /[\r\n"&|<>^()%!]/;
 var FALLBACK_PATHS = isWindows ? [
-  join7(process.env["APPDATA"] ?? homedir3(), "npm", "claude.cmd"),
-  join7(process.env["APPDATA"] ?? homedir3(), "npm", "claude"),
-  join7(homedir3(), "AppData", "Roaming", "npm", "claude.cmd")
+  join8(process.env["APPDATA"] ?? homedir3(), "npm", "claude.cmd"),
+  join8(process.env["APPDATA"] ?? homedir3(), "npm", "claude"),
+  join8(homedir3(), "AppData", "Roaming", "npm", "claude.cmd")
 ] : [
-  join7(homedir3(), ".local", "bin", "claude"),
-  join7(homedir3(), ".npm", "bin", "claude"),
+  join8(homedir3(), ".local", "bin", "claude"),
+  join8(homedir3(), ".npm", "bin", "claude"),
   "/usr/local/bin/claude",
   "/opt/homebrew/bin/claude"
 ];
@@ -2638,4 +2741,4 @@ export {
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-CSSSRQIC.js.map
+//# sourceMappingURL=chunk-5JPNJX45.js.map

@@ -23,9 +23,9 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function warnOnce(text: string, diag?: (message: string) => void): void {
-  if (warnedFailures.has(text)) return;
-  warnedFailures.add(text);
+function warnOnce(key: string, text: string, diag?: (message: string) => void): void {
+  if (warnedFailures.has(key)) return;
+  warnedFailures.add(key);
   if (diag) diag(text);
   else console.warn(`leverframe: ${text}`);
 }
@@ -74,8 +74,9 @@ async function reconcileOne(authRef: string): Promise<SingleCleanupResult> {
 
       let deleted = false;
       let deletionError: string | undefined;
+      let backendError: string | undefined;
       try {
-        deleted = await deleteProviderCredential(authRef);
+        deleted = await deleteProviderCredential(authRef, diagnostic => { backendError = diagnostic; });
       } catch (error) {
         deletionError = message(error);
       }
@@ -83,7 +84,7 @@ async function reconcileOne(authRef: string): Promise<SingleCleanupResult> {
         return {
           deleted: false,
           cleared: false,
-          error: deletionError ?? 'credential deletion could not be confirmed',
+          error: deletionError ?? backendError ?? 'credential deletion could not be confirmed',
         };
       }
 
@@ -108,28 +109,43 @@ export async function reconcilePendingCredentialDeletes(
     queued = await loadPendingCredentialDeletes();
   } catch (error) {
     const persistenceError = `Could not read pending credential cleanup: ${message(error)}`;
-    warnOnce(persistenceError, diag);
+    warnOnce(persistenceError, persistenceError, diag);
     return { deleted: [], pending: [], persistenceError };
   }
 
   const knownPending = new Set(queued);
   const deleted: string[] = [];
-  const errors: string[] = [];
+  const errors: Array<{ key: string; text: string }> = [];
+  const resolvedReferences = new Set<string>();
   for (const authRef of queued) {
     const result = await reconcileOne(authRef);
     if (result.deleted) deleted.push(authRef);
-    if (result.cleared) knownPending.delete(authRef);
-    if (result.error) errors.push(`Cleanup for ${authRef}: ${result.error}`);
+    if (result.cleared) {
+      knownPending.delete(authRef);
+      resolvedReferences.add(authRef);
+    }
+    if (result.error) {
+      errors.push({
+        key: `${authRef}\0${result.error}`,
+        text: `Cleanup for ${authRef}: ${result.error}`,
+      });
+    }
   }
 
   let pending = [...knownPending];
   try {
     pending = await loadPendingCredentialDeletes();
   } catch (error) {
-    errors.push(`Could not confirm pending credential cleanup: ${message(error)}`);
+    const text = `Could not confirm pending credential cleanup: ${message(error)}`;
+    errors.push({ key: text, text });
   }
-  const persistenceError = errors.length > 0 ? errors.join('; ') : undefined;
-  if (persistenceError) warnOnce(persistenceError, diag);
+  const persistenceError = errors.length > 0 ? errors.map(error => error.text).join('; ') : undefined;
+  for (const authRef of resolvedReferences) {
+    for (const key of warnedFailures) {
+      if (key.startsWith(`${authRef}\0`)) warnedFailures.delete(key);
+    }
+  }
+  for (const error of errors) warnOnce(error.key, error.text, diag);
   return {
     deleted,
     pending,

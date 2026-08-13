@@ -70,7 +70,7 @@ import {
   withProviderMutationLock,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-CSSSRQIC.js";
+} from "./chunk-5JPNJX45.js";
 
 // src/cli.ts
 import pc18 from "picocolors";
@@ -1157,9 +1157,9 @@ var warnedFailures = /* @__PURE__ */ new Set();
 function message(error) {
   return error instanceof Error ? error.message : String(error);
 }
-function warnOnce(text3, diag) {
-  if (warnedFailures.has(text3)) return;
-  warnedFailures.add(text3);
+function warnOnce(key, text3, diag) {
+  if (warnedFailures.has(key)) return;
+  warnedFailures.add(key);
   if (diag) diag(text3);
   else console.warn(`leverframe: ${text3}`);
 }
@@ -1194,8 +1194,11 @@ async function reconcileOne(authRef) {
       }
       let deleted = false;
       let deletionError;
+      let backendError;
       try {
-        deleted = await deleteProviderCredential(authRef);
+        deleted = await deleteProviderCredential(authRef, (diagnostic) => {
+          backendError = diagnostic;
+        });
       } catch (error) {
         deletionError = message(error);
       }
@@ -1203,7 +1206,7 @@ async function reconcileOne(authRef) {
         return {
           deleted: false,
           cleared: false,
-          error: deletionError ?? "credential deletion could not be confirmed"
+          error: deletionError ?? backendError ?? "credential deletion could not be confirmed"
         };
       }
       try {
@@ -1223,26 +1226,41 @@ async function reconcilePendingCredentialDeletes(diag) {
     queued = await loadPendingCredentialDeletes();
   } catch (error) {
     const persistenceError2 = `Could not read pending credential cleanup: ${message(error)}`;
-    warnOnce(persistenceError2, diag);
+    warnOnce(persistenceError2, persistenceError2, diag);
     return { deleted: [], pending: [], persistenceError: persistenceError2 };
   }
   const knownPending = new Set(queued);
   const deleted = [];
   const errors = [];
+  const resolvedReferences = /* @__PURE__ */ new Set();
   for (const authRef of queued) {
     const result = await reconcileOne(authRef);
     if (result.deleted) deleted.push(authRef);
-    if (result.cleared) knownPending.delete(authRef);
-    if (result.error) errors.push(`Cleanup for ${authRef}: ${result.error}`);
+    if (result.cleared) {
+      knownPending.delete(authRef);
+      resolvedReferences.add(authRef);
+    }
+    if (result.error) {
+      errors.push({
+        key: `${authRef}\0${result.error}`,
+        text: `Cleanup for ${authRef}: ${result.error}`
+      });
+    }
   }
   let pending = [...knownPending];
   try {
     pending = await loadPendingCredentialDeletes();
   } catch (error) {
-    errors.push(`Could not confirm pending credential cleanup: ${message(error)}`);
+    const text3 = `Could not confirm pending credential cleanup: ${message(error)}`;
+    errors.push({ key: text3, text: text3 });
   }
-  const persistenceError = errors.length > 0 ? errors.join("; ") : void 0;
-  if (persistenceError) warnOnce(persistenceError, diag);
+  const persistenceError = errors.length > 0 ? errors.map((error) => error.text).join("; ") : void 0;
+  for (const authRef of resolvedReferences) {
+    for (const key of warnedFailures) {
+      if (key.startsWith(`${authRef}\0`)) warnedFailures.delete(key);
+    }
+  }
+  for (const error of errors) warnOnce(error.key, error.text, diag);
   return {
     deleted,
     pending,
@@ -15743,6 +15761,29 @@ async function upsertOAuthProvider(providerId, _cred) {
     return entry;
   }));
 }
+async function persistOAuthProvider(providerId, credential, authRef, diagnostics) {
+  return withCredentialMutationLock(authRef, async () => {
+    await journalCredentialWrite(authRef);
+    const saved = await saveProviderCredential(
+      authRef,
+      oauthCredentialToKeychainJson(credential),
+      (msg) => {
+        diagnostics.push(msg);
+        p6.log.warn(msg);
+      }
+    );
+    if (!saved) {
+      throw new Error(`Could not save OAuth tokens${diagnostics.length ? ` - ${diagnostics.at(-1)}` : " - check credential storage permissions and try again"}`);
+    }
+    const entry = await upsertOAuthProvider(providerId, credential);
+    try {
+      await cancelCredentialDelete(authRef);
+    } catch (error) {
+      p6.log.warn(`Could not clear credential cleanup marker: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return entry;
+  });
+}
 async function authenticateProviderInner(providerId, options = {}) {
   const registryId = toOAuthRegistryId(providerId);
   if (!supportsNativeOAuth(providerId)) {
@@ -15755,21 +15796,7 @@ async function authenticateProviderInner(providerId, options = {}) {
   const cred = await runNativeDeviceCode(providerId, options.signal);
   const nativeDiagnostics = [];
   const authRef = oauthAuthRef(registryId);
-  await journalCredentialWrite(authRef);
-  const saved = await saveProviderCredential(
-    authRef,
-    oauthCredentialToKeychainJson(cred),
-    (msg) => {
-      nativeDiagnostics.push(msg);
-      p6.log.warn(msg);
-    }
-  );
-  if (!saved) {
-    throw new Error(
-      `Could not save OAuth tokens \u2014 ${nativeDiagnostics.at(-1) || "check credential storage permissions and try again"}`
-    );
-  }
-  const registryProvider = await upsertOAuthProvider(providerId, cred);
+  const registryProvider = await persistOAuthProvider(providerId, cred, authRef, nativeDiagnostics);
   const refreshSpinner = p6.spinner();
   refreshSpinner.start("Refreshing model list...");
   try {
@@ -15994,13 +16021,6 @@ function buildRegistryEntry(template, fetched, pricedModels, authRef, existing) 
     }
   };
 }
-function persistEntry(entry) {
-  updateRegistry((registry) => {
-    const index = registry.providers.findIndex((provider) => provider.id === entry.id);
-    if (index >= 0) registry.providers[index] = entry;
-    else registry.providers.push(entry);
-  });
-}
 async function addProviderFromTemplateLocked(template, apiKey, opts) {
   const packageError = await probeTemplatePackage(template);
   if (packageError) {
@@ -16036,15 +16056,6 @@ async function addProviderFromTemplateLocked(template, apiKey, opts) {
     };
   }
   const authRef = trimmedKey ? `keyring:provider:${template.id}` : "none:anonymous";
-  if (trimmedKey) await journalCredentialWrite(authRef);
-  const saved = trimmedKey ? await saveProviderCredential(authRef, trimmedKey) : true;
-  if (!saved) {
-    return {
-      added: false,
-      error: "Could not save API key to credential storage.",
-      hint: "Check Keychain access and leverframe home permissions, then try again."
-    };
-  }
   const pricingCache = loadPricingCache();
   const platform = pricingPlatformForProvider(template.id, template.id);
   const pricedModels = enrichModelsWithPricing(
@@ -16052,8 +16063,41 @@ async function addProviderFromTemplateLocked(template, apiKey, opts) {
     buildPricingIndex(pricingCache),
     platform
   );
-  const entry = buildRegistryEntry(template, fetched, pricedModels, authRef, existing);
-  persistEntry(entry);
+  const publish = () => updateRegistry((current) => {
+    const active = current.providers.find((provider) => provider.id === template.id);
+    if (active && !opts?.replaceExisting) {
+      throw new Error(`${template.name} became active while adding the provider.`);
+    }
+    const entry2 = buildRegistryEntry(template, fetched, pricedModels, authRef, active);
+    const index = current.providers.findIndex((provider) => provider.id === entry2.id);
+    if (index >= 0) current.providers[index] = entry2;
+    else current.providers.push(entry2);
+    return entry2;
+  });
+  let entry;
+  if (trimmedKey) {
+    const published = await withCredentialMutationLock(authRef, async () => {
+      await journalCredentialWrite(authRef);
+      if (!await saveProviderCredential(authRef, trimmedKey)) return null;
+      const committed = publish();
+      try {
+        await cancelCredentialDelete(authRef);
+      } catch {
+        return committed;
+      }
+      return committed;
+    });
+    if (!published) {
+      return {
+        added: false,
+        error: "Could not save API key to credential storage.",
+        hint: "Check Keychain access and leverframe home permissions, then try again."
+      };
+    }
+    entry = published;
+  } else {
+    entry = publish();
+  }
   enrichPricingAsync();
   const keyVerified = !template.skipKeyVerification && !fetched.usedStaticFallback;
   return {

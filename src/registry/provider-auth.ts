@@ -22,8 +22,8 @@ import {
 import { getTemplateById } from '../provider-templates.js';
 import { oauthAuthRef, toOAuthRegistryId } from './import-build.js';
 import { updateRegistry } from './io.js';
-import { journalCredentialWrite, reconcilePendingCredentialDeletes } from './credential-lifecycle.js';
-import { withProviderMutationLock } from './lock.js';
+import { cancelCredentialDelete, journalCredentialWrite, reconcilePendingCredentialDeletes } from './credential-lifecycle.js';
+import { withCredentialMutationLock, withProviderMutationLock } from './lock.js';
 import { refreshProviderModels } from './refresh-models.js';
 import type { RegistryProvider } from './types.js';
 
@@ -112,14 +112,7 @@ export async function saveNativeOAuthCredential(
     const registryId = toOAuthRegistryId(providerId);
     const diagnostics: string[] = [];
     const authRef = oauthAuthRef(registryId);
-    await journalCredentialWrite(authRef);
-    const saved = await saveProviderCredential(
-      authRef,
-      oauthCredentialToKeychainJson(cred),
-      (msg) => { diagnostics.push(msg); p.log.warn(msg); },
-    );
-    if (!saved) throw new Error(`Could not save OAuth tokens${diagnostics.length ? ` - ${diagnostics.at(-1)}` : ' - check credential storage permissions and try again'}`);
-    await upsertOAuthProvider(providerId, cred);
+    await persistOAuthProvider(providerId, cred, authRef, diagnostics);
   } finally {
     await reconcilePendingCredentialDeletes(message => p.log.warn(message));
   }
@@ -170,6 +163,32 @@ async function upsertOAuthProvider(providerId: string, _cred: StoredOAuthCredent
   }));
 }
 
+async function persistOAuthProvider(
+  providerId: string,
+  credential: StoredOAuthCredential,
+  authRef: string,
+  diagnostics: string[],
+): Promise<RegistryProvider> {
+  return withCredentialMutationLock(authRef, async () => {
+    await journalCredentialWrite(authRef);
+    const saved = await saveProviderCredential(
+      authRef,
+      oauthCredentialToKeychainJson(credential),
+      (msg) => { diagnostics.push(msg); p.log.warn(msg); },
+    );
+    if (!saved) {
+      throw new Error(`Could not save OAuth tokens${diagnostics.length ? ` - ${diagnostics.at(-1)}` : ' - check credential storage permissions and try again'}`);
+    }
+    const entry = await upsertOAuthProvider(providerId, credential);
+    try {
+      await cancelCredentialDelete(authRef);
+    } catch (error) {
+      p.log.warn(`Could not clear credential cleanup marker: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return entry;
+  });
+}
+
 /** Authenticates, stores, and publishes one native OAuth provider atomically. */
 async function authenticateProviderInner(
   providerId: string,
@@ -190,19 +209,7 @@ async function authenticateProviderInner(
 
   const nativeDiagnostics: string[] = [];
   const authRef = oauthAuthRef(registryId);
-  await journalCredentialWrite(authRef);
-  const saved = await saveProviderCredential(
-    authRef,
-    oauthCredentialToKeychainJson(cred),
-    (msg) => { nativeDiagnostics.push(msg); p.log.warn(msg); },
-  );
-  if (!saved) {
-    throw new Error(
-      `Could not save OAuth tokens — ${nativeDiagnostics.at(-1) || 'check credential storage permissions and try again'}`,
-    );
-  }
-
-  const registryProvider = await upsertOAuthProvider(providerId, cred);
+  const registryProvider = await persistOAuthProvider(providerId, cred, authRef, nativeDiagnostics);
 
   const refreshSpinner = p.spinner();
   refreshSpinner.start('Refreshing model list...');

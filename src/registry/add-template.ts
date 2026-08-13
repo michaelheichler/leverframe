@@ -6,8 +6,8 @@ import type { ProviderTemplate } from '../provider-templates.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
 import { loadRegistryStrict, updateRegistry } from './io.js';
-import { journalCredentialWrite, reconcilePendingCredentialDeletes } from './credential-lifecycle.js';
-import { withProviderMutationLock } from './lock.js';
+import { cancelCredentialDelete, journalCredentialWrite, reconcilePendingCredentialDeletes } from './credential-lifecycle.js';
+import { withCredentialMutationLock, withProviderMutationLock } from './lock.js';
 import {
   buildPricingIndex,
   enrichModelsWithPricing,
@@ -88,14 +88,6 @@ function buildRegistryEntry(
   };
 }
 
-function persistEntry(entry: RegistryProvider): void {
-  updateRegistry(registry => {
-    const index = registry.providers.findIndex(provider => provider.id === entry.id);
-    if (index >= 0) registry.providers[index] = entry;
-    else registry.providers.push(entry);
-  });
-}
-
 /** Persist credential + registry entry. Returns whether the upstream API key was actually validated. */
 async function addProviderFromTemplateLocked(
   template: ProviderTemplate,
@@ -142,16 +134,6 @@ async function addProviderFromTemplateLocked(
   }
 
   const authRef = trimmedKey ? `keyring:provider:${template.id}` : 'none:anonymous';
-  if (trimmedKey) await journalCredentialWrite(authRef);
-  const saved = trimmedKey ? await saveProviderCredential(authRef, trimmedKey) : true;
-  if (!saved) {
-    return {
-      added: false,
-      error: 'Could not save API key to credential storage.',
-      hint: 'Check Keychain access and leverframe home permissions, then try again.',
-    };
-  }
-
   const pricingCache = loadPricingCache();
   const platform = pricingPlatformForProvider(template.id, template.id);
   const pricedModels = enrichModelsWithPricing(
@@ -159,8 +141,41 @@ async function addProviderFromTemplateLocked(
     buildPricingIndex(pricingCache),
     platform,
   );
-  const entry = buildRegistryEntry(template, fetched, pricedModels, authRef, existing);
-  persistEntry(entry);
+  const publish = (): RegistryProvider => updateRegistry(current => {
+    const active = current.providers.find(provider => provider.id === template.id);
+    if (active && !opts?.replaceExisting) {
+      throw new Error(`${template.name} became active while adding the provider.`);
+    }
+    const entry = buildRegistryEntry(template, fetched, pricedModels, authRef, active);
+    const index = current.providers.findIndex(provider => provider.id === entry.id);
+    if (index >= 0) current.providers[index] = entry;
+    else current.providers.push(entry);
+    return entry;
+  });
+  let entry: RegistryProvider;
+  if (trimmedKey) {
+    const published = await withCredentialMutationLock(authRef, async () => {
+      await journalCredentialWrite(authRef);
+      if (!await saveProviderCredential(authRef, trimmedKey)) return null;
+      const committed = publish();
+      try {
+        await cancelCredentialDelete(authRef);
+      } catch {
+        return committed;
+      }
+      return committed;
+    });
+    if (!published) {
+      return {
+        added: false,
+        error: 'Could not save API key to credential storage.',
+        hint: 'Check Keychain access and leverframe home permissions, then try again.',
+      };
+    }
+    entry = published;
+  } else {
+    entry = publish();
+  }
   enrichPricingAsync();
 
   const keyVerified = !template.skipKeyVerification && !fetched.usedStaticFallback;

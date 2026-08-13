@@ -114,8 +114,72 @@ describe('credential cleanup reconciliation', () => {
 
     expect(first.pending).toEqual(['keyring:provider:test']);
     expect(second.pending).toEqual(['keyring:provider:test']);
-    expect(warnings).toEqual(['Cleanup for keyring:provider:test: credential deletion could not be confirmed']);
-    expect(stderrWarning).toHaveBeenCalledWith('leverframe: keyring error: backend uncertain');
-    expect(stderrWarning).toHaveBeenCalledTimes(1);
+    expect(warnings).toEqual(['Cleanup for keyring:provider:test: keyring error: backend uncertain']);
+    expect(stderrWarning).not.toHaveBeenCalled();
+  });
+
+  it('deduplicates unchanged reference errors when the pending set changes', async () => {
+    saveRegistry({ schemaVersion: 1, providers: [] }, getProvidersPath());
+    await queueCredentialDelete('keyring:provider:one');
+    vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockImplementation(async input => ({
+      ok: false,
+      error: input.account === 'provider:one'
+        ? 'Secret Service unavailable'
+        : 'D-Bus session is unavailable; Secret Service keyring access cannot be used',
+    }));
+    const warnings: string[] = [];
+
+    await reconcilePendingCredentialDeletes(message => warnings.push(message));
+    await queueCredentialDelete('keyring:provider:two');
+    await reconcilePendingCredentialDeletes(message => warnings.push(message));
+
+    expect(warnings).toEqual([
+      'Cleanup for keyring:provider:one: Secret Service daemon is not running (start GNOME Keyring or KWallet, or provide a D-Bus session)',
+      'Cleanup for keyring:provider:two: D-Bus session is unavailable (preserve XDG_RUNTIME_DIR or provide DBUS_SESSION_BUS_ADDRESS)',
+    ]);
+  });
+
+  it('reports a changed backend error for the same reference', async () => {
+    saveRegistry({ schemaVersion: 1, providers: [] }, getProvidersPath());
+    await queueCredentialDelete('keyring:provider:test');
+    let backendError = 'first backend failure';
+    vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockImplementation(async () => ({
+      ok: false,
+      error: backendError,
+    }));
+    const warnings: string[] = [];
+
+    await reconcilePendingCredentialDeletes(message => warnings.push(message));
+    backendError = 'second backend failure';
+    await reconcilePendingCredentialDeletes(message => warnings.push(message));
+
+    expect(warnings).toEqual([
+      'Cleanup for keyring:provider:test: keyring error: first backend failure',
+      'Cleanup for keyring:provider:test: keyring error: second backend failure',
+    ]);
+  });
+
+  it('warns again after an earlier incident recovers', async () => {
+    const authRef = 'keyring:provider:test';
+    saveRegistry({ schemaVersion: 1, providers: [] }, getProvidersPath());
+    await queueCredentialDelete(authRef);
+    let operationResult: { ok: false; error: string } | { ok: true; value: null } = {
+      ok: false,
+      error: 'backend failure',
+    };
+    vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockImplementation(async () => operationResult);
+    const warnings: string[] = [];
+
+    await reconcilePendingCredentialDeletes(message => warnings.push(message));
+    operationResult = { ok: true, value: null };
+    await reconcilePendingCredentialDeletes(message => warnings.push(message));
+    await queueCredentialDelete(authRef);
+    operationResult = { ok: false, error: 'backend failure' };
+    await reconcilePendingCredentialDeletes(message => warnings.push(message));
+
+    expect(warnings).toEqual([
+      'Cleanup for keyring:provider:test: keyring error: backend failure',
+      'Cleanup for keyring:provider:test: keyring error: backend failure',
+    ]);
   });
 });

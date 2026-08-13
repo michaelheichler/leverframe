@@ -7,6 +7,13 @@ import { addProviderFromTemplate } from '../src/registry/add-template.js';
 import * as env from '../src/env.js';
 import * as io from '../src/registry/io.js';
 import * as pricing from '../src/registry/pricing.js';
+import { withCredentialMutationLock } from '../src/registry/lock.js';
+
+const lifecycle = vi.hoisted(() => ({
+  cancelCredentialDelete: vi.fn(),
+  journalCredentialWrite: vi.fn(),
+  reconcilePendingCredentialDeletes: vi.fn(async () => ({ deleted: [], pending: [] })),
+}));
 
 vi.mock('../src/env.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/env.js')>();
@@ -18,8 +25,9 @@ vi.mock('../src/env.js', async importOriginal => {
 });
 vi.mock('../src/provider-factory.js', () => ({ isSdkMigratedNpm: vi.fn(() => true) }));
 vi.mock('../src/registry/credential-lifecycle.js', () => ({
-  journalCredentialWrite: vi.fn(),
-  reconcilePendingCredentialDeletes: vi.fn(async () => ({ deleted: [], pending: [] })),
+  cancelCredentialDelete: lifecycle.cancelCredentialDelete,
+  journalCredentialWrite: lifecycle.journalCredentialWrite,
+  reconcilePendingCredentialDeletes: lifecycle.reconcilePendingCredentialDeletes,
 }));
 vi.mock('../src/registry/io.js', () => ({
   loadRegistry: vi.fn(),
@@ -46,6 +54,7 @@ describe('z.ai Coding Plan live key verification', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(env.saveProviderCredential).mockResolvedValue(true);
+    lifecycle.cancelCredentialDelete.mockResolvedValue(undefined);
     vi.mocked(io.loadRegistry).mockReturnValue({ schemaVersion: 1, providers: [] });
     vi.mocked(io.loadRegistryStrict).mockReturnValue({ schemaVersion: 1, providers: [] });
     vi.mocked(pricing.enrichModelsWithPricing).mockImplementation(
@@ -139,5 +148,38 @@ describe('z.ai Coding Plan live key verification', () => {
     ]);
     expect(result.provider?.modelsCache?.models[0]?.contextWindow).toBe(1_000_000);
     expect(result.hint).toMatch(/listing.*unavailable|did not verify/i);
+  });
+
+  it('holds the credential lock through template registry publication', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ data: [{ id: 'glm-5.2' }] }),
+    } as Response));
+    let releaseSave: (() => void) | undefined;
+    let saveStarted: (() => void) | undefined;
+    const saveGate = new Promise<void>(resolve => { releaseSave = resolve; });
+    const saveStart = new Promise<void>(resolve => { saveStarted = resolve; });
+    vi.mocked(env.saveProviderCredential).mockImplementation(async () => {
+      saveStarted?.();
+      await saveGate;
+      return true;
+    });
+    const publication = addProviderFromTemplate(zai(), 'test-key');
+    await saveStart;
+    let contenderEntered = false;
+    const contender = withCredentialMutationLock(
+      'keyring:provider:zai',
+      async () => { contenderEntered = true; },
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(contenderEntered).toBe(false);
+    releaseSave?.();
+    await expect(publication).resolves.toMatchObject({ added: true });
+    await contender;
+    expect(contenderEntered).toBe(true);
+    expect(lifecycle.cancelCredentialDelete).toHaveBeenCalledWith('keyring:provider:zai');
   });
 });

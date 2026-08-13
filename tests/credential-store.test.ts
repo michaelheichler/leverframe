@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -8,13 +9,16 @@ import { pathToFileURL } from 'node:url';
 import {
   _credentialStoreInternals,
   buildKeyringHelperEnv,
+  classifyKeyringError,
   deleteFallbackCredential,
+  deleteStoredCredential,
   diagnoseCredentialStorage,
   getCredentialFallbackPath,
   readFallbackCredential,
   readStoredCredential,
   runIsolatedKeyringOperation,
   writeFallbackCredential,
+  writeStoredCredential,
 } from '../src/credential-store.js';
 import { resolveProviderCredential, saveProviderCredential } from '../src/env.js';
 
@@ -119,6 +123,136 @@ describe('credential fallback', () => {
     expect(diagnostics.join('\n')).toMatch(/plaintext credential fallback/i);
     expect(diagnostics.join('\n')).toMatch(/no at-rest encryption/i);
   });
+
+  it('promotes fallback data when keyring service returns', async () => {
+    temporaryHome();
+    const account = 'provider:openai';
+    const credential = JSON.stringify({ type: 'oauth', access: 'new-token', refresh: 'refresh-token' });
+    writeFallbackCredential(account, credential);
+    let keyringValue: string | null = null;
+    vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockImplementation(async input => {
+      if (input.operation === 'read') return { ok: true, value: keyringValue };
+      if (input.operation === 'write') {
+        expect(input.value).toBe(credential);
+        keyringValue = input.value;
+        return { ok: true, value: null };
+      }
+      throw new Error(`Unexpected keyring operation: ${input.operation}`);
+    });
+
+    await expect(readStoredCredential(account)).resolves.toBe(credential);
+    expect(readFallbackCredential(account)).toBeNull();
+  });
+
+  it('promotes a newer fallback over an older readable keyring value', async () => {
+    temporaryHome();
+    const account = 'provider:openai';
+    const oldCredential = JSON.stringify({ type: 'oauth', access: 'old-token' });
+    const newCredential = JSON.stringify({ type: 'oauth', access: 'new-token' });
+    writeFallbackCredential(account, newCredential);
+    let keyringValue = oldCredential;
+    vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockImplementation(async input => {
+      if (input.operation === 'read') return { ok: true, value: keyringValue };
+      if (input.operation === 'write') {
+        expect(input.value).toBe(newCredential);
+        keyringValue = input.value;
+        return { ok: true, value: null };
+      }
+      throw new Error(`Unexpected keyring operation: ${input.operation}`);
+    });
+
+    await expect(readStoredCredential(account)).resolves.toBe(newCredential);
+    expect(readFallbackCredential(account)).toBeNull();
+  });
+
+  it('promotes fallback data through a pending keyring deletion', async () => {
+    temporaryHome();
+    const account = 'provider:openai';
+    const credential = JSON.stringify({ type: 'oauth', access: 'replacement-token' });
+    writeFallbackCredential(account, credential);
+    let pending = true;
+    vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockImplementation(async input => {
+      if (input.operation === 'read') {
+        return pending ? { ok: true, value: null, deleted: true } : { ok: true, value: credential };
+      }
+      if (input.operation === 'write') {
+        pending = false;
+        return { ok: true, value: null };
+      }
+      throw new Error(`Unexpected keyring operation: ${input.operation}`);
+    });
+
+    await expect(readStoredCredential(account)).resolves.toBe(credential);
+    expect(readFallbackCredential(account)).toBeNull();
+  });
+
+  it('updates existing fallback data before attempting a newer keyring write', async () => {
+    temporaryHome();
+    const account = 'provider:openai';
+    writeFallbackCredential(account, 'old-token');
+    vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockImplementation(async input => {
+      expect(input.operation).toBe('write');
+      expect(readFallbackCredential(account)).toBe('new-token');
+      return { ok: false, error: 'Secret Service unavailable' };
+    });
+
+    await expect(writeStoredCredential(account, 'new-token')).resolves.toBe(true);
+    expect(readFallbackCredential(account)).toBe('new-token');
+  });
+
+  it('reports success after keyring publication when stale fallback cleanup fails', async () => {
+    temporaryHome();
+    const account = 'provider:openai';
+    writeFallbackCredential(account, 'old-token');
+    const fallbackPath = getCredentialFallbackPath();
+    vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockImplementation(async () => {
+      writeFileSync(fallbackPath, '{broken', { mode: 0o600 });
+      return { ok: true, value: null };
+    });
+    const diagnostics: string[] = [];
+
+    await expect(writeStoredCredential(account, 'new-token', message => diagnostics.push(message))).resolves.toBe(true);
+    expect(diagnostics).toContainEqual(expect.stringMatching(/stale fallback material remains/));
+  });
+
+  it('does not bypass corrupt keyring metadata with fallback data', async () => {
+    temporaryHome();
+    const account = 'provider:openai';
+    writeFallbackCredential(account, 'fallback-token');
+    const operation = vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockResolvedValue({
+      ok: false,
+      error: 'integrity: keyring credential journal is corrupt',
+    });
+
+    await expect(readStoredCredential(account)).resolves.toBeNull();
+    expect(operation).toHaveBeenCalledOnce();
+    expect(readFallbackCredential(account)).toBe('fallback-token');
+  });
+
+  it('removes fallback data before starting explicit keyring deletion', async () => {
+    temporaryHome();
+    const account = 'provider:openai';
+    writeFallbackCredential(account, 'fallback-token');
+    const operation = vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockImplementation(async input => {
+      expect(input.operation).toBe('delete');
+      expect(readFallbackCredential(account)).toBeNull();
+      return { ok: true, value: null };
+    });
+
+    await expect(deleteStoredCredential(account)).resolves.toBe(true);
+    expect(operation).toHaveBeenCalledOnce();
+  });
+
+  it('does not start keyring deletion when fallback absence cannot be verified', async () => {
+    temporaryHome();
+    const account = 'provider:openai';
+    writeFallbackCredential(account, 'fallback-token');
+    writeFileSync(getCredentialFallbackPath(), '{broken', { mode: 0o600 });
+    const operation = vi.spyOn(_credentialStoreInternals, 'keyringOperation');
+
+    await expect(deleteStoredCredential(account)).resolves.toBe(false);
+    expect(operation).not.toHaveBeenCalled();
+  });
 });
 
 describe('legacy keychain migration', () => {
@@ -212,6 +346,56 @@ describe('isolated keyring operations', () => {
     });
   });
 
+  it('preserves an explicit D-Bus address instead of deriving one', () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
+
+    expect(buildKeyringHelperEnv({
+      DBUS_SESSION_BUS_ADDRESS: 'unix:abstract=/tmp/explicit-bus',
+      XDG_RUNTIME_DIR: '/missing/runtime',
+    }).DBUS_SESSION_BUS_ADDRESS).toBe('unix:abstract=/tmp/explicit-bus');
+  });
+
+  it('derives the D-Bus address from an owned runtime socket', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
+    const runtime = mkdtempSync(join(tmpdir(), 'leverframe-dbus-runtime-'));
+    const socketPath = join(runtime, 'bus');
+    const server = createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(socketPath, resolve);
+    });
+
+    try {
+      expect(buildKeyringHelperEnv({ HOME: '/home/test', XDG_RUNTIME_DIR: runtime })).toMatchObject({
+        HOME: '/home/test',
+        XDG_RUNTIME_DIR: runtime,
+        DBUS_SESSION_BUS_ADDRESS: `unix:path=${socketPath}`,
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('does not derive a D-Bus address from a regular file', () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
+    const runtime = mkdtempSync(join(tmpdir(), 'leverframe-dbus-runtime-'));
+    writeFileSync(join(runtime, 'bus'), 'not a socket');
+
+    expect(buildKeyringHelperEnv({ XDG_RUNTIME_DIR: runtime }).DBUS_SESSION_BUS_ADDRESS).toBeUndefined();
+  });
+
+  it('distinguishes a missing D-Bus session from a missing Secret Service daemon', () => {
+    expect(classifyKeyringError('D-Bus session is unavailable; Secret Service keyring access cannot be used'))
+      .toMatch(/^D-Bus session is unavailable/);
+    expect(classifyKeyringError('org.freedesktop.secrets has no owner'))
+      .toMatch(/^Secret Service daemon is not running/);
+  });
+
+  it('classifies incomplete keyring transaction cleanup as an integrity error', () => {
+    expect(classifyKeyringError('integrity: keyring credential cleanup is incomplete'))
+      .toBe('keyring integrity error: keyring credential cleanup is incomplete');
+  });
+
   it('kills a child process whose synchronous native-shaped call blocks', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'leverframe-keyring-module-'));
     const modulePath = join(directory, 'blocked.mjs');
@@ -297,13 +481,16 @@ describe('isolated keyring operations', () => {
   });
 
   it.runIf(process.platform === 'linux')('fast-fails without spawning when D-Bus session bus is unavailable', async () => {
-    delete process.env['DBUS_SESSION_BUS_ADDRESS'];
     const spawned = vi.fn(() => { throw new Error('spawn must not be called when D-Bus is unavailable'); });
     const started = Date.now();
+    const runtime = mkdtempSync(join(tmpdir(), 'leverframe-missing-dbus-'));
 
     const result = await runIsolatedKeyringOperation(
       { operation: 'read', service: 'leverframe', account: 'probe' },
-      { spawnImpl: spawned as unknown as typeof import('node:child_process').spawn },
+      {
+        env: { XDG_RUNTIME_DIR: runtime },
+        spawnImpl: spawned as unknown as typeof import('node:child_process').spawn,
+      },
     );
 
     expect(result).toEqual({ ok: false, error: 'D-Bus session is unavailable; Secret Service keyring access cannot be used' });
@@ -325,6 +512,36 @@ describe('isolated keyring operations', () => {
     await expect(result).resolves.toEqual({ ok: true, value: null });
   });
 
+  it('passes a derived D-Bus address to the spawned helper', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
+    const runtime = mkdtempSync(join(tmpdir(), 'leverframe-dbus-runtime-'));
+    const socketPath = join(runtime, 'bus');
+    const server = createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(socketPath, resolve);
+    });
+    const child = fakeChild();
+    const spawned = vi.fn(asSpawn(() => child)) as unknown as typeof import('node:child_process').spawn;
+
+    try {
+      const result = runIsolatedKeyringOperation(
+        { operation: 'read', service: 'leverframe', account: 'probe' },
+        { env: { XDG_RUNTIME_DIR: runtime }, moduleUrl: 'file:///missing.mjs', spawnImpl: spawned },
+      );
+      child.stdout.end(JSON.stringify({ ok: true, value: null }));
+      child.emit('close', 0, null);
+
+      await expect(result).resolves.toEqual({ ok: true, value: null });
+      expect(vi.mocked(spawned).mock.calls[0]?.[2]?.env).toMatchObject({
+        XDG_RUNTIME_DIR: runtime,
+        DBUS_SESSION_BUS_ADDRESS: `unix:path=${socketPath}`,
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
   it.runIf(process.platform === 'linux')('honors an explicit env over process.env for the availability check', async () => {
     process.env['DBUS_SESSION_BUS_ADDRESS'] = 'unix:path=/run/user/1000/bus';
     const spawned = vi.fn(() => { throw new Error('spawn must not be called when the provided env lacks D-Bus'); });
@@ -332,7 +549,7 @@ describe('isolated keyring operations', () => {
     const result = await runIsolatedKeyringOperation(
       { operation: 'read', service: 'leverframe', account: 'probe' },
       {
-        env: { HOME: '/tmp' },
+        env: { HOME: '/tmp', XDG_RUNTIME_DIR: mkdtempSync(join(tmpdir(), 'leverframe-missing-dbus-')) },
         spawnImpl: spawned as unknown as typeof import('node:child_process').spawn,
       },
     );

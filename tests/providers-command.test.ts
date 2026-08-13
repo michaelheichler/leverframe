@@ -141,7 +141,7 @@ describe('registry crud', () => {
     expect(result.removed).toBe(true);
     expect(result.credentialDeleted).toBe(true);
     expect(loadRegistry().providers).toHaveLength(0);
-    expect(deleteSpy).toHaveBeenCalledWith('keyring:provider:openai');
+    expect(deleteSpy).toHaveBeenCalledWith('keyring:provider:openai', expect.any(Function));
   });
 
   it('keeps a shared credential when another provider still references it', async () => {

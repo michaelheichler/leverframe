@@ -1,5 +1,6 @@
 import { withCredentialMutationLock } from './registry/lock.js';
 import {
+  buildKeyringHelperEnv,
   classifyKeyringError,
   missingDbusReason,
   runIsolatedKeyringOperation,
@@ -63,11 +64,56 @@ function isIntegrityError(error: string): boolean {
   return /^integrity:/i.test(error);
 }
 
+function fallbackWarning(): string {
+  return `${FALLBACK_WARNING}: ${getCredentialFallbackPath()}`;
+}
+
+function removeFallbackCredential(account: string, diag: ((msg: string) => void) | undefined): boolean {
+  try {
+    deleteFallbackCredential(account);
+    if (readFallbackCredential(account) !== null) {
+      reportWarning(diag, 'Credential fallback deletion could not be verified');
+      return false;
+    }
+    return true;
+  } catch (error) {
+    reportWarning(diag, `Could not verify credential fallback deletion: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
+
+async function promoteFallbackCredential(
+  account: string,
+  value: string,
+  diag: ((msg: string) => void) | undefined,
+): Promise<string | null> {
+  const published = await _credentialStoreInternals.keyringOperation({
+    operation: 'write', service: KEYRING_SERVICE, account, value,
+  });
+  if (!published.ok) {
+    reportWarning(diag, classifyKeyringError(published.error));
+    if (isIntegrityError(published.error)) return null;
+    reportWarning(diag, fallbackWarning());
+    return value;
+  }
+  const verified = await readKeyringService(KEYRING_SERVICE, account);
+  if (!verified.ok) {
+    reportWarning(diag, classifyKeyringError(verified.error));
+    if (isIntegrityError(verified.error)) return null;
+    reportWarning(diag, fallbackWarning());
+    return value;
+  }
+  if (verified.deleted || verified.value !== value) {
+    reportWarning(diag, 'Keyring promotion could not be verified');
+    return null;
+  }
+  if (!removeFallbackCredential(account, diag)) return null;
+  return value;
+}
+
 export async function readStoredCredential(account: string, diag?: (msg: string) => void): Promise<string | null> {
   return withCredentialMutationLock(`keyring:${account}`, async () => {
     const primary = await readKeyringService(KEYRING_SERVICE, account);
-    if (primary.ok && primary.deleted) return null;
-    if (primary.ok && primary.value !== null) return primary.value;
     if (!primary.ok) {
       if (isIntegrityError(primary.error)) {
         reportWarning(diag, `${classifyKeyringError(primary.error)} (account ${account}); run \`leverframe keyring repair\` to rebuild the journal`);
@@ -75,6 +121,17 @@ export async function readStoredCredential(account: string, diag?: (msg: string)
       }
       reportWarning(diag, classifyKeyringError(primary.error));
     }
+
+    let fallback: string | null;
+    try {
+      fallback = readFallbackCredential(account);
+    } catch (error) {
+      reportWarning(diag, `Could not read credential fallback: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+    if (fallback !== null) return promoteFallbackCredential(account, fallback, diag);
+    if (primary.ok && primary.deleted) return null;
+    if (primary.ok && primary.value !== null) return primary.value;
 
     for (const service of LEGACY_KEYRING_SERVICES) {
       const legacy = await readKeyringService(service, account);
@@ -88,27 +145,31 @@ export async function readStoredCredential(account: string, diag?: (msg: string)
       }
     }
 
-    const fallback = readFallbackCredential(account);
-    if (fallback !== null) reportWarning(diag, `${FALLBACK_WARNING}: ${getCredentialFallbackPath()}`);
-    return fallback;
+    return null;
   });
 }
 
 async function writeStoredCredentialUnlocked(account: string, value: string, diag?: (msg: string) => void): Promise<boolean> {
+  let staged = false;
+  try {
+    staged = readFallbackCredential(account) !== null;
+    if (staged) writeFallbackCredential(account, value);
+  } catch (error) {
+    reportWarning(diag, `Could not update credential fallback: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
   const result = await _credentialStoreInternals.keyringOperation({ operation: 'write', service: KEYRING_SERVICE, account, value });
   if (result.ok) {
-    try {
-      deleteFallbackCredential(account);
-    } catch (error) {
-      reportWarning(diag, `Keyring save succeeded, but stale fallback material was not removed: ${error instanceof Error ? error.message : String(error)}`);
+    if (!removeFallbackCredential(account, diag)) {
+      reportWarning(diag, 'Keyring save succeeded, but stale fallback material remains queued for removal');
     }
     return true;
   }
   reportWarning(diag, classifyKeyringError(result.error));
   if (isIntegrityError(result.error)) return false;
   try {
-    writeFallbackCredential(account, value);
-    reportWarning(diag, `${FALLBACK_WARNING}: ${getCredentialFallbackPath()}`);
+    if (!staged) writeFallbackCredential(account, value);
+    reportWarning(diag, fallbackWarning());
     return true;
   } catch (error) {
     reportWarning(diag, `Could not write credential fallback: ${error instanceof Error ? error.message : String(error)}`);
@@ -125,16 +186,10 @@ export function writeStoredCredential(account: string, value: string, diag?: (ms
 
 export function deleteStoredCredential(account: string, diag?: (msg: string) => void): Promise<boolean> {
   return withCredentialMutationLock(`keyring:${account}`, async () => {
+    if (!removeFallbackCredential(account, diag)) return false;
     const result = await _credentialStoreInternals.keyringOperation({ operation: 'delete', service: KEYRING_SERVICE, account });
     if (!result.ok) reportWarning(diag, classifyKeyringError(result.error));
-    let fallbackAbsent = false;
-    try {
-      deleteFallbackCredential(account);
-      fallbackAbsent = readFallbackCredential(account) === null;
-    } catch (error) {
-      reportWarning(diag, `Could not verify credential fallback deletion: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    return result.ok && fallbackAbsent;
+    return result.ok;
   });
 }
 
@@ -155,10 +210,11 @@ export async function diagnoseCredentialStorage(env: NodeJS.ProcessEnv = process
   const headless = Boolean(env.SSH_CONNECTION || env.SSH_TTY || (!env.DISPLAY && !env.WAYLAND_DISPLAY));
   const diagnostics: CredentialDiagnostic[] = [];
   if (headless) diagnostics.push({ level: 'info', message: 'Headless/SSH session detected; OpenAI device-code sign-in does not require a GUI.' });
-  const dbusReason = missingDbusReason(env);
+  const helperEnv = buildKeyringHelperEnv(env);
+  const dbusReason = missingDbusReason(helperEnv);
   const probe = dbusReason
     ? { ok: false as const, error: dbusReason }
-    : await runIsolatedKeyringOperation({ operation: 'read', service: KEYRING_SERVICE, account: '__leverframe_probe__' }, { env });
+    : await runIsolatedKeyringOperation({ operation: 'read', service: KEYRING_SERVICE, account: '__leverframe_probe__' }, { env: helperEnv });
   if (!probe.ok) {
     diagnostics.push({
       level: 'warn',
