@@ -81,6 +81,18 @@ export function estimateAnthropicInputTokens(body: object): number {
 }
 
 /**
+ * Rough local estimate for locally-produced output content (assistant text
+ * and/or serialized tool-call input), used only when a provider omits real
+ * output-token usage. Mirrors the bytes/4 prose weighting in
+ * {@link estimateAnthropicInputTokens} without its structural-JSON split,
+ * since the input here is the exact bytes already delivered to the client
+ * rather than a full request body.
+ */
+export function estimateAnthropicOutputTokens(outputBytes: number): number {
+  return outputBytes > 0 ? Math.max(1, Math.ceil(outputBytes / 4)) : 0;
+}
+
+/**
  * Anthropic-compatible message for an upstream context-length rejection.
  *
  * Contract: Claude Code parses this exact shape client-side —

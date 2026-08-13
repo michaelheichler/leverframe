@@ -24,6 +24,7 @@ import { CLAUDE_CODE_BILLING_HEADER_PREFIX } from './oauth/claude-identity.js';
 import { ToolResultImageError, ProviderTransportError } from './provider-error.js';
 import type { RequestExecutionObserver } from './request-execution-context.js';
 import { VERTEX_ANTHROPIC_NPM } from './constants.js';
+import { estimateAnthropicInputTokens, estimateAnthropicOutputTokens } from './anthropic-endpoints.js';
 
 export { silenceSdkWarnings, ToolResultImageError };
 
@@ -547,6 +548,7 @@ export function translateToolChoice(tc: AnthropicRequest['tool_choice']): SdkCal
 
 const COMPACT_TEXT_ONLY_START = 'CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.';
 const COMPACT_TEXT_ONLY_END = 'REMINDER: Do NOT call any tools. Respond with plain text only';
+const COMPACT_OAUTH_INSTRUCTION = 'Keep this compaction summary under 16,000 output tokens. Preserve concrete decisions, file paths, errors, pending tasks, and user instructions without repetition.';
 /**
  * Claude Code's structured-output agents inherit the terminal StructuredOutput
  * tool when they fork a reactive compaction turn, even though the compact prompt
@@ -618,8 +620,11 @@ export function translateRequest(
   // ChatGPT Codex OAuth backend requires `instructions` in providerOptions and
   // rejects the standard `system` field. It also manages its own output limit.
   if (options?.openAiOAuth && systemText) {
+    const instructions = compactRequest
+      ? `${systemText}\n\n${COMPACT_OAUTH_INSTRUCTION}`
+      : systemText;
     providerOptions = deepMergeProviderOptions(providerOptions, {
-      openai: { instructions: systemText },
+      openai: { instructions },
     });
   }
 
@@ -633,6 +638,18 @@ export function translateRequest(
   // GPT-5.6+ public-API implicit mode also
   // honors the explicit breakpoints copied from Claude Code's cache_control
   // blocks, while retaining an automatic latest-message breakpoint as fallback.
+  if (npm === '@github/copilot-sdk') {
+    const claudeSessionId = extractClaudeSessionId(body, options?.claudeSessionId);
+    if (claudeSessionId !== undefined) {
+      providerOptions = deepMergeProviderOptions(providerOptions, {
+        copilot: {
+          claudeSessionId,
+          ...(effort === undefined ? {} : { reasoningEffort: effort }),
+        },
+      });
+    }
+  }
+
   if (npm === '@ai-sdk/openai') {
     const claudeSessionId = extractClaudeSessionId(body, options?.claudeSessionId);
     providerOptions = deepMergeProviderOptions(providerOptions, {
@@ -931,6 +948,8 @@ export async function writeAnthropicStream(
     cache_creation_input_tokens: 0,
     cache_read_input_tokens: 0,
   };
+  /** @why Fallback source when the provider's finish part omits outputTokens. */
+  let outputContentBytes = 0;
 
   const emit = (event: string, data: unknown) => write(sseChunk(event, data));
   /** @why Early deltas are safe only when sanitization cannot rewrite the payload. */
@@ -979,6 +998,7 @@ export async function writeAnthropicStream(
     }
     const suffix = output.slice(emittedLength);
     if (!suffix) return;
+    outputContentBytes += Buffer.byteLength(suffix, 'utf8');
     emit('content_block_delta', {
       type: 'content_block_delta', index: idToBlock.get(id) ?? blockIndex,
       delta: { type: 'input_json_delta', partial_json: suffix },
@@ -1075,6 +1095,7 @@ export async function writeAnthropicStream(
         break;
       case 'reasoning-delta':
         if (openType !== 'thinking') openBlock('thinking', { type: 'thinking', thinking: '', signature: '' });
+        outputContentBytes += Buffer.byteLength(part.text ?? '', 'utf8');
         emit('content_block_delta', {
           type: 'content_block_delta', index: blockIndex,
           delta: { type: 'thinking_delta', thinking: part.text ?? '' },
@@ -1092,6 +1113,7 @@ export async function writeAnthropicStream(
         break;
       case 'text-delta':
         if (openType !== 'text') openBlock('text', { type: 'text', text: '' });
+        outputContentBytes += Buffer.byteLength(part.text ?? '', 'utf8');
         emit('content_block_delta', {
           type: 'content_block_delta', index: blockIndex,
           delta: { type: 'text_delta', text: part.text ?? '' },
@@ -1172,7 +1194,8 @@ export async function writeAnthropicStream(
         break;
       }
 
-      case 'finish':
+      case 'finish': {
+        const outputEstimate = estimateAnthropicOutputTokens(outputContentBytes);
         if (part.totalUsage) {
           const finalUsage = toAnthropicUsage(
             part.totalUsage,
@@ -1181,9 +1204,14 @@ export async function writeAnthropicStream(
           const hasFinalInputUsage = finalUsage.input_tokens
             + finalUsage.cache_creation_input_tokens
             + finalUsage.cache_read_input_tokens > 0;
+          const outputTokens = part.totalUsage.outputTokens === undefined && outputEstimate > 0
+            ? outputEstimate
+            : finalUsage.output_tokens;
           usage = hasFinalInputUsage
-            ? finalUsage
-            : { ...usage, output_tokens: finalUsage.output_tokens };
+            ? { ...finalUsage, output_tokens: outputTokens }
+            : { ...usage, output_tokens: outputTokens };
+        } else if (outputEstimate > 0) {
+          usage = { ...usage, output_tokens: outputEstimate };
         }
         observer?.onUsage?.({
           model: modelId,
@@ -1195,6 +1223,7 @@ export async function writeAnthropicStream(
         else if (part.finishReason === 'stop' && finishReason !== 'tool_use') finishReason = 'end_turn';
         rawFinishReason = part.finishReason;
         break;
+      }
 
       case 'error': {
         const e = part.error as { data?: unknown; message?: string } | undefined;
@@ -1442,10 +1471,22 @@ export async function generateAnthropicResponse(
 
   const inputRules = toolInputRules(params.tools);
   const finalUsage = toAnthropicUsage(usage, inputTokensIncludeCache);
+  const hasContent = !!text || toolCalls.length > 0;
+  const resolvedUsage: AnthropicUsage = {
+    ...finalUsage,
+    input_tokens: hasContent && usage?.inputTokens === undefined
+      ? estimateAnthropicInputTokens(params as unknown as object)
+      : finalUsage.input_tokens,
+    output_tokens: hasContent && usage?.outputTokens === undefined
+      ? estimateAnthropicOutputTokens(Buffer.byteLength(
+        text + toolCalls.map(tc => JSON.stringify(tc.input ?? null)).join(''), 'utf8',
+      ))
+      : finalUsage.output_tokens,
+  };
   const promptCacheKeyHash = sdkPromptCacheKeyHash(params);
   options?.onUsage?.({
     model: modelId,
-    ...finalUsage,
+    ...resolvedUsage,
     ...(promptCacheKeyHash ? { promptCacheKeyHash } : {}),
   });
   return {
@@ -1460,6 +1501,6 @@ export async function generateAnthropicResponse(
       })),
     ],
     stop_reason: finishReason === 'tool-calls' ? 'tool_use' : 'end_turn',
-    usage: finalUsage,
+    usage: resolvedUsage,
   };
 }

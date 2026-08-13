@@ -534,6 +534,7 @@ describe('translateRequest', () => {
       role: 'user',
       content: [{ type: 'text', text: compactInstruction }],
     });
+    expect(compact.providerOptions?.openai?.instructions).toContain('under 16,000 output tokens');
     expect(tools).toEqual([
       { name: 'Read', input_schema: { type: 'object' } },
       { name: 'StructuredOutput', input_schema: { type: 'object' } },
@@ -555,6 +556,7 @@ describe('translateRequest', () => {
     }, '@ai-sdk/openai', { openAiOAuth: true });
     expect(ordinary.tools && Object.keys(ordinary.tools)).toEqual(['Read', 'StructuredOutput']);
     expect(ordinary.toolChoice).toBe('required');
+    expect(ordinary.providerOptions?.openai?.instructions).not.toContain('under 16,000 output tokens');
     expect(compact.providerOptions?.openai?.promptCacheKey)
       .toBe(ordinary.providerOptions?.openai?.promptCacheKey);
   });
@@ -721,6 +723,34 @@ describe('generateAnthropicResponse', () => {
       expect(body.usage).toEqual(expected);
       vi.doUnmock('ai');
     }
+    vi.resetModules();
+  });
+
+  it('falls back to a local estimate when usage is entirely absent for real content', async () => {
+    vi.resetModules();
+    const generateText = vi.fn(async (_options: { abortSignal: AbortSignal }) => ({
+      text: 'Here is the answer you asked for.',
+      toolCalls: [],
+      finishReason: 'stop',
+      usage: undefined,
+    }));
+    vi.doMock('ai', () => ({
+      generateText,
+      streamText: vi.fn(),
+      tool: vi.fn((spec: unknown) => spec),
+      jsonSchema: vi.fn((schema: unknown) => schema),
+    }));
+
+    const { generateAnthropicResponse } = await import('../src/sdk-adapter.js');
+    const body = await generateAnthropicResponse(
+      {} as never,
+      { messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] as never },
+      'test-model',
+    );
+    const usage = body.usage as { input_tokens: number; output_tokens: number };
+    expect(usage.input_tokens).toBeGreaterThan(0);
+    expect(usage.output_tokens).toBeGreaterThan(0);
+    vi.doUnmock('ai');
     vi.resetModules();
   });
 
@@ -1947,5 +1977,19 @@ describe('writeAnthropicStream usage propagation', () => {
     const finalUsage = byEvent(events, 'message_delta').at(-1)!.data.usage;
     expect(finalUsage.input_tokens).toBe(297_000);
     expect(finalUsage.output_tokens).toBe(10);
+  });
+
+  it('falls back to a local output estimate when totalUsage omits outputTokens', async () => {
+    const { events } = await collect([
+      { type: 'start' },
+      { type: 'text-start', id: 't1' },
+      { type: 'text-delta', id: 't1', text: 'a much longer completion than the malformed-usage case' },
+      { type: 'text-end', id: 't1' },
+      { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 100 } },
+    ], 'm', { initialInputTokens: 37 });
+
+    const finalUsage = byEvent(events, 'message_delta').at(-1)!.data.usage;
+    expect(finalUsage.input_tokens).toBe(100);
+    expect(finalUsage.output_tokens).toBeGreaterThan(0);
   });
 });
