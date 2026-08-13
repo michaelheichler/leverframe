@@ -70,7 +70,7 @@ import {
   withProviderMutationLock,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-SFLLGI5H.js";
+} from "./chunk-WPLYAMNL.js";
 
 // src/cli.ts
 import pc18 from "picocolors";

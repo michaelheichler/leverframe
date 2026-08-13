@@ -298,7 +298,7 @@ var package_default = {
     "node-gyp-build": "4.8.4",
     open: "11.0.0",
     picocolors: "1.1.1",
-    tweakcc: "4.3.0",
+    tweakcc: "4.3.3",
     undici: "7.28.0",
     ws: "8.21.0"
   },
@@ -2741,4 +2741,4 @@ export {
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-SFLLGI5H.js.map
+//# sourceMappingURL=chunk-WPLYAMNL.js.map
