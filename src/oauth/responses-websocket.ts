@@ -1,22 +1,118 @@
-// responses-websocket.ts — persistent outbound WebSocket transport for OpenAI's
+// responses-websocket.ts, persistent outbound WebSocket transport for OpenAI's
 // ChatGPT/Codex Responses backend.
-//
 // The Vercel AI SDK still sees a fetch-like SSE response per model call. Behind
 // that interface, leverframe retains one sequential WebSocket chain per opaque
 // Claude session/model/effort/account partition and uses previous_response_id
 // only after proving the next translated conversation appends to the chain head.
+// The transport is split across responses-websocket-*.ts modules by
+// responsibility (connection pool, request-context lifecycle, diagnostics,
+// reasoning-protocol tracking, retry/backoff, continuation matching, payload
+// shaping, response-output accumulation). This file is the orchestration
+// entry point: it wires those modules together into the actual socket
+// lifecycle and exposes the public fetch-transport API.
 
 import { createHash } from 'node:crypto';
-import { AsyncLocalStorage } from 'node:async_hooks';
-import type { Agent as HttpAgent, IncomingHttpHeaders, IncomingMessage } from 'node:http';
+import type { Agent as HttpAgent } from 'node:http';
 import type { FetchFunction } from '@ai-sdk/provider-utils';
-import type { RawData, WebSocket as WsWebSocket } from 'ws';
+import type { RawData } from 'ws';
 import { CODEX_RESPONSES_WEBSOCKETS_BETA } from '../constants.js';
 import { outboundWsProxyAgent } from '../outbound-proxy.js';
 import { ProviderTransportError, parseRetryAfter } from '../provider-error.js';
+import type {
+  ConnectionEntry,
+  JsonObject,
+  RequestContext,
+  WebSocketConstructor,
+} from './responses-websocket-types.js';
+import {
+  allocateConnectionDebugId,
+  cleanupExpiredConnections,
+  connectionCount,
+  connectionCountByGeneration,
+  connectionEntries,
+  debugKey,
+  deleteEntry,
+  evictOldestIdleGeneration,
+  evictStaleCredentialConnections,
+  peekNextConnectionDebugId,
+  registerEntry,
+  releaseEntryForRequestId,
+  resetConnectionPoolState,
+  trackEntryForRequest,
+} from './responses-websocket-connection-pool.js';
+import {
+  activeContextsSnapshot,
+  cancelContext,
+  clearActiveContexts,
+  closeContext,
+  errorContext,
+  flushPending,
+  resetContextForRetry,
+  settleHandshakeSuccess,
+  trackActiveContext,
+} from './responses-websocket-context.js';
+import {
+  boundedDiagnosticIdentifier,
+  diagnosticTextFingerprint,
+  emitDiagnostic,
+  emitResponseErrorDiagnostic,
+  responseFailureDetails,
+} from './responses-websocket-diagnostics.js';
+import { trackReasoningProtocol } from './responses-websocket-reasoning-protocol.js';
+import {
+  boundedThrottleRetryAfterMs,
+  handleTransportFailure,
+  numericRetryAfterMs,
+  responseRetryAfterMs,
+  RETRYABLE_UPGRADE_STATUSES,
+  socketFailureIsRetryable,
+} from './responses-websocket-retry-backoff.js';
+import {
+  continuationMatch,
+  continuationMismatchDetails,
+  continuationMismatchSummary,
+  conversationItemHash,
+  conversationItemKind,
+  inputArray,
+} from './responses-websocket-continuation-matching.js';
+import {
+  applyResponsesLiteShape,
+  authorizationFingerprint,
+  bodyToString,
+  changedPromptFields,
+  hasResponsesLiteHeader,
+  instructionChangeSummary,
+  instructionsFromPayload,
+  responsesWebSocketPartitionKey,
+  responsesWebSocketPromptFieldHashes,
+  responsesWebSocketPromptFingerprint,
+  toHeaderRecord,
+} from './responses-websocket-payload.js';
+import {
+  captureOutput,
+  eventType,
+  expectedAssistantItems,
+  responseErrorCode,
+  responseUsage,
+  responseUsageDebug,
+  TERMINAL_EVENT_TYPES,
+} from './responses-websocket-response-output.js';
+import {
+  observeRejectedResponseBody,
+  providerRequestId,
+  safeResponseHeaders,
+} from './responses-websocket-rejected-response.js';
 
-const RESPONSES_LITE_HEADER = 'x-openai-internal-codex-responses-lite';
-const TERMINAL_EVENT_TYPES = new Set(['response.completed', 'response.failed', 'response.incomplete']);
+export type {
+  ResponsesWebSocketDiagnosticContext,
+  ResponsesWebSocketDiagnosticEvent,
+  ResponsesWebSocketFetchOptions,
+} from './responses-websocket-types.js';
+export { withResponsesWebSocketDiagnosticContext } from './responses-websocket-diagnostics.js';
+export { responsesWebSocketPartitionKey, responsesWebSocketPromptFingerprint } from './responses-websocket-payload.js';
+import type { ResponsesWebSocketFetchOptions } from './responses-websocket-types.js';
+import { currentDiagnosticContext } from './responses-websocket-diagnostics.js';
+
 const FAILURE_EVENT_TYPES = new Set(['error', 'response.failed', 'response.incomplete']);
 
 export const RESPONSES_WS_HARD_TTL_MS = 55 * 60_000;
@@ -25,217 +121,16 @@ export const RESPONSES_WS_NURSERY_IDLE_TTL_MS = 5 * 60_000;
 export const RESPONSES_WS_MAX_CONNECTIONS = 32;
 export const RESPONSES_WS_MAX_NURSERY_CONNECTIONS = 8;
 
-export interface ResponsesWebSocketFetchOptions {
-  providerId?: string;
-  accountId?: string;
-  /** Test overrides; production callers should leave these unset. */
-  hardTtlMs?: number;
-  idleTtlMs?: number;
-  nurseryIdleTtlMs?: number;
-  maxConnections?: number;
-  maxNurseryConnections?: number;
-  maxTransportRetries?: 0 | 1;
-  handshakeTimeoutMs?: number;
-  retryBaseDelayMs?: number;
-  retryMaxDelayMs?: number;
-  random?: () => number;
-  eagerResponseForTests?: boolean;
-  now?: () => number;
-  /** Opt-in structured transport diagnostics; never receives conversation content. */
-  onDiagnostic?: (event: ResponsesWebSocketDiagnosticEvent) => void;
-}
-
-export interface ResponsesWebSocketDiagnosticEvent extends Record<string, unknown> {
-  event: string;
-  requestId?: string;
-}
-
-export interface ResponsesWebSocketDiagnosticContext {
-  requestId?: string;
-  claudeSessionId?: string;
-}
-
-const diagnosticContext = new AsyncLocalStorage<ResponsesWebSocketDiagnosticContext>();
-
-/** Correlate a gateway/proxy request with the lower-level SDK WebSocket fetch. */
-export function withResponsesWebSocketDiagnosticContext<T>(
-  context: ResponsesWebSocketDiagnosticContext,
-  fn: () => T,
-): T {
-  return diagnosticContext.run(context, fn);
-}
-
-type JsonObject = Record<string, unknown>;
-
-interface OutputAccumulator {
-  type?: string;
-  itemId?: string;
-  text: string;
-  summaries: Map<number, string>;
-  done?: JsonObject;
-}
-
-interface RequestContext {
-  controller: ReadableStreamDefaultController<Uint8Array>;
-  encoder: TextEncoder;
-  originalPayload: JsonObject;
-  sendPayload: JsonObject;
-  promptFieldHashes: Record<string, string>;
-  instructionsSnapshot?: string;
-  continued: boolean;
-  retried: boolean;
-  closed: boolean;
-  frameCount: number;
-  responseId?: string;
-  pendingEvents: unknown[];
-  emittedModelData: boolean;
-  transportRetryCount: number;
-  transportRetryPending: boolean;
-  retryTimer?: ReturnType<typeof setTimeout>;
-  signal?: AbortSignal;
-  provider: string;
-  model?: string;
-  handshakeSettled: boolean;
-  resolveHandshake?: () => void;
-  rejectHandshake?: (reason: unknown) => void;
-  outputByIndex: Map<number, OutputAccumulator>;
-  outputIndexByItemId: Map<string, number>;
-  reasoningPartsByItemId: Map<string, Map<number, ReasoningPartState>>;
-  recentUpstreamEventTypes: string[];
-  emittedProtocolAnomalies: Set<string>;
-  emitDiagnostic?: (event: { event: string } & Record<string, unknown>) => void;
-  entry?: ConnectionEntry;
-  createReplacement: () => ConnectionEntry;
-  abortCleanup?: () => void;
-  /** Correlation id from the calling proxy request, used to target eviction at the
-   * specific connection that served a request the caller later found corrupted. */
-  requestId?: string;
-}
-
-type ReasoningPartState = 'active' | 'can_conclude' | 'concluded';
-
-interface ConnectionEntry {
-  debugId: number;
-  key?: string;
-  credentialScopeKey?: string;
-  credentialFingerprint?: string;
-  socket: WsWebSocket;
-  persistent: boolean;
-  generation: 'nursery' | 'established' | 'isolated';
-  open: boolean;
-  createdAt: number;
-  ttlPausedMs: number;
-  inFlightStartedAt?: number;
-  lastUsedAt: number;
-  inFlight: boolean;
-  upgradeResponsePending: boolean;
-  current?: RequestContext;
-  promptFieldHashes?: Record<string, string>;
-  instructionsSnapshot?: string;
-  responseId?: string;
-  requestInput?: unknown[];
-  expectedAssistant?: unknown[];
-  /** requestId of the turn most recently dispatched on this entry. used to target
-   * eviction without evicting an entry a later, unrelated request has since claimed. */
-  lastRequestId?: string;
-  options: Required<Pick<
-    ResponsesWebSocketFetchOptions,
-    'hardTtlMs' | 'idleTtlMs' | 'nurseryIdleTtlMs' | 'maxConnections'
-    | 'maxTransportRetries' | 'handshakeTimeoutMs' | 'retryBaseDelayMs' | 'retryMaxDelayMs'
-    | 'random' | 'now'
-  >> & { awaitOpen: boolean };
-  debug: (message: string) => void;
-}
-
-// A Claude session partition can have multiple valid conversation heads at
-// once: rewinds/branches, hidden title-generation requests, and stop hooks can
-// all share its model/effort/cache key. Retain each head and select by exact
-// conversation prefix instead of letting the newest branch replace the rest.
-// New heads live in a separately capped nursery LRU until their first reuse;
-// established heads therefore never consume nursery capacity, and one-shot
-// nursery traffic never consumes the established LRU's 32 reserved slots.
-const connections = new Map<string, Set<ConnectionEntry>>();
-const activeContexts = new Set<RequestContext>();
-let nextConnectionDebugId = 1;
-
-const REQUEST_ENTRY_TRACKING_CAP = 256;
-const entryByRequestId = new Map<string, ConnectionEntry>();
-
-function trackEntryForRequest(requestId: string, entry: ConnectionEntry): void {
-  entryByRequestId.set(requestId, entry);
-  entry.lastRequestId = requestId;
-  while (entryByRequestId.size > REQUEST_ENTRY_TRACKING_CAP) {
-    const oldestKey = entryByRequestId.keys().next().value;
-    if (oldestKey === undefined) break;
-    entryByRequestId.delete(oldestKey);
-  }
-}
-
-function connectionEntries(key?: string): ConnectionEntry[] {
-  return key ? [...(connections.get(key) ?? [])] : [...connections.values()].flatMap(entries => [...entries]);
-}
-
-function connectionCount(): number {
-  let count = 0;
-  for (const entries of connections.values()) count += entries.size;
-  return count;
-}
-
-function connectionCountByGeneration(generation: ConnectionEntry['generation']): number {
-  return connectionEntries().filter(entry => entry.generation === generation).length;
-}
-
-function registerEntry(entry: ConnectionEntry): void {
-  if (!entry.key) return;
-  let entries = connections.get(entry.key);
-  if (!entries) {
-    entries = new Set();
-    connections.set(entry.key, entries);
-  }
-  entries.add(entry);
-}
-
-function unregisterEntry(entry: ConnectionEntry): void {
-  if (!entry.key) return;
-  const entries = connections.get(entry.key);
-  if (!entries) return;
-  entries.delete(entry);
-  if (entries.size === 0) connections.delete(entry.key);
-}
-
-function debugKey(key: string | undefined): string {
-  return key ? key.slice(0, 12) : 'none';
-}
-
-function emitDiagnostic(
-  options: ResponsesWebSocketFetchOptions,
-  event: { event: string } & Record<string, unknown>,
-  correlation = diagnosticContext.getStore(),
-): void {
-  if (!options.onDiagnostic) return;
-  try {
-    options.onDiagnostic({
-      ...event,
-      ...(correlation?.requestId ? { requestId: correlation.requestId } : {}),
-      ...(correlation?.claudeSessionId ? { claudeSessionId: correlation.claudeSessionId } : {}),
-    });
-  } catch {
-    // Diagnostics must never alter inference behavior.
-  }
-}
-
 /** Test-only cleanup, also useful for preventing leaked fake sockets. */
 export function resetResponsesWebSocketConnectionsForTests(): void {
-  for (const ctx of activeContexts) {
+  for (const ctx of activeContextsSnapshot()) {
     cancelContext(ctx, new DOMException('Transport reset', 'AbortError'));
   }
   for (const entry of connectionEntries()) {
     try { entry.socket.close(); } catch { /* ignore */ }
   }
-  activeContexts.clear();
-  connections.clear();
-  entryByRequestId.clear();
-  nextConnectionDebugId = 1;
+  clearActiveContexts();
+  resetConnectionPoolState();
 }
 
 /** Close every pooled socket that was authenticated with a superseded token. */
@@ -264,10 +159,8 @@ export function evictResponsesWebSocketConnectionsForAccessToken(accessToken: st
  * already evicted, so it never tears down a connection serving other traffic.
  */
 export function evictResponsesWebSocketConnectionForRequest(requestId: string): boolean {
-  const entry = entryByRequestId.get(requestId);
-  entryByRequestId.delete(requestId);
-  if (!entry || entry.lastRequestId !== requestId) return false;
-  entry.lastRequestId = undefined;
+  const entry = releaseEntryForRequestId(requestId);
+  if (!entry) return false;
   const ctx = entry.current;
   if (ctx && !ctx.closed) {
     cancelContext(ctx, new DOMException('Reasoning-part protocol error detected', 'AbortError'));
@@ -277,1047 +170,7 @@ export function evictResponsesWebSocketConnectionForRequest(requestId: string): 
   return true;
 }
 
-/** Normalize the SDK's HeadersInit into a plain record for `ws`. */
-function toHeaderRecord(headers: HeadersInit | undefined): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (!headers) return out;
-  if (headers instanceof Headers) {
-    headers.forEach((value, key) => { out[key] = value; });
-  } else if (Array.isArray(headers)) {
-    for (const [key, value] of headers) out[key] = value;
-  } else {
-    for (const [key, value] of Object.entries(headers)) out[key] = String(value);
-  }
-  return out;
-}
-
-function hasResponsesLiteHeader(headers: Record<string, string>): boolean {
-  return Object.entries(headers).some(
-    ([key, value]) => key.toLowerCase() === RESPONSES_LITE_HEADER && value.toLowerCase() === 'true',
-  );
-}
-
-function authorizationFingerprint(headers: Record<string, string>): string {
-  const authorization = Object.entries(headers)
-    .find(([key]) => key.toLowerCase() === 'authorization')?.[1];
-  return authorization
-    ? createHash('sha256').update(authorization).digest('hex')
-    : '';
-}
-
-function bodyToString(body: BodyInit | null | undefined): string {
-  if (body == null) return '';
-  if (typeof body === 'string') return body;
-  if (body instanceof Uint8Array) return Buffer.from(body).toString('utf8');
-  if (body instanceof ArrayBuffer) return Buffer.from(new Uint8Array(body)).toString('utf8');
-  return String(body);
-}
-
-function applyResponsesLiteShape(payload: JsonObject): JsonObject {
-  const reasoning = payload.reasoning && typeof payload.reasoning === 'object'
-    ? { ...(payload.reasoning as JsonObject) }
-    : {};
-  reasoning.context = 'all_turns';
-  return { ...payload, reasoning, parallel_tool_calls: false, store: false };
-}
-
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (!value || typeof value !== 'object') return value;
-  const out: JsonObject = {};
-  for (const key of Object.keys(value as JsonObject).sort()) {
-    const child = (value as JsonObject)[key];
-    if (child !== undefined) out[key] = canonicalize(child);
-  }
-  return out;
-}
-
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(canonicalize(value));
-}
-
-/** Fingerprint non-conversation request fields for privacy-safe diagnostics. */
-export function responsesWebSocketPromptFingerprint(payload: JsonObject): string {
-  const stable = { ...payload };
-  delete stable.input;
-  delete stable.previous_response_id;
-  delete stable.stream;
-  delete stable.background;
-  return createHash('sha256').update(canonicalJson(stable)).digest('hex');
-}
-
-function responsesWebSocketPromptFieldHashes(payload: JsonObject): Record<string, string> {
-  const hashes: Record<string, string> = {};
-  for (const key of Object.keys(payload).sort()) {
-    if (key === 'input' || key === 'previous_response_id' || key === 'stream' || key === 'background') continue;
-    hashes[key] = createHash('sha256').update(canonicalJson(payload[key])).digest('hex').slice(0, 12);
-  }
-  return hashes;
-}
-
-function changedPromptFields(
-  previous: Record<string, string> | undefined,
-  current: Record<string, string>,
-): string[] {
-  if (!previous) return [];
-  return [...new Set([...Object.keys(previous), ...Object.keys(current)])]
-    .filter(key => previous[key] !== current[key])
-    .sort();
-}
-
-function instructionsFromPayload(payload: JsonObject): string | undefined {
-  return typeof payload.instructions === 'string' ? payload.instructions : undefined;
-}
-
-function instructionChangeSummary(previous: string | undefined, current: string | undefined): string | undefined {
-  if (previous === undefined || current === undefined || previous === current) return undefined;
-  const comparable = Math.min(previous.length, current.length);
-  let prefix = 0;
-  while (prefix < comparable && previous[prefix] === current[prefix]) prefix += 1;
-  let suffix = 0;
-  while (
-    suffix < comparable - prefix
-    && previous[previous.length - 1 - suffix] === current[current.length - 1 - suffix]
-  ) suffix += 1;
-  const firstDiffLine = previous.slice(0, prefix).split('\n').length;
-  return `instructions changed: previous_chars=${previous.length} current_chars=${current.length} common_prefix_chars=${prefix} common_suffix_chars=${suffix} first_diff_line=${firstDiffLine}`;
-}
-
-/**
- * Opaque socket partition key. Prompt fields intentionally are not part of this
- * key: Responses accepts fresh instructions/tools on each create, and Claude can
- * change them during a normal tool loop. Exact conversation lineage is validated
- * separately before previous_response_id is used.
- */
-export function responsesWebSocketPartitionKey(
-  wsUrl: string,
-  payload: JsonObject,
-  options: Pick<ResponsesWebSocketFetchOptions, 'providerId' | 'accountId'> = {},
-  credentialFingerprint = '',
-): string | undefined {
-  const promptCacheKey = payload.prompt_cache_key;
-  const model = payload.model;
-  if (typeof promptCacheKey !== 'string' || !promptCacheKey || typeof model !== 'string' || !model) return undefined;
-  const reasoning = payload.reasoning && typeof payload.reasoning === 'object'
-    ? payload.reasoning as JsonObject
-    : undefined;
-  const effort = typeof reasoning?.effort === 'string' ? reasoning.effort.trim().toLowerCase() : '';
-  const material = [
-    wsUrl,
-    options.providerId ?? 'openai',
-    options.accountId ?? '',
-    model,
-    effort,
-    promptCacheKey,
-    credentialFingerprint,
-  ].join('\x1f');
-  return createHash('sha256').update(material).digest('hex');
-}
-
-function inputArray(payload: JsonObject): unknown[] {
-  return Array.isArray(payload.input) ? payload.input : [];
-}
-
-function normalizeToolCallJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(normalizeToolCallJson);
-  if (!value || typeof value !== 'object') return value;
-  const record = value as JsonObject;
-  const out: JsonObject = {};
-  for (const [key, child] of Object.entries(record)) out[key] = normalizeToolCallJson(child);
-
-  // Claude parses tool_use input into an object. The OpenAI SDK later serializes
-  // it again, so insignificant whitespace and object-key order can differ from
-  // the model's original function-call argument string. Compare the JSON value,
-  // while leaving message text and function_call_output strings exact.
-  const jsonField = record.type === 'function_call'
-    ? 'arguments'
-    : record.type === 'custom_tool_call' ? 'input' : undefined;
-  if (jsonField && typeof record[jsonField] === 'string') {
-    try {
-      out[jsonField] = canonicalJson(JSON.parse(record[jsonField] as string));
-    } catch {
-      // A malformed/non-JSON custom-tool input must still match byte-for-byte.
-    }
-  }
-  return out;
-}
-
-function arraysEqual(left: unknown[], right: unknown[]): boolean {
-  return canonicalJson(normalizeToolCallJson(left)) === canonicalJson(normalizeToolCallJson(right));
-}
-
-type ContinuationMatchMode = 'exact' | 'omitted_reasoning';
-
-interface ContinuationMatch {
-  delta: unknown[];
-  mode: ContinuationMatchMode;
-}
-
-function conversationItemKind(value: unknown): string {
-  if (!value || typeof value !== 'object') return typeof value;
-  const record = value as JsonObject;
-  if (typeof record.type === 'string') return record.type;
-  if (typeof record.role === 'string') return record.role;
-  return 'object';
-}
-
-function conversationItemHash(value: unknown): string {
-  return createHash('sha256').update(canonicalJson(normalizeToolCallJson(value))).digest('hex').slice(0, 16);
-}
-
-function continuationMismatchDetails(entry: ConnectionEntry, payload: JsonObject): Record<string, unknown> {
-  const full = inputArray(payload);
-  const prefix = [...(entry.requestInput ?? []), ...(entry.expectedAssistant ?? [])];
-  const comparable = Math.min(full.length, prefix.length);
-  let mismatch = comparable;
-  for (let index = 0; index < comparable; index += 1) {
-    if (!arraysEqual([full[index]], [prefix[index]])) {
-      mismatch = index;
-      break;
-    }
-  }
-  const expected = mismatch < prefix.length ? prefix[mismatch] : undefined;
-  const actual = mismatch < full.length ? full[mismatch] : undefined;
-  return {
-    fullItems: full.length,
-    expectedPrefixItems: prefix.length,
-    firstMismatch: mismatch,
-    expectedKind: expected === undefined ? 'none' : conversationItemKind(expected),
-    actualKind: actual === undefined ? 'none' : conversationItemKind(actual),
-    ...(expected !== undefined ? { expectedHash: conversationItemHash(expected) } : {}),
-    ...(actual !== undefined ? { actualHash: conversationItemHash(actual) } : {}),
-  };
-}
-
-function continuationMismatchSummary(entry: ConnectionEntry, payload: JsonObject): string {
-  const details = continuationMismatchDetails(entry, payload);
-  return `full_items=${details.fullItems} expected_prefix_items=${details.expectedPrefixItems} `
-    + `first_mismatch=${details.firstMismatch} expected=${details.expectedKind} actual=${details.actualKind}`;
-}
-
-function continuationMatch(entry: ConnectionEntry, payload: JsonObject): ContinuationMatch | undefined {
-  if (!entry.responseId || !entry.requestInput || !entry.expectedAssistant) return undefined;
-  const full = inputArray(payload);
-  const exactPrefix = [...entry.requestInput, ...entry.expectedAssistant];
-  if (full.length > exactPrefix.length && arraysEqual(full.slice(0, exactPrefix.length), exactPrefix)) {
-    return { delta: full.slice(exactPrefix.length), mode: 'exact' };
-  }
-
-  // Claude does not always echo an OpenAI reasoning item back into its
-  // Anthropic-format history, even though it faithfully echoes the function
-  // call or assistant text that followed it. The omitted reasoning already
-  // belongs to previous_response_id, so it is safe to continue only when the
-  // remaining response items still match exactly.
-  const echoedAssistant = entry.expectedAssistant.filter(item => conversationItemKind(item) !== 'reasoning');
-  if (echoedAssistant.length === entry.expectedAssistant.length) return undefined;
-  const echoablePrefix = [...entry.requestInput, ...echoedAssistant];
-  if (full.length <= echoablePrefix.length || !arraysEqual(full.slice(0, echoablePrefix.length), echoablePrefix)) {
-    return undefined;
-  }
-  return { delta: full.slice(echoablePrefix.length), mode: 'omitted_reasoning' };
-}
-
-function eventType(event: unknown): string | undefined {
-  return event && typeof event === 'object' && typeof (event as JsonObject).type === 'string'
-    ? (event as JsonObject).type as string
-    : undefined;
-}
-
-function responseErrorCode(event: unknown): string | undefined {
-  if (!event || typeof event !== 'object') return undefined;
-  const record = event as JsonObject;
-  if (typeof record.code === 'string') return record.code;
-  const error = record.error && typeof record.error === 'object' ? record.error as JsonObject : undefined;
-  if (typeof error?.code === 'string') return error.code;
-  const response = record.response && typeof record.response === 'object' ? record.response as JsonObject : undefined;
-  const responseError = response?.error && typeof response.error === 'object' ? response.error as JsonObject : undefined;
-  return typeof responseError?.code === 'string' ? responseError.code : undefined;
-}
-
-function responseRetryAfterMs(event: unknown): number | undefined {
-  if (!event || typeof event !== 'object') return undefined;
-  const record = event as JsonObject;
-  const response = record.response && typeof record.response === 'object'
-    ? record.response as JsonObject
-    : undefined;
-  for (const candidate of [record, record.error, response?.error]) {
-    if (!candidate || typeof candidate !== 'object') continue;
-    const error = candidate as JsonObject;
-    const value = error.retry_after_seconds ?? error.retry_after;
-    if (typeof value === 'number' && Number.isFinite(value)) return value * 1_000;
-    if (typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value.trim())) {
-      return Number(value) * 1_000;
-    }
-  }
-  return undefined;
-}
-
-function boundedDiagnosticIdentifier(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const normalized = value.trim();
-  return normalized && /^[a-zA-Z0-9_.:/-]+$/.test(normalized)
-    ? normalized.slice(0, 128)
-    : undefined;
-}
-
-function diagnosticTextFingerprint(
-  field: 'errorMessage' | 'closeReason',
-  value: unknown,
-): Record<string, unknown> {
-  if (typeof value !== 'string' || value.length === 0) return {};
-  return {
-    [`${field}Bytes`]: Buffer.byteLength(value),
-    [`${field}Hash`]: createHash('sha256').update(value).digest('hex').slice(0, 16),
-  };
-}
-
-function responseFailureDetails(event: unknown): Record<string, unknown> {
-  if (!event || typeof event !== 'object') return {};
-  const record = event as JsonObject;
-  const response = record.response && typeof record.response === 'object'
-    ? record.response as JsonObject
-    : undefined;
-  const error = record.error && typeof record.error === 'object'
-    ? record.error as JsonObject
-    : response?.error && typeof response.error === 'object'
-      ? response.error as JsonObject
-      : undefined;
-  const incomplete = response?.incomplete_details && typeof response.incomplete_details === 'object'
-    ? response.incomplete_details as JsonObject
-    : undefined;
-  const message = typeof error?.message === 'string'
-    ? error.message
-    : typeof record.message === 'string' ? record.message : undefined;
-  return {
-    errorType: boundedDiagnosticIdentifier(error?.type ?? record.type),
-    errorCode: boundedDiagnosticIdentifier(error?.code ?? record.code),
-    responseStatus: boundedDiagnosticIdentifier(response?.status),
-    incompleteReason: boundedDiagnosticIdentifier(incomplete?.reason),
-    ...diagnosticTextFingerprint('errorMessage', message),
-  };
-}
-
-function emitContextDiagnostic(
-  entry: ConnectionEntry,
-  ctx: RequestContext,
-  details: { event: string } & Record<string, unknown>,
-): void {
-  ctx.emitDiagnostic?.({
-    connectionId: entry.debugId,
-    generation: entry.generation,
-    continued: ctx.continued,
-    retried: ctx.retried,
-    frameCount: ctx.frameCount,
-    emittedModelData: ctx.emittedModelData,
-    responseIdReceived: Boolean(ctx.responseId),
-    inFlightMs: entry.inFlightStartedAt === undefined
-      ? undefined
-      : Math.max(0, entry.options.now() - entry.inFlightStartedAt),
-    ...details,
-  });
-}
-
-function emitResponseErrorDiagnostic(
-  entry: ConnectionEntry,
-  ctx: RequestContext,
-  details: Record<string, unknown>,
-): void {
-  emitContextDiagnostic(entry, ctx, { event: 'ws_response_error', ...details });
-}
-
-function diagnosticItemIdHash(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0
-    ? createHash('sha256').update(value).digest('hex').slice(0, 16)
-    : undefined;
-}
-
-function reasoningPartIndex(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0
-    ? value
-    : undefined;
-}
-
-function emitProtocolAnomaly(
-  entry: ConnectionEntry,
-  ctx: RequestContext,
-  anomaly: string,
-  itemId: unknown,
-  summaryIndex: number | undefined,
-  upstreamEventType: string,
-): void {
-  const itemIdHash = diagnosticItemIdHash(itemId);
-  const key = `${anomaly}:${itemIdHash ?? 'none'}:${summaryIndex ?? 'none'}`;
-  if (ctx.emittedProtocolAnomalies.has(key)) return;
-  ctx.emittedProtocolAnomalies.add(key);
-  const parts = typeof itemId === 'string' ? ctx.reasoningPartsByItemId.get(itemId) : undefined;
-  emitContextDiagnostic(entry, ctx, {
-    event: 'ws_response_protocol_anomaly',
-    source: 'response_event_sequence',
-    anomaly,
-    upstreamEventType,
-    itemIdHash,
-    summaryIndex,
-    knownSummaryParts: parts
-      ? [...parts.entries()].sort(([left], [right]) => left - right)
-        .map(([index, state]) => ({ summaryIndex: index, state }))
-      : [],
-    recentUpstreamEventTypes: [...ctx.recentUpstreamEventTypes],
-  });
-}
-
-function trackReasoningProtocol(
-  entry: ConnectionEntry,
-  ctx: RequestContext,
-  event: unknown,
-  type: string | undefined,
-): void {
-  if (!type || !event || typeof event !== 'object') return;
-  ctx.recentUpstreamEventTypes.push(boundedDiagnosticIdentifier(type) ?? 'unknown');
-  if (ctx.recentUpstreamEventTypes.length > 20) ctx.recentUpstreamEventTypes.shift();
-
-  const record = event as JsonObject;
-  if (type === 'response.output_item.added' || type === 'response.output_item.done') {
-    const item = record.item && typeof record.item === 'object' ? record.item as JsonObject : undefined;
-    if (item?.type !== 'reasoning') return;
-    const itemId = item.id;
-    if (typeof itemId !== 'string' || itemId.length === 0) return;
-    const current = ctx.reasoningPartsByItemId.get(itemId);
-    if (type === 'response.output_item.added') {
-      if (current) {
-        emitProtocolAnomaly(entry, ctx, 'duplicate_reasoning_item_added', itemId, 0, type);
-      }
-      ctx.reasoningPartsByItemId.set(itemId, new Map([[0, 'active']]));
-    } else {
-      if (!current) {
-        emitProtocolAnomaly(entry, ctx, 'reasoning_start_missing_before_item_done', itemId, undefined, type);
-      }
-      ctx.reasoningPartsByItemId.delete(itemId);
-    }
-    return;
-  }
-
-  if (!type.startsWith('response.reasoning_summary_')) {
-    if (type === 'response.completed' && ctx.reasoningPartsByItemId.size > 0) {
-      for (const itemId of ctx.reasoningPartsByItemId.keys()) {
-        emitProtocolAnomaly(entry, ctx, 'reasoning_item_done_missing_before_completion', itemId, undefined, type);
-      }
-    }
-    return;
-  }
-
-  const itemId = record.item_id;
-  const summaryIndex = reasoningPartIndex(record.summary_index);
-  if (typeof itemId !== 'string' || summaryIndex === undefined) return;
-  const parts = ctx.reasoningPartsByItemId.get(itemId);
-  const state = parts?.get(summaryIndex);
-
-  if (type === 'response.reasoning_summary_part.added') {
-    if (!parts) {
-      emitProtocolAnomaly(entry, ctx, 'reasoning_item_missing_before_summary_part', itemId, summaryIndex, type);
-      return;
-    }
-    if (summaryIndex > 0) {
-      for (const [index, partState] of parts) {
-        if (partState === 'can_conclude') parts.set(index, 'concluded');
-      }
-      if (state === 'active' || state === 'can_conclude') {
-        emitProtocolAnomaly(entry, ctx, 'duplicate_reasoning_summary_part_added', itemId, summaryIndex, type);
-      }
-      parts.set(summaryIndex, 'active');
-    }
-    return;
-  }
-
-  if (type === 'response.reasoning_summary_text.delta') {
-    if (state === undefined || state === 'concluded') {
-      emitProtocolAnomaly(entry, ctx, 'reasoning_start_missing_before_delta', itemId, summaryIndex, type);
-    }
-    return;
-  }
-
-  if (type === 'response.reasoning_summary_part.done') {
-    if (state === undefined || state === 'concluded') {
-      emitProtocolAnomaly(entry, ctx, 'reasoning_start_missing_before_part_done', itemId, summaryIndex, type);
-      return;
-    }
-    parts!.set(summaryIndex, ctx.originalPayload.store === true ? 'concluded' : 'can_conclude');
-  }
-}
-
-function responseIdFromEvent(event: unknown): string | undefined {
-  if (!event || typeof event !== 'object') return undefined;
-  const response = (event as JsonObject).response;
-  if (!response || typeof response !== 'object') return undefined;
-  return typeof (response as JsonObject).id === 'string' ? (response as JsonObject).id as string : undefined;
-}
-
-interface ResponseUsage {
-  inputTokens: number;
-  cachedTokens: number;
-  cacheWriteTokens: number;
-  outputTokens: number;
-}
-
-function responseUsage(event: unknown): ResponseUsage | undefined {
-  if (!event || typeof event !== 'object') return undefined;
-  const response = (event as JsonObject).response;
-  if (!response || typeof response !== 'object') return undefined;
-  const usage = (response as JsonObject).usage;
-  if (!usage || typeof usage !== 'object') return undefined;
-  const usageRecord = usage as JsonObject;
-  const details = usageRecord.input_tokens_details && typeof usageRecord.input_tokens_details === 'object'
-    ? usageRecord.input_tokens_details as JsonObject
-    : {};
-  const number = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : 0;
-  return {
-    inputTokens: number(usageRecord.input_tokens),
-    cachedTokens: number(details.cached_tokens),
-    cacheWriteTokens: number(details.cache_write_tokens ?? usageRecord.cache_write_tokens),
-    outputTokens: number(usageRecord.output_tokens),
-  };
-}
-
-function responseUsageDebug(usage: ResponseUsage): string {
-  return `usage input_tokens=${usage.inputTokens} `
-    + `cached_tokens=${usage.cachedTokens} `
-    + `cache_write_tokens=${usage.cacheWriteTokens} `
-    + `output_tokens=${usage.outputTokens}`;
-}
-
-function outputAccumulator(ctx: RequestContext, index: number): OutputAccumulator {
-  let accumulator = ctx.outputByIndex.get(index);
-  if (!accumulator) {
-    accumulator = { text: '', summaries: new Map() };
-    ctx.outputByIndex.set(index, accumulator);
-  }
-  return accumulator;
-}
-
-function captureOutput(ctx: RequestContext, event: unknown): void {
-  if (!event || typeof event !== 'object') return;
-  const record = event as JsonObject;
-  const type = eventType(event);
-  if (type === 'response.created') {
-    ctx.responseId = responseIdFromEvent(event) ?? ctx.responseId;
-    return;
-  }
-  if (type === 'response.output_item.added' && typeof record.output_index === 'number') {
-    const item = record.item && typeof record.item === 'object' ? record.item as JsonObject : {};
-    const accumulator = outputAccumulator(ctx, record.output_index);
-    accumulator.type = typeof item.type === 'string' ? item.type : accumulator.type;
-    accumulator.itemId = typeof item.id === 'string' ? item.id : accumulator.itemId;
-    if (accumulator.itemId) ctx.outputIndexByItemId.set(accumulator.itemId, record.output_index);
-    return;
-  }
-  if (type === 'response.output_text.delta' && typeof record.item_id === 'string') {
-    const index = ctx.outputIndexByItemId.get(record.item_id);
-    if (index !== undefined && typeof record.delta === 'string') outputAccumulator(ctx, index).text += record.delta;
-    return;
-  }
-  if (type === 'response.reasoning_summary_text.delta' && typeof record.item_id === 'string') {
-    const index = ctx.outputIndexByItemId.get(record.item_id);
-    if (index !== undefined && typeof record.delta === 'string') {
-      const accumulator = outputAccumulator(ctx, index);
-      const summaryIndex = typeof record.summary_index === 'number' ? record.summary_index : 0;
-      accumulator.summaries.set(summaryIndex, (accumulator.summaries.get(summaryIndex) ?? '') + record.delta);
-    }
-    return;
-  }
-  if (type === 'response.output_item.done' && typeof record.output_index === 'number') {
-    const item = record.item && typeof record.item === 'object' ? record.item as JsonObject : {};
-    const accumulator = outputAccumulator(ctx, record.output_index);
-    accumulator.type = typeof item.type === 'string' ? item.type : accumulator.type;
-    accumulator.done = item;
-    return;
-  }
-  if (TERMINAL_EVENT_TYPES.has(type ?? '')) {
-    ctx.responseId = responseIdFromEvent(event) ?? ctx.responseId;
-    const response = record.response && typeof record.response === 'object' ? record.response as JsonObject : undefined;
-    if (Array.isArray(response?.output) && ctx.outputByIndex.size === 0) {
-      response.output.forEach((item, index) => {
-        if (item && typeof item === 'object') {
-          outputAccumulator(ctx, index).done = item as JsonObject;
-          outputAccumulator(ctx, index).type = typeof (item as JsonObject).type === 'string'
-            ? (item as JsonObject).type as string
-            : undefined;
-        }
-      });
-    }
-  }
-}
-
-function withoutEphemeralFields(item: JsonObject): JsonObject {
-  const out = { ...item };
-  delete out.id;
-  delete out.status;
-  delete out.phase;
-  delete out.role;
-  for (const [key, value] of Object.entries(out)) {
-    if (value == null) delete out[key];
-  }
-  return out;
-}
-
-function expectedAssistantItems(ctx: RequestContext): unknown[] {
-  const output: unknown[] = [];
-  for (const [, accumulator] of [...ctx.outputByIndex.entries()].sort(([left], [right]) => left - right)) {
-      const done = accumulator.done ?? {};
-      const type = accumulator.type ?? (typeof done.type === 'string' ? done.type : undefined);
-      if (type === 'message') {
-        const doneContent = Array.isArray(done.content) ? done.content : undefined;
-        const text = accumulator.text || (doneContent
-          ? doneContent.filter(part => part && typeof part === 'object' && (part as JsonObject).type === 'output_text')
-            .map(part => String((part as JsonObject).text ?? '')).join('')
-          : '');
-        output.push({ role: 'assistant', content: [{ type: 'output_text', text }] });
-        continue;
-      }
-      if (type === 'reasoning') {
-        const summary = accumulator.summaries.size
-          ? [...accumulator.summaries.entries()].sort(([a], [b]) => a - b)
-            .map(([, text]) => ({ type: 'summary_text', text }))
-          : Array.isArray(done.summary) ? done.summary : [];
-        output.push({ ...withoutEphemeralFields(done), type: 'reasoning', summary });
-        continue;
-      }
-      if (type === 'function_call' || type === 'custom_tool_call') {
-        output.push({ ...withoutEphemeralFields(done), type });
-      }
-  }
-  return output;
-}
-
-function encodeSse(ctx: RequestContext, event: unknown): void {
-  if (ctx.closed) return;
-  ctx.controller.enqueue(ctx.encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-}
-
-function flushPending(ctx: RequestContext): void {
-  for (const event of ctx.pendingEvents) encodeSse(ctx, event);
-  ctx.pendingEvents = [];
-}
-
-function settleHandshakeSuccess(ctx: RequestContext): void {
-  if (ctx.handshakeSettled) return;
-  ctx.handshakeSettled = true;
-  ctx.resolveHandshake?.();
-}
-
-function settleHandshakeFailure(ctx: RequestContext, reason: unknown): void {
-  if (ctx.handshakeSettled) return;
-  ctx.handshakeSettled = true;
-  ctx.rejectHandshake?.(reason);
-}
-
-function clearContextRuntime(ctx: RequestContext): void {
-  if (ctx.retryTimer !== undefined) {
-    clearTimeout(ctx.retryTimer);
-    ctx.retryTimer = undefined;
-  }
-  ctx.abortCleanup?.();
-  ctx.abortCleanup = undefined;
-  activeContexts.delete(ctx);
-}
-
-function closeContext(ctx: RequestContext): void {
-  if (ctx.closed) return;
-  ctx.closed = true;
-  clearContextRuntime(ctx);
-  try { ctx.controller.close(); } catch { /* already closed */ }
-}
-
-function errorContext(ctx: RequestContext, error: ProviderTransportError): void {
-  if (ctx.closed) return;
-  ctx.closed = true;
-  clearContextRuntime(ctx);
-  settleHandshakeFailure(ctx, error);
-  try { ctx.controller.error(error); } catch { /* already closed */ }
-}
-
-function deleteEntry(entry: ConnectionEntry, closeSocket = true): void {
-  entry.inFlight = false;
-  entry.current = undefined;
-  unregisterEntry(entry);
-  if (entry.lastRequestId) {
-    entryByRequestId.delete(entry.lastRequestId);
-    entry.lastRequestId = undefined;
-  }
-  if (closeSocket) {
-    try { entry.socket.close(); } catch { /* ignore */ }
-  }
-}
-
-function cancelContext(ctx: RequestContext, reason: unknown): void {
-  if (ctx.closed) return;
-  if (ctx.entry) deleteEntry(ctx.entry);
-  settleHandshakeFailure(ctx, reason);
-  closeContext(ctx);
-}
-
-function failContext(
-  entry: ConnectionEntry,
-  ctx: RequestContext,
-  error: ProviderTransportError,
-  diagnosticDetails: Record<string, unknown>,
-): void {
-  if (ctx.closed || ctx.entry !== entry) return;
-  entry.debug(`fail: ${error.safeMessage}`);
-  emitResponseErrorDiagnostic(entry, ctx, {
-    ...diagnosticDetails,
-    failurePhase: error.phase,
-    httpStatusCode: diagnosticDetails['httpStatusCode'] ?? error.httpStatus,
-    providerRequestId: error.providerRequestId,
-    retryAfterMs: error.retryAfterMs,
-    retryable: error.retryable,
-    retriesExhausted: error.retriesExhausted,
-    attemptCount: error.attemptCount,
-    outputEmitted: error.outputEmitted,
-  });
-  flushPending(ctx);
-  deleteEntry(entry);
-  errorContext(ctx, error);
-}
-
-const RETRYABLE_UPGRADE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504, 529]);
 const DEFAULT_THROTTLE_RETRY_AFTER_MS = 5_000;
-const MAX_THROTTLE_RETRY_AFTER_MS = 60_000;
-
-function boundedThrottleRetryAfterMs(value: number | undefined): number {
-  if (value === undefined || !Number.isFinite(value) || value < 0) {
-    return DEFAULT_THROTTLE_RETRY_AFTER_MS;
-  }
-  return Math.min(Math.round(value), MAX_THROTTLE_RETRY_AFTER_MS);
-}
-
-function numericRetryAfterMs(value: string | undefined): number | undefined {
-  if (typeof value !== 'string' || !/^\d+$/.test(value.trim())) return undefined;
-  const seconds = Number(value.trim());
-  return Number.isSafeInteger(seconds) && seconds <= Number.MAX_SAFE_INTEGER / 1_000
-    ? seconds * 1_000
-    : undefined;
-}
-const RETRYABLE_SOCKET_CODES = new Set([
-  'ECONNREFUSED',
-  'ECONNRESET',
-  'EHOSTUNREACH',
-  'ENETDOWN',
-  'ENETUNREACH',
-  'EPIPE',
-  'ETIMEDOUT',
-]);
-const RETRYABLE_CLOSE_CODES = new Set([1006, 1011, 1012, 1013, 1014]);
-const SAFE_RESPONSE_HEADERS = [
-  'retry-after',
-  'x-request-id',
-  'request-id',
-  'openai-request-id',
-  'x-openai-request-id',
-] as const;
-const MAX_REJECTED_BODY_PREFIX_BYTES = 4_096;
-const MAX_REJECTED_BODY_BYTES = 64 * 1_024;
-
-function headerValue(
-  headers: IncomingHttpHeaders,
-  name: string,
-): string | undefined {
-  const value = headers[name];
-  if (Array.isArray(value)) return value[0];
-  return value;
-}
-
-function safeResponseHeaders(
-  headers: IncomingHttpHeaders,
-): Record<string, string> {
-  const safe: Record<string, string> = {};
-  for (const name of SAFE_RESPONSE_HEADERS) {
-    const value = headerValue(headers, name);
-    if (value !== undefined) safe[name] = value;
-  }
-  return safe;
-}
-
-function providerRequestId(headers: IncomingHttpHeaders): string | undefined {
-  for (const name of SAFE_RESPONSE_HEADERS) {
-    if (!name.includes('request-id')) continue;
-    const value = headerValue(headers, name)?.trim();
-    if (value) return value.slice(0, 256);
-  }
-  return undefined;
-}
-
-function observeRejectedResponseBody(
-  response: IncomingMessage,
-  emit: (summary: Record<string, unknown>) => void,
-): void {
-  let bytesObserved = 0;
-  let prefixBytes = 0;
-  let completed = false;
-  let truncated = false;
-  const hash = createHash('sha256');
-  const finish = () => {
-    if (completed) return;
-    completed = true;
-    emit({
-      bodyBytesObserved: bytesObserved,
-      bodyPrefixSha256: prefixBytes > 0 ? hash.digest('hex').slice(0, 16) : undefined,
-      bodyTruncated: truncated,
-    });
-    response.destroy();
-  };
-  response.on('data', chunk => {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
-    bytesObserved += bytes.length;
-    const remaining = MAX_REJECTED_BODY_PREFIX_BYTES - prefixBytes;
-    if (remaining > 0) {
-      const prefix = bytes.subarray(0, remaining);
-      hash.update(prefix);
-      prefixBytes += prefix.length;
-    }
-    if (bytesObserved > MAX_REJECTED_BODY_BYTES) {
-      truncated = true;
-      response.destroy();
-    }
-  });
-  response.once('end', finish);
-  response.once('close', finish);
-  response.once('error', finish);
-  response.resume();
-}
-
-function socketFailureIsRetryable(error: Error): boolean {
-  const code = (error as NodeJS.ErrnoException).code;
-  if (code && RETRYABLE_SOCKET_CODES.has(code)) return true;
-  return /connection reset|socket hang up|timed? ?out|network unreachable|handshake.*timed out/i
-    .test(error.message);
-}
-
-function transportErrorWithAttempt(
-  error: ProviderTransportError,
-  attemptCount: number,
-  retriesExhausted: boolean,
-  outputEmitted: boolean,
-): ProviderTransportError {
-  return new ProviderTransportError({
-    provider: error.provider,
-    model: error.model,
-    phase: error.phase,
-    // Preserve the original classification. Omitting this made the
-    // reconstructed error re-derive category from phase/httpStatus alone
-    // (via classifyProviderErrorCategory), silently discarding any explicit
-    // override — e.g. a bodyless-403-throttle reclassified to 'rate_limit'
-    // would re-collapse to the terminal 'permission' category here, which
-    // then forced retryable back to false downstream.
-    category: error.category,
-    httpStatus: error.httpStatus,
-    providerRequestId: error.providerRequestId,
-    retryAfterMs: error.retryAfterMs,
-    retryable: error.retryable,
-    retriesExhausted,
-    outputEmitted,
-    cause: error.cause,
-    safeMessage: error.safeMessage,
-    responseHeaders: error.responseHeaders,
-    attemptCount,
-  });
-}
-
-function retryBudgetExhausted(
-  entry: ConnectionEntry,
-  ctx: RequestContext,
-  error: ProviderTransportError,
-): boolean {
-  return ctx.transportRetryCount >= entry.options.maxTransportRetries
-    || (error.retryAfterMs !== undefined && error.retryAfterMs > entry.options.retryMaxDelayMs);
-}
-
-function retryDelayMs(entry: ConnectionEntry, ctx: RequestContext, error: ProviderTransportError): number {
-  const exponent = Math.max(0, ctx.transportRetryCount);
-  const jitter = 0.5 + Math.max(0, Math.min(1, entry.options.random()));
-  const backoff = Math.min(
-    entry.options.retryMaxDelayMs,
-    Math.round(entry.options.retryBaseDelayMs * (2 ** exponent) * jitter),
-  );
-  return Math.max(backoff, error.retryAfterMs ?? 0);
-}
-
-function retryTransportFailure(
-  entry: ConnectionEntry,
-  ctx: RequestContext,
-  error: ProviderTransportError,
-  diagnosticDetails: Record<string, unknown>,
-  preOutputFrameAllowance = 0,
-): boolean {
-  if (
-    ctx.closed
-    || ctx.entry !== entry
-    || !error.retryable
-    || retryBudgetExhausted(entry, ctx, error)
-    || ctx.frameCount > preOutputFrameAllowance
-    || ctx.emittedModelData
-    || ctx.signal?.aborted
-  ) return false;
-
-  const delayMs = retryDelayMs(entry, ctx, error);
-
-  ctx.transportRetryCount += 1;
-  ctx.transportRetryPending = true;
-  entry.debug(`transport failed before output; retrying in ${delayMs}ms`);
-  emitContextDiagnostic(entry, ctx, {
-    event: 'ws_transport_retry',
-    outcome: 'started',
-    attemptNumber: ctx.transportRetryCount + 1,
-    delayMs,
-    failurePhase: error.phase,
-    httpStatusCode: error.httpStatus,
-    providerRequestId: error.providerRequestId,
-    ...diagnosticDetails,
-  });
-  deleteEntry(entry);
-  ctx.retryTimer = setTimeout(() => {
-    ctx.retryTimer = undefined;
-    if (ctx.closed || ctx.signal?.aborted) {
-      ctx.transportRetryPending = false;
-      emitContextDiagnostic(entry, ctx, {
-        event: 'ws_transport_retry',
-        outcome: 'cancelled',
-        attemptNumber: ctx.transportRetryCount + 1,
-      });
-      return;
-    }
-    resetContextForRetry(ctx);
-    let replacement: ConnectionEntry;
-    try {
-      replacement = ctx.createReplacement();
-    } catch (cause) {
-      const connectionError = new ProviderTransportError({
-        provider: ctx.provider,
-        model: ctx.model,
-        phase: 'connect',
-        retryable: false,
-        outputEmitted: false,
-        cause,
-        safeMessage: 'Provider WebSocket connection could not be created.',
-        attemptCount: ctx.transportRetryCount + 1,
-      });
-      ctx.transportRetryPending = false;
-      failContext(entry, ctx, connectionError, { source: 'connection_constructor' });
-      return;
-    }
-    if (ctx.closed || ctx.signal?.aborted) {
-      ctx.transportRetryPending = false;
-      deleteEntry(replacement);
-      return;
-    }
-    dispatchContext(replacement, ctx);
-    if (replacement.open) settleHandshakeSuccess(ctx);
-  }, delayMs);
-  ctx.retryTimer.unref?.();
-  return true;
-}
-
-function handleTransportFailure(
-  entry: ConnectionEntry,
-  ctx: RequestContext,
-  error: ProviderTransportError,
-  diagnosticDetails: Record<string, unknown>,
-  preOutputFrameAllowance = 0,
-): void {
-  if (retryTransportFailure(entry, ctx, error, diagnosticDetails, preOutputFrameAllowance)) return;
-  if (ctx.closed || ctx.entry !== entry) return;
-  const retriesExhausted = error.retryable
-    && ctx.frameCount <= preOutputFrameAllowance
-    && !ctx.emittedModelData
-    && retryBudgetExhausted(entry, ctx, error);
-  const finalError = transportErrorWithAttempt(
-    error,
-    ctx.transportRetryCount + 1,
-    retriesExhausted,
-    ctx.emittedModelData,
-  );
-  if (ctx.transportRetryPending) {
-    ctx.transportRetryPending = false;
-    emitContextDiagnostic(entry, ctx, {
-      event: 'ws_transport_retry',
-      outcome: 'exhausted',
-      attemptNumber: finalError.attemptCount,
-      failurePhase: finalError.phase,
-      httpStatusCode: finalError.httpStatus,
-      ...diagnosticDetails,
-    });
-  }
-  failContext(entry, ctx, finalError, diagnosticDetails);
-}
-
-function evictStaleCredentialConnections(
-  credentialScopeKey: string | undefined,
-  credentialFingerprint: string,
-): Array<Record<string, unknown>> {
-  if (!credentialScopeKey) return [];
-  const evictions: Array<Record<string, unknown>> = [];
-  for (const entry of connectionEntries()) {
-    if (
-      entry.inFlight
-      || entry.credentialScopeKey !== credentialScopeKey
-      || entry.credentialFingerprint === credentialFingerprint
-    ) continue;
-    evictions.push({
-      connectionId: entry.debugId,
-      partitionKey: entry.key,
-      generation: entry.generation,
-      reason: 'credential_rotated',
-    });
-    deleteEntry(entry);
-  }
-  return evictions;
-}
-
-function cleanupExpiredConnections(now: number): Array<Record<string, unknown>> {
-  const evictions: Array<Record<string, unknown>> = [];
-  for (const entry of connectionEntries()) {
-    if (entry.inFlight) continue;
-    const idleTtlMs = entry.generation === 'nursery'
-      ? entry.options.nurseryIdleTtlMs
-      : entry.options.idleTtlMs;
-    const ttlAgeMs = Math.max(0, now - entry.createdAt - entry.ttlPausedMs);
-    if (ttlAgeMs >= entry.options.hardTtlMs || now - entry.lastUsedAt >= idleTtlMs) {
-      entry.debug('evicting expired idle connection');
-      evictions.push({
-        connectionId: entry.debugId,
-        partitionKey: entry.key,
-        generation: entry.generation,
-        reason: ttlAgeMs >= entry.options.hardTtlMs
-          ? 'hard_ttl'
-          : entry.generation === 'nursery' ? 'nursery_idle_ttl' : 'idle_ttl',
-      });
-      deleteEntry(entry);
-    }
-  }
-  return evictions;
-}
-
-function evictOldestIdleGeneration(
-  generation: 'nursery' | 'established',
-  maxConnections: number,
-  reason: 'nursery_lru_cap' | 'established_lru_cap',
-): Array<Record<string, unknown>> {
-  const evictions: Array<Record<string, unknown>> = [];
-  const idle = connectionEntries()
-    .filter(entry => !entry.inFlight && entry.generation === generation)
-    .sort((left, right) => left.lastUsedAt - right.lastUsedAt);
-  while (connectionCountByGeneration(generation) >= maxConnections && idle.length) {
-    const oldest = idle.shift();
-    if (oldest) {
-      evictions.push({
-        connectionId: oldest.debugId,
-        partitionKey: oldest.key,
-        generation: oldest.generation,
-        reason,
-      });
-      deleteEntry(oldest);
-    }
-  }
-  return evictions;
-}
 
 function isModelDataEvent(type: string | undefined): boolean {
   return Boolean(type && (
@@ -1330,15 +183,6 @@ function isModelDataEvent(type: string | undefined): boolean {
 function outgoingPayload(payload: JsonObject): string {
   return JSON.stringify({ type: 'response.create', ...payload });
 }
-
-type WebSocketConstructor = new (
-  url: string,
-  options: {
-    headers: Record<string, string>;
-    agent?: HttpAgent;
-    handshakeTimeout: number;
-  },
-) => WsWebSocket;
 
 function sendContext(entry: ConnectionEntry, ctx: RequestContext): void {
   const outgoing = outgoingPayload(ctx.sendPayload);
@@ -1405,20 +249,6 @@ function finishInFlightPeriod(entry: ConnectionEntry, now: number): void {
   }
 }
 
-function resetContextForRetry(ctx: RequestContext): void {
-  ctx.continued = false;
-  ctx.sendPayload = ctx.originalPayload;
-  ctx.pendingEvents = [];
-  ctx.frameCount = 0;
-  ctx.emittedModelData = false;
-  ctx.responseId = undefined;
-  ctx.outputByIndex.clear();
-  ctx.outputIndexByItemId.clear();
-  ctx.reasoningPartsByItemId.clear();
-  ctx.recentUpstreamEventTypes = [];
-  ctx.emittedProtocolAnomalies.clear();
-}
-
 function handleSocketMessage(entry: ConnectionEntry, data: RawData): void {
   const ctx = entry.current;
   if (!ctx || ctx.closed) return;
@@ -1426,11 +256,11 @@ function handleSocketMessage(entry: ConnectionEntry, data: RawData): void {
   ctx.frameCount += 1;
   if (ctx.transportRetryPending) {
     ctx.transportRetryPending = false;
-    emitContextDiagnostic(entry, ctx, {
+    emitResponseErrorDiagnostic(entry, ctx, {
       event: 'ws_transport_retry',
       outcome: 'recovered',
       attemptNumber: ctx.transportRetryCount + 1,
-    });
+    } as unknown as Record<string, unknown>);
   }
   let event: unknown;
   try {
@@ -1552,7 +382,7 @@ function createConnection(
     ...(agent ? { agent } : {}),
   });
   const entry: ConnectionEntry = {
-    debugId: nextConnectionDebugId++,
+    debugId: allocateConnectionDebugId(),
     key: persistent ? key : undefined,
     credentialScopeKey: persistent ? credentialScopeKey : undefined,
     credentialFingerprint: persistent ? credentialFingerprint : undefined,
@@ -1602,18 +432,14 @@ function createConnection(
       return;
     }
 
-    // Observe the rejection body before failing on the next tick. Suppress
-    // socket-level errors during that window so the failure is handled once.
+    // Body observation runs before the tick-deferred failure below. suppress socket-level errors meanwhile so the failure is handled once.
     entry.upgradeResponsePending = true;
     const retryableUpgradeStatus = RETRYABLE_UPGRADE_STATUSES.has(statusCode) || statusCode === 403;
     const error = new ProviderTransportError({
       provider: ctx.provider,
       model: ctx.model,
       phase: 'websocket_upgrade',
-      // classifyProviderErrorCategory maps httpStatus 403 to the terminal
-      // 'permission' category by default, which would force retryable back
-      // to false regardless of what is passed below; reclassify to
-      // 'rate_limit' so the edge throttle actually stays retryable.
+      // 403 defaults to the terminal 'permission' category, which would force retryable back to false. reclassify so the edge throttle stays retryable.
       category: statusCode === 403 ? 'rate_limit' : undefined,
       httpStatus: mappedStatusCode,
       providerRequestId: requestId,
@@ -1626,11 +452,11 @@ function createConnection(
         : `Provider WebSocket upgrade was rejected with HTTP ${statusCode}.`,
       responseHeaders,
     });
-    observeRejectedResponseBody(response, summary => emitContextDiagnostic(entry, ctx, {
+    observeRejectedResponseBody(response, summary => emitResponseErrorDiagnostic(entry, ctx, {
       event: 'ws_upgrade_response_body',
       httpStatusCode: statusCode,
       ...summary,
-    }));
+    } as unknown as Record<string, unknown>));
     setImmediate(() => handleTransportFailure(entry, ctx, error, {
       source: 'unexpected_response',
       httpStatusCode: statusCode,
@@ -1674,7 +500,7 @@ function createConnection(
         provider: ctx.provider,
         model: ctx.model,
         phase: ctx.frameCount === 0 ? 'connect' : 'stream',
-        retryable: RETRYABLE_CLOSE_CODES.has(code),
+        retryable: RETRYABLE_UPGRADE_STATUSES.has(code) || false,
         outputEmitted: ctx.emittedModelData,
         cause: new Error(`WebSocket closed with code ${code}`),
         safeMessage: 'Provider WebSocket closed before completion.',
@@ -1719,8 +545,7 @@ export function createResponsesWebSocketFetch(
 
   return async (_input, init): Promise<Response> => {
     const { WebSocket } = await import('ws');
-    // ws does not honor HTTP(S)_PROXY env vars itself; tunnel through the
-    // configured outbound proxy when one applies to this wss URL.
+    // ws ignores HTTP(S)_PROXY env vars. tunnel through the configured outbound proxy when one applies to this wss URL.
     const proxyAgent = await outboundWsProxyAgent(wsUrl);
     const headers = toHeaderRecord(init?.headers);
     headers['OpenAI-Beta'] = CODEX_RESPONSES_WEBSOCKETS_BETA;
@@ -1744,7 +569,7 @@ export function createResponsesWebSocketFetch(
     const promptFingerprint = responsesWebSocketPromptFingerprint(payload);
     const promptFieldHashes = responsesWebSocketPromptFieldHashes(payload);
     const instructionsSnapshot = instructionsFromPayload(payload);
-    const diagnosticCorrelation = diagnosticContext.getStore();
+    const diagnosticCorrelation = currentDiagnosticContext();
     const now = resolvedOptions.now();
     const evictions = [
       ...evictStaleCredentialConnections(credentialScopeKey, credentialFingerprint),
@@ -1755,7 +580,7 @@ export function createResponsesWebSocketFetch(
     const idleCandidates = candidates.filter(entry => !entry.inFlight);
     const matches = idleCandidates
       .map(entry => ({ entry, match: continuationMatch(entry, payload) }))
-      .filter((candidate): candidate is { entry: ConnectionEntry; match: ContinuationMatch } => candidate.match !== undefined)
+      .filter((candidate): candidate is { entry: ConnectionEntry; match: NonNullable<typeof candidate.match> } => candidate.match !== undefined)
       // Prefer the longest matching history, which produces the smallest delta.
       .sort((left, right) => left.match.delta.length - right.match.delta.length
         || (left.match.mode === right.match.mode ? 0 : left.match.mode === 'exact' ? -1 : 1));
@@ -1798,15 +623,13 @@ export function createResponsesWebSocketFetch(
         + (selectedMatch.mode === 'omitted_reasoning' ? ' after accepting omitted reasoning' : ''),
       );
     } else if (candidates.some(entry => entry.inFlight)) {
-      // Claude auxiliary requests can share a session id. Never multiplex or
-      // queue a request whose lineage cannot yet include the active response.
+      // Claude auxiliary requests can share a session id. never multiplex or queue a request whose lineage cannot yet include the active response.
       selected = undefined;
       persistent = false;
       decision = 'parallel_isolated';
       debug('parallel request using an isolated socket');
     } else if (diagnosticEntry) {
-      // A rewind, branch, or hidden auxiliary inference gets its own full-context
-      // head. Existing heads remain eligible for later exact-prefix matches.
+      // A rewind, branch, or hidden auxiliary inference gets its own full-context head. existing heads remain eligible for later exact-prefix matches.
       debug(
         `history mismatch starting an additional chain; retained ${candidates.length} existing head(s) `
         + `(${continuationMismatchSummary(diagnosticEntry, payload)})`,
@@ -1865,7 +688,7 @@ export function createResponsesWebSocketFetch(
       selectedGeneration: selected?.generation,
       continuationMatchMode: selectedMatch?.mode,
       promotedConnectionId,
-      createdConnectionId: selected ? undefined : nextConnectionDebugId,
+      createdConnectionId: selected ? undefined : peekNextConnectionDebugId(),
       createdGeneration: selected ? undefined : persistent ? 'nursery' : 'isolated',
       incrementalInputItems: selectedDelta?.length,
       heads: candidates.map(entry => ({
@@ -1936,9 +759,10 @@ export function createResponsesWebSocketFetch(
             debug,
             proxyAgent,
           ),
+          redispatch: replacement => dispatchContext(replacement, ctx),
         };
         activeContext = ctx;
-        activeContexts.add(ctx);
+        trackActiveContext(ctx);
 
         const abort = () => {
           const reason = signal?.reason ?? new DOMException('Request aborted', 'AbortError');

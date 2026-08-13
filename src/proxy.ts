@@ -1,23 +1,13 @@
-// src/proxy.ts — Local Anthropic-to-OpenAI translation proxy
-// Adapted from cucoleadan/opencode-cowork-proxy (MIT)
 import { createServer } from 'node:http';
-import type { ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { appendFileSync, openSync, writeSync, closeSync } from 'node:fs';
 import { readBody, extractApiKey, sendJson } from './http-utils.js';
 import { formatAnthropicModelEntry, formatAnthropicModelList } from './server/models.js';
-import { claudeCodeClientModelId, routeLookupIds, stripOneMContextSuffix } from './context-model-id.js';
+import { claudeCodeClientModelId, stripOneMContextSuffix } from './context-model-id.js';
 import {
-  getProxyDebugLogPath,
-  INFERENCE_PROGRESS_INTERVAL_MS,
-  redactTraceLine,
-  resetTraceLog,
-  writeInferenceResponseLifecycleLog,
   writeInferenceResponseErrorLog,
   writeWebSocketDiagnosticLog,
 } from './trace-log.js';
 import { relayAnthropicMessages, UpstreamUnreachableError } from './upstream-forward.js';
-import { revalidateCustomEndpointUrl } from './registry/url-security.js';
 import {
   CLAUDE_CODE_CLI_VERSION,
   injectClaudeCodeBillingSystemLine,
@@ -69,345 +59,37 @@ import {
 import { resolveExecutionSessionKey } from './execution-session-key.js';
 import { buildProviderCapabilities } from './provider-capabilities.js';
 import { createRequestExecutionContext, cancelAllActiveRequestExecutions } from './request-execution-context.js';
-import { autoReplayMaxRetries, type LifecycleDeadlines } from './request-lifecycle.js';
+import { autoReplayMaxRetries } from './request-lifecycle.js';
 import { createSseHeartbeat, DELAY_FIRST_HEARTBEAT } from './sse-heartbeat.js';
+import { isTransientSdkStreamFailure } from './proxy-retry.js';
+import {
+  lookupRoute,
+  parseAnthropicRequest,
+  proxyExecutionMessages,
+  proxyRuntimeRouteKey,
+  proxyToolResults,
+  revalidateUpstreamUrl,
+  type ProxyModelAlias,
+  type ProxyRoute,
+} from './proxy-request.js';
+import {
+  anthropicError,
+  applyProxyExecutionHeaders,
+  createTranslationLifecycle,
+  makeProxyLog,
+} from './proxy-response.js';
 
-type ProxyLog = (message: string | (() => string)) => void;
+export { isTransientSdkStreamFailure } from './proxy-retry.js';
+export { aliasModelId, type ProxyModelAlias, type ProxyRoute } from './proxy-request.js';
 
 const INTERNAL_ADAPTER_KEEPALIVE_TIMEOUT_MS = 60_000;
-const TRANSIENT_CONNECTION_CODES = new Set([
-  'ECONNABORTED',
-  'ECONNREFUSED',
-  'ECONNRESET',
-  'EPIPE',
-  'ETIMEDOUT',
-  'UND_ERR_CONNECT_TIMEOUT',
-  'UND_ERR_SOCKET',
-]);
-
-/** Nested SDK wrappers must not hide a transient transport cause or upstream 5xx. */
-export function isTransientSdkStreamFailure(error: unknown): boolean {
-  if (sdkTranslationErrorSignature(error) === 'reasoning_part_not_found') return true;
-
-  const sdkStatusCode = sdkUpstreamErrorDetails(error)?.statusCode;
-  if (sdkStatusCode !== undefined && sdkStatusCode >= 500 && sdkStatusCode <= 599) return true;
-
-  const pending: unknown[] = [error];
-  const seen = new Set<unknown>();
-  while (pending.length > 0) {
-    const value = pending.shift();
-    if (!value || typeof value !== 'object' || seen.has(value)) continue;
-    seen.add(value);
-    const record = value as {
-      cause?: unknown;
-      code?: unknown;
-      errors?: unknown[];
-      lastError?: unknown;
-      message?: unknown;
-      statusCode?: unknown;
-    };
-    if (typeof record.statusCode === 'number' && record.statusCode >= 500 && record.statusCode <= 599) return true;
-    if (typeof record.code === 'string' && TRANSIENT_CONNECTION_CODES.has(record.code)) return true;
-    if (typeof record.message === 'string'
-      && /connection reset|premature close|socket hang up|terminated/i.test(record.message)) {
-      return true;
-    }
-    pending.push(record.cause, record.lastError);
-    if (Array.isArray(record.errors)) pending.push(...record.errors);
-  }
-  return false;
-}
-
-function proxyExecutionMessages(body: unknown): Array<{ role: string; content: unknown }> {
-  if (!body || typeof body !== 'object') return [];
-  const messages = (body as Record<string, unknown>).messages;
-  if (!Array.isArray(messages)) return [];
-  return messages.flatMap(value => {
-    if (!value || typeof value !== 'object') return [];
-    const message = value as Record<string, unknown>;
-    return typeof message.role === 'string' ? [{ role: message.role, content: message.content }] : [];
-  });
-}
-
-function proxyToolResults(body: unknown): Array<{ toolUseId: string; content: string }> {
-  if (!body || typeof body !== 'object') return [];
-  const messages = (body as Record<string, unknown>).messages;
-  if (!Array.isArray(messages)) return [];
-  const results: Array<{ toolUseId: string; content: string }> = [];
-  for (const value of messages) {
-    if (!value || typeof value !== 'object') continue;
-    const content = (value as Record<string, unknown>).content;
-    if (!Array.isArray(content)) continue;
-    for (const blockValue of content) {
-      if (!blockValue || typeof blockValue !== 'object') continue;
-      const block = blockValue as Record<string, unknown>;
-      if (block.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue;
-      results.push({
-        toolUseId: block.tool_use_id,
-        content: typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? ''),
-      });
-    }
-  }
-  return results;
-}
-
-function applyProxyExecutionHeaders(res: ServerResponse, tracking: ExecutionTrackingHandle): void {
-  if (res.headersSent) return;
-  for (const [name, value] of Object.entries(tracking.headers)) res.setHeader(name, value);
-}
-
-async function revalidateUpstreamUrl(rawUrl: string): Promise<boolean> {
-  if (!rawUrl) return true;
-  const allowInsecureLocal = rawUrl.trim().toLowerCase().startsWith('http://');
-  const result = await revalidateCustomEndpointUrl(rawUrl, { allowInsecureLocal });
-  return result.ok;
-}
-
-type ProxyAnthropicRequestBody = Partial<AnthropicRequest> & Record<string, unknown>;
-
-type ParsedAnthropicRequest =
-  | { ok: true; body: ProxyAnthropicRequestBody }
-  | { ok: false; status: number; message: string };
-
-/**
- * Parses and validates the raw wire body for /v1/messages (and its
- * count_tokens sibling). `model` stays optional here on purpose — Claude
- * Code's token-counting and health-probe requests omit it, and the caller
- * falls back to the default route. Beyond the type check on `model`, this
- * intentionally validates nothing else about the body's shape (e.g. a
- * non-array `messages`) — that stays the translation/relay layer's job, so
- * its existing error taxonomy (400 vs 502, retryability, etc.) for a
- * malformed-but-present field is unchanged by this refactor.
- */
-function parseAnthropicRequest(raw: string): ParsedAnthropicRequest {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { ok: false, status: 400, message: 'Invalid JSON body' };
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { ok: false, status: 400, message: 'Request body must be a JSON object' };
-  }
-  const body = parsed as ProxyAnthropicRequestBody;
-  if (body.model !== undefined && typeof body.model !== 'string') {
-    return { ok: false, status: 400, message: `'model' must be a string when present, got ${typeof body.model}` };
-  }
-  return { ok: true, body };
-}
-
-function createTranslationLifecycle(
-  logPath: string | undefined,
-  requestId: string | undefined,
-  modelId: string,
-  provider: string,
-) {
-  if (!logPath || !requestId) return undefined;
-
-  const startedAt = Date.now();
-  let firstPartAt: number | undefined;
-  let lastPartAt: number | undefined;
-  let lastPartType: string | undefined;
-  let lastOutputAt: number | undefined;
-  let sdkParts = 0;
-  let translatedBytes = 0;
-  let translatedChunks = 0;
-  let stopped = false;
-  let dispatched = false;
-
-  const write = (
-    event: Parameters<typeof writeInferenceResponseLifecycleLog>[1]['event'],
-    extra: Partial<Parameters<typeof writeInferenceResponseLifecycleLog>[1]> = {},
-  ) => writeInferenceResponseLifecycleLog(logPath, {
-    event,
-    requestId,
-    modelId,
-    provider,
-    route: 'translated',
-    ...extra,
-  });
-  const snapshot = (now: number) => ({
-    phase: !dispatched
-      ? 'preparing_translation' as const
-      : sdkParts === 0
-        ? 'waiting_for_sdk' as const
-        : 'translating' as const,
-    durationMs: now - startedAt,
-    sdkParts,
-    ...(lastPartAt !== undefined ? { sdkIdleMs: now - lastPartAt } : {}),
-    translatedBytes,
-    translatedChunks,
-    ...(lastOutputAt !== undefined ? { outputIdleMs: now - lastOutputAt } : {}),
-    ...(lastPartType ? { lastPartType } : {}),
-  });
-  const timer = setInterval(() => {
-    if (!stopped) write('translation_progress', snapshot(Date.now()));
-  }, INFERENCE_PROGRESS_INTERVAL_MS);
-  timer.unref();
-
-  return {
-    dispatched() {
-      if (stopped || dispatched) return;
-      dispatched = true;
-      write('translation_dispatched', snapshot(Date.now()));
-    },
-    onPart(partType: string) {
-      const now = Date.now();
-      sdkParts += 1;
-      lastPartAt = now;
-      lastPartType = partType;
-      if (firstPartAt === undefined) {
-        firstPartAt = now;
-        write('translation_started', {
-          durationMs: now - startedAt,
-          sdkParts,
-          lastPartType,
-        });
-      }
-    },
-    onOutput(chunk: string) {
-      translatedBytes += Buffer.byteLength(chunk);
-      translatedChunks += 1;
-      lastOutputAt = Date.now();
-    },
-    complete() {
-      if (stopped) return;
-      stopped = true;
-      clearInterval(timer);
-      write('translation_completed', snapshot(Date.now()));
-    },
-    cancel() {
-      if (stopped) return;
-      stopped = true;
-      clearInterval(timer);
-      write('translation_cancelled', snapshot(Date.now()));
-    },
-    fail(errorType: string, errorSignature?: string) {
-      if (stopped) return;
-      stopped = true;
-      clearInterval(timer);
-      write('translation_failed', { ...snapshot(Date.now()), errorType, errorSignature });
-    },
-  };
-}
-
-function appendSecureLog(logPath: string, line: string): void {
-  const redacted = redactTraceLine(line);
-  try {
-    const fd = openSync(logPath, 'a', 0o600);
-    try {
-      writeSync(fd, `${new Date().toISOString()} ${redacted}\n`);
-    } finally {
-      closeSync(fd);
-    }
-  } catch {
-    try {
-      appendFileSync(logPath, `${new Date().toISOString()} ${redacted}\n`);
-    } catch { /* ignore */ }
-  }
-}
-
-function makeProxyLog(debug: boolean, logPath?: string): ProxyLog {
-  if (!debug) return () => {};
-  const path = logPath ?? getProxyDebugLogPath();
-  resetTraceLog(path);
-  return (message) => {
-    const line = typeof message === 'function' ? message() : message;
-    appendSecureLog(path, line);
-  };
-}
 
 // ── HTTP server ─────────────────────────────────────────────────────
-
-function anthropicError(res: ServerResponse, status: number, message: string, requestId?: string) {
-  sendJson(res, status, {
-    type: 'error',
-    error: { type: anthropicErrorType(status), message },
-    ...(requestId ? { request_id: requestId } : {}),
-  });
-}
 
 export interface ProxyHandle {
   port: number;
   token: string;
   close: () => void | Promise<void>;
-}
-
-/**
- * A single entry in a proxy catalog.
- * aliasId: the id advertised in /v1/models (must start with 'claude-' or 'anthropic-')
- * realModelId: the actual model id sent to the upstream provider
- * upstreamUrl: full chat-completions URL (openai) or base URL without /v1 (anthropic)
- * apiKey: per-route upstream key. SDK routes may intentionally be empty for
- * anonymous free providers; passthrough and Cloud Code routes still require it.
- */
-export interface ProxyRoute {
-  aliasId: string;
-  realModelId: string;
-  displayName: string;
-  upstreamUrl: string;
-  apiKey: string;
-  modelFormat: 'anthropic' | 'openai';
-  contextWindow?: number;
-  /** Provider never confirmed a context window — resolve to the conservative default, never a heuristic. */
-  contextWindowUnconfirmed?: boolean;
-  npm?: string;      // OpenCode api.npm — when SDK-migrated, routes via the adapter
-  baseURL?: string;  // base URL for openai-compatible / openrouter SDK providers
-  providerId?: string;
-  authType?: 'api' | 'oauth' | 'none';
-  oauthAccountId?: string;
-  providerData?: Record<string, unknown>;
-  /** Called once on upstream HTTP 401 to get a refreshed OAuth token. Retry happens only if token differs from current apiKey. */
-  refreshToken?: (rejectedToken: string) => Promise<string | null>;
-  supportedParameters?: string[];
-  reasoning?: boolean;
-  interleavedReasoningField?: string;
-  /** Backend capability: model requires the Responses-Lite request shape (x-openai-internal-codex-responses-lite). */
-  useResponsesLite?: boolean;
-  /** Backend capability: model must use the WebSocket Responses transport instead of HTTP. */
-  preferWebSockets?: boolean;
-  /** Static headers sent on every upstream request (e.g. a plan/auth-tracking header a custom endpoint requires). */
-  headers?: Record<string, string>;
-  /** Test-only: overrides RequestLifecycle's production deadline defaults for this route's requests. */
-  requestDeadlines?: LifecycleDeadlines;
-}
-
-/**
- * Produce a gateway-discovery-safe alias for a model id.
- * Claude Code's gateway discovery only shows ids starting with 'claude' or 'anthropic'.
- * claude-* ids are returned unchanged; everything else gets an 'anthropic-{providerId}__' prefix.
- * Uses stable provider id (slug), not display name — renaming a provider does not break aliases.
- */
-export function aliasModelId(realId: string, providerId: string): string {
-  if (realId.startsWith('claude-')) return realId;
-  const sanitized = providerId.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  return `anthropic-${sanitized}__${realId}`;
-}
-
-/** Resolve catalog alias when Claude Code or legacy registry ids differ by prefix/suffix. */
-function lookupRoute(byAlias: Map<string, ProxyRoute>, id: string): ProxyRoute | undefined {
-  for (const key of routeLookupIds(id)) {
-    const route = byAlias.get(key);
-    if (route) return route;
-  }
-  return undefined;
-}
-
-/** Short alias name → route id, resolvable in request bodies alongside route aliasIds. */
-export interface ProxyModelAlias {
-  name: string;
-  routeId: string;
-}
-
-function proxyRuntimeRouteKey(route: ProxyRoute): string {
-  return [
-    route.providerId ?? route.aliasId,
-    route.oauthAccountId ?? '',
-    route.aliasId,
-    route.realModelId,
-    route.npm ?? '@native-anthropic',
-    route.baseURL ?? route.upstreamUrl,
-  ].join('\x1f');
 }
 
 /** Multi-model proxy: routes each request by body.model to the correct upstream. */
