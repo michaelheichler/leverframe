@@ -107,6 +107,9 @@ interface RequestContext {
   entry?: ConnectionEntry;
   createReplacement: () => ConnectionEntry;
   abortCleanup?: () => void;
+  /** Correlation id from the calling proxy request, used to target eviction at the
+   * specific connection that served a request the caller later found corrupted. */
+  requestId?: string;
 }
 
 type ReasoningPartState = 'active' | 'can_conclude' | 'concluded';
@@ -132,6 +135,9 @@ interface ConnectionEntry {
   responseId?: string;
   requestInput?: unknown[];
   expectedAssistant?: unknown[];
+  /** requestId of the turn most recently dispatched on this entry. used to target
+   * eviction without evicting an entry a later, unrelated request has since claimed. */
+  lastRequestId?: string;
   options: Required<Pick<
     ResponsesWebSocketFetchOptions,
     'hardTtlMs' | 'idleTtlMs' | 'nurseryIdleTtlMs' | 'maxConnections'
@@ -151,6 +157,19 @@ interface ConnectionEntry {
 const connections = new Map<string, Set<ConnectionEntry>>();
 const activeContexts = new Set<RequestContext>();
 let nextConnectionDebugId = 1;
+
+const REQUEST_ENTRY_TRACKING_CAP = 256;
+const entryByRequestId = new Map<string, ConnectionEntry>();
+
+function trackEntryForRequest(requestId: string, entry: ConnectionEntry): void {
+  entryByRequestId.set(requestId, entry);
+  entry.lastRequestId = requestId;
+  while (entryByRequestId.size > REQUEST_ENTRY_TRACKING_CAP) {
+    const oldestKey = entryByRequestId.keys().next().value;
+    if (oldestKey === undefined) break;
+    entryByRequestId.delete(oldestKey);
+  }
+}
 
 function connectionEntries(key?: string): ConnectionEntry[] {
   return key ? [...(connections.get(key) ?? [])] : [...connections.values()].flatMap(entries => [...entries]);
@@ -215,6 +234,7 @@ export function resetResponsesWebSocketConnectionsForTests(): void {
   }
   activeContexts.clear();
   connections.clear();
+  entryByRequestId.clear();
   nextConnectionDebugId = 1;
 }
 
@@ -234,6 +254,27 @@ export function evictResponsesWebSocketConnectionsForAccessToken(accessToken: st
     evicted += 1;
   }
   return evicted;
+}
+
+/**
+ * Evict the connection that served a specific proxy request, called when a
+ * downstream SDK translation error (e.g. a reasoning-part-not-found throw) shows
+ * the stream was corrupted in a way the WS layer's own anomaly detector did not
+ * flag. No-ops if the entry has since been reused by a later request or was
+ * already evicted, so it never tears down a connection serving other traffic.
+ */
+export function evictResponsesWebSocketConnectionForRequest(requestId: string): boolean {
+  const entry = entryByRequestId.get(requestId);
+  entryByRequestId.delete(requestId);
+  if (!entry || entry.lastRequestId !== requestId) return false;
+  entry.lastRequestId = undefined;
+  const ctx = entry.current;
+  if (ctx && !ctx.closed) {
+    cancelContext(ctx, new DOMException('Reasoning-part protocol error detected', 'AbortError'));
+  } else {
+    deleteEntry(entry);
+  }
+  return true;
 }
 
 /** Normalize the SDK's HeadersInit into a plain record for `ws`. */
@@ -897,6 +938,10 @@ function deleteEntry(entry: ConnectionEntry, closeSocket = true): void {
   entry.inFlight = false;
   entry.current = undefined;
   unregisterEntry(entry);
+  if (entry.lastRequestId) {
+    entryByRequestId.delete(entry.lastRequestId);
+    entry.lastRequestId = undefined;
+  }
   if (closeSocket) {
     try { entry.socket.close(); } catch { /* ignore */ }
   }
@@ -1346,6 +1391,7 @@ function dispatchContext(entry: ConnectionEntry, ctx: RequestContext): void {
   entry.inFlightStartedAt = now;
   entry.current = ctx;
   ctx.entry = entry;
+  if (ctx.requestId) trackEntryForRequest(ctx.requestId, entry);
   if (entry.open) {
     settleHandshakeSuccess(ctx);
     sendContext(entry, ctx);
@@ -1463,7 +1509,7 @@ function handleSocketMessage(entry: ConnectionEntry, data: RawData): void {
 
   if (TERMINAL_EVENT_TYPES.has(type ?? '') || type === 'error') {
     flushPending(ctx);
-    const failed = FAILURE_EVENT_TYPES.has(type ?? '');
+    const failed = FAILURE_EVENT_TYPES.has(type ?? '') || ctx.emittedProtocolAnomalies.size > 0;
     if (!failed && ctx.responseId && entry.persistent) {
       const now = entry.options.now();
       finishInFlightPeriod(entry, now);
@@ -1874,6 +1920,7 @@ export function createResponsesWebSocketFetch(
           reasoningPartsByItemId: new Map(),
           recentUpstreamEventTypes: [],
           emittedProtocolAnomalies: new Set(),
+          requestId: diagnosticCorrelation?.requestId,
           emitDiagnostic: options.onDiagnostic
             ? event => emitDiagnostic(options, event, diagnosticCorrelation)
             : undefined,

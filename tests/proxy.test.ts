@@ -4,7 +4,7 @@ import http from 'node:http';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { aliasModelId, startProxyCatalog, type ProxyRoute } from '../src/proxy.js';
+import { aliasModelId, isTransientSdkStreamFailure, startProxyCatalog, type ProxyRoute } from '../src/proxy.js';
 import { getProxyDebugLogPath } from '../src/trace-log.js';
 import { buildClaudeCodeBillingSystemLine } from '../src/oauth/claude-identity.js';
 import { anthropicMessagesEndpoint, estimateAnthropicInputTokens } from '../src/anthropic-endpoints.js';
@@ -129,6 +129,20 @@ describe('aliasModelId', () => {
 
   it('uses stable provider id slug in alias', () => {
     expect(aliasModelId('deepseek-v4', 'go')).toBe('anthropic-go__deepseek-v4');
+  });
+});
+
+describe('isTransientSdkStreamFailure', () => {
+  it('classifies a reasoning-part-not-found error as retryable', () => {
+    expect(isTransientSdkStreamFailure(new Error('reasoning part reasoning-42 not found'))).toBe(true);
+  });
+
+  it('does not classify a text-part-not-found error as retryable (out of this fix\'s scope)', () => {
+    expect(isTransientSdkStreamFailure(new Error('text part msg-9 not found'))).toBe(false);
+  });
+
+  it('does not classify an unrelated error as retryable', () => {
+    expect(isTransientSdkStreamFailure(new Error('rate limited'))).toBe(false);
   });
 });
 
@@ -851,7 +865,7 @@ describe('SDK translated error logging', () => {
       const messageDelta = JSON.parse(messageDeltaBlock.split('\n')[1]!.replace('data: ', ''));
       expect(messageDelta.usage).toEqual({
         input_tokens: expectedInputTokens,
-        output_tokens: 0,
+        output_tokens: 2,
         cache_creation_input_tokens: 0,
         cache_read_input_tokens: 0,
       });

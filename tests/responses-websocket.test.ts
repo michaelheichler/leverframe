@@ -699,6 +699,56 @@ describe('createResponsesWebSocketFetch', () => {
     }));
   });
 
+  it('evicts rather than pools a connection whose turn completed with a detected protocol anomaly', async () => {
+    const wsFetch = createResponsesWebSocketFetch(WS_URL, undefined, {
+      providerId: 'openai', accountId: 'acct-anomaly-eviction',
+    });
+    const firstUser = { role: 'user', content: [{ type: 'input_text', text: 'hello' }] };
+    const first = await wsFetch('https://x', {
+      method: 'POST', headers: {}, body: JSON.stringify(sessionPayload([firstUser])),
+    });
+    const socket = lastSocket();
+    socket.emit('open');
+    const events = [
+      {
+        type: 'response.output_item.added', output_index: 0,
+        item: { type: 'reasoning', id: 'reasoning-late' },
+      },
+      {
+        type: 'response.reasoning_summary_text.delta', item_id: 'reasoning-late',
+        summary_index: 0, delta: 'first',
+      },
+      {
+        type: 'response.reasoning_summary_part.done', item_id: 'reasoning-late', summary_index: 0,
+      },
+      {
+        type: 'response.reasoning_summary_part.added', item_id: 'reasoning-late', summary_index: 1,
+      },
+      {
+        type: 'response.reasoning_summary_text.delta', item_id: 'reasoning-late',
+        summary_index: 0, delta: 'late',
+      },
+      { type: 'response.completed', response: { id: 'resp_anomaly_completed' } },
+    ];
+    for (const event of events) socket.emit('message', Buffer.from(JSON.stringify(event)));
+    await readAll(first);
+
+    expect(socket.close).toHaveBeenCalled();
+
+    const secondUser = { role: 'user', content: [{ type: 'input_text', text: 'again' }] };
+    const second = await wsFetch('https://x', {
+      method: 'POST', headers: {},
+      body: JSON.stringify(sessionPayload([firstUser, secondUser])),
+    });
+
+    expect(fakeSockets).toHaveLength(2);
+    const secondSocket = lastSocket();
+    expect(secondSocket).not.toBe(socket);
+    secondSocket.emit('open');
+    emitTextResponse(secondSocket, 'resp_after_anomaly', 'ok');
+    await readAll(second);
+  });
+
   it('closes the socket when the request is aborted', async () => {
     const controller = new AbortController();
     const wsFetch = createResponsesWebSocketFetch(WS_URL);
@@ -1028,6 +1078,10 @@ describe('createResponsesWebSocketFetch', () => {
     socket.emit('open');
     socket.emit('message', Buffer.from(JSON.stringify({ type: 'response.created', response: { id: 'resp_reason_tool' } })));
     socket.emit('message', Buffer.from(JSON.stringify({
+      type: 'response.output_item.added', output_index: 0,
+      item: { type: 'reasoning', id: 'rs_1', encrypted_content: 'enc_private', summary: [] },
+    })));
+    socket.emit('message', Buffer.from(JSON.stringify({
       type: 'response.output_item.done', output_index: 0,
       item: { type: 'reasoning', id: 'rs_1', encrypted_content: 'enc_private', summary: [] },
     })));
@@ -1076,6 +1130,10 @@ describe('createResponsesWebSocketFetch', () => {
     const socket = lastSocket();
     socket.emit('open');
     socket.emit('message', Buffer.from(JSON.stringify({ type: 'response.created', response: { id: 'resp_reason_text' } })));
+    socket.emit('message', Buffer.from(JSON.stringify({
+      type: 'response.output_item.added', output_index: 0,
+      item: { type: 'reasoning', id: 'rs_1', encrypted_content: 'enc_private', summary: [] },
+    })));
     socket.emit('message', Buffer.from(JSON.stringify({
       type: 'response.output_item.done', output_index: 0,
       item: { type: 'reasoning', id: 'rs_1', encrypted_content: 'enc_private', summary: [] },

@@ -50,10 +50,12 @@ import {
 } from './anthropic-endpoints.js';
 import type { LanguageModel } from 'ai';
 import {
+  evictResponsesWebSocketConnectionForRequest,
   evictResponsesWebSocketConnectionsForAccessToken,
   withResponsesWebSocketDiagnosticContext,
 } from './oauth/responses-websocket.js';
 import { ProviderRuntimeCache } from './provider-runtime-cache.js';
+import { disposeLanguageModel } from './language-model-disposal.js';
 import { resolveContextWindow } from './context-window.js';
 import { listenTcpServer } from './listener-ready.js';
 import {
@@ -84,7 +86,9 @@ const TRANSIENT_CONNECTION_CODES = new Set([
 ]);
 
 /** Nested SDK wrappers must not hide a transient transport cause or upstream 5xx. */
-function isTransientSdkStreamFailure(error: unknown): boolean {
+export function isTransientSdkStreamFailure(error: unknown): boolean {
+  if (sdkTranslationErrorSignature(error) === 'reasoning_part_not_found') return true;
+
   const sdkStatusCode = sdkUpstreamErrorDetails(error)?.statusCode;
   if (sdkStatusCode !== undefined && sdkStatusCode >= 500 && sdkStatusCode <= 599) return true;
 
@@ -419,6 +423,7 @@ export async function startProxyCatalog(
   const proxyToken = randomUUID();
   silenceSdkWarnings();
   const providerRuntimeCache = new ProviderRuntimeCache<LanguageModel>({
+    disposeHandle: disposeLanguageModel,
     onCredentialRotated: previous => {
       evictResponsesWebSocketConnectionsForAccessToken(previous.credential);
     },
@@ -874,7 +879,7 @@ export async function startProxyCatalog(
               while (true) {
                 try {
                   await withResponsesWebSocketDiagnosticContext(
-                    { requestId: relayRequestId, claudeSessionId },
+                    { requestId: trackedRequestId, claudeSessionId },
                     () => streamAnthropicResponse(
                       model,
                       params,
@@ -899,6 +904,9 @@ export async function startProxyCatalog(
                   }
                   retryCount += 1;
                   const reason = sdkTranslationErrorSignature(error);
+                  if (reason === 'reasoning_part_not_found') {
+                    evictResponsesWebSocketConnectionForRequest(trackedRequestId);
+                  }
                   requestExecution.recordRetryAttempt({ attempt: retryCount, reason });
                   tracking.recordRetryAttempt();
                   plog(() => `sdk auto-replay: retry=${retryCount}/${maxRetries} reason=${reason}`);
@@ -918,7 +926,7 @@ export async function startProxyCatalog(
             // outright ("Stream must be set to true"), so always stream internally
             // for it and collect the result, regardless of what the client asked for.
             const anthropicResponse = await withResponsesWebSocketDiagnosticContext(
-              { requestId: relayRequestId, claudeSessionId },
+              { requestId: trackedRequestId, claudeSessionId },
               () => generateAnthropicResponse(
                 model,
                 params,
@@ -948,9 +956,13 @@ export async function startProxyCatalog(
           }
           requestExecution.fail(err);
           tracking.fail(undefined);
+          const sdkErrorSignature = sdkTranslationErrorSignature(err);
+          if (sdkErrorSignature === 'reasoning_part_not_found') {
+            evictResponsesWebSocketConnectionForRequest(trackedRequestId);
+          }
           translationLifecycle?.fail(
             err instanceof Error ? err.name : 'UpstreamError',
-            sdkTranslationErrorSignature(err),
+            sdkErrorSignature,
           );
           const message = formatUpstreamError(err);
           const details = sdkUpstreamErrorDetails(err);
@@ -1045,13 +1057,14 @@ export async function startProxyCatalog(
   return {
     port: address.port,
     token: proxyToken,
-    close: () => new Promise<void>(resolve => {
+    close: async () => {
       cleanupListeners();
       // Local shutdown: settle every in-flight request to a `cancelled`
       // terminal outcome instead of abandoning it mid-stream.
       cancelAllActiveRequestExecutions();
-      server.close(() => resolve());
-    }),
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      await providerRuntimeCache.dispose();
+    },
   };
 }
 
