@@ -99,6 +99,16 @@ describe('parseCopilotModelInfo', () => {
     expect(model.contextWindowUnconfirmed).toBe(true);
   });
 
+  it('keeps models when the RPC payload includes unknown reasoning effort labels', () => {
+    const model = parseCopilotModelInfo(modelInfo({
+      supportedReasoningEfforts: ['low', 'unknown-live-value', 'high'],
+      defaultReasoningEffort: 'unknown-live-value',
+    }));
+
+    expect(model.supportedReasoningEfforts).toEqual(['low', 'high']);
+    expect(model.defaultReasoningEffort).toBeUndefined();
+  });
+
   it.each([
     null,
     {},
@@ -111,8 +121,8 @@ describe('parseCopilotModelInfo', () => {
     modelInfo({ capabilities: { supports: { vision: true, reasoningEffort: true }, limits: { max_context_window_tokens: -1 } } }),
     modelInfo({ capabilities: { supports: { vision: true, reasoningEffort: true }, limits: { max_context_window_tokens: Number.NaN } } }),
     modelInfo({ capabilities: { supports: { vision: true, reasoningEffort: true }, limits: { max_context_window_tokens: '128000' } } }),
-    modelInfo({ supportedReasoningEfforts: ['medium', 'extreme'] }),
-    modelInfo({ defaultReasoningEffort: 'extreme' }),
+    modelInfo({ supportedReasoningEfforts: ['medium', 42] }),
+    modelInfo({ defaultReasoningEffort: 42 }),
   ])('rejects malformed model metadata %#', record => {
     expect(() => parseCopilotModelInfo(record)).toThrow(TypeError);
   });

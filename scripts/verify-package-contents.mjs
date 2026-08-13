@@ -12,8 +12,9 @@ try {
     ['pack', '--json', '--ignore-scripts', '--pack-destination', root],
     { encoding: 'utf8' },
   );
-  const records = JSON.parse(output);
-  if (!Array.isArray(records) || records.length !== 1) {
+  const parsed = JSON.parse(output);
+  const records = Array.isArray(parsed) ? parsed : Object.values(parsed);
+  if (records.length !== 1) {
     throw new Error('npm pack returned an unexpected result');
   }
 

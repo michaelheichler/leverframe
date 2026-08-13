@@ -70,7 +70,7 @@ import {
   withProviderMutationLock,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-GBE65LA6.js";
+} from "./chunk-IT2BVRZ2.js";
 
 // src/cli.ts
 import pc18 from "picocolors";
@@ -15257,22 +15257,19 @@ function parseContextWindow(limits) {
 }
 function parseReasoningEffort(value, field) {
   if (value === void 0) return void 0;
-  if (typeof value !== "string" || !REASONING_EFFORTS2.has(value)) {
-    throw new CopilotModelValidationError(`Copilot model ${field} contains an unsupported value`);
+  if (typeof value !== "string") {
+    throw new CopilotModelValidationError(`Copilot model ${field} must be a string`);
   }
-  return value;
+  return REASONING_EFFORTS2.has(value) ? value : void 0;
 }
 function parseReasoningEfforts(value) {
   if (value === void 0) return void 0;
   if (!Array.isArray(value)) {
     throw new CopilotModelValidationError("Copilot model supportedReasoningEfforts must be an array");
   }
-  return value.map((effort, index) => {
+  return value.flatMap((effort, index) => {
     const parsed = parseReasoningEffort(effort, `supportedReasoningEfforts[${index}]`);
-    if (parsed === void 0) {
-      throw new CopilotModelValidationError(`Copilot model supportedReasoningEfforts[${index}] is missing`);
-    }
-    return parsed;
+    return parsed === void 0 ? [] : [parsed];
   });
 }
 function parseCopilotModelInfo(record) {

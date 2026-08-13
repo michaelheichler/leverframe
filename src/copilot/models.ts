@@ -89,10 +89,10 @@ function parseContextWindow(limits: JsonRecord): number | undefined {
 
 function parseReasoningEffort(value: unknown, field: string): ReasoningEffort | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== 'string' || !REASONING_EFFORTS.has(value as ReasoningEffort)) {
-    throw new CopilotModelValidationError(`Copilot model ${field} contains an unsupported value`);
+  if (typeof value !== 'string') {
+    throw new CopilotModelValidationError(`Copilot model ${field} must be a string`);
   }
-  return value as ReasoningEffort;
+  return REASONING_EFFORTS.has(value as ReasoningEffort) ? value as ReasoningEffort : undefined;
 }
 
 function parseReasoningEfforts(value: unknown): ReasoningEffort[] | undefined {
@@ -100,12 +100,9 @@ function parseReasoningEfforts(value: unknown): ReasoningEffort[] | undefined {
   if (!Array.isArray(value)) {
     throw new CopilotModelValidationError('Copilot model supportedReasoningEfforts must be an array');
   }
-  return value.map((effort, index) => {
+  return value.flatMap((effort, index) => {
     const parsed = parseReasoningEffort(effort, `supportedReasoningEfforts[${index}]`);
-    if (parsed === undefined) {
-      throw new CopilotModelValidationError(`Copilot model supportedReasoningEfforts[${index}] is missing`);
-    }
-    return parsed;
+    return parsed === undefined ? [] : [parsed];
   });
 }
 
