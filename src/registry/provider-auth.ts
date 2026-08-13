@@ -1,4 +1,4 @@
-// provider-auth.ts — leverframe providers auth (native OpenAI device-code flow)
+// Native provider authentication and transactional credential publication.
 
 import { printOAuthStepsPanel } from '../ui.js';
 import pc from 'picocolors';
@@ -6,7 +6,12 @@ import * as p from '@clack/prompts';
 import open from 'open';
 import { saveProviderCredential } from '../env.js';
 import { diagnoseCredentialStorage } from '../credential-store.js';
+import {
+  githubCopilotTokensToStoredCredential,
+  runGitHubCopilotDeviceCodeFlow,
+} from '../oauth/github-copilot.js';
 import { runOpenAiDeviceCodeFlow } from '../oauth/openai.js';
+import { sleepMs } from '../oauth/pkce.js';
 import {
   supportsNativeOAuth,
   tokensToStoredCredential,
@@ -28,6 +33,7 @@ export type ProviderAuthMethod = 'native';
 
 export interface ProviderAuthOptions {
   method?: ProviderAuthMethod;
+  signal?: AbortSignal;
 }
 
 export interface ProviderAuthResult {
@@ -40,6 +46,7 @@ const OPENAI_DISPLAY = 'OpenAI ChatGPT Plus/Pro';
 const PROVIDER_DISPLAY: Record<NativeOAuthProviderId, string> = {
   openai: OPENAI_DISPLAY,
   'openai-oauth': OPENAI_DISPLAY,
+  'github-copilot': 'GitHub Copilot',
 };
 
 function openBrowser(url: string): void {
@@ -50,29 +57,48 @@ function openBrowser(url: string): void {
   open(url).catch(() => {});
 }
 
-async function runNativeDeviceCode(providerId: NativeOAuthProviderId): Promise<StoredOAuthCredential> {
+/** Completes one provider-specific device flow and returns a storage-ready credential. */
+async function runNativeDeviceCode(
+  providerId: NativeOAuthProviderId,
+  signal: AbortSignal | undefined,
+): Promise<StoredOAuthCredential> {
   const label = PROVIDER_DISPLAY[providerId];
   printOAuthStepsPanel(`${label} — Sign in`, label);
 
   const spinner = p.spinner();
   spinner.start('Waiting for authorization...');
+  const onDeviceCode = ({ url, userCode }: { url: string; userCode: string }): void => {
+    spinner.stop('');
+    p.log.info(`Visit: ${pc.cyan(url)}`);
+    p.log.info(`Enter code: ${pc.bold(userCode)}`);
+    openBrowser(url);
+    spinner.start('Waiting for authorization...');
+  };
 
   try {
-    const { tokens, accountId } = await runOpenAiDeviceCodeFlow(({ url, userCode }) => {
-      spinner.stop('');
-      p.log.info(`Visit: ${pc.cyan(url)}`);
-      p.log.info(`Enter code: ${pc.bold(userCode)}`);
-      openBrowser(url);
-      spinner.start('Waiting for authorization...');
-    });
+    if (providerId === 'github-copilot') {
+      const { tokens } = await runGitHubCopilotDeviceCodeFlow(onDeviceCode, {
+        sleep: sleepMs,
+        now: () => Date.now(),
+        signal,
+        onWarning: warning => {
+          p.log.warn(`GitHub OAuth token polling returned HTTP ${warning.status}; retrying`);
+        },
+      });
+      spinner.stop(pc.green('Signed in to GitHub Copilot'));
+      return githubCopilotTokensToStoredCredential(tokens);
+    }
+
+    const { tokens, accountId } = await runOpenAiDeviceCodeFlow(onDeviceCode);
     spinner.stop(pc.green('Signed in to OpenAI ChatGPT'));
     return tokensToStoredCredential(tokens, undefined, accountId);
-  } catch (err) {
+  } catch (error) {
     spinner.stop('');
-    throw err;
+    throw error;
   }
 }
 
+/** Publishes an OAuth credential only after its keyring write succeeds. */
 export async function saveNativeOAuthCredential(
   providerId: string,
   tokens: import('../oauth/types.js').OAuthTokenResponse,
@@ -80,7 +106,9 @@ export async function saveNativeOAuthCredential(
   providerData?: Record<string, unknown>,
 ): Promise<void> {
   try {
-    const cred = tokensToStoredCredential(tokens, undefined, accountId, providerData);
+    const cred = providerId === 'github-copilot'
+      ? githubCopilotTokensToStoredCredential(tokens)
+      : tokensToStoredCredential(tokens, undefined, accountId, providerData);
     const registryId = toOAuthRegistryId(providerId);
     const diagnostics: string[] = [];
     const authRef = oauthAuthRef(registryId);
@@ -90,7 +118,7 @@ export async function saveNativeOAuthCredential(
       oauthCredentialToKeychainJson(cred),
       (msg) => { diagnostics.push(msg); p.log.warn(msg); },
     );
-    if (!saved) throw new Error(`Could not save OAuth tokens${diagnostics.length ? ` — ${diagnostics.at(-1)}` : ' — check credential storage permissions and try again'}`);
+    if (!saved) throw new Error(`Could not save OAuth tokens${diagnostics.length ? ` - ${diagnostics.at(-1)}` : ' - check credential storage permissions and try again'}`);
     await upsertOAuthProvider(providerId, cred);
   } finally {
     await reconcilePendingCredentialDeletes(message => p.log.warn(message));
@@ -142,14 +170,15 @@ async function upsertOAuthProvider(providerId: string, _cred: StoredOAuthCredent
   }));
 }
 
+/** Authenticates, stores, and publishes one native OAuth provider atomically. */
 async function authenticateProviderInner(
   providerId: string,
-  _options: ProviderAuthOptions = {},
+  options: ProviderAuthOptions = {},
 ): Promise<ProviderAuthResult> {
   const registryId = toOAuthRegistryId(providerId);
 
   if (!supportsNativeOAuth(providerId)) {
-    throw new Error('OAuth sign-in is only available for openai (ChatGPT Plus/Pro).');
+    throw new Error('OAuth sign-in is available for openai and github-copilot.');
   }
 
   for (const diagnostic of await diagnoseCredentialStorage()) {
@@ -157,7 +186,7 @@ async function authenticateProviderInner(
     else p.log.info(diagnostic.message);
   }
 
-  const cred = await runNativeDeviceCode(providerId);
+  const cred = await runNativeDeviceCode(providerId, options.signal);
 
   const nativeDiagnostics: string[] = [];
   const authRef = oauthAuthRef(registryId);
@@ -168,7 +197,9 @@ async function authenticateProviderInner(
     (msg) => { nativeDiagnostics.push(msg); p.log.warn(msg); },
   );
   if (!saved) {
-    p.log.warn(`Could not save OAuth tokens — ${nativeDiagnostics.at(-1) || 'session may not persist.'}`);
+    throw new Error(
+      `Could not save OAuth tokens — ${nativeDiagnostics.at(-1) || 'check credential storage permissions and try again'}`,
+    );
   }
 
   const registryProvider = await upsertOAuthProvider(providerId, cred);
@@ -176,10 +207,14 @@ async function authenticateProviderInner(
   const refreshSpinner = p.spinner();
   refreshSpinner.start('Refreshing model list...');
   try {
-    await refreshProviderModels(registryId, cred.access);
+    const refreshResult = await refreshProviderModels(registryId, cred.access);
+    if (!refreshResult.ok) {
+      throw new Error(refreshResult.reason ?? 'Model discovery failed without a reason');
+    }
     refreshSpinner.stop('Models refreshed');
-  } catch {
-    refreshSpinner.stop('Could not refresh models — run leverframe providers refresh-models later');
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    refreshSpinner.stop(`Could not refresh models: ${reason} - run leverframe providers refresh-models later`);
   }
 
   return { providerId: registryId, credential: cred, registryProvider };
@@ -197,11 +232,13 @@ export async function authenticateProvider(
 }
 
 export function providerAuthHelpText(): string {
-  return `${pc.bold('leverframe providers auth')} — sign in with OAuth
+  return `${pc.bold('leverframe providers auth')} - sign in with OAuth
 
 ${pc.bold('Usage:')}
   leverframe providers auth openai
+  leverframe providers auth github-copilot
 
 ${pc.bold('Device code (works on SSH/VPS):')}
-  openai   ChatGPT Plus/Pro (device code at auth.openai.com/codex/device)`;
+  openai          ChatGPT Plus/Pro (auth.openai.com/codex/device)
+  github-copilot  GitHub Copilot subscription (github.com/login/device)`;
 }
