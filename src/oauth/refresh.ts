@@ -1,4 +1,4 @@
-// oauth/refresh.ts — refresh OAuth tokens before inference
+/** Refreshes renewable OAuth credentials before inference. */
 
 import { refreshOpenAiAccessToken } from './openai.js';
 import type { StoredOAuthCredential } from './types.js';
@@ -10,25 +10,31 @@ export function oauthCredentialShouldRefresh(
 ): boolean {
   if (cred.accessRejected === true) return true;
   if (oauthCredentialNeedsRefresh(cred)) return true;
-  // All native OAuth providers use short-lived access tokens — check expiry proactively
+  // Renewable OAuth access tokens are checked before inference. Durable opaque tokens have no JWT expiry.
   if ((NATIVE_OAUTH_PROVIDER_IDS as readonly string[]).includes(providerId) && accessTokenIsExpiring(cred.access)) return true;
   return false;
 }
 
+/**
+ * Refreshes renewable native credentials and rejects durable or custom provider IDs.
+ * The registry accepts custom string IDs, so unsupported values fail here with their exact ID.
+ */
 export async function refreshStoredOAuthCredential(
   providerId: string,
   cred: StoredOAuthCredential,
 ): Promise<StoredOAuthCredential> {
-  if (!cred.refresh) {
-    throw new Error(`${providerId}: OAuth refresh token missing — run leverframe providers auth ${providerId}`);
+  if (providerId === 'github-copilot') {
+    throw new Error(
+      'github-copilot: GitHub OAuth token cannot be refreshed; run leverframe providers auth github-copilot',
+    );
   }
-
-  let tokens;
-  if (providerId === 'openai' || providerId === 'openai-oauth') {
-    tokens = await refreshOpenAiAccessToken(cred.refresh);
-  } else {
+  if (!cred.refresh) {
+    throw new Error(`${providerId}: OAuth refresh token missing. Run leverframe providers auth ${providerId}`);
+  }
+  if (providerId !== 'openai' && providerId !== 'openai-oauth') {
     throw new Error(`OAuth refresh not implemented for provider "${providerId}"`);
   }
 
+  const tokens = await refreshOpenAiAccessToken(cred.refresh);
   return tokensToStoredCredential(tokens, cred.refresh, cred.accountId, cred.providerData);
 }

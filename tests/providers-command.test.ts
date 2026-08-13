@@ -87,10 +87,10 @@ describe('parseProvidersArgs', () => {
     expect(help).not.toContain('Add OpenAI with an API key');
   });
 
-  it('mentions only openai in auth help', () => {
+  it('shows OpenAI and GitHub Copilot as native OAuth providers', () => {
     const help = providerAuthHelpText();
-    expect(help).toContain('openai');
-    expect(help).not.toContain('github-copilot');
+    expect(help).toContain('auth openai');
+    expect(help).toContain('auth github-copilot');
     expect(help).not.toContain('xai');
   });
 
@@ -178,14 +178,21 @@ describe('providers add menu', () => {
     vi.restoreAllMocks();
   });
 
-  it('offers ChatGPT OAuth first then every addable API template', async () => {
+  it('offers OAuth providers first, then every addable API template', async () => {
     selectMock.mockResolvedValue('noop');
 
     await runProvidersAdd();
 
     const options = selectMock.mock.calls[0]?.[0].options.map((option: { value: string }) => option.value);
-    // OAuth surfaces first, then every supported API template (sorted alphabetically by name).
-    expect(options).toEqual(['oauth:openai-oauth', 'api:kimi', 'api:moonshot', 'api:openai', 'api:opencode-go', 'api:zai']);
+    expect(options).toEqual([
+      'oauth:github-copilot',
+      'oauth:openai-oauth',
+      'api:kimi',
+      'api:moonshot',
+      'api:openai',
+      'api:opencode-go',
+      'api:zai',
+    ]);
   });
 
   it('hides already-configured templates from the add menu', async () => {
@@ -197,6 +204,13 @@ describe('providers add menu', () => {
     await runProvidersAdd();
 
     const options = selectMock.mock.calls[0]?.[0].options.map((option: { value: string }) => option.value);
-    expect(options).toEqual(['oauth:openai-oauth', 'api:kimi', 'api:moonshot', 'api:opencode-go', 'api:zai']);
+    expect(options).toEqual([
+      'oauth:github-copilot',
+      'oauth:openai-oauth',
+      'api:kimi',
+      'api:moonshot',
+      'api:opencode-go',
+      'api:zai',
+    ]);
   });
 });

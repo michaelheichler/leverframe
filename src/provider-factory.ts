@@ -4,6 +4,7 @@
 import type { LanguageModel } from 'ai';
 import { wrapLanguageModel, extractReasoningMiddleware } from 'ai';
 import { VERTEX_ANTHROPIC_NPM, CODEX_RESPONSES_LITE_VERSION, CODEX_RESPONSES_LITE_WS_URL } from './constants.js';
+import { createDefaultCopilotLanguageModel } from './copilot/language-model-default.js';
 import { extractOpenAiAccountId } from './oauth/openai.js';
 import {
   createResponsesWebSocketFetch,
@@ -158,6 +159,15 @@ export async function createLanguageModel(spec: ProviderModelSpec): Promise<Lang
         `${revalidation.error ?? 'Custom endpoint URL failed security revalidation.'}${revalidation.hint ? ` ${revalidation.hint}` : ''}`,
       );
     }
+  }
+
+  if (npm === '@github/copilot-sdk') {
+    return createDefaultCopilotLanguageModel({
+      modelId,
+      gitHubToken: apiKey,
+      environment: process.env,
+      nodeVersion: process.version,
+    });
   }
 
   if (npm === '@ai-sdk/openai') {

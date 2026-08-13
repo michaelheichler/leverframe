@@ -25,7 +25,7 @@ function handoff(content: string): string {
 // Extracts the generated PATCH 10d block (marker through the closing
 // `if(...)...}}` pair) for structural inspection of the guard logic.
 function descriptionBlock(content: string): string {
-  const match = content.match(/\/\*ccpatch:agent-description\*\/\{[\s\S]*?\+\(_ccae\?" · "\+_ccae:""\);\}\}/);
+  const match = content.match(/\/\*ccpatch:agent-description\*\/\{[\s\S]*?\+\(_ccae\?" \\u00b7 "\+_ccae:""\);\}\}/);
   if (!match) throw new Error('description block not found');
   return match[0];
 }
@@ -121,6 +121,16 @@ function defineLifecycleTests(): void {
       expect(second.content).not.toContain('GPT Sol');
       expect(second.content.match(new RegExp(AGENT_DESCRIPTION_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))).toHaveLength(1);
     });
+
+    it('refreshes a literal UTF-8 separator block to ASCII-safe source', () => {
+      const current = applyRoutingNoticeTransform(fixture(), CONFIG).content;
+      const legacy = current.replaceAll('\\u00b7', '·');
+      const refreshed = applyRoutingNoticeTransform(legacy, CONFIG);
+
+      expect(refreshed.results).toContainEqual({ status: 'OK', name: 'PATCH 10d: agent description indicator (refresh)' });
+      expect(refreshed.content).toContain('" \\u00b7 "');
+      expect(refreshed.content).not.toContain('" · "');
+    });
   });
 }
 
@@ -134,15 +144,19 @@ function defineAgentDescriptionTests(): void {
 
       expect(result.results).toContainEqual({ status: 'OK', name: 'PATCH 10d: agent description indicator' });
       expect(result.content).toContain(`${AGENT_DESCRIPTION_MARKER}{let _ccat=Object.assign(Object.create(null),`);
-      expect(result.content).toContain('if(r.indexOf(" · "+_ccad)===-1){r=r+" · "+_ccad+(_ccae?" · "+_ccae:"");}}');
+      expect(result.content).toContain('if(r.indexOf(" \\u00b7 "+_ccad)===-1){r=r+" \\u00b7 "+_ccad+(_ccae?" \\u00b7 "+_ccae:"");}}');
+      expect(result.content).not.toContain('" · "');
       expect(result.content).toContain('"sol":"high"');
+      const appendIndicator = new Function('r', 'ne', `${descriptionBlock(result.content)};return r;`) as (description: string, modelId: string) => string;
+      expect(appendIndicator('Implement Task 12 Redis cache', 'leverframe:openai-oauth:gpt-5.6-sol'))
+        .toBe('Implement Task 12 Redis cache · GPT Sol · high');
     });
 
     it('falls back to the raw model id and omits effort when the model is absent from the config table', () => {
       const result = applyRoutingNoticeTransform(fixture(), {});
 
       expect(result.content).toContain('_ccad=_ccat!==void 0?_ccat:String(ne||"")');
-      expect(result.content).toContain('if(r.indexOf(" · "+_ccad)===-1){r=r+" · "+_ccad+(_ccae?" · "+_ccae:"");}}');
+      expect(result.content).toContain('if(r.indexOf(" \\u00b7 "+_ccad)===-1){r=r+" \\u00b7 "+_ccad+(_ccae?" \\u00b7 "+_ccae:"");}}');
     });
 
     it('guards the append with the exact resolved display suffix, not a bare middle-dot check, so a user description already containing " · " for unrelated reasons still gets the indicator appended', () => {
@@ -153,7 +167,7 @@ function defineAgentDescriptionTests(): void {
       // suffix candidate (`" · "+_ccad`), not a bare `/ · /` probe against the
       // description — so "check A · B" (which contains " · " but not the
       // computed display text) does not false-suppress the append.
-      expect(block).toMatch(/if\(r\.indexOf\(" · "\+_ccad\)===-1\)\{/);
+      expect(block).toMatch(/if\(r\.indexOf\(" \\u00b7 "\+_ccad\)===-1\)\{/);
       expect(block).not.toMatch(/if\(!\/ [^"]*\/\.test\(r\)\)/);
       // _ccad/_ccae are computed unconditionally, before the guard.
       expect(block.indexOf('_ccad=_ccat!==void 0')).toBeLessThan(block.indexOf('if(r.indexOf('));

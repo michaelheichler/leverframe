@@ -104,6 +104,58 @@ describe('ProviderRuntimeCache', () => {
     expect(create).toHaveBeenCalledWith(current);
   });
 
+  it('disposes all settled handles exactly once during shutdown', async () => {
+    const disposeHandle = vi.fn(async () => undefined);
+    const cache = new ProviderRuntimeCache<object>({ disposeHandle });
+    const first = cache.snapshot('route-a', 'token-a');
+    const second = cache.snapshot('route-b', 'token-b');
+    const handleA = { id: 'a' };
+    const handleB = { id: 'b' };
+    await cache.getHandle('route-a', first, async () => handleA);
+    await cache.getHandle('route-b', second, async () => handleB);
+
+    await cache.dispose();
+    await cache.dispose();
+
+    expect(disposeHandle).toHaveBeenCalledTimes(2);
+    expect(disposeHandle).toHaveBeenCalledWith(handleA);
+    expect(disposeHandle).toHaveBeenCalledWith(handleB);
+  });
+
+  it('rejects handle access after shutdown starts', async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const cache = new ProviderRuntimeCache<object>({
+      disposeHandle: async () => gate,
+    });
+    const credential = cache.snapshot('route', 'token-a');
+    await cache.getHandle('route', credential, async () => ({ id: 'a' }));
+
+    const disposing = cache.dispose();
+    await expect(cache.getHandle('route', credential, async () => ({ id: 'b' })))
+      .rejects.toThrow(/disposed|shutting down/i);
+    release?.();
+    await disposing;
+  });
+
+  it('waits for in-flight handle construction before disposing it', async () => {
+    const disposeHandle = vi.fn(async () => undefined);
+    const cache = new ProviderRuntimeCache<object>({ disposeHandle });
+    const credential = cache.snapshot('route', 'token-a');
+    let resolveHandle: ((handle: object) => void) | undefined;
+    const pending = cache.getHandle('route', credential, () => (
+      new Promise(resolve => { resolveHandle = resolve; })
+    ));
+
+    const disposing = cache.dispose();
+    const handle = { id: 'late' };
+    resolveHandle?.(handle);
+    await pending;
+    await disposing;
+
+    expect(disposeHandle).toHaveBeenCalledWith(handle);
+  });
+
   it('shares a concurrent refresh failure, retains the old generation, and permits a later retry', async () => {
     const disposed = vi.fn();
     const cache = new ProviderRuntimeCache<object>({ disposeHandle: disposed });

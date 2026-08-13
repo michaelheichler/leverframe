@@ -739,7 +739,7 @@ describe('PATCH 8/9 effort capability gates', () => {
 
 describe('PATCH_TRANSFORMS_VERSION', () => {
   it('is bumped for the agent description indicator (PATCH 10d)', () => {
-    expect(PATCH_TRANSFORMS_VERSION).toBe(6);
+    expect(PATCH_TRANSFORMS_VERSION).toBe(7);
   });
 });
 

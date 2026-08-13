@@ -63,6 +63,15 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     supported: true,
   },
   {
+    id: 'github-copilot',
+    name: 'GitHub Copilot',
+    authType: 'oauth',
+    npm: '@github/copilot-sdk',
+    signupUrl: 'https://github.com/features/copilot',
+    modelSource: 'api-list',
+    supported: true,
+  },
+  {
     id: 'opencode-go',
     name: 'OpenCode Go (Subscription)',
     authType: 'api',

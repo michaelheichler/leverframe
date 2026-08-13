@@ -39,6 +39,8 @@ export class ProviderRuntimeCache<T> {
   private readonly credentials = new Map<string, CredentialSnapshot>();
   private readonly handles = new Map<string, HandleEntry<T>>();
   private readonly refreshes = new Map<string, Promise<CredentialSnapshot>>();
+  private disposePromise: Promise<void> | undefined;
+  private disposed = false;
 
   constructor(private readonly options: ProviderRuntimeCacheOptions<T> = {}) {}
 
@@ -55,6 +57,7 @@ export class ProviderRuntimeCache<T> {
     requestedCredential: CredentialSnapshot,
     create: (credential: CredentialSnapshot) => Promise<T>,
   ): Promise<T> {
+    if (this.disposed) throw new Error('Provider runtime cache has been disposed');
     // A caller may have captured a snapshot immediately before another request
     // rotated the route. Canonicalize it here so that stale request-local state
     // can never recreate a handle for an already-superseded generation.
@@ -155,6 +158,20 @@ export class ProviderRuntimeCache<T> {
       }
     }
     return disposals;
+  }
+
+  /** Disposes every reachable provider handle and rejects later cache access. */
+  dispose(): Promise<void> {
+    if (this.disposePromise !== undefined) return this.disposePromise;
+    this.disposed = true;
+    const entries = [...this.handles.values()];
+    this.handles.clear();
+    this.credentials.clear();
+    this.disposePromise = Promise.all(entries.map(entry => entry.promise.then(
+      async handle => { await this.options.disposeHandle?.(handle); },
+      () => undefined,
+    ))).then(() => undefined);
+    return this.disposePromise;
   }
 
   private handleKey(routeKey: string, credential: CredentialSnapshot): string {

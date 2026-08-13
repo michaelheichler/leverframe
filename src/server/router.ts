@@ -69,6 +69,7 @@ import {
   withResponsesWebSocketDiagnosticContext,
 } from '../oauth/responses-websocket.js';
 import { ProviderRuntimeCache } from '../provider-runtime-cache.js';
+import { disposeLanguageModel } from '../language-model-disposal.js';
 import {
   beginExecutionTracking,
   reconcileExecutionsAtStartup,
@@ -314,6 +315,7 @@ function reconcileExecutionsAtStartupSafely(plog: PLog): void {
 export async function startServer(options: ServerOptions): Promise<ServerHandle> {
   silenceSdkWarnings();
   const languageModelCache = new ProviderRuntimeCache<LanguageModel>({
+    disposeHandle: disposeLanguageModel,
     onCredentialRotated: previous => {
       evictResponsesWebSocketConnectionsForAccessToken(previous.credential);
     },
@@ -333,13 +335,16 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
     url: `http://${tcpListenerUrlHost(address.address)}:${address.port}`,
     server,
     inferenceLogPath: options.inferenceLogPath,
-    close: () => new Promise<void>((resolve, reject) => {
+    close: async () => {
       // Local-shutdown edge: settle every in-flight request to a `cancelled`
       // terminal outcome instead of abandoning it mid-stream when the
       // listener goes down.
       cancelAllActiveRequestExecutions();
-      server.close(err => (err ? reject(err) : resolve()));
-    }),
+      await new Promise<void>((resolve, reject) => {
+        server.close(error => (error ? reject(error) : resolve()));
+      });
+      await languageModelCache.dispose();
+    },
   };
 }
 

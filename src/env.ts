@@ -124,6 +124,8 @@ export function buildHttpProxyChildEnv(
   env['https_proxy'] = proxyUrl;
   env['http_proxy'] = proxyUrl;
   env['NODE_EXTRA_CA_CERTS'] = caCertPath;
+  // Leverframe maps provider context errors, but Claude cannot compact one oversized tool result.
+  env['CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT'] = '1';
   return env;
 }
 

@@ -209,10 +209,10 @@ function handoffPattern(): RegExp {
   );
 }
 
-// Middle dot separator matching the requested indicator format
-// "<description> · <display> · <effort>". Not a regex metacharacter, so it
-// needs no escaping in the patterns built below.
-const AGENT_DESCRIPTION_SEP = '·';
+// The patch payload stays ASCII because native binary patching can reinterpret
+// literal multibyte UTF-8. JavaScript evaluates this escape to a middle dot.
+const AGENT_DESCRIPTION_SEP = '\\u00b7';
+const AGENT_DESCRIPTION_SEP_PATTERN = '(?:\\\\u00b7|\\xB7)';
 
 interface AgentDescriptionOptions {
   descVar: string;
@@ -254,7 +254,7 @@ function agentDescriptionPattern(): RegExp {
   return new RegExp(
     escaped(AGENT_DESCRIPTION_MARKER)
       + '\\{let _ccat=Object\\.assign\\(Object\\.create\\(null\\),[\\s\\S]*?'
-      + '\\+\\(_ccae\\?" ' + AGENT_DESCRIPTION_SEP + ' "\\+_ccae:""\\);\\}\\}',
+      + '\\+\\(_ccae\\?" ' + AGENT_DESCRIPTION_SEP_PATTERN + ' "\\+_ccae:""\\);\\}\\}',
   );
 }
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildChildEnv } from '../src/env.js';
+import { buildChildEnv, buildHttpProxyChildEnv } from '../src/env.js';
 
 describe('buildChildEnv', () => {
   afterEach(() => {
@@ -24,5 +24,13 @@ describe('buildChildEnv', () => {
     const env = buildChildEnv('http://127.0.0.1:9999', 'gpt-5.6-sol', 'token', 9999, 272_000);
 
     expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('272000');
+  });
+});
+
+describe('buildHttpProxyChildEnv', () => {
+  it('lets the upstream provider enforce unknown-model context windows', () => {
+    const env = buildHttpProxyChildEnv(9999, '/tmp/leverframe-ca.pem');
+
+    expect(env.CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT).toBe('1');
   });
 });

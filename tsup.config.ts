@@ -11,6 +11,7 @@ export default defineConfig({
     js: '#!/usr/bin/env node',
   },
   external: [
+    '@github/copilot-sdk',
     '@napi-rs/keyring',
     'ws',
     /^@ai-sdk\//,

@@ -5,6 +5,7 @@ import {
   CODEX_RESPONSES_WEBSOCKETS_BETA,
   DEFAULT_SERVER_PORT,
   MAX_MODEL_CATALOG,
+  OAUTH_REQUEST_TIMEOUT_MS,
   OPENCODE_CACHE_PATH,
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
@@ -59,15 +60,17 @@ import {
   setServerFavoritesOnly,
   setServerListenMode,
   setServerMaskGatewayIds,
+  sleepMs,
   stripOneMContextSuffix,
   supportsNativeOAuth,
   tokensToStoredCredential,
   unregisterServerRuntimeState,
+  withAbortTimeout,
   withCredentialMutationLock,
   withProviderMutationLock,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-PQYK4YB3.js";
+} from "./chunk-T7YRZSML.js";
 
 // src/cli.ts
 import pc14 from "picocolors";
@@ -270,19 +273,19 @@ import { execFileSync } from "child_process";
 import { existsSync, lstatSync, realpathSync, statSync } from "fs";
 import { homedir } from "os";
 import { join, sep } from "path";
-function classifyInstallationKind(canonicalPath) {
+function classifyInstallationKind(canonicalPath2) {
   const home = homedir();
   const nativeLocalBin = join(home, ".local", "bin", "claude");
-  if (canonicalPath === nativeLocalBin || canonicalPath.startsWith(`${join(home, ".local", "bin")}${sep}`)) {
+  if (canonicalPath2 === nativeLocalBin || canonicalPath2.startsWith(`${join(home, ".local", "bin")}${sep}`)) {
     return "native-local-bin";
   }
-  if (canonicalPath.includes(`${sep}homebrew${sep}`) || canonicalPath.startsWith("/opt/homebrew/") || canonicalPath.startsWith("/usr/local/Cellar/")) {
+  if (canonicalPath2.includes(`${sep}homebrew${sep}`) || canonicalPath2.startsWith("/opt/homebrew/") || canonicalPath2.startsWith("/usr/local/Cellar/")) {
     return "homebrew";
   }
-  if (canonicalPath.includes(`${sep}npm${sep}`) && canonicalPath.startsWith(home)) {
+  if (canonicalPath2.includes(`${sep}npm${sep}`) && canonicalPath2.startsWith(home)) {
     return "npm-local";
   }
-  if (/\\npm\\/i.test(canonicalPath) || canonicalPath.includes(`${sep}npm${sep}`)) {
+  if (/\\npm\\/i.test(canonicalPath2) || canonicalPath2.includes(`${sep}npm${sep}`)) {
     return process.platform === "win32" ? "windows-npm" : "npm-global";
   }
   return "custom";
@@ -327,8 +330,8 @@ function isClaudeCodeVersionSupportedForBinaryPatching(version) {
 function unsupportedClaudeCodeBinaryPatchingMessage(version) {
   return `Claude Code ${version} is not supported for binary patching. Upgrade to Claude Code 2.1.223 or newer.`;
 }
-function computeIdentity(canonicalPath) {
-  return createHash("sha256").update(canonicalPath).digest("hex");
+function computeIdentity(canonicalPath2) {
+  return createHash("sha256").update(canonicalPath2).digest("hex");
 }
 function discoverLogicalPath(explicitTarget) {
   if (explicitTarget?.trim()) {
@@ -357,29 +360,29 @@ function resolveClaudeInstallation(options = {}) {
   const discovered = discoverLogicalPath(options.target);
   if (!discovered) return null;
   const { path: logicalPath, source: discoverySource } = discovered;
-  let canonicalPath;
+  let canonicalPath2;
   try {
-    canonicalPath = realpathSync(logicalPath);
+    canonicalPath2 = realpathSync(logicalPath);
   } catch {
     return null;
   }
   try {
-    const stats = lstatSync(canonicalPath);
-    if (stats.isSymbolicLink() || !statSync(canonicalPath).isFile()) return null;
+    const stats = lstatSync(canonicalPath2);
+    if (stats.isSymbolicLink() || !statSync(canonicalPath2).isFile()) return null;
   } catch {
     return null;
   }
-  const version = readExactClaudeVersion(canonicalPath);
+  const version = readExactClaudeVersion(canonicalPath2);
   if (!version) return null;
   return {
     logicalPath,
-    canonicalPath,
-    installationPath: canonicalPath,
+    canonicalPath: canonicalPath2,
+    installationPath: canonicalPath2,
     discoverySource,
-    installationKind: classifyInstallationKind(canonicalPath),
-    identity: computeIdentity(canonicalPath),
+    installationKind: classifyInstallationKind(canonicalPath2),
+    identity: computeIdentity(canonicalPath2),
     version,
-    executableType: classifyExecutableType(canonicalPath)
+    executableType: classifyExecutableType(canonicalPath2)
   };
 }
 
@@ -1937,7 +1940,7 @@ function lookupContextWindow(modelId) {
 }
 function resolveContextWindow(modelId, explicit, unconfirmed) {
   if (typeof explicit === "number" && explicit > 0) return explicit;
-  if (unconfirmed) return DEFAULT_CONTEXT_WINDOW;
+  if (unconfirmed) return contextWindowFromHeuristics(modelId);
   return lookupContextWindow(modelId);
 }
 
@@ -1977,6 +1980,15 @@ var PROVIDER_TEMPLATES = [
     authType: "oauth",
     npm: "@ai-sdk/openai",
     signupUrl: "https://chatgpt.com",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "github-copilot",
+    name: "GitHub Copilot",
+    authType: "oauth",
+    npm: "@github/copilot-sdk",
+    signupUrl: "https://github.com/features/copilot",
     modelSource: "api-list",
     supported: true
   },
@@ -2320,8 +2332,1535 @@ function localProvidersToServerModels(localProviders) {
 // src/provider-factory.ts
 import { wrapLanguageModel, extractReasoningMiddleware } from "ai";
 
-// src/oauth/responses-websocket.ts
+// src/copilot/event-usage.ts
+function sum(left, right) {
+  if (left === void 0) return right;
+  if (right === void 0) return left;
+  return left + right;
+}
+function addCopilotUsage(current, next) {
+  return {
+    inputTokens: sum(current.inputTokens, next.inputTokens),
+    outputTokens: sum(current.outputTokens, next.outputTokens),
+    cacheReadTokens: sum(current.cacheReadTokens, next.cacheReadTokens),
+    cacheWriteTokens: sum(current.cacheWriteTokens, next.cacheWriteTokens),
+    reasoningTokens: sum(current.reasoningTokens, next.reasoningTokens),
+    finishReason: next.finishReason ?? current.finishReason
+  };
+}
+function languageModelUsage(state) {
+  return {
+    inputTokens: {
+      total: state.inputTokens,
+      noCache: state.inputTokens === void 0 || state.cacheReadTokens === void 0 ? void 0 : state.inputTokens - state.cacheReadTokens,
+      cacheRead: state.cacheReadTokens,
+      cacheWrite: state.cacheWriteTokens
+    },
+    outputTokens: {
+      total: state.outputTokens,
+      text: state.outputTokens === void 0 || state.reasoningTokens === void 0 ? void 0 : state.outputTokens - state.reasoningTokens,
+      reasoning: state.reasoningTokens
+    }
+  };
+}
+function languageModelFinishReason(state, sawToolCalls) {
+  const raw = state.finishReason ?? (sawToolCalls ? "tool_calls" : void 0);
+  if (raw === "tool_calls") return { unified: "tool-calls", raw };
+  if (raw === "stop" || raw === "length") return { unified: raw, raw };
+  if (raw === "content_filter") return { unified: "content-filter", raw };
+  return { unified: "other", raw };
+}
+
+// src/copilot/event-stream.ts
+var CopilotEventStreamClosedError = class extends Error {
+  constructor() {
+    super("Copilot event stream is already closed");
+    this.name = "CopilotEventStreamClosedError";
+  }
+};
+var CopilotEventProtocolError = class extends Error {
+  constructor(eventType2, detail) {
+    super(`Invalid Copilot ${eventType2} event: ${detail}`);
+    this.name = "CopilotEventProtocolError";
+  }
+};
+function dataRecord(event) {
+  if (event.data === null || typeof event.data !== "object" || Array.isArray(event.data)) {
+    throw new CopilotEventProtocolError(event.type, "data must be an object");
+  }
+  return event.data;
+}
+function stringField(input) {
+  const value = input.data[input.field];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new CopilotEventProtocolError(
+      input.event.type,
+      `${input.field} must be a non-empty string`
+    );
+  }
+  return value;
+}
+function optionalNumber(input) {
+  const value = input.data[input.field];
+  if (value === void 0) return void 0;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new CopilotEventProtocolError(
+      input.event.type,
+      `${input.field} must be a non-negative number`
+    );
+  }
+  return value;
+}
+function textParts(state, event) {
+  const data = dataRecord(event);
+  const messageId = stringField({ event, data, field: "messageId" });
+  if (event.type === "assistant.message_start") {
+    state.openText.add(messageId);
+    return [{ type: "text-start", id: messageId }];
+  }
+  if (event.type === "assistant.message_delta") {
+    const delta = stringField({ event, data, field: "deltaContent" });
+    const start = state.openText.has(messageId) ? [] : [{ type: "text-start", id: messageId }];
+    state.openText.add(messageId);
+    return [...start, { type: "text-delta", id: messageId, delta }];
+  }
+  const content = typeof data.content === "string" ? data.content : (() => {
+    throw new CopilotEventProtocolError(event.type, "content must be a string");
+  })();
+  const parts = state.openText.has(messageId) ? [{ type: "text-end", id: messageId }] : content.length === 0 ? [] : [
+    { type: "text-start", id: messageId },
+    { type: "text-delta", id: messageId, delta: content },
+    { type: "text-end", id: messageId }
+  ];
+  state.openText.delete(messageId);
+  const toolParts = finalizedToolParts({ state, event, value: data.toolRequests });
+  return toolParts.length === 0 ? parts : [...parts, ...toolParts, ...finish(state, void 0)];
+}
+function reasoningParts(state, event) {
+  const data = dataRecord(event);
+  const reasoningId = stringField({ event, data, field: "reasoningId" });
+  if (event.type === "assistant.reasoning_delta") {
+    const delta = stringField({ event, data, field: "deltaContent" });
+    const start = state.openReasoning.has(reasoningId) ? [] : [{ type: "reasoning-start", id: reasoningId }];
+    state.openReasoning.add(reasoningId);
+    return [...start, { type: "reasoning-delta", id: reasoningId, delta }];
+  }
+  const content = typeof data.content === "string" ? data.content : (() => {
+    throw new CopilotEventProtocolError(event.type, "content must be a string");
+  })();
+  const parts = state.openReasoning.has(reasoningId) ? [{ type: "reasoning-end", id: reasoningId }] : [
+    { type: "reasoning-start", id: reasoningId },
+    ...content.length === 0 ? [] : [{ type: "reasoning-delta", id: reasoningId, delta: content }],
+    { type: "reasoning-end", id: reasoningId }
+  ];
+  state.openReasoning.delete(reasoningId);
+  return parts;
+}
+function toolDeltaParts(state, event) {
+  const data = dataRecord(event);
+  const toolCallId = stringField({ event, data, field: "toolCallId" });
+  const delta = stringField({ event, data, field: "inputDelta" });
+  const suppliedName = data.toolName === void 0 ? void 0 : stringField({ event, data, field: "toolName" });
+  const open2 = state.openTools.get(toolCallId) ?? { bufferedDeltas: [] };
+  if (open2.name !== void 0 && suppliedName !== void 0 && open2.name !== suppliedName) {
+    throw new CopilotEventProtocolError(event.type, "toolName changed during input streaming");
+  }
+  const toolName = open2.name ?? suppliedName;
+  if (toolName === void 0) {
+    open2.bufferedDeltas.push(delta);
+    state.openTools.set(toolCallId, open2);
+    return [];
+  }
+  if (open2.name !== void 0) return [{ type: "tool-input-delta", id: toolCallId, delta }];
+  state.openTools.set(toolCallId, { name: toolName, bufferedDeltas: [] });
+  return [
+    { type: "tool-input-start", id: toolCallId, toolName },
+    ...open2.bufferedDeltas.map((value) => ({
+      type: "tool-input-delta",
+      id: toolCallId,
+      delta: value
+    })),
+    { type: "tool-input-delta", id: toolCallId, delta }
+  ];
+}
+function parseToolRequests(event, value) {
+  if (value === void 0) return [];
+  if (!Array.isArray(value)) {
+    throw new CopilotEventProtocolError(event.type, "toolRequests must be an array");
+  }
+  return value.map((item) => {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) {
+      throw new CopilotEventProtocolError(event.type, "tool request must be an object");
+    }
+    const record = item;
+    const toolCallId = stringField({ event, data: record, field: "toolCallId" });
+    const name = stringField({ event, data: record, field: "name" });
+    const args = record.arguments;
+    if (args !== void 0 && (args === null || typeof args !== "object" || Array.isArray(args))) {
+      throw new CopilotEventProtocolError(event.type, "tool arguments must be an object");
+    }
+    return { toolCallId, name, arguments: args };
+  });
+}
+function finalizedToolParts(input) {
+  const requests = parseToolRequests(input.event, input.value);
+  if (requests.length > 0) input.state.sawToolCalls = true;
+  return requests.flatMap((request3) => {
+    const open2 = input.state.openTools.get(request3.toolCallId);
+    if (open2?.name !== void 0 && open2.name !== request3.name) {
+      throw new CopilotEventProtocolError(input.event.type, "final tool name does not match input stream");
+    }
+    const start = open2?.name === void 0 ? [
+      { type: "tool-input-start", id: request3.toolCallId, toolName: request3.name },
+      ...(open2?.bufferedDeltas ?? []).map((delta) => ({
+        type: "tool-input-delta",
+        id: request3.toolCallId,
+        delta
+      }))
+    ] : [];
+    input.state.openTools.delete(request3.toolCallId);
+    return [
+      ...start,
+      { type: "tool-input-end", id: request3.toolCallId },
+      {
+        type: "tool-call",
+        toolCallId: request3.toolCallId,
+        toolName: request3.name,
+        input: JSON.stringify(request3.arguments ?? {})
+      }
+    ];
+  });
+}
+function recordUsage(state, event) {
+  const data = dataRecord(event);
+  state.usage = addCopilotUsage(state.usage, {
+    inputTokens: optionalNumber({ event, data, field: "inputTokens" }),
+    outputTokens: optionalNumber({ event, data, field: "outputTokens" }),
+    cacheReadTokens: optionalNumber({ event, data, field: "cacheReadTokens" }),
+    cacheWriteTokens: optionalNumber({ event, data, field: "cacheWriteTokens" }),
+    reasoningTokens: optionalNumber({ event, data, field: "reasoningTokens" }),
+    finishReason: data.finishReason === void 0 ? void 0 : stringField({ event, data, field: "finishReason" })
+  });
+}
+function closeOpenParts(state) {
+  const parts = [
+    ...[...state.openText].map((id) => ({ type: "text-end", id })),
+    ...[...state.openReasoning].map((id) => ({ type: "reasoning-end", id })),
+    ...[...state.openTools].flatMap(([id, input]) => input.name === void 0 ? [] : [{ type: "tool-input-end", id }])
+  ];
+  state.openText.clear();
+  state.openReasoning.clear();
+  state.openTools.clear();
+  return parts;
+}
+function finish(state, rawOverride) {
+  const closingParts = closeOpenParts(state);
+  state.closed = true;
+  return [
+    ...closingParts,
+    {
+      type: "finish",
+      usage: languageModelUsage(state.usage),
+      finishReason: rawOverride === void 0 ? languageModelFinishReason(state.usage, state.sawToolCalls) : { unified: "other", raw: rawOverride }
+    }
+  ];
+}
+function errorPart(state, event) {
+  const data = dataRecord(event);
+  const errorType = stringField({ event, data, field: "errorType" });
+  const message2 = stringField({ event, data, field: "message" });
+  const statusCode = optionalNumber({ event, data, field: "statusCode" });
+  state.closed = true;
+  return [{ type: "error", error: { errorType, message: message2, statusCode } }];
+}
+function assistantParts(state, event) {
+  if (event.type.startsWith("assistant.message")) return textParts(state, event);
+  if (event.type.startsWith("assistant.reasoning")) return reasoningParts(state, event);
+  if (event.type === "assistant.tool_call_delta") return toolDeltaParts(state, event);
+  if (event.type === "assistant.usage") {
+    recordUsage(state, event);
+    return [];
+  }
+  if (event.type === "assistant.turn_end") return finish(state, void 0);
+  if (event.type === "assistant.idle") {
+    const data = dataRecord(event);
+    if (data.aborted !== void 0 && typeof data.aborted !== "boolean") {
+      throw new CopilotEventProtocolError(event.type, "aborted must be a boolean");
+    }
+    return finish(state, data.aborted === true ? "abort:idle" : void 0);
+  }
+  return [];
+}
+function eventParts(state, event) {
+  if (event.agentId !== void 0) return [];
+  if (state.closed) throw new CopilotEventStreamClosedError();
+  if (event.type.startsWith("assistant.")) return assistantParts(state, event);
+  if (event.type === "session.error") return errorPart(state, event);
+  if (event.type === "abort") {
+    const data = dataRecord(event);
+    return finish(state, `abort:${stringField({ event, data, field: "reason" })}`);
+  }
+  return [];
+}
+function createCopilotEventStreamBridge() {
+  const state = {
+    closed: false,
+    openText: /* @__PURE__ */ new Set(),
+    openReasoning: /* @__PURE__ */ new Set(),
+    openTools: /* @__PURE__ */ new Map(),
+    usage: {},
+    sawToolCalls: false
+  };
+  return {
+    get closed() {
+      return state.closed;
+    },
+    handle: (event) => eventParts(state, event)
+  };
+}
+
+// src/copilot/event-readable-stream.ts
+async function pumpEvents(input) {
+  const bridge = createCopilotEventStreamBridge();
+  try {
+    while (!input.cancelled()) {
+      const next = await input.iterator.next();
+      if (next.done || input.cancelled()) break;
+      for (const part of bridge.handle(next.value)) input.controller.enqueue(part);
+      if (bridge.closed) break;
+    }
+    if (!input.cancelled()) input.controller.close();
+  } catch (error) {
+    if (!input.cancelled()) input.controller.error(error);
+  } finally {
+    await input.close();
+  }
+}
+function bridgeCopilotSessionEvents(events) {
+  const iterator = events[Symbol.asyncIterator]();
+  let cancelled = false;
+  let returned = false;
+  const close = async () => {
+    if (returned) return;
+    returned = true;
+    await iterator.return?.();
+  };
+  return new ReadableStream({
+    start(controller) {
+      void pumpEvents({ iterator, controller, cancelled: () => cancelled, close });
+    },
+    async cancel() {
+      cancelled = true;
+      await close();
+    }
+  });
+}
+
+// src/copilot/memory-session-fs.ts
+import { posix } from "path";
+function filesystemError(code, path) {
+  return Object.assign(new Error(`${code}: ${path}`), { code });
+}
+function canonicalPath(path) {
+  if (!path.startsWith("/")) throw filesystemError("EINVAL", path);
+  return posix.normalize(path);
+}
+function directChild(parent, candidate) {
+  if (candidate === parent) return void 0;
+  const relative = posix.relative(parent, candidate);
+  if (relative.length === 0 || relative.startsWith("../") || relative === "..") return void 0;
+  const [child, ...rest] = relative.split("/");
+  return rest.length === 0 ? child : void 0;
+}
+var MemorySessionFs = class {
+  files = /* @__PURE__ */ new Map();
+  directories = /* @__PURE__ */ new Map();
+  constructor() {
+    const createdAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.directories.set("/", { birthtime: createdAt, mtime: createdAt });
+  }
+  async readFile(path) {
+    const normalized = canonicalPath(path);
+    const file = this.files.get(normalized);
+    if (file === void 0) throw filesystemError("ENOENT", normalized);
+    return file.content;
+  }
+  async writeFile(path, content) {
+    const normalized = canonicalPath(path);
+    this.ensureParent(normalized);
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    this.files.set(normalized, {
+      content,
+      birthtime: this.files.get(normalized)?.birthtime ?? now,
+      mtime: now
+    });
+  }
+  async appendFile(path, content) {
+    const normalized = canonicalPath(path);
+    await this.writeFile(normalized, `${this.files.get(normalized)?.content ?? ""}${content}`);
+  }
+  async exists(path) {
+    const normalized = canonicalPath(path);
+    return this.files.has(normalized) || this.directories.has(normalized);
+  }
+  async stat(path) {
+    const normalized = canonicalPath(path);
+    const file = this.files.get(normalized);
+    if (file !== void 0) return this.fileInfo(file);
+    const directory = this.directories.get(normalized);
+    if (directory === void 0) throw filesystemError("ENOENT", normalized);
+    return {
+      isFile: false,
+      isDirectory: true,
+      size: 0,
+      mtime: directory.mtime,
+      birthtime: directory.birthtime
+    };
+  }
+  async mkdir(path, recursive) {
+    const normalized = canonicalPath(path);
+    if (this.directories.has(normalized)) return;
+    if (!recursive) {
+      this.ensureParent(normalized);
+      this.directories.set(normalized, this.newMetadata());
+      return;
+    }
+    let current = "/";
+    for (const segment of normalized.split("/").filter(Boolean)) {
+      current = posix.join(current, segment);
+      if (!this.directories.has(current)) this.directories.set(current, this.newMetadata());
+    }
+  }
+  async readdir(path) {
+    return this.children(path).map((entry) => entry.name);
+  }
+  async readdirWithTypes(path) {
+    return this.children(path);
+  }
+  async rm(path, recursive, force) {
+    const normalized = canonicalPath(path);
+    if (!this.files.has(normalized) && !this.directories.has(normalized)) {
+      if (force) return;
+      throw filesystemError("ENOENT", normalized);
+    }
+    if (this.files.delete(normalized)) return;
+    if (!recursive && this.children(normalized).length > 0) {
+      throw filesystemError("ENOTEMPTY", normalized);
+    }
+    const prefix = normalized === "/" ? "/" : `${normalized}/`;
+    for (const file of this.files.keys()) if (file.startsWith(prefix)) this.files.delete(file);
+    for (const directory of this.directories.keys()) {
+      if (directory === normalized || directory.startsWith(prefix)) this.directories.delete(directory);
+    }
+  }
+  async rename(source, destination) {
+    const from = canonicalPath(source);
+    const to = canonicalPath(destination);
+    this.ensureParent(to);
+    const file = this.files.get(from);
+    if (file !== void 0) {
+      this.files.delete(from);
+      this.files.set(to, file);
+      return;
+    }
+    if (!this.directories.has(from)) throw filesystemError("ENOENT", from);
+    this.moveDirectory(from, to);
+  }
+  requireDirectory(path) {
+    const normalized = canonicalPath(path);
+    if (!this.directories.has(normalized)) throw filesystemError("ENOENT", normalized);
+    return normalized;
+  }
+  ensureParent(path) {
+    const parent = posix.dirname(path);
+    if (!this.directories.has(parent)) throw filesystemError("ENOENT", parent);
+  }
+  children(path) {
+    const normalized = this.requireDirectory(path);
+    const entries = /* @__PURE__ */ new Map();
+    for (const directory of this.directories.keys()) {
+      const name = directChild(normalized, directory);
+      if (name !== void 0) entries.set(name, "directory");
+    }
+    for (const file of this.files.keys()) {
+      const name = directChild(normalized, file);
+      if (name !== void 0) entries.set(name, "file");
+    }
+    return [...entries].map(([name, type]) => ({ name, type })).sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+  }
+  moveDirectory(from, to) {
+    const directoryMoves = [...this.directories].filter(([path]) => path === from || path.startsWith(`${from}/`));
+    const fileMoves = [...this.files].filter(([path]) => path.startsWith(`${from}/`));
+    for (const [path] of directoryMoves) this.directories.delete(path);
+    for (const [path] of fileMoves) this.files.delete(path);
+    for (const [path, metadata] of directoryMoves) {
+      this.directories.set(`${to}${path.slice(from.length)}`, metadata);
+    }
+    for (const [path, metadata] of fileMoves) {
+      this.files.set(`${to}${path.slice(from.length)}`, metadata);
+    }
+  }
+  fileInfo(file) {
+    return {
+      isFile: true,
+      isDirectory: false,
+      size: Buffer.byteLength(file.content),
+      mtime: file.mtime,
+      birthtime: file.birthtime
+    };
+  }
+  newMetadata() {
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    return { birthtime: now, mtime: now };
+  }
+};
+function createMemorySessionFsProvider() {
+  return new MemorySessionFs();
+}
+
+// src/copilot/generate-result.ts
+async function collectCopilotGenerateResult(stream) {
+  const reader = stream.getReader();
+  const blocks = /* @__PURE__ */ new Map();
+  const order = [];
+  const immediate = [];
+  let finish2;
+  for (; ; ) {
+    const next = await reader.read();
+    if (next.done) break;
+    const part = next.value;
+    if (part.type === "text-start" || part.type === "reasoning-start") {
+      blocks.set(part.id, { type: part.type === "text-start" ? "text" : "reasoning", value: "" });
+      order.push(part.id);
+    } else if (part.type === "text-delta" || part.type === "reasoning-delta") {
+      const block = blocks.get(part.id);
+      if (block === void 0) throw new Error(`V3 delta for unopened block "${part.id}"`);
+      block.value += part.delta;
+    } else if (part.type === "tool-call" || part.type === "file" || part.type === "source") {
+      immediate.push(part);
+    } else if (part.type === "finish") {
+      finish2 = part;
+    } else if (part.type === "error") {
+      throw part.error instanceof Error ? part.error : new Error(String(part.error));
+    }
+  }
+  if (finish2 === void 0) throw new Error("Copilot stream ended without a finish part");
+  const content = order.map((id) => {
+    const block = blocks.get(id);
+    if (block === void 0) throw new Error(`Missing generated block "${id}"`);
+    return block.type === "text" ? { type: "text", text: block.value } : { type: "reasoning", text: block.value };
+  });
+  return {
+    content: [...content, ...immediate],
+    finishReason: finish2.finishReason,
+    usage: finish2.usage,
+    warnings: []
+  };
+}
+
+// src/copilot/session-events.ts
+function createSessionEventSource(session) {
+  const queued = [];
+  let waiting;
+  let closed = false;
+  const subscribe = "on" in session ? session.on.bind(session) : session.subscribe.bind(session);
+  const unsubscribe = subscribe((event) => {
+    if (closed) return;
+    if (waiting !== void 0) {
+      const resolve3 = waiting;
+      waiting = void 0;
+      resolve3({ done: false, value: event });
+    } else queued.push(event);
+  });
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    unsubscribe();
+    waiting?.({ done: true, value: void 0 });
+    waiting = void 0;
+  };
+  return {
+    close,
+    [Symbol.asyncIterator]() {
+      return {
+        next() {
+          const event = queued.shift();
+          if (event !== void 0) return Promise.resolve({ done: false, value: event });
+          if (closed) return Promise.resolve({ done: true, value: void 0 });
+          if (waiting !== void 0) {
+            return Promise.reject(new Error("Session event source already has a reader"));
+          }
+          return new Promise((resolve3) => {
+            waiting = resolve3;
+          });
+        },
+        async return() {
+          close();
+          return { done: true, value: void 0 };
+        }
+      };
+    }
+  };
+}
+
+// src/copilot/serialized-history.ts
 import { createHash as createHash2 } from "crypto";
+
+// src/copilot/canonical-json.ts
+function encode(value, ancestors) {
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError("Canonical JSON numbers must be finite");
+    return JSON.stringify(value);
+  }
+  if (typeof value !== "object") {
+    throw new TypeError(`Canonical JSON does not support ${typeof value}`);
+  }
+  if (ancestors.has(value)) throw new TypeError("Canonical JSON does not support cycles");
+  const nextAncestors = new Set(ancestors).add(value);
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => encode(item, nextAncestors)).join(",")}]`;
+  }
+  const record = value;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${encode(record[key], nextAncestors)}`).join(",")}}`;
+}
+function canonicalJson(value) {
+  return encode(value, /* @__PURE__ */ new Set());
+}
+
+// src/copilot/history-renderer.ts
+function renderOutput(output) {
+  if (output.type === "text" || output.type === "json") {
+    return { status: "ok", output: output.value };
+  }
+  if (output.type === "error-text" || output.type === "error-json") {
+    return { status: "error", output: output.value };
+  }
+  if (output.type === "execution-denied") {
+    return { status: "error", output: output.reason ?? "execution denied" };
+  }
+  if (output.type === "content") return { status: "ok", output: output.value };
+  throw new TypeError("Unsupported V3 tool-result output");
+}
+function remoteImage(data, mediaType) {
+  if (!(data instanceof URL) || !["http:", "https:"].includes(data.protocol)) {
+    throw new TypeError(`Copilot history does not support embedded ${mediaType} files`);
+  }
+  if (data.username || data.password || data.search || data.hash) {
+    throw new TypeError("Copilot history does not support secret-bearing image URLs");
+  }
+  if (!mediaType.startsWith("image")) {
+    throw new TypeError(`Copilot history does not support ${mediaType} files`);
+  }
+  return { type: "image", reference: data.href, mediaType };
+}
+function renderPart(value) {
+  if (value === null || typeof value !== "object") {
+    throw new TypeError("Copilot history prompt part must be an object");
+  }
+  const part = value;
+  if (part.type === "text" || part.type === "reasoning") {
+    if (typeof part.text !== "string") throw new TypeError(`${part.type} text must be a string`);
+    return { type: part.type, text: part.text };
+  }
+  if (part.type === "file") {
+    if (typeof part.mediaType !== "string") throw new TypeError("File mediaType must be a string");
+    return remoteImage(part.data, part.mediaType);
+  }
+  if (part.type === "tool-call") {
+    if (typeof part.toolCallId !== "string" || typeof part.toolName !== "string") {
+      throw new TypeError("Tool-call identity must be a string");
+    }
+    return {
+      type: "tool-call",
+      toolCallId: part.toolCallId,
+      toolName: part.toolName,
+      input: part.input
+    };
+  }
+  if (part.type === "tool-result") {
+    if (typeof part.toolCallId !== "string" || typeof part.toolName !== "string") {
+      throw new TypeError("Tool-result identity must be a string");
+    }
+    const rendered = renderOutput(part.output);
+    return {
+      type: "tool-result",
+      toolCallId: part.toolCallId,
+      toolName: part.toolName,
+      status: rendered.status,
+      output: rendered.output
+    };
+  }
+  throw new TypeError(`Copilot history does not support ${String(part.type)} prompt parts`);
+}
+function renderMessage(message2) {
+  return message2.role === "system" ? { role: message2.role, content: message2.content } : { role: message2.role, content: message2.content.map(renderPart) };
+}
+function renderCopilotHistory(prompt, version) {
+  const transcript = canonicalJson({
+    format: `leverframe-copilot-history-v${version}`,
+    messages: prompt.map(renderMessage)
+  });
+  return [
+    "Continue from the final turn in this prior conversation transcript.",
+    transcript
+  ].join("\n");
+}
+
+// src/copilot/serialized-history.ts
+var SERIALIZED_HISTORY_VERSION = 1;
+function sha256(value) {
+  return createHash2("sha256").update(value).digest("hex");
+}
+function renderCopilotHistory2(prompt) {
+  return renderCopilotHistory(prompt, SERIALIZED_HISTORY_VERSION);
+}
+function historyPrefixHashes(history) {
+  const hashes = [sha256(`history-v${history.version}`)];
+  for (const entry of history.entries) {
+    hashes.push(sha256(`${hashes.at(-1)}\0${canonicalJson(entry)}`));
+  }
+  return hashes;
+}
+
+// src/copilot/prompt.ts
+import { createHash as createHash4 } from "crypto";
+
+// src/copilot/transcript.ts
+import { createHash as createHash3 } from "crypto";
+function sha2562(value) {
+  return createHash3("sha256").update(value).digest("hex");
+}
+function hashSystemPrompt(systemPrompt) {
+  return sha2562(canonicalJson({ systemPrompt }));
+}
+function hashToolSchema(tools) {
+  const sorted = [...tools].sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+  return sha2562(canonicalJson(sorted));
+}
+function deriveCopilotSessionKey(input) {
+  return sha2562(canonicalJson(input));
+}
+function sameSessionConfiguration(previous, current) {
+  if (previous.upstreamModel !== current.upstreamModel || previous.reasoningEffort !== current.reasoningEffort) {
+    return { kind: "resync", reason: "model-changed" };
+  }
+  if (previous.toolSchemaHash !== current.toolSchemaHash) {
+    return { kind: "resync", reason: "tool-schema-changed" };
+  }
+  if (previous.systemPromptHash !== current.systemPromptHash) {
+    return { kind: "resync", reason: "system-prompt-changed" };
+  }
+  return void 0;
+}
+function toolResultIds(history, fromIndex) {
+  const appended = history.entries.slice(fromIndex);
+  if (appended.length === 0 || appended.some((entry) => entry.role !== "tool")) return void 0;
+  const ids = appended.flatMap((entry) => entry.parts.flatMap((part) => part.type === "tool-result" ? [part.toolCallId] : []));
+  return ids.length > 0 ? ids : void 0;
+}
+function classifyTranscript(previous, current) {
+  if (previous === null) return { kind: "resync", reason: "cold-restart" };
+  const configurationChange = sameSessionConfiguration(previous, current);
+  if (configurationChange !== void 0) return configurationChange;
+  const previousHashes = historyPrefixHashes(previous.history);
+  const currentHashes = historyPrefixHashes(current.history);
+  const previousLength = previous.history.entries.length;
+  const currentLength = current.history.entries.length;
+  const sharedLength = Math.min(previousLength, currentLength);
+  const sharedPrefixMatches = previousHashes[sharedLength] === currentHashes[sharedLength];
+  if (currentLength === previousLength && sharedPrefixMatches) return { kind: "exact-retry" };
+  if (currentLength > previousLength && sharedPrefixMatches) {
+    const resolvedToolCallIds = toolResultIds(current.history, previousLength);
+    return resolvedToolCallIds === void 0 ? { kind: "new-turn" } : { kind: "tool-result-continuation", resolvedToolCallIds };
+  }
+  if (currentLength < previousLength) {
+    return sharedPrefixMatches ? { kind: "resync", reason: "rewind" } : { kind: "resync", reason: "compaction" };
+  }
+  return { kind: "resync", reason: "branch" };
+}
+
+// src/copilot/prompt.ts
+function sha2563(value) {
+  return createHash4("sha256").update(value).digest("hex");
+}
+function outputHash(output) {
+  return sha2563(canonicalJson(output));
+}
+function serializedPart(part) {
+  if (part.type === "text" || part.type === "reasoning") {
+    if (typeof part.text !== "string") throw new TypeError(`${part.type} text must be a string`);
+    return { type: part.type, text: part.text };
+  }
+  if (part.type === "file") {
+    const data = part.data;
+    const mediaType = part.mediaType;
+    if (typeof mediaType !== "string" || !mediaType.startsWith("image/")) {
+      throw new TypeError("Copilot supports only image prompt files");
+    }
+    if (data instanceof URL) return { type: "image", reference: data.href, mediaType };
+    if (data instanceof Uint8Array || typeof data === "string") {
+      const payload = data instanceof Uint8Array ? Buffer.from(data).toString("base64") : data;
+      return { type: "image", reference: `sha256:${sha2563(payload)}`, mediaType };
+    }
+    throw new TypeError("Copilot image data must be bytes, base64, or a URL");
+  }
+  if (part.type === "tool-call") {
+    if (typeof part.toolCallId !== "string" || typeof part.toolName !== "string") {
+      throw new TypeError("Copilot tool-call identifiers must be strings");
+    }
+    return {
+      type: "tool-call",
+      toolCallId: part.toolCallId,
+      toolName: part.toolName,
+      payloadHash: sha2563(canonicalJson(part.input))
+    };
+  }
+  if (part.type === "tool-result") {
+    const result = part;
+    return {
+      type: "tool-result",
+      toolCallId: result.toolCallId,
+      toolName: result.toolName,
+      status: result.output.type === "error-text" || result.output.type === "error-json" || result.output.type === "execution-denied" ? "error" : "ok",
+      payloadHash: outputHash(result.output)
+    };
+  }
+  throw new TypeError(`Copilot does not support ${String(part.type)} prompt parts`);
+}
+function v3History(prompt) {
+  return {
+    version: SERIALIZED_HISTORY_VERSION,
+    entries: prompt.filter((message2) => message2.role !== "system").map((message2) => ({
+      role: message2.role,
+      parts: message2.content.map((part) => serializedPart(part))
+    }))
+  };
+}
+function v3SystemPrompt(prompt) {
+  const systems = prompt.filter((message2) => message2.role === "system");
+  if (systems.length > 1) throw new TypeError("Copilot accepts one normalized system message");
+  return systems[0]?.content ?? "";
+}
+function v3ComparisonState(input) {
+  const system = v3SystemPrompt(input.prompt);
+  return {
+    upstreamModel: input.modelId,
+    reasoningEffort: input.reasoningEffort,
+    systemPromptHash: hashSystemPrompt(system),
+    toolSchemaHash: hashToolSchema(input.tools.map((tool3) => ({
+      name: tool3.name,
+      description: tool3.description ?? null,
+      inputSchemaJson: tool3.inputSchema
+    }))),
+    history: v3History(input.prompt)
+  };
+}
+function v3ToolResults(prompt) {
+  return prompt.flatMap((message2) => message2.role === "tool" ? message2.content.filter((part) => part.type === "tool-result") : []);
+}
+function v3LatestUserPrompt(prompt) {
+  const user = [...prompt].reverse().find((message2) => message2.role === "user");
+  if (user === void 0) throw new TypeError("Copilot request requires a user message");
+  const text3 = user.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+  if (text3.length === 0) throw new TypeError("Copilot user message requires text");
+  return text3;
+}
+
+// src/copilot/response-replay.ts
+function recordCopilotResponse(input) {
+  const reader = input.stream.getReader();
+  const parts = [];
+  return new ReadableStream({
+    async pull(controller) {
+      try {
+        const next = await reader.read();
+        if (next.done) {
+          input.onComplete(Object.freeze([...parts]));
+          input.onSettled();
+          controller.close();
+          return;
+        }
+        parts.push(next.value);
+        controller.enqueue(next.value);
+      } catch (error) {
+        input.onSettled();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      input.onSettled();
+      await reader.cancel(reason);
+    }
+  });
+}
+function replayCopilotResponse(parts) {
+  return new ReadableStream({
+    start(controller) {
+      for (const part of parts) controller.enqueue(part);
+      controller.close();
+    }
+  });
+}
+
+// src/copilot/language-model.ts
+var CopilotUnsupportedToolChoiceError = class extends Error {
+  constructor(toolChoice) {
+    super(`GitHub Copilot does not support tool choice "${toolChoice}". Use "auto" or "none".`);
+    this.name = "CopilotUnsupportedToolChoiceError";
+  }
+};
+function providerOption(options, field) {
+  return options.providerOptions?.copilot?.[field];
+}
+var CLAUDE_SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var REASONING_EFFORTS = /* @__PURE__ */ new Set(["low", "medium", "high", "xhigh", "max"]);
+function requestIdentity(options) {
+  const claudeSessionId = providerOption(options, "claudeSessionId");
+  const effort = providerOption(options, "reasoningEffort");
+  if (typeof claudeSessionId !== "string" || !CLAUDE_SESSION_ID_RE.test(claudeSessionId)) {
+    throw new TypeError("GitHub Copilot requires a validated Claude session ID");
+  }
+  if (effort !== void 0 && (typeof effort !== "string" || !REASONING_EFFORTS.has(effort))) {
+    throw new TypeError("GitHub Copilot reasoning effort must be low, medium, high, xhigh, or max");
+  }
+  return { claudeSessionId, reasoningEffort: effort ?? null };
+}
+function functionTools(options) {
+  const tools = options.tools ?? [];
+  const providerTool = tools.find((tool3) => tool3.type === "provider");
+  if (providerTool !== void 0) {
+    throw new TypeError(`GitHub Copilot does not accept provider tool "${providerTool.name}"`);
+  }
+  return tools;
+}
+function validateToolChoice(options) {
+  const choice = options.toolChoice?.type ?? "auto";
+  if (choice === "auto" || choice === "none") return choice;
+  throw new CopilotUnsupportedToolChoiceError(choice);
+}
+function requestContext(input) {
+  const toolChoice = validateToolChoice(input.options);
+  const identity = requestIdentity(input.options);
+  const tools = functionTools(input.options);
+  const availableTools = toolChoice === "none" ? [] : tools;
+  const comparison = v3ComparisonState({
+    prompt: input.options.prompt,
+    modelId: input.config.modelId,
+    reasoningEffort: identity.reasoningEffort,
+    tools: availableTools
+  });
+  const key = input.deps.deriveSessionKey({
+    claudeSessionId: identity.claudeSessionId,
+    upstreamModel: input.config.modelId,
+    reasoningEffort: identity.reasoningEffort,
+    systemPromptHash: comparison.systemPromptHash,
+    toolSchemaHash: comparison.toolSchemaHash
+  });
+  return {
+    options: input.options,
+    partitionId: identity.claudeSessionId,
+    tools,
+    comparison,
+    key,
+    toolChoice
+  };
+}
+function sessionConfig(input) {
+  const enabledTools = input.toolChoice === "none" ? [] : input.tools;
+  return {
+    model: input.modelId,
+    ...input.reasoningEffort === null ? {} : { reasoningEffort: input.reasoningEffort },
+    systemMessage: { mode: "replace", content: input.systemPrompt },
+    availableTools: enabledTools.map((tool3) => tool3.name),
+    tools: enabledTools,
+    toolSearch: { enabled: false },
+    memory: { enabled: false },
+    infiniteSessions: { enabled: false },
+    enableSessionStore: false,
+    enableConfigDiscovery: false,
+    enableSkills: false,
+    skipCustomInstructions: true,
+    customAgentsLocalOnly: true,
+    workingDirectory: input.workingDirectory
+  };
+}
+function wrapAbort(input) {
+  if (input.signal === void 0) return input.stream;
+  return input.stream.pipeThrough(new TransformStream({
+    start(controller) {
+      input.signal?.addEventListener("abort", () => {
+        input.toolBridge.settleAllPending("abort");
+        input.source.close();
+        void input.session.abort();
+        controller.terminate();
+      }, { once: true });
+    },
+    transform(part, controller) {
+      controller.enqueue(part);
+    }
+  }));
+}
+async function startTurn(input) {
+  const source = createSessionEventSource({
+    subscribe: (handler) => input.active.subscribeEvents(handler)
+  });
+  const stream = wrapAbort({
+    stream: input.deps.bridgeSessionEvents(source),
+    signal: input.context.options.abortSignal,
+    session: input.active.session,
+    toolBridge: input.active.toolBridge,
+    source
+  });
+  try {
+    if (input.decision.kind === "tool-result-continuation" && !input.recreating) {
+      input.active.toolBridge.resolveToolResults(v3ToolResults(input.context.options.prompt));
+    } else if (input.decision.kind !== "exact-retry" || input.recreating) {
+      const prompt = input.recreating ? renderCopilotHistory2(input.context.options.prompt) : v3LatestUserPrompt(input.context.options.prompt);
+      await input.active.session.send({ prompt });
+    }
+    return stream;
+  } catch (error) {
+    source.close();
+    throw error;
+  }
+}
+function withComparison(state, comparison) {
+  return { ...state, comparison };
+}
+function streamResult(stream) {
+  return { stream, request: { body: void 0 }, response: void 0 };
+}
+function resolveSlotKey(input) {
+  const primary = input.sessions.get(input.context.partitionId);
+  const primaryBusy = input.activeResponses.has(input.context.partitionId);
+  const sharesPrimarySlot = primary === void 0 || primary.key === input.context.key;
+  return primaryBusy && !sharesPrimarySlot ? `${input.context.partitionId}${input.context.key}` : input.context.partitionId;
+}
+async function resolveTurnSession(input) {
+  const previous = input.sessions.get(input.slotKey);
+  const decision = previous === void 0 ? { kind: "resync", reason: "cold-restart" } : input.deps.classifyTranscript(previous.comparison, input.comparison);
+  const replay = decision.kind === "exact-retry" && previous?.key === input.key ? previous.completedResponse : void 0;
+  if (replay !== void 0) return { kind: "replay", parts: replay };
+  const missingRetryReplay = decision.kind === "exact-retry";
+  const recreating = previous !== void 0 && (previous.key !== input.key || decision.kind === "resync" || missingRetryReplay);
+  let active = previous;
+  if (previous === void 0 || recreating) {
+    if (previous !== void 0) {
+      previous.toolBridge.settleAllPending("disconnect");
+      await previous.session.disconnect();
+    }
+    active = await input.createState({
+      options: input.options,
+      key: input.key,
+      comparison: input.comparison,
+      tools: input.context.tools,
+      toolChoice: input.context.toolChoice
+    });
+    input.sessions.set(input.slotKey, active);
+  }
+  if (active === void 0) throw new Error("Copilot session state was not created");
+  return { kind: "turn", active, decision, recreating };
+}
+function createCopilotLanguageModel(config, deps) {
+  const sessions = /* @__PURE__ */ new Map();
+  const activeResponses = /* @__PURE__ */ new Set();
+  let disposed = false;
+  const createState = async (input) => {
+    const runtime = await deps.getRuntime();
+    await runtime.start();
+    const toolBridge = deps.createToolBridge(input.toolChoice === "none" ? [] : input.tools);
+    const earlyEvents = [];
+    let sessionEventHandler;
+    const session = await runtime.createSession(sessionConfig({
+      modelId: config.modelId,
+      reasoningEffort: input.comparison.reasoningEffort,
+      systemPrompt: v3SystemPrompt(input.options.prompt),
+      tools: input.tools,
+      toolChoice: input.toolChoice,
+      workingDirectory: deps.workingDirectory
+    }), (event) => {
+      if (sessionEventHandler === void 0) earlyEvents.push(event);
+      else sessionEventHandler(event);
+    });
+    return {
+      key: input.key,
+      session,
+      toolBridge,
+      comparison: input.comparison,
+      subscribeEvents(handler) {
+        sessionEventHandler = handler;
+        for (const event of earlyEvents.splice(0)) handler(event);
+        return () => {
+          sessionEventHandler = void 0;
+        };
+      }
+    };
+  };
+  const doStream = async (options) => {
+    if (disposed) throw new Error("GitHub Copilot model has been disposed");
+    if (options.abortSignal?.aborted) throw new Error("GitHub Copilot request aborted");
+    const context = requestContext({ options, config, deps });
+    const slotKey = resolveSlotKey({ sessions, activeResponses, context });
+    if (activeResponses.has(slotKey)) {
+      throw new Error("A GitHub Copilot response is already active for this Claude session");
+    }
+    const { comparison, key } = context;
+    const resolved = await resolveTurnSession({
+      slotKey,
+      key,
+      comparison,
+      options,
+      context,
+      sessions,
+      createState,
+      deps
+    });
+    if (resolved.kind === "replay") return streamResult(replayCopilotResponse(resolved.parts));
+    const { active, decision, recreating } = resolved;
+    const stream = await startTurn({ active, deps, context, decision, recreating });
+    sessions.set(slotKey, withComparison(active, comparison));
+    activeResponses.add(slotKey);
+    const recorded = recordCopilotResponse({
+      stream,
+      onComplete(parts) {
+        const latest = sessions.get(slotKey);
+        if (latest?.key === key && latest.comparison === comparison) {
+          sessions.set(slotKey, { ...latest, completedResponse: parts });
+        }
+      },
+      onSettled() {
+        activeResponses.delete(slotKey);
+      }
+    });
+    return streamResult(recorded);
+  };
+  const model = {
+    specificationVersion: "v3",
+    provider: config.providerId ?? "github-copilot",
+    modelId: config.modelId,
+    supportedUrls: { "image/*": [/^https:\/\//] },
+    doStream,
+    async doGenerate(options) {
+      return collectCopilotGenerateResult((await doStream(options)).stream);
+    },
+    async dispose() {
+      if (disposed) return;
+      disposed = true;
+      const active = [...sessions.values()];
+      sessions.clear();
+      activeResponses.clear();
+      for (const state of active) state.toolBridge.settleAllPending("disposal");
+      await Promise.all(active.map((state) => state.session.disconnect()));
+    }
+  };
+  return model;
+}
+
+// src/copilot/runtime.ts
+import { mkdirSync as mkdirSync3 } from "fs";
+import { join as join4 } from "path";
+var COPILOT_SDK_PACKAGE = "@github/copilot-sdk";
+var CopilotSdkNotInstalledError = class extends Error {
+  constructor(cause) {
+    super(`GitHub Copilot support is not installed. Run: npm install ${COPILOT_SDK_PACKAGE}`, {
+      cause
+    });
+    this.name = "CopilotSdkNotInstalledError";
+  }
+};
+var CopilotSdkIncompatibleError = class extends Error {
+  constructor() {
+    super(`Installed ${COPILOT_SDK_PACKAGE} is incompatible. Install ${COPILOT_SDK_PACKAGE}@1.0.9`);
+    this.name = "CopilotSdkIncompatibleError";
+  }
+};
+var CopilotUnsupportedNodeVersionError = class extends Error {
+  constructor(version) {
+    super(
+      `GitHub Copilot requires Node.js ^20.19.0 or >=22.12.0; current version is ${version}`
+    );
+    this.name = "CopilotUnsupportedNodeVersionError";
+  }
+};
+function validateCopilotSdkModule(value) {
+  if (value === null || typeof value !== "object") {
+    throw new CopilotSdkIncompatibleError();
+  }
+  const module = value;
+  const connection = module.RuntimeConnection;
+  if (typeof module.CopilotClient !== "function" || connection === null || typeof connection !== "object" || typeof connection.forStdio !== "function") {
+    throw new CopilotSdkIncompatibleError();
+  }
+  return value;
+}
+function parseNodeVersion(version) {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(version);
+  if (match === null) {
+    throw new TypeError(`Invalid Node.js version: ${version}`);
+  }
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3])
+  };
+}
+function isCopilotSupportedNodeVersion(version) {
+  const parsed = parseNodeVersion(version);
+  if (parsed.major === 20) return parsed.minor >= 19;
+  if (parsed.major === 22) return parsed.minor >= 12;
+  return parsed.major > 22;
+}
+function resolveCopilotDirectories(env) {
+  const runtimeHome = join4(getAppHome(env), "copilot");
+  return {
+    baseDirectory: runtimeHome,
+    workingDirectory: join4(runtimeHome, "workspace")
+  };
+}
+function isModuleNotFound(error) {
+  return error !== null && typeof error === "object" && "code" in error && error.code === "ERR_MODULE_NOT_FOUND";
+}
+var GITHUB_CREDENTIAL_ENV_NAMES = /* @__PURE__ */ new Set([
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "GH_ENTERPRISE_TOKEN",
+  "GITHUB_ENTERPRISE_TOKEN"
+]);
+function runtimeEnvironment(environment) {
+  return Object.fromEntries(
+    Object.entries(environment).filter(([name]) => !name.startsWith("COPILOT_") && !GITHUB_CREDENTIAL_ENV_NAMES.has(name))
+  );
+}
+function clientOptions(config, sdk) {
+  return {
+    connection: sdk.RuntimeConnection.forStdio(),
+    mode: "empty",
+    gitHubToken: config.gitHubToken,
+    useLoggedInUser: false,
+    baseDirectory: config.baseDirectory,
+    workingDirectory: config.workingDirectory,
+    logLevel: "none",
+    telemetry: { captureContent: false },
+    sessionFs: {
+      initialCwd: config.workingDirectory,
+      sessionStatePath: "/session",
+      conventions: "posix",
+      capabilities: { sqlite: false }
+    },
+    env: runtimeEnvironment(config.environment)
+  };
+}
+async function loadCopilotSdk(moduleLoader) {
+  try {
+    return validateCopilotSdkModule(await moduleLoader());
+  } catch (error) {
+    if (isModuleNotFound(error)) throw new CopilotSdkNotInstalledError(error);
+    throw error;
+  }
+}
+function createCopilotRuntime(config) {
+  let client;
+  let startPromise;
+  let stopPromise;
+  let stopErrors;
+  let stopSettled = false;
+  let forceStopPromise;
+  let disposed = false;
+  const start = async () => {
+    if (disposed) throw new Error("Copilot runtime has already been disposed");
+    if (startPromise !== void 0) return startPromise;
+    startPromise = (async () => {
+      if (!isCopilotSupportedNodeVersion(config.nodeVersion)) {
+        throw new CopilotUnsupportedNodeVersionError(config.nodeVersion);
+      }
+      const sdk = await loadCopilotSdk(config.moduleLoader);
+      if (disposed) throw new Error("Copilot runtime was disposed during startup");
+      client = config.clientFactory(sdk, clientOptions(config, sdk));
+      await client.start();
+      if (disposed) throw new Error("Copilot runtime was disposed during startup");
+    })();
+    return startPromise;
+  };
+  const stop = async () => {
+    if (stopPromise !== void 0) return stopPromise;
+    disposed = true;
+    stopPromise = (async () => {
+      if (startPromise !== void 0) {
+        try {
+          await startPromise;
+        } catch {
+        }
+      }
+      return client === void 0 ? [] : client.stop();
+    })().then(
+      (errors) => {
+        stopErrors = errors;
+        stopSettled = true;
+        return errors;
+      },
+      (error) => {
+        stopSettled = true;
+        throw error;
+      }
+    );
+    return stopPromise;
+  };
+  const activeClient = async () => {
+    await start();
+    if (client === void 0) throw new Error("Copilot runtime client did not start");
+    return client;
+  };
+  const listModels = async () => (await activeClient()).listModels();
+  const createSession = async (sessionConfig2) => {
+    const runtimeClient = await activeClient();
+    if (runtimeClient.createSession === void 0) {
+      throw new CopilotSdkIncompatibleError();
+    }
+    return runtimeClient.createSession(sessionConfig2);
+  };
+  const forceStop = async () => {
+    if (forceStopPromise !== void 0) return forceStopPromise;
+    const stoppedCleanly = stopSettled && stopErrors !== void 0 && stopErrors.length === 0;
+    if (client === void 0 || stoppedCleanly) {
+      disposed = true;
+      forceStopPromise = Promise.resolve();
+      return forceStopPromise;
+    }
+    disposed = true;
+    forceStopPromise = client.forceStop();
+    return forceStopPromise;
+  };
+  return { start, stop, forceStop, listModels, createSession };
+}
+async function loadCopilotSdkModule() {
+  return import("@github/copilot-sdk");
+}
+function createCopilotSdkClient(sdk, options) {
+  return new sdk.CopilotClient(options);
+}
+function createDefaultCopilotRuntime(input) {
+  const directories = resolveCopilotDirectories(input.environment);
+  mkdirSync3(directories.workingDirectory, { recursive: true, mode: 448 });
+  return createCopilotRuntime({
+    gitHubToken: input.gitHubToken,
+    nodeVersion: input.nodeVersion,
+    baseDirectory: directories.baseDirectory,
+    workingDirectory: directories.workingDirectory,
+    environment: input.environment,
+    moduleLoader: loadCopilotSdkModule,
+    clientFactory: createCopilotSdkClient
+  });
+}
+
+// src/copilot/tool-bridge.ts
+var DuplicateToolResultError = class extends Error {
+  toolCallId;
+  constructor(toolCallId) {
+    super(`Tool result for "${toolCallId}" was already settled`);
+    this.name = "DuplicateToolResultError";
+    this.toolCallId = toolCallId;
+  }
+};
+var UnknownToolResultError = class extends Error {
+  toolCallId;
+  constructor(toolCallId) {
+    super(`Tool result for unknown call "${toolCallId}"`);
+    this.name = "UnknownToolResultError";
+    this.toolCallId = toolCallId;
+  }
+};
+var ToolResultError = class extends Error {
+  toolCallId;
+  toolName;
+  constructor(toolCallId, toolName, detail) {
+    super(`Tool "${toolName}" failed for call "${toolCallId}": ${detail}`);
+    this.name = "ToolResultError";
+    this.toolCallId = toolCallId;
+    this.toolName = toolName;
+  }
+};
+var ToolBridgeSettledError = class extends Error {
+  reason;
+  constructor(reason) {
+    super(`Copilot tool bridge settled because of ${reason}`);
+    this.name = "ToolBridgeSettledError";
+    this.reason = reason;
+  }
+};
+function schemaRecord(tool3) {
+  if (tool3.inputSchema === null || typeof tool3.inputSchema !== "object") {
+    throw new TypeError(`Tool "${tool3.name}" input schema must be a JSON object`);
+  }
+  return tool3.inputSchema;
+}
+function resultValue(result) {
+  if (result.output.type === "text" || result.output.type === "json") {
+    return result.output.value;
+  }
+  if (result.output.type === "content") return result.output.value;
+  return void 0;
+}
+function resultError(result) {
+  const output = result.output;
+  if (output.type === "error-text") {
+    return new ToolResultError(result.toolCallId, result.toolName, output.value);
+  }
+  if (output.type === "error-json") {
+    return new ToolResultError(result.toolCallId, result.toolName, JSON.stringify(output.value));
+  }
+  if (output.type === "execution-denied") {
+    return new ToolResultError(result.toolCallId, result.toolName, output.reason ?? "execution denied");
+  }
+  return void 0;
+}
+function pendingHandler(state, toolName) {
+  return (_args, invocation) => {
+    if (state.terminalReason !== void 0) {
+      return Promise.reject(new ToolBridgeSettledError(state.terminalReason));
+    }
+    if (state.pending.has(invocation.toolCallId) || state.settled.has(invocation.toolCallId)) {
+      return Promise.reject(new DuplicateToolResultError(invocation.toolCallId));
+    }
+    if (invocation.toolName !== toolName) {
+      return Promise.reject(new Error(
+        `Copilot invoked tool "${toolName}" with mismatched name "${invocation.toolName}"`
+      ));
+    }
+    return new Promise((resolve3, reject) => {
+      state.pending.set(invocation.toolCallId, { toolName, resolve: resolve3, reject });
+    });
+  };
+}
+function copilotTools(tools, state) {
+  return tools.map((tool3) => ({
+    name: tool3.name,
+    ...tool3.description === void 0 ? {} : { description: tool3.description },
+    parameters: schemaRecord(tool3),
+    overridesBuiltInTool: true,
+    skipPermission: true,
+    defer: "never",
+    handler: pendingHandler(state, tool3.name)
+  }));
+}
+var TOOL_RESULT_OUTPUT_TYPES = /* @__PURE__ */ new Set([
+  "text",
+  "json",
+  "content",
+  "error-text",
+  "error-json",
+  "execution-denied"
+]);
+function validateResults(state, results) {
+  const batchIds = /* @__PURE__ */ new Set();
+  for (const result of results) {
+    if (!TOOL_RESULT_OUTPUT_TYPES.has(result.output.type)) {
+      throw new TypeError(`Unsupported tool-result output type "${result.output.type}"`);
+    }
+    if (state.settled.has(result.toolCallId) || batchIds.has(result.toolCallId)) {
+      throw new DuplicateToolResultError(result.toolCallId);
+    }
+    const call = state.pending.get(result.toolCallId);
+    if (call === void 0) throw new UnknownToolResultError(result.toolCallId);
+    if (call.toolName !== result.toolName) {
+      throw new Error(
+        `Tool result name "${result.toolName}" does not match pending tool "${call.toolName}"`
+      );
+    }
+    batchIds.add(result.toolCallId);
+  }
+}
+function resolveResults(state, results) {
+  validateResults(state, results);
+  for (const result of results) {
+    const call = state.pending.get(result.toolCallId);
+    if (call === void 0) throw new UnknownToolResultError(result.toolCallId);
+    state.pending.delete(result.toolCallId);
+    state.settled.add(result.toolCallId);
+    const error = resultError(result);
+    if (error === void 0) call.resolve(resultValue(result));
+    else call.reject(error);
+  }
+}
+function settlePending(state, reason) {
+  state.terminalReason ??= reason;
+  for (const [toolCallId, call] of state.pending) {
+    state.pending.delete(toolCallId);
+    state.settled.add(toolCallId);
+    call.reject(new ToolBridgeSettledError(state.terminalReason));
+  }
+}
+function createToolBridge(tools) {
+  const state = {
+    pending: /* @__PURE__ */ new Map(),
+    settled: /* @__PURE__ */ new Set(),
+    terminalReason: void 0
+  };
+  return {
+    copilotTools: copilotTools(tools, state),
+    pendingToolCallIds: () => [...state.pending.keys()],
+    resolveToolResults: (results) => resolveResults(state, results),
+    settleAllPending: (reason) => settlePending(state, reason)
+  };
+}
+
+// src/copilot/language-model-default.ts
+function runtimeAdapter(runtime) {
+  return {
+    start: () => runtime.start(),
+    async createSession(config, onEvent) {
+      return await runtime.createSession({
+        ...config,
+        onEvent,
+        createSessionFsProvider: createMemorySessionFsProvider
+      });
+    }
+  };
+}
+function toolBridgeAdapter(bridge) {
+  return {
+    copilotTools: bridge.copilotTools,
+    pendingToolCallIds: () => bridge.pendingToolCallIds(),
+    resolveToolResults: (results) => bridge.resolveToolResults(results),
+    settleAllPending: (reason) => bridge.settleAllPending(reason)
+  };
+}
+function connectorDependencies(input) {
+  const directories = resolveCopilotDirectories(input.environment);
+  let runtime;
+  return {
+    workingDirectory: directories.workingDirectory,
+    async getRuntime() {
+      runtime ??= createDefaultCopilotRuntime({
+        gitHubToken: input.gitHubToken,
+        nodeVersion: input.nodeVersion,
+        environment: input.environment
+      });
+      return runtimeAdapter(runtime);
+    },
+    createToolBridge(tools) {
+      return toolBridgeAdapter(createToolBridge(tools));
+    },
+    bridgeSessionEvents(events) {
+      return bridgeCopilotSessionEvents(events);
+    },
+    deriveSessionKey: deriveCopilotSessionKey,
+    classifyTranscript
+  };
+}
+function createDefaultCopilotLanguageModel(input) {
+  if (input.gitHubToken.length === 0) {
+    throw new TypeError("GitHub Copilot credential is empty. Run leverframe providers auth github-copilot");
+  }
+  return createCopilotLanguageModel(
+    { modelId: input.modelId },
+    connectorDependencies(input)
+  );
+}
+
+// src/oauth/responses-websocket.ts
+import { createHash as createHash5 } from "crypto";
 import { AsyncLocalStorage } from "async_hooks";
 
 // src/outbound-proxy.ts
@@ -2554,6 +4093,17 @@ function withResponsesWebSocketDiagnosticContext(context, fn) {
 var connections = /* @__PURE__ */ new Map();
 var activeContexts = /* @__PURE__ */ new Set();
 var nextConnectionDebugId = 1;
+var REQUEST_ENTRY_TRACKING_CAP = 256;
+var entryByRequestId = /* @__PURE__ */ new Map();
+function trackEntryForRequest(requestId, entry) {
+  entryByRequestId.set(requestId, entry);
+  entry.lastRequestId = requestId;
+  while (entryByRequestId.size > REQUEST_ENTRY_TRACKING_CAP) {
+    const oldestKey = entryByRequestId.keys().next().value;
+    if (oldestKey === void 0) break;
+    entryByRequestId.delete(oldestKey);
+  }
+}
 function connectionEntries(key) {
   return key ? [...connections.get(key) ?? []] : [...connections.values()].flatMap((entries) => [...entries]);
 }
@@ -2611,6 +4161,19 @@ function evictResponsesWebSocketConnectionsForAccessToken(accessToken) {
   }
   return evicted;
 }
+function evictResponsesWebSocketConnectionForRequest(requestId) {
+  const entry = entryByRequestId.get(requestId);
+  entryByRequestId.delete(requestId);
+  if (!entry || entry.lastRequestId !== requestId) return false;
+  entry.lastRequestId = void 0;
+  const ctx = entry.current;
+  if (ctx && !ctx.closed) {
+    cancelContext(ctx, new DOMException("Reasoning-part protocol error detected", "AbortError"));
+  } else {
+    deleteEntry(entry);
+  }
+  return true;
+}
 function toHeaderRecord(headers) {
   const out = {};
   if (!headers) return out;
@@ -2632,7 +4195,7 @@ function hasResponsesLiteHeader(headers) {
 }
 function authorizationFingerprint(headers) {
   const authorization = Object.entries(headers).find(([key]) => key.toLowerCase() === "authorization")?.[1];
-  return authorization ? createHash2("sha256").update(authorization).digest("hex") : "";
+  return authorization ? createHash5("sha256").update(authorization).digest("hex") : "";
 }
 function bodyToString(body) {
   if (body == null) return "";
@@ -2656,7 +4219,7 @@ function canonicalize(value) {
   }
   return out;
 }
-function canonicalJson(value) {
+function canonicalJson2(value) {
   return JSON.stringify(canonicalize(value));
 }
 function responsesWebSocketPromptFingerprint(payload) {
@@ -2665,13 +4228,13 @@ function responsesWebSocketPromptFingerprint(payload) {
   delete stable.previous_response_id;
   delete stable.stream;
   delete stable.background;
-  return createHash2("sha256").update(canonicalJson(stable)).digest("hex");
+  return createHash5("sha256").update(canonicalJson2(stable)).digest("hex");
 }
 function responsesWebSocketPromptFieldHashes(payload) {
   const hashes = {};
   for (const key of Object.keys(payload).sort()) {
     if (key === "input" || key === "previous_response_id" || key === "stream" || key === "background") continue;
-    hashes[key] = createHash2("sha256").update(canonicalJson(payload[key])).digest("hex").slice(0, 12);
+    hashes[key] = createHash5("sha256").update(canonicalJson2(payload[key])).digest("hex").slice(0, 12);
   }
   return hashes;
 }
@@ -2707,7 +4270,7 @@ function responsesWebSocketPartitionKey(wsUrl, payload, options = {}, credential
     promptCacheKey,
     credentialFingerprint
   ].join("");
-  return createHash2("sha256").update(material).digest("hex");
+  return createHash5("sha256").update(material).digest("hex");
 }
 function inputArray(payload) {
   return Array.isArray(payload.input) ? payload.input : [];
@@ -2721,14 +4284,14 @@ function normalizeToolCallJson(value) {
   const jsonField = record.type === "function_call" ? "arguments" : record.type === "custom_tool_call" ? "input" : void 0;
   if (jsonField && typeof record[jsonField] === "string") {
     try {
-      out[jsonField] = canonicalJson(JSON.parse(record[jsonField]));
+      out[jsonField] = canonicalJson2(JSON.parse(record[jsonField]));
     } catch {
     }
   }
   return out;
 }
 function arraysEqual(left, right) {
-  return canonicalJson(normalizeToolCallJson(left)) === canonicalJson(normalizeToolCallJson(right));
+  return canonicalJson2(normalizeToolCallJson(left)) === canonicalJson2(normalizeToolCallJson(right));
 }
 function conversationItemKind(value) {
   if (!value || typeof value !== "object") return typeof value;
@@ -2738,7 +4301,7 @@ function conversationItemKind(value) {
   return "object";
 }
 function conversationItemHash(value) {
-  return createHash2("sha256").update(canonicalJson(normalizeToolCallJson(value))).digest("hex").slice(0, 16);
+  return createHash5("sha256").update(canonicalJson2(normalizeToolCallJson(value))).digest("hex").slice(0, 16);
 }
 function continuationMismatchDetails(entry, payload) {
   const full = inputArray(payload);
@@ -2819,7 +4382,7 @@ function diagnosticTextFingerprint(field, value) {
   if (typeof value !== "string" || value.length === 0) return {};
   return {
     [`${field}Bytes`]: Buffer.byteLength(value),
-    [`${field}Hash`]: createHash2("sha256").update(value).digest("hex").slice(0, 16)
+    [`${field}Hash`]: createHash5("sha256").update(value).digest("hex").slice(0, 16)
   };
 }
 function responseFailureDetails(event) {
@@ -2854,7 +4417,7 @@ function emitResponseErrorDiagnostic(entry, ctx, details) {
   emitContextDiagnostic(entry, ctx, { event: "ws_response_error", ...details });
 }
 function diagnosticItemIdHash(value) {
-  return typeof value === "string" && value.length > 0 ? createHash2("sha256").update(value).digest("hex").slice(0, 16) : void 0;
+  return typeof value === "string" && value.length > 0 ? createHash5("sha256").update(value).digest("hex").slice(0, 16) : void 0;
 }
 function reasoningPartIndex(value) {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : void 0;
@@ -3111,6 +4674,10 @@ function deleteEntry(entry, closeSocket = true) {
   entry.inFlight = false;
   entry.current = void 0;
   unregisterEntry(entry);
+  if (entry.lastRequestId) {
+    entryByRequestId.delete(entry.lastRequestId);
+    entry.lastRequestId = void 0;
+  }
   if (closeSocket) {
     try {
       entry.socket.close();
@@ -3201,8 +4768,8 @@ function observeRejectedResponseBody(response, emit) {
   let prefixBytes = 0;
   let completed = false;
   let truncated = false;
-  const hash = createHash2("sha256");
-  const finish = () => {
+  const hash = createHash5("sha256");
+  const finish2 = () => {
     if (completed) return;
     completed = true;
     emit({
@@ -3226,9 +4793,9 @@ function observeRejectedResponseBody(response, emit) {
       response.destroy();
     }
   });
-  response.once("end", finish);
-  response.once("close", finish);
-  response.once("error", finish);
+  response.once("end", finish2);
+  response.once("close", finish2);
+  response.once("error", finish2);
   response.resume();
 }
 function socketFailureIsRetryable(error) {
@@ -3459,6 +5026,7 @@ function dispatchContext(entry, ctx) {
   entry.inFlightStartedAt = now;
   entry.current = ctx;
   ctx.entry = entry;
+  if (ctx.requestId) trackEntryForRequest(ctx.requestId, entry);
   if (entry.open) {
     settleHandshakeSuccess(ctx);
     sendContext(entry, ctx);
@@ -3568,7 +5136,7 @@ function handleSocketMessage(entry, data) {
   if (isModelDataEvent(type)) flushPending(ctx);
   if (TERMINAL_EVENT_TYPES.has(type ?? "") || type === "error") {
     flushPending(ctx);
-    const failed = FAILURE_EVENT_TYPES.has(type ?? "");
+    const failed = FAILURE_EVENT_TYPES.has(type ?? "") || ctx.emittedProtocolAnomalies.size > 0;
     if (!failed && ctx.responseId && entry.persistent) {
       const now = entry.options.now();
       finishInFlightPeriod(entry, now);
@@ -3843,10 +5411,10 @@ function createResponsesWebSocketFetch(wsUrl, log12, options = {}) {
       keyTuple: {
         wsUrl,
         providerId: options.providerId ?? "openai",
-        accountIdHash: options.accountId ? createHash2("sha256").update(options.accountId).digest("hex").slice(0, 16) : "",
+        accountIdHash: options.accountId ? createHash5("sha256").update(options.accountId).digest("hex").slice(0, 16) : "",
         model: typeof payload.model === "string" ? payload.model : void 0,
         effort: typeof payload.reasoning?.effort === "string" ? String(payload.reasoning.effort).trim().toLowerCase() : "",
-        promptCacheKeyHash: typeof payload.prompt_cache_key === "string" ? createHash2("sha256").update(payload.prompt_cache_key).digest("hex").slice(0, 16) : void 0
+        promptCacheKeyHash: typeof payload.prompt_cache_key === "string" ? createHash5("sha256").update(payload.prompt_cache_key).digest("hex").slice(0, 16) : void 0
       },
       promptFingerprint,
       promptFieldHashes,
@@ -3920,6 +5488,7 @@ function createResponsesWebSocketFetch(wsUrl, log12, options = {}) {
           reasoningPartsByItemId: /* @__PURE__ */ new Map(),
           recentUpstreamEventTypes: [],
           emittedProtocolAnomalies: /* @__PURE__ */ new Set(),
+          requestId: diagnosticCorrelation?.requestId,
           emitDiagnostic: options.onDiagnostic ? (event) => emitDiagnostic(options, event, diagnosticCorrelation) : void 0,
           createReplacement: () => createConnection(
             WebSocket,
@@ -3992,7 +5561,7 @@ function createResponsesWebSocketFetch(wsUrl, log12, options = {}) {
 }
 
 // src/oauth/claude-identity.ts
-import { createHash as createHash3, randomUUID } from "crypto";
+import { createHash as createHash6, randomUUID } from "crypto";
 var CLAUDE_CODE_CLI_VERSION = "2.1.195";
 var CLAUDE_CODE_USER_AGENT = `claude-cli/${CLAUDE_CODE_CLI_VERSION} (external, cli)`;
 var CLAUDE_CODE_ENTRYPOINT = process.env.CLAUDE_CODE_ENTRYPOINT ?? "cli";
@@ -4007,7 +5576,7 @@ function getOrCreateSessionId(seed) {
   return id;
 }
 function uuidFromHash(input) {
-  const h = createHash3("sha256").update(input).digest("hex");
+  const h = createHash6("sha256").update(input).digest("hex");
   return [
     h.slice(0, 8),
     h.slice(8, 12),
@@ -4021,7 +5590,7 @@ var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function resolveCliUserID(providerData, seed) {
   const v = providerData?.cliUserID;
   if (typeof v === "string" && HEX64_RE.test(v)) return v;
-  return createHash3("sha256").update(`cliUserID:${seed}`).digest("hex");
+  return createHash6("sha256").update(`cliUserID:${seed}`).digest("hex");
 }
 function resolveAccountUUID(providerData, seed) {
   const v = providerData?.accountUUID;
@@ -4328,6 +5897,14 @@ async function createLanguageModel(spec) {
         `${revalidation.error ?? "Custom endpoint URL failed security revalidation."}${revalidation.hint ? ` ${revalidation.hint}` : ""}`
       );
     }
+  }
+  if (npm === "@github/copilot-sdk") {
+    return createDefaultCopilotLanguageModel({
+      modelId,
+      gitHubToken: apiKey,
+      environment: process.env,
+      nodeVersion: process.version
+    });
   }
   if (npm === "@ai-sdk/openai") {
     const { createOpenAI } = await import("@ai-sdk/openai");
@@ -4889,13 +6466,13 @@ function thinkingProviderOptions(npm) {
 import {
   chmodSync as chmodSync3,
   existsSync as existsSync6,
-  mkdirSync as mkdirSync3,
+  mkdirSync as mkdirSync4,
   readFileSync as readFileSync4,
   unlinkSync,
   writeFileSync as writeFileSync3
 } from "fs";
-import { createHash as createHash4 } from "crypto";
-import { join as join4 } from "path";
+import { createHash as createHash7 } from "crypto";
+import { join as join5 } from "path";
 import pc2 from "picocolors";
 var DIR_MODE = 448;
 var FILE_MODE3 = 384;
@@ -4906,13 +6483,13 @@ var INFERENCE_REQUEST_LOG = "inference-requests.jsonl";
 var INFERENCE_PROGRESS_INTERVAL_MS = 3e4;
 var INFERENCE_SESSION_DIR = "sessions";
 var inferenceSessionSequence = 0;
-var CLAUDE_SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var CLAUDE_SESSION_ID_RE2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function safeClaudeSessionId(value) {
-  return typeof value === "string" && CLAUDE_SESSION_ID_RE.test(value.trim()) ? value.trim().toLowerCase() : void 0;
+  return typeof value === "string" && CLAUDE_SESSION_ID_RE2.test(value.trim()) ? value.trim().toLowerCase() : void 0;
 }
 function ensureLogsDir() {
   const dir = getLogsPath();
-  mkdirSync3(dir, { recursive: true, mode: DIR_MODE });
+  mkdirSync4(dir, { recursive: true, mode: DIR_MODE });
   try {
     chmodSync3(dir, DIR_MODE);
   } catch {
@@ -4920,24 +6497,24 @@ function ensureLogsDir() {
   return dir;
 }
 function getClaudeDebugLogPath() {
-  return join4(ensureLogsDir(), CLAUDE_DEBUG_LOG);
+  return join5(ensureLogsDir(), CLAUDE_DEBUG_LOG);
 }
 function prepareClaudeTraceLog(path = getClaudeDebugLogPath()) {
   resetTraceLog(path);
   return path;
 }
 function getProxyDebugLogPath() {
-  return join4(ensureLogsDir(), PROXY_DEBUG_LOG);
+  return join5(ensureLogsDir(), PROXY_DEBUG_LOG);
 }
 function getProviderDebugLogPath() {
-  return join4(ensureLogsDir(), PROVIDER_DEBUG_LOG);
+  return join5(ensureLogsDir(), PROVIDER_DEBUG_LOG);
 }
 function getInferenceRequestLogPath() {
-  return join4(ensureLogsDir(), INFERENCE_REQUEST_LOG);
+  return join5(ensureLogsDir(), INFERENCE_REQUEST_LOG);
 }
 function getSessionLogPath(label = "session", extension = "log") {
-  const dir = join4(ensureLogsDir(), INFERENCE_SESSION_DIR);
-  mkdirSync3(dir, { recursive: true, mode: DIR_MODE });
+  const dir = join5(ensureLogsDir(), INFERENCE_SESSION_DIR);
+  mkdirSync4(dir, { recursive: true, mode: DIR_MODE });
   try {
     chmodSync3(dir, DIR_MODE);
   } catch {
@@ -4946,7 +6523,7 @@ function getSessionLogPath(label = "session", extension = "log") {
   const safeExtension = extension.toLowerCase().replace(/[^a-z0-9]+/g, "") || "log";
   const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[-:.]/g, "").replace("T", "-").replace("Z", "Z");
   const sequence = inferenceSessionSequence++;
-  return join4(dir, `${timestamp}-${safeLabel}-pid${process.pid}-${sequence}.${safeExtension}`);
+  return join5(dir, `${timestamp}-${safeLabel}-pid${process.pid}-${sequence}.${safeExtension}`);
 }
 function getInferenceSessionLogPath(label = "proxy") {
   return getSessionLogPath(label, "jsonl");
@@ -5021,7 +6598,7 @@ function canonicalDiagnosticValue(value) {
   );
 }
 function diagnosticHash(value) {
-  return createHash4("sha256").update(JSON.stringify(canonicalDiagnosticValue(value)) ?? "undefined").digest("hex").slice(0, 16);
+  return createHash7("sha256").update(JSON.stringify(canonicalDiagnosticValue(value)) ?? "undefined").digest("hex").slice(0, 16);
 }
 function diagnosticBytes(value) {
   return Buffer.byteLength(JSON.stringify(value) ?? "");
@@ -5978,11 +7555,192 @@ function buildOpenAiOAuthModels() {
   });
 }
 
+// src/copilot/models.ts
+var CopilotModelValidationError = class extends TypeError {
+  constructor(message2) {
+    super(message2);
+    this.name = "CopilotModelValidationError";
+  }
+};
+var REASONING_EFFORTS2 = /* @__PURE__ */ new Set([
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max"
+]);
+function requireRecord(value, field) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new CopilotModelValidationError(`Copilot model ${field} must be an object`);
+  }
+  return value;
+}
+function requireNonEmptyString(record, field) {
+  const value = record[field];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new CopilotModelValidationError(`Copilot model ${field} must be a non-empty string`);
+  }
+  return value;
+}
+function requireBoolean(record, field) {
+  const value = record[field];
+  if (typeof value !== "boolean") {
+    throw new CopilotModelValidationError(`Copilot model ${field} must be a boolean`);
+  }
+  return value;
+}
+function policyAllowsModel(value) {
+  if (value === void 0) return true;
+  const policy = requireRecord(value, "policy");
+  const state = requireNonEmptyString(policy, "state");
+  if (state !== "enabled" && state !== "disabled" && state !== "unconfigured") {
+    throw new CopilotModelValidationError("Copilot model policy.state is unsupported");
+  }
+  return state === "enabled";
+}
+function parseContextWindow(limits) {
+  const value = limits.max_context_window_tokens;
+  if (value === void 0) return void 0;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new CopilotModelValidationError("Copilot model max_context_window_tokens must be a positive number");
+  }
+  return value;
+}
+function parseReasoningEffort(value, field) {
+  if (value === void 0) return void 0;
+  if (typeof value !== "string" || !REASONING_EFFORTS2.has(value)) {
+    throw new CopilotModelValidationError(`Copilot model ${field} contains an unsupported value`);
+  }
+  return value;
+}
+function parseReasoningEfforts(value) {
+  if (value === void 0) return void 0;
+  if (!Array.isArray(value)) {
+    throw new CopilotModelValidationError("Copilot model supportedReasoningEfforts must be an array");
+  }
+  return value.map((effort, index) => {
+    const parsed = parseReasoningEffort(effort, `supportedReasoningEfforts[${index}]`);
+    if (parsed === void 0) {
+      throw new CopilotModelValidationError(`Copilot model supportedReasoningEfforts[${index}] is missing`);
+    }
+    return parsed;
+  });
+}
+function parseCopilotModelInfo(record) {
+  const model = requireRecord(record, "record");
+  const id = requireNonEmptyString(model, "id");
+  const name = requireNonEmptyString(model, "name");
+  policyAllowsModel(model.policy);
+  const capabilities = requireRecord(model.capabilities, "capabilities");
+  const supports = requireRecord(capabilities.supports, "capabilities.supports");
+  const limits = requireRecord(capabilities.limits, "capabilities.limits");
+  const vision = requireBoolean(supports, "vision");
+  const reasoning = requireBoolean(supports, "reasoningEffort");
+  const contextWindow = parseContextWindow(limits);
+  const supportedReasoningEfforts = parseReasoningEfforts(model.supportedReasoningEfforts);
+  const defaultReasoningEffort = parseReasoningEffort(
+    model.defaultReasoningEffort,
+    "defaultReasoningEffort"
+  );
+  return {
+    id,
+    name,
+    upstreamModelId: id,
+    modelFormat: "openai",
+    vision,
+    reasoning,
+    ...contextWindow === void 0 ? { contextWindowUnconfirmed: true } : { contextWindow },
+    ...supportedReasoningEfforts === void 0 ? {} : { supportedReasoningEfforts },
+    ...defaultReasoningEffort === void 0 ? {} : { defaultReasoningEffort }
+  };
+}
+function mapCopilotModels(records) {
+  if (!Array.isArray(records)) {
+    throw new CopilotModelValidationError("CopilotClient.listModels() must return an array");
+  }
+  return records.flatMap((record) => {
+    const model = parseCopilotModelInfo(record);
+    const policy = requireRecord(record, "record").policy;
+    return policyAllowsModel(policy) ? [model] : [];
+  });
+}
+async function refreshCopilotModels(input) {
+  try {
+    const models = mapCopilotModels(await input.listModels());
+    if (models.length === 0) {
+      throw new Error("Copilot model discovery returned no models");
+    }
+    return { models, source: "live" };
+  } catch (error) {
+    if (input.cachedModels.length === 0) throw error;
+    return {
+      models: input.cachedModels,
+      source: "cache",
+      failureReason: error instanceof Error ? error.message : String(error),
+      failureKind: error instanceof CopilotModelValidationError ? "schema" : "runtime"
+    };
+  }
+}
+
 // src/registry/refresh-models.ts
+async function disposeCopilotRuntime(runtime) {
+  const errors = [];
+  try {
+    errors.push(...await runtime.stop());
+  } catch (error) {
+    errors.push(error instanceof Error ? error : new Error(String(error)));
+  }
+  if (errors.length === 0) return errors;
+  try {
+    await runtime.forceStop();
+  } catch (error) {
+    errors.push(error instanceof Error ? error : new Error(String(error)));
+  }
+  return errors;
+}
+async function refreshCopilotOAuthModels(provider, accessToken) {
+  const runtime = createDefaultCopilotRuntime({
+    gitHubToken: accessToken,
+    nodeVersion: process.version,
+    environment: process.env
+  });
+  let result;
+  let discoveryError;
+  try {
+    result = await refreshCopilotModels({
+      listModels: () => runtime.listModels(),
+      cachedModels: provider.modelsCache?.models ?? []
+    });
+  } catch (error) {
+    discoveryError = error;
+  }
+  const cleanupErrors = await disposeCopilotRuntime(runtime);
+  if (discoveryError !== void 0) {
+    if (cleanupErrors.length > 0) {
+      const message2 = discoveryError instanceof Error ? discoveryError.message : String(discoveryError);
+      throw new AggregateError([discoveryError, ...cleanupErrors], message2, {
+        cause: discoveryError
+      });
+    }
+    throw discoveryError;
+  }
+  if (cleanupErrors.length > 0) {
+    throw new AggregateError(cleanupErrors, "Copilot runtime did not stop cleanly");
+  }
+  if (result === void 0) {
+    throw new Error("Copilot model discovery did not return a result");
+  }
+  return result;
+}
 async function refreshOAuthProvider(provider, accessToken) {
-  const tpl = provider.templateId ?? provider.id;
-  if (tpl === "openai" || tpl === "openai-oauth") return refreshOpenAiOAuthModels(accessToken);
-  throw new Error(`refreshOAuthProvider: unsupported template "${tpl}"`);
+  const templateId = provider.templateId ?? provider.id;
+  if (templateId === "openai" || templateId === "openai-oauth") {
+    return refreshOpenAiOAuthModels(accessToken);
+  }
+  if (templateId === "github-copilot") {
+    return refreshCopilotOAuthModels(provider, accessToken);
+  }
+  throw new Error(`refreshOAuthProvider: unsupported template "${templateId}"`);
 }
 function readCapabilityFlags(m) {
   const bool = (v) => typeof v === "boolean" ? v : void 0;
@@ -6179,7 +7937,9 @@ async function refreshProviderModelsInner(providerId, apiKey, registry = loadReg
     let models = [];
     let baseUrl;
     let oauthFallbackReason;
-    if (provider.authType === "oauth" && ((provider.templateId ?? provider.id) === "openai" || provider.id === "openai-oauth")) {
+    const oauthTemplateId = provider.templateId ?? provider.id;
+    const supportsOAuthDiscovery = provider.authType === "oauth" && ["openai", "openai-oauth", "github-copilot"].includes(oauthTemplateId);
+    if (supportsOAuthDiscovery) {
       if (!apiKey) {
         return {
           id: provider.id,
@@ -6190,6 +7950,10 @@ async function refreshProviderModelsInner(providerId, apiKey, registry = loadReg
       }
       const oauthResult = await refreshOAuthProvider(provider, apiKey);
       const failureDetail = oauthResult.failureReason ? ` (${oauthResult.failureReason})` : "";
+      if (oauthResult.source === "cache") {
+        const reason = oauthResult.failureKind === "schema" ? `Copilot returned unexpected model data${failureDetail}. Kept your existing cached model list. Update Leverframe or its Copilot SDK before retrying.` : `Live model discovery failed${failureDetail}. Kept your existing cached model list. Try refreshing again later.`;
+        return skipWithCachedModels(provider, reason);
+      }
       if (oauthResult.source === "seed" && cachedModelCount(provider) > 0) {
         return skipWithCachedModels(
           provider,
@@ -6293,10 +8057,285 @@ async function refreshAllProviderModels(resolveKey) {
 import pc3 from "picocolors";
 import * as p2 from "@clack/prompts";
 import open from "open";
+
+// src/oauth/github-copilot.ts
+var CLIENT_ID = "Ov23liGIthyyjFMYk6ai";
+var DEVICE_CODE_ENDPOINT = "https://github.com/login/device/code";
+var TOKEN_ENDPOINT = "https://github.com/login/oauth/access_token";
+var DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
+var SLOW_DOWN_INCREMENT_MS = 5e3;
+var MAX_TRANSIENT_RETRIES = 2;
+var NON_EXPIRING_EXPIRES_AT = Number.MAX_SAFE_INTEGER;
+function requireRecord2(value, endpoint) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`GitHub Copilot OAuth response from ${endpoint} must be a JSON object`);
+  }
+  return value;
+}
+function requireNonEmptyString2(record, field, endpoint) {
+  const value = record[field];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TypeError(`GitHub Copilot OAuth response from ${endpoint} has invalid ${field}`);
+  }
+  return value;
+}
+function requireHttpsUrl(record, field, endpoint) {
+  const value = requireNonEmptyString2(record, field, endpoint);
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch (error) {
+    throw new TypeError(`GitHub Copilot OAuth response from ${endpoint} has invalid ${field}`, {
+      cause: error
+    });
+  }
+  if (parsed.protocol !== "https:") {
+    throw new TypeError(`GitHub Copilot OAuth response from ${endpoint} has invalid ${field}`);
+  }
+  return value;
+}
+function isPositiveNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+function requirePositiveNumber(record, field, endpoint) {
+  const value = record[field];
+  if (!isPositiveNumber(value)) {
+    throw new TypeError(`GitHub Copilot OAuth response from ${endpoint} has invalid ${field}`);
+  }
+  return value;
+}
+function redactSecrets(value, secrets) {
+  return secrets.reduce((redacted, secret) => {
+    if (secret.length === 0) return redacted;
+    const variants = /* @__PURE__ */ new Set([
+      secret,
+      secret.toLowerCase(),
+      secret.toUpperCase(),
+      secret.replaceAll("-", "%2D"),
+      secret.replaceAll("-", "%2d")
+    ]);
+    return [...variants].reduce(
+      (result, variant) => result.replaceAll(variant, "[REDACTED]"),
+      redacted
+    );
+  }, value);
+}
+async function readJsonRecord(response, endpoint) {
+  const responseText = await response.text();
+  try {
+    return requireRecord2(JSON.parse(responseText), endpoint);
+  } catch (error) {
+    if (error instanceof TypeError && error.message.startsWith("GitHub Copilot OAuth response")) {
+      throw error;
+    }
+    throw new TypeError(`GitHub Copilot OAuth response from ${endpoint} is not valid JSON`, {
+      cause: error
+    });
+  }
+}
+async function readSuccessfulJson(input) {
+  if (!input.response.ok) {
+    const responseText = await input.response.text();
+    const reason = redactSecrets(responseText, input.secrets).slice(0, 500);
+    throw new Error(
+      `GitHub Copilot OAuth request to ${input.endpoint} failed with HTTP ${input.response.status}: ${reason}`
+    );
+  }
+  return readJsonRecord(input.response, input.endpoint);
+}
+function parseDeviceCodeData(record) {
+  return {
+    device_code: requireNonEmptyString2(record, "device_code", DEVICE_CODE_ENDPOINT),
+    user_code: requireNonEmptyString2(record, "user_code", DEVICE_CODE_ENDPOINT),
+    verification_uri: requireHttpsUrl(record, "verification_uri", DEVICE_CODE_ENDPOINT),
+    expires_in: requirePositiveNumber(record, "expires_in", DEVICE_CODE_ENDPOINT),
+    interval: requirePositiveNumber(record, "interval", DEVICE_CODE_ENDPOINT)
+  };
+}
+function parseTokenData(record) {
+  if (typeof record.error === "string" && record.error.length > 0) {
+    const interval = record.interval;
+    if (interval !== void 0 && !isPositiveNumber(interval)) {
+      throw new TypeError(`GitHub Copilot OAuth response from ${TOKEN_ENDPOINT} has invalid interval`);
+    }
+    return {
+      error: record.error,
+      ...typeof interval === "number" ? { interval } : {}
+    };
+  }
+  const accessToken = requireNonEmptyString2(record, "access_token", TOKEN_ENDPOINT);
+  const tokenType = requireNonEmptyString2(record, "token_type", TOKEN_ENDPOINT);
+  if (tokenType.toLowerCase() !== "bearer") {
+    throw new TypeError(`GitHub Copilot OAuth response from ${TOKEN_ENDPOINT} has invalid token_type`);
+  }
+  const scope = record.scope;
+  if (typeof scope !== "string") {
+    throw new TypeError(`GitHub Copilot OAuth response from ${TOKEN_ENDPOINT} has invalid scope`);
+  }
+  return { access_token: accessToken, token_type: "bearer", scope };
+}
+function throwIfAborted(signal, cause) {
+  if (signal?.aborted === true) {
+    throw new Error("GitHub Copilot device authorization aborted", { cause });
+  }
+}
+async function runAbortableRequest(input) {
+  throwIfAborted(input.signal, input.signal?.reason);
+  try {
+    return await withAbortTimeout(
+      (timeoutSignal) => input.operation(
+        input.signal === void 0 ? timeoutSignal : AbortSignal.any([timeoutSignal, input.signal])
+      ),
+      input.timeoutMessage,
+      input.timeoutMs
+    );
+  } catch (error) {
+    throwIfAborted(input.signal, error);
+    throw error;
+  }
+}
+async function sleepUntilNextPoll(sleep, milliseconds, signal) {
+  throwIfAborted(signal, signal?.reason);
+  if (signal === void 0) {
+    await sleep(milliseconds);
+    return;
+  }
+  let onAbort = () => void 0;
+  const aborted = new Promise((_resolve, reject) => {
+    onAbort = () => reject(new Error("GitHub Copilot device authorization aborted", {
+      cause: signal.reason
+    }));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    await Promise.race([sleep(milliseconds), aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+function tokenPollingFailure(error) {
+  if (error === "expired_token") {
+    return new Error("GitHub Copilot device authorization expired; run leverframe providers auth github-copilot");
+  }
+  if (error === "access_denied") {
+    return new Error("GitHub Copilot device authorization was denied; run leverframe providers auth github-copilot");
+  }
+  if (error === "device_flow_disabled") {
+    return new Error("GitHub Copilot device authorization failed with device_flow_disabled; enable device flow for the Leverframe OAuth App");
+  }
+  return new Error(`GitHub Copilot device authorization failed with ${error}`);
+}
+async function requestGitHubCopilotDeviceCode(signal) {
+  const response = await runAbortableRequest({
+    operation: (requestSignal) => fetch(DEVICE_CODE_ENDPOINT, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({ client_id: CLIENT_ID }).toString(),
+      signal: requestSignal
+    }),
+    signal,
+    timeoutMessage: "GitHub Copilot device-code request timed out",
+    timeoutMs: OAUTH_REQUEST_TIMEOUT_MS
+  });
+  return parseDeviceCodeData(await readSuccessfulJson({
+    response,
+    endpoint: DEVICE_CODE_ENDPOINT,
+    secrets: []
+  }));
+}
+function githubCopilotDeviceCodeUrl(deviceData) {
+  return deviceData.verification_uri;
+}
+async function pollGitHubCopilotDeviceCodeToken(deviceData, options) {
+  const deadline = options.now() + deviceData.expires_in * 1e3;
+  let intervalMs = deviceData.interval * 1e3;
+  let transientFailures = 0;
+  while (options.now() < deadline) {
+    await sleepUntilNextPoll(
+      options.sleep,
+      Math.min(intervalMs, Math.max(0, deadline - options.now())),
+      options.signal
+    );
+    throwIfAborted(options.signal, options.signal?.reason);
+    if (options.now() >= deadline) break;
+    const remainingMs = Math.max(0, deadline - options.now());
+    const response = await runAbortableRequest({
+      operation: (requestSignal) => fetch(TOKEN_ENDPOINT, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({
+          client_id: CLIENT_ID,
+          device_code: deviceData.device_code,
+          grant_type: DEVICE_GRANT_TYPE
+        }).toString(),
+        signal: requestSignal
+      }),
+      signal: options.signal,
+      timeoutMessage: "GitHub Copilot device token request timed out",
+      timeoutMs: Math.min(OAUTH_REQUEST_TIMEOUT_MS, remainingMs)
+    });
+    if (response.status === 429 || response.status >= 500) {
+      if (transientFailures < MAX_TRANSIENT_RETRIES) {
+        transientFailures += 1;
+        options.onWarning?.({ endpoint: TOKEN_ENDPOINT, status: response.status });
+        continue;
+      }
+    } else {
+      transientFailures = 0;
+    }
+    const record = await readSuccessfulJson({
+      response,
+      endpoint: TOKEN_ENDPOINT,
+      secrets: [deviceData.device_code, deviceData.user_code]
+    });
+    const result = parseTokenData(record);
+    if ("access_token" in result) {
+      return { tokens: { access_token: result.access_token } };
+    }
+    if (result.error === "authorization_pending") continue;
+    if (result.error === "slow_down") {
+      intervalMs = Math.max(
+        intervalMs + SLOW_DOWN_INCREMENT_MS,
+        (result.interval ?? 0) * 1e3
+      );
+      continue;
+    }
+    throw tokenPollingFailure(result.error);
+  }
+  throw new Error("GitHub Copilot device authorization timed out");
+}
+async function runGitHubCopilotDeviceCodeFlow(onDeviceCode, options) {
+  const deviceData = await requestGitHubCopilotDeviceCode(options.signal);
+  onDeviceCode({
+    url: githubCopilotDeviceCodeUrl(deviceData),
+    userCode: deviceData.user_code
+  });
+  return pollGitHubCopilotDeviceCodeToken(deviceData, options);
+}
+function githubCopilotTokensToStoredCredential(tokens) {
+  if (typeof tokens.access_token !== "string" || tokens.access_token.length === 0) {
+    throw new TypeError("GitHub Copilot OAuth access token must be a non-empty string");
+  }
+  return {
+    type: "oauth",
+    access: tokens.access_token,
+    refresh: "",
+    expires: NON_EXPIRING_EXPIRES_AT
+  };
+}
+
+// src/registry/provider-auth.ts
 var OPENAI_DISPLAY = "OpenAI ChatGPT Plus/Pro";
 var PROVIDER_DISPLAY = {
   openai: OPENAI_DISPLAY,
-  "openai-oauth": OPENAI_DISPLAY
+  "openai-oauth": OPENAI_DISPLAY,
+  "github-copilot": "GitHub Copilot"
 };
 function openBrowser(url) {
   const headless = process.env["SSH_CONNECTION"] || process.env["SSH_TTY"] || process.platform === "linux" && !process.env["DISPLAY"] && !process.env["WAYLAND_DISPLAY"];
@@ -6304,24 +8343,37 @@ function openBrowser(url) {
   open(url).catch(() => {
   });
 }
-async function runNativeDeviceCode(providerId) {
+async function runNativeDeviceCode(providerId, signal) {
   const label = PROVIDER_DISPLAY[providerId];
   printOAuthStepsPanel(`${label} \u2014 Sign in`, label);
   const spinner5 = p2.spinner();
   spinner5.start("Waiting for authorization...");
+  const onDeviceCode = ({ url, userCode }) => {
+    spinner5.stop("");
+    p2.log.info(`Visit: ${pc3.cyan(url)}`);
+    p2.log.info(`Enter code: ${pc3.bold(userCode)}`);
+    openBrowser(url);
+    spinner5.start("Waiting for authorization...");
+  };
   try {
-    const { tokens, accountId } = await runOpenAiDeviceCodeFlow(({ url, userCode }) => {
-      spinner5.stop("");
-      p2.log.info(`Visit: ${pc3.cyan(url)}`);
-      p2.log.info(`Enter code: ${pc3.bold(userCode)}`);
-      openBrowser(url);
-      spinner5.start("Waiting for authorization...");
-    });
+    if (providerId === "github-copilot") {
+      const { tokens: tokens2 } = await runGitHubCopilotDeviceCodeFlow(onDeviceCode, {
+        sleep: sleepMs,
+        now: () => Date.now(),
+        signal,
+        onWarning: (warning) => {
+          p2.log.warn(`GitHub OAuth token polling returned HTTP ${warning.status}; retrying`);
+        }
+      });
+      spinner5.stop(pc3.green("Signed in to GitHub Copilot"));
+      return githubCopilotTokensToStoredCredential(tokens2);
+    }
+    const { tokens, accountId } = await runOpenAiDeviceCodeFlow(onDeviceCode);
     spinner5.stop(pc3.green("Signed in to OpenAI ChatGPT"));
     return tokensToStoredCredential(tokens, void 0, accountId);
-  } catch (err) {
+  } catch (error) {
     spinner5.stop("");
-    throw err;
+    throw error;
   }
 }
 function oauthDisplayName(registryId, fallbackName) {
@@ -6363,16 +8415,16 @@ async function upsertOAuthProvider(providerId, _cred) {
     return entry;
   }));
 }
-async function authenticateProviderInner(providerId, _options = {}) {
+async function authenticateProviderInner(providerId, options = {}) {
   const registryId = toOAuthRegistryId(providerId);
   if (!supportsNativeOAuth(providerId)) {
-    throw new Error("OAuth sign-in is only available for openai (ChatGPT Plus/Pro).");
+    throw new Error("OAuth sign-in is available for openai and github-copilot.");
   }
   for (const diagnostic of await diagnoseCredentialStorage()) {
     if (diagnostic.level === "warn") p2.log.warn(diagnostic.message);
     else p2.log.info(diagnostic.message);
   }
-  const cred = await runNativeDeviceCode(providerId);
+  const cred = await runNativeDeviceCode(providerId, options.signal);
   const nativeDiagnostics = [];
   const authRef = oauthAuthRef(registryId);
   await journalCredentialWrite(authRef);
@@ -6385,16 +8437,22 @@ async function authenticateProviderInner(providerId, _options = {}) {
     }
   );
   if (!saved) {
-    p2.log.warn(`Could not save OAuth tokens \u2014 ${nativeDiagnostics.at(-1) || "session may not persist."}`);
+    throw new Error(
+      `Could not save OAuth tokens \u2014 ${nativeDiagnostics.at(-1) || "check credential storage permissions and try again"}`
+    );
   }
   const registryProvider = await upsertOAuthProvider(providerId, cred);
   const refreshSpinner = p2.spinner();
   refreshSpinner.start("Refreshing model list...");
   try {
-    await refreshProviderModels(registryId, cred.access);
+    const refreshResult = await refreshProviderModels(registryId, cred.access);
+    if (!refreshResult.ok) {
+      throw new Error(refreshResult.reason ?? "Model discovery failed without a reason");
+    }
     refreshSpinner.stop("Models refreshed");
-  } catch {
-    refreshSpinner.stop("Could not refresh models \u2014 run leverframe providers refresh-models later");
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    refreshSpinner.stop(`Could not refresh models: ${reason} - run leverframe providers refresh-models later`);
   }
   return { providerId: registryId, credential: cred, registryProvider };
 }
@@ -6406,13 +8464,15 @@ async function authenticateProvider(providerId, options = {}) {
   }
 }
 function providerAuthHelpText() {
-  return `${pc3.bold("leverframe providers auth")} \u2014 sign in with OAuth
+  return `${pc3.bold("leverframe providers auth")} - sign in with OAuth
 
 ${pc3.bold("Usage:")}
   leverframe providers auth openai
+  leverframe providers auth github-copilot
 
 ${pc3.bold("Device code (works on SSH/VPS):")}
-  openai   ChatGPT Plus/Pro (device code at auth.openai.com/codex/device)`;
+  openai          ChatGPT Plus/Pro (auth.openai.com/codex/device)
+  github-copilot  GitHub Copilot subscription (github.com/login/device)`;
 }
 
 // src/prompts.ts
@@ -6444,7 +8504,7 @@ function scoreModelSearch(query, fields) {
     else if (field.normalized.includes(normalizedQuery)) score = Math.max(score, field.weight + 90);
     else if (field.compact.includes(compactQuery)) score = Math.max(score, field.weight + 70);
   }
-  return score + tokens.reduce((sum, token) => sum + searchableFields.reduce((best, field) => {
+  return score + tokens.reduce((sum2, token) => sum2 + searchableFields.reduce((best, field) => {
     if (field.normalized.split(" ").includes(token)) return Math.max(best, 30);
     if (field.normalized.includes(token) || field.compact.includes(token)) return Math.max(best, 12);
     return best;
@@ -8030,7 +10090,7 @@ data: ${JSON.stringify({
 import { randomUUID as randomUUID3 } from "crypto";
 
 // src/sdk-adapter.ts
-import { createHash as createHash5 } from "crypto";
+import { createHash as createHash8 } from "crypto";
 import { streamText, generateText, tool, jsonSchema } from "ai";
 
 // src/proxy-shared.ts
@@ -8167,6 +10227,69 @@ function resolveUpstreamTools(tools, messages) {
   return upstream;
 }
 
+// src/anthropic-endpoints.ts
+var MESSAGE_PATH = "/v1/messages";
+var COUNT_TOKENS_PATH = "/v1/messages/count_tokens";
+function anthropicMessagesEndpoint(url) {
+  if (!url) return null;
+  let pathname;
+  try {
+    pathname = new URL(url, "http://relay.local").pathname;
+  } catch {
+    return null;
+  }
+  if (pathname === MESSAGE_PATH) return "messages";
+  if (pathname === COUNT_TOKENS_PATH) return "count_tokens";
+  return null;
+}
+var NON_CONTEXT_FIELDS = /* @__PURE__ */ new Set([
+  "model",
+  "stream",
+  "max_tokens",
+  "temperature",
+  "top_p",
+  "top_k",
+  "stop_sequences",
+  "metadata"
+]);
+var IMAGE_INPUT_TOKEN_ESTIMATE = 1600;
+function isAnthropicImageBlock(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const rec = value;
+  return rec.type === "image" && !!rec.source && typeof rec.source === "object";
+}
+function estimateAnthropicInputTokens(body) {
+  const contextBody = Object.fromEntries(
+    Object.entries(body).filter(([key]) => !NON_CONTEXT_FIELDS.has(key))
+  );
+  let imageCount = 0;
+  let textBytes = 0;
+  const serialized = JSON.stringify(contextBody, (_key, value) => {
+    if (isAnthropicImageBlock(value)) {
+      imageCount += 1;
+      return { type: "image" };
+    }
+    if (typeof value === "string") {
+      textBytes += Buffer.byteLength(value, "utf8");
+    }
+    return value;
+  });
+  if (!serialized || serialized === "{}") return 0;
+  const totalBytes = Buffer.byteLength(serialized, "utf8");
+  const structuralBytes = Math.max(0, totalBytes - textBytes);
+  const textTokens = Math.ceil(textBytes / 4) + Math.ceil(structuralBytes / 6);
+  return Math.max(1, textTokens + imageCount * IMAGE_INPUT_TOKEN_ESTIMATE);
+}
+function estimateAnthropicOutputTokens(outputBytes) {
+  return outputBytes > 0 ? Math.max(1, Math.ceil(outputBytes / 4)) : 0;
+}
+function anthropicPromptTooLongMessage(body, contextWindow) {
+  const maximum = Math.max(1, Math.floor(contextWindow));
+  const estimatedPromptTokens = estimateAnthropicInputTokens(body);
+  const promptTokens = Math.max(estimatedPromptTokens, maximum + 1);
+  return `prompt is too long: ${promptTokens} tokens > ${maximum} maximum`;
+}
+
 // src/sdk-adapter.ts
 function sdkTranslationErrorSignature(error) {
   const message2 = error instanceof Error ? error.message : typeof error === "string" ? error : void 0;
@@ -8175,11 +10298,11 @@ function sdkTranslationErrorSignature(error) {
   if (/\btext part \S+ not found\b/i.test(message2)) return "text_part_not_found";
   return void 0;
 }
-var CLAUDE_SESSION_ID_RE2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var CLAUDE_SESSION_ID_RE3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function validClaudeSessionId(value) {
   if (typeof value !== "string") return void 0;
   const trimmed = value.trim();
-  return CLAUDE_SESSION_ID_RE2.test(trimmed) ? trimmed.toLowerCase() : void 0;
+  return CLAUDE_SESSION_ID_RE3.test(trimmed) ? trimmed.toLowerCase() : void 0;
 }
 function extractClaudeSessionId(body, headerFallback) {
   const userId = body.metadata?.user_id;
@@ -8194,7 +10317,7 @@ function extractClaudeSessionId(body, headerFallback) {
   return validClaudeSessionId(headerFallback);
 }
 function claudeSessionPromptCacheKey(sessionId) {
-  return "relay-session-" + createHash5("sha256").update(sessionId).digest("hex").slice(0, 32);
+  return "relay-session-" + createHash8("sha256").update(sessionId).digest("hex").slice(0, 32);
 }
 function anthropicEffortFromRequest(body) {
   const effort = body.output_config?.effort;
@@ -8204,7 +10327,7 @@ function anthropicEffortFromRequest(body) {
 function openAiPromptCacheKey(system, tools) {
   const toolSig = (tools ?? []).map((t) => `${t.name}${t.description ?? ""}${JSON.stringify(t.input_schema ?? {})}`).join("");
   const material = `${system ?? ""}\0${toolSig}`;
-  return "relay-" + createHash5("sha256").update(material).digest("hex").slice(0, 32);
+  return "relay-" + createHash8("sha256").update(material).digest("hex").slice(0, 32);
 }
 function supportsOpenAiPromptCacheBreakpoints(modelId) {
   const match = modelId.toLowerCase().match(/^gpt-(\d+)(?:\.(\d+))?(?:-|$)/);
@@ -8497,6 +10620,7 @@ function translateToolChoice(tc) {
 }
 var COMPACT_TEXT_ONLY_START = "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.";
 var COMPACT_TEXT_ONLY_END = "REMINDER: Do NOT call any tools. Respond with plain text only";
+var COMPACT_OAUTH_INSTRUCTION = "Keep this compaction summary under 16,000 output tokens. Preserve concrete decisions, file paths, errors, pending tasks, and user instructions without repetition.";
 function isClaudeCodeStructuredOutputCompactRequest(body) {
   if (body.diagnostics !== void 0) return false;
   if (!body.tools?.some((candidate) => candidate.name === "StructuredOutput")) return false;
@@ -8532,12 +10656,26 @@ function translateRequest(body, npm, options) {
     effortProviderOptions(npm, effort, options?.reasoningMetadata?.upstreamModelId ?? body.model, options?.reasoningMetadata)
   );
   if (options?.openAiOAuth && systemText) {
+    const instructions = compactRequest ? `${systemText}
+
+${COMPACT_OAUTH_INSTRUCTION}` : systemText;
     providerOptions = deepMergeProviderOptions(providerOptions, {
-      openai: { instructions: systemText }
+      openai: { instructions }
     });
   }
   const upstreamModelId2 = options?.reasoningMetadata?.upstreamModelId ?? body.model;
   const supportsExplicitOpenAiCaching = !options?.openAiOAuth && supportsOpenAiPromptCacheBreakpoints(upstreamModelId2);
+  if (npm === "@github/copilot-sdk") {
+    const claudeSessionId = extractClaudeSessionId(body, options?.claudeSessionId);
+    if (claudeSessionId !== void 0) {
+      providerOptions = deepMergeProviderOptions(providerOptions, {
+        copilot: {
+          claudeSessionId,
+          ...effort === void 0 ? {} : { reasoningEffort: effort }
+        }
+      });
+    }
+  }
   if (npm === "@ai-sdk/openai") {
     const claudeSessionId = extractClaudeSessionId(body, options?.claudeSessionId);
     providerOptions = deepMergeProviderOptions(providerOptions, {
@@ -8580,7 +10718,7 @@ function toAnthropicUsage(u, inputTokensIncludeCache) {
 }
 function sdkPromptCacheKeyHash(params) {
   const key = params.providerOptions?.openai?.promptCacheKey;
-  return typeof key === "string" ? createHash5("sha256").update(key).digest("hex").slice(0, 16) : void 0;
+  return typeof key === "string" ? createHash8("sha256").update(key).digest("hex").slice(0, 16) : void 0;
 }
 function safeJson(value) {
   try {
@@ -8699,6 +10837,7 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
     cache_creation_input_tokens: 0,
     cache_read_input_tokens: 0
   };
+  let outputContentBytes = 0;
   const emit = (event, data) => write(sseChunk(event, data));
   const toolCanFlushEarly = (id) => {
     const rules = inputRules.get(toolNameById.get(id) ?? "");
@@ -8737,6 +10876,7 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
     }
     const suffix = output.slice(emittedLength);
     if (!suffix) return;
+    outputContentBytes += Buffer.byteLength(suffix, "utf8");
     emit("content_block_delta", {
       type: "content_block_delta",
       index: idToBlock.get(id) ?? blockIndex,
@@ -8836,6 +10976,7 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
           break;
         case "reasoning-delta":
           if (openType !== "thinking") openBlock("thinking", { type: "thinking", thinking: "", signature: "" });
+          outputContentBytes += Buffer.byteLength(part.text ?? "", "utf8");
           emit("content_block_delta", {
             type: "content_block_delta",
             index: blockIndex,
@@ -8853,6 +10994,7 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
           break;
         case "text-delta":
           if (openType !== "text") openBlock("text", { type: "text", text: "" });
+          outputContentBytes += Buffer.byteLength(part.text ?? "", "utf8");
           emit("content_block_delta", {
             type: "content_block_delta",
             index: blockIndex,
@@ -8931,14 +11073,18 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
           }
           break;
         }
-        case "finish":
+        case "finish": {
+          const outputEstimate = estimateAnthropicOutputTokens(outputContentBytes);
           if (part.totalUsage) {
             const finalUsage = toAnthropicUsage(
               part.totalUsage,
               observer?.inputTokensIncludeCache ?? false
             );
             const hasFinalInputUsage = finalUsage.input_tokens + finalUsage.cache_creation_input_tokens + finalUsage.cache_read_input_tokens > 0;
-            usage = hasFinalInputUsage ? finalUsage : { ...usage, output_tokens: finalUsage.output_tokens };
+            const outputTokens = part.totalUsage.outputTokens === void 0 && outputEstimate > 0 ? outputEstimate : finalUsage.output_tokens;
+            usage = hasFinalInputUsage ? { ...finalUsage, output_tokens: outputTokens } : { ...usage, output_tokens: outputTokens };
+          } else if (outputEstimate > 0) {
+            usage = { ...usage, output_tokens: outputEstimate };
           }
           observer?.onUsage?.({
             model: modelId,
@@ -8950,6 +11096,7 @@ async function writeAnthropicStream(stream, modelId, write, log12, observer, too
           else if (part.finishReason === "stop" && finishReason !== "tool_use") finishReason = "end_turn";
           rawFinishReason = part.finishReason;
           break;
+        }
         case "error": {
           const e = part.error;
           const errMsg = e?.message || (typeof part.error === "string" ? part.error : JSON.stringify(e?.data ?? part.error));
@@ -9145,10 +11292,19 @@ async function generateAnthropicResponse(model, params, modelId, options) {
   }
   const inputRules = toolInputRules(params.tools);
   const finalUsage = toAnthropicUsage(usage, inputTokensIncludeCache);
+  const hasContent = !!text3 || toolCalls.length > 0;
+  const resolvedUsage = {
+    ...finalUsage,
+    input_tokens: hasContent && usage?.inputTokens === void 0 ? estimateAnthropicInputTokens(params) : finalUsage.input_tokens,
+    output_tokens: hasContent && usage?.outputTokens === void 0 ? estimateAnthropicOutputTokens(Buffer.byteLength(
+      text3 + toolCalls.map((tc) => JSON.stringify(tc.input ?? null)).join(""),
+      "utf8"
+    )) : finalUsage.output_tokens
+  };
   const promptCacheKeyHash = sdkPromptCacheKeyHash(params);
   options?.onUsage?.({
     model: modelId,
-    ...finalUsage,
+    ...resolvedUsage,
     ...promptCacheKeyHash ? { promptCacheKeyHash } : {}
   });
   return {
@@ -9166,74 +11322,14 @@ async function generateAnthropicResponse(model, params, modelId, options) {
       }))
     ],
     stop_reason: finishReason === "tool-calls" ? "tool_use" : "end_turn",
-    usage: finalUsage
+    usage: resolvedUsage
   };
 }
 
-// src/anthropic-endpoints.ts
-var MESSAGE_PATH = "/v1/messages";
-var COUNT_TOKENS_PATH = "/v1/messages/count_tokens";
-function anthropicMessagesEndpoint(url) {
-  if (!url) return null;
-  let pathname;
-  try {
-    pathname = new URL(url, "http://relay.local").pathname;
-  } catch {
-    return null;
-  }
-  if (pathname === MESSAGE_PATH) return "messages";
-  if (pathname === COUNT_TOKENS_PATH) return "count_tokens";
-  return null;
-}
-var NON_CONTEXT_FIELDS = /* @__PURE__ */ new Set([
-  "model",
-  "stream",
-  "max_tokens",
-  "temperature",
-  "top_p",
-  "top_k",
-  "stop_sequences",
-  "metadata"
-]);
-var IMAGE_INPUT_TOKEN_ESTIMATE = 1600;
-function isAnthropicImageBlock(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const rec = value;
-  return rec.type === "image" && !!rec.source && typeof rec.source === "object";
-}
-function estimateAnthropicInputTokens(body) {
-  const contextBody = Object.fromEntries(
-    Object.entries(body).filter(([key]) => !NON_CONTEXT_FIELDS.has(key))
-  );
-  let imageCount = 0;
-  let textBytes = 0;
-  const serialized = JSON.stringify(contextBody, (_key, value) => {
-    if (isAnthropicImageBlock(value)) {
-      imageCount += 1;
-      return { type: "image" };
-    }
-    if (typeof value === "string") {
-      textBytes += Buffer.byteLength(value, "utf8");
-    }
-    return value;
-  });
-  if (!serialized || serialized === "{}") return 0;
-  const totalBytes = Buffer.byteLength(serialized, "utf8");
-  const structuralBytes = Math.max(0, totalBytes - textBytes);
-  const textTokens = Math.ceil(textBytes / 4) + Math.ceil(structuralBytes / 6);
-  return Math.max(1, textTokens + imageCount * IMAGE_INPUT_TOKEN_ESTIMATE);
-}
-function anthropicPromptTooLongMessage(body, contextWindow) {
-  const maximum = Math.max(1, Math.floor(contextWindow));
-  const estimatedPromptTokens = estimateAnthropicInputTokens(body);
-  const promptTokens = Math.max(estimatedPromptTokens, maximum + 1);
-  return `prompt is too long: ${promptTokens} tokens > ${maximum} maximum`;
-}
-
 // src/provider-runtime-cache.ts
-import { createHash as createHash6 } from "crypto";
+import { createHash as createHash9 } from "crypto";
 function fingerprintCredential(credential) {
-  return createHash6("sha256").update(credential).digest("hex");
+  return createHash9("sha256").update(credential).digest("hex");
 }
 function immutableSnapshot(generation, credential) {
   return Object.freeze({
@@ -9250,6 +11346,8 @@ var ProviderRuntimeCache = class {
   credentials = /* @__PURE__ */ new Map();
   handles = /* @__PURE__ */ new Map();
   refreshes = /* @__PURE__ */ new Map();
+  disposePromise;
+  disposed = false;
   snapshot(routeKey, initialCredential) {
     const current = this.credentials.get(routeKey);
     if (current) return current;
@@ -9258,6 +11356,7 @@ var ProviderRuntimeCache = class {
     return initial;
   }
   async getHandle(routeKey, requestedCredential, create) {
+    if (this.disposed) throw new Error("Provider runtime cache has been disposed");
     const credential = this.credentials.get(routeKey) ?? requestedCredential;
     const cacheKey = this.handleKey(routeKey, credential);
     const existing = this.handles.get(cacheKey);
@@ -9328,10 +11427,33 @@ var ProviderRuntimeCache = class {
     }
     return disposals;
   }
+  /** Disposes every reachable provider handle and rejects later cache access. */
+  dispose() {
+    if (this.disposePromise !== void 0) return this.disposePromise;
+    this.disposed = true;
+    const entries = [...this.handles.values()];
+    this.handles.clear();
+    this.credentials.clear();
+    this.disposePromise = Promise.all(entries.map((entry) => entry.promise.then(
+      async (handle) => {
+        await this.options.disposeHandle?.(handle);
+      },
+      () => void 0
+    ))).then(() => void 0);
+    return this.disposePromise;
+  }
   handleKey(routeKey, credential) {
     return `${routeKey}${credential.generation}${credential.fingerprint}`;
   }
 };
+
+// src/language-model-disposal.ts
+function isDisposableLanguageModel(model) {
+  return typeof model === "object" && model !== null && "dispose" in model && typeof model.dispose === "function";
+}
+async function disposeLanguageModel(model) {
+  if (isDisposableLanguageModel(model)) await model.dispose();
+}
 
 // src/listener-ready.ts
 import { connect } from "net";
@@ -9351,15 +11473,15 @@ function probeTcpListener(host, port, timeoutMs) {
   return new Promise((resolve3) => {
     const socket = connect({ host, port });
     let settled = false;
-    const finish = (ready) => {
+    const finish2 = (ready) => {
       if (settled) return;
       settled = true;
       socket.destroy();
       resolve3(ready);
     };
-    socket.once("connect", () => finish(true));
-    socket.once("error", () => finish(false));
-    socket.setTimeout(timeoutMs, () => finish(false));
+    socket.once("connect", () => finish2(true));
+    socket.once("error", () => finish2(false));
+    socket.setTimeout(timeoutMs, () => finish2(false));
   });
 }
 async function closeAfterReadinessFailure(server) {
@@ -9408,24 +11530,24 @@ async function listenTcpServer(server, port, host) {
 import { randomUUID as randomUUID2 } from "crypto";
 
 // src/checkpoint-store.ts
-import { createHash as createHash7 } from "crypto";
+import { createHash as createHash10 } from "crypto";
 import { existsSync as existsSync7, lstatSync as lstatSync2, readdirSync, rmSync } from "fs";
-import { join as join5 } from "path";
+import { join as join6 } from "path";
 var MAX_DOCUMENT_BYTES = 512 * 1024;
 function getExecutionsRoot() {
-  return join5(getAppHome(), "state", "executions");
+  return join6(getAppHome(), "state", "executions");
 }
 function workspaceOrSessionHash(scopeIdentifier) {
-  return createHash7("sha256").update("leverframe-execution-scope\0").update(scopeIdentifier).digest("hex").slice(0, 32);
+  return createHash10("sha256").update("leverframe-execution-scope\0").update(scopeIdentifier).digest("hex").slice(0, 32);
 }
 function getExecutionDir(scopeHash, executionId) {
-  return join5(getExecutionsRoot(), scopeHash, executionId);
+  return join6(getExecutionsRoot(), scopeHash, executionId);
 }
 function getCheckpointPath(scopeHash, executionId) {
-  return join5(getExecutionDir(scopeHash, executionId), "checkpoint.json");
+  return join6(getExecutionDir(scopeHash, executionId), "checkpoint.json");
 }
 function getLedgerPath(scopeHash, executionId) {
-  return join5(getExecutionDir(scopeHash, executionId), "ledger.json");
+  return join6(getExecutionDir(scopeHash, executionId), "ledger.json");
 }
 function isPlainRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -9495,7 +11617,7 @@ function listExecutions() {
   if (!existsSync7(root)) return [];
   const results = [];
   for (const scopeHash of safeReaddir(root)) {
-    for (const executionId of safeReaddir(join5(root, scopeHash))) {
+    for (const executionId of safeReaddir(join6(root, scopeHash))) {
       results.push({ scopeHash, executionId });
     }
   }
@@ -9515,7 +11637,7 @@ function isExpired(expiresAtIso, now = Date.now) {
 }
 
 // src/execution-checkpoint.ts
-import { createHash as createHash8 } from "crypto";
+import { createHash as createHash11 } from "crypto";
 var CHECKPOINT_SCHEMA_VERSION = 1;
 var DEFAULT_CHECKPOINT_TTL_MS = 24 * 60 * 60 * 1e3;
 var TOOL_STATUSES = /* @__PURE__ */ new Set([
@@ -9591,7 +11713,7 @@ function boundedDigest(content) {
   const buffer = Buffer.from(content, "utf8");
   const truncated = buffer.subarray(0, DIGEST_TRUNCATE_BYTES);
   return {
-    digest: createHash8("sha256").update(truncated).digest("hex"),
+    digest: createHash11("sha256").update(truncated).digest("hex"),
     byteCount: buffer.byteLength
   };
 }
@@ -9610,7 +11732,7 @@ function digestMessages(messages) {
   }));
 }
 function conversationFingerprint(messages) {
-  const hash = createHash8("sha256");
+  const hash = createHash11("sha256");
   for (const message2 of messages) {
     hash.update(typeof message2.role === "string" ? message2.role : "unknown").update("\0");
     hash.update(stableStringify(message2.content)).update("");
@@ -10697,6 +12819,7 @@ var TRANSIENT_CONNECTION_CODES = /* @__PURE__ */ new Set([
   "UND_ERR_SOCKET"
 ]);
 function isTransientSdkStreamFailure(error) {
+  if (sdkTranslationErrorSignature(error) === "reasoning_part_not_found") return true;
   const sdkStatusCode = sdkUpstreamErrorDetails(error)?.statusCode;
   if (sdkStatusCode !== void 0 && sdkStatusCode >= 500 && sdkStatusCode <= 599) return true;
   const pending = [error];
@@ -10913,6 +13036,7 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
   const proxyToken = randomUUID3();
   silenceSdkWarnings();
   const providerRuntimeCache = new ProviderRuntimeCache({
+    disposeHandle: disposeLanguageModel,
     onCredentialRotated: (previous) => {
       evictResponsesWebSocketConnectionsForAccessToken(previous.credential);
     }
@@ -11286,7 +13410,7 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
                 while (true) {
                   try {
                     await withResponsesWebSocketDiagnosticContext(
-                      { requestId: relayRequestId, claudeSessionId: claudeSessionId2 },
+                      { requestId: trackedRequestId, claudeSessionId: claudeSessionId2 },
                       () => streamAnthropicResponse(
                         model,
                         params,
@@ -11309,6 +13433,9 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
                     }
                     retryCount += 1;
                     const reason = sdkTranslationErrorSignature(error);
+                    if (reason === "reasoning_part_not_found") {
+                      evictResponsesWebSocketConnectionForRequest(trackedRequestId);
+                    }
                     requestExecution.recordRetryAttempt({ attempt: retryCount, reason });
                     tracking.recordRetryAttempt();
                     plog(() => `sdk auto-replay: retry=${retryCount}/${maxRetries} reason=${reason}`);
@@ -11325,7 +13452,7 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
               }
             } else {
               const anthropicResponse = await withResponsesWebSocketDiagnosticContext(
-                { requestId: relayRequestId, claudeSessionId: claudeSessionId2 },
+                { requestId: trackedRequestId, claudeSessionId: claudeSessionId2 },
                 () => generateAnthropicResponse(
                   model,
                   params,
@@ -11355,9 +13482,13 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
             }
             requestExecution.fail(err);
             tracking.fail(void 0);
+            const sdkErrorSignature = sdkTranslationErrorSignature(err);
+            if (sdkErrorSignature === "reasoning_part_not_found") {
+              evictResponsesWebSocketConnectionForRequest(trackedRequestId);
+            }
             translationLifecycle?.fail(
               err instanceof Error ? err.name : "UpstreamError",
-              sdkTranslationErrorSignature(err)
+              sdkErrorSignature
             );
             const message2 = formatUpstreamError(err);
             const details = sdkUpstreamErrorDetails(err);
@@ -11448,11 +13579,12 @@ data: ${JSON.stringify({
   return {
     port: address.port,
     token: proxyToken,
-    close: () => new Promise((resolve3) => {
+    close: async () => {
       cleanupListeners();
       cancelAllActiveRequestExecutions();
-      server.close(() => resolve3());
-    })
+      await new Promise((resolve3) => server.close(() => resolve3()));
+      await providerRuntimeCache.dispose();
+    }
   };
 }
 function startProxy(completionsUrl, modelId, debug = false, contextWindow, sdk, apiKey) {
@@ -12015,6 +14147,7 @@ function reconcileExecutionsAtStartupSafely(plog) {
 async function startServer(options) {
   silenceSdkWarnings();
   const languageModelCache = new ProviderRuntimeCache({
+    disposeHandle: disposeLanguageModel,
     onCredentialRotated: (previous) => {
       evictResponsesWebSocketConnectionsForAccessToken(previous.credential);
     }
@@ -12031,10 +14164,13 @@ async function startServer(options) {
     url: `http://${tcpListenerUrlHost(address.address)}:${address.port}`,
     server,
     inferenceLogPath: options.inferenceLogPath,
-    close: () => new Promise((resolve3, reject) => {
+    close: async () => {
       cancelAllActiveRequestExecutions();
-      server.close((err) => err ? reject(err) : resolve3());
-    })
+      await new Promise((resolve3, reject) => {
+        server.close((error) => error ? reject(error) : resolve3());
+      });
+      await languageModelCache.dispose();
+    }
   };
 }
 async function revalidateEndpointUrl(url) {
@@ -12925,8 +15061,8 @@ import { createBrotliDecompress, createGunzip, createInflate } from "zlib";
 // src/http-proxy/ca.ts
 import { randomBytes as randomBytes2, randomUUID as randomUUID5 } from "crypto";
 import { constants as fsConstants } from "fs";
-import { chmodSync as chmodSync4, closeSync as closeSync2, linkSync, lstatSync as lstatSync3, mkdirSync as mkdirSync4, openSync as openSync2, readFileSync as readFileSync5, renameSync as renameSync2, rmSync as rmSync2, unlinkSync as unlinkSync2, writeFileSync as writeFileSync4 } from "fs";
-import { dirname as dirname3, join as join6, resolve } from "path";
+import { chmodSync as chmodSync4, closeSync as closeSync2, linkSync, lstatSync as lstatSync3, mkdirSync as mkdirSync5, openSync as openSync2, readFileSync as readFileSync5, renameSync as renameSync2, rmSync as rmSync2, unlinkSync as unlinkSync2, writeFileSync as writeFileSync4 } from "fs";
+import { dirname as dirname3, join as join7, resolve } from "path";
 import forge from "node-forge";
 var O_NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 var CERT_DIR = "http-proxy";
@@ -12951,7 +15087,7 @@ function serialNumber() {
   return bytes.toString("hex");
 }
 function caLockPath() {
-  return join6(getAppHome(), CERT_DIR, "ca-generation.lock");
+  return join7(getAppHome(), CERT_DIR, "ca-generation.lock");
 }
 var CaLockBusyError = class extends Error {
   lockPath;
@@ -13023,7 +15159,7 @@ function releaseCaLock(lockPath2, nonce) {
 function tryAcquireCaLock(lockPath2, opts = {}) {
   const now = opts.now ?? Date.now();
   const nonce = randomUUID5();
-  mkdirSync4(dirname3(lockPath2), { recursive: true, mode: 448 });
+  mkdirSync5(dirname3(lockPath2), { recursive: true, mode: 448 });
   if (!isRegularLockPath(lockPath2)) return null;
   let fd;
   try {
@@ -13077,15 +15213,15 @@ function acquireCaLockSync(lockPath2 = caLockPath(), opts = {}) {
   }
 }
 function certPaths() {
-  const dir = join6(getAppHome(), CERT_DIR);
+  const dir = join7(getAppHome(), CERT_DIR);
   return {
     dir,
-    caCert: join6(dir, CA_CERT_FILE),
-    caKey: join6(dir, CA_KEY_FILE),
-    serverCert: join6(dir, SERVER_CERT_FILE),
-    serverKey: join6(dir, SERVER_KEY_FILE),
-    version: join6(dir, CERT_VERSION_FILE),
-    setId: join6(dir, CERT_SET_FILE)
+    caCert: join7(dir, CA_CERT_FILE),
+    caKey: join7(dir, CA_KEY_FILE),
+    serverCert: join7(dir, SERVER_CERT_FILE),
+    serverKey: join7(dir, SERVER_KEY_FILE),
+    version: join7(dir, CERT_VERSION_FILE),
+    setId: join7(dir, CERT_SET_FILE)
   };
 }
 function writePrivate(path, value) {
@@ -13106,7 +15242,7 @@ function atomicWrite(path, value, mode) {
   }
 }
 function generateCertificates(paths) {
-  mkdirSync4(paths.dir, { recursive: true, mode: 448 });
+  mkdirSync5(paths.dir, { recursive: true, mode: 448 });
   chmodSync4(paths.dir, 448);
   const now = Date.now();
   const caKeys = forge.pki.rsa.generateKeyPair(2048);
@@ -13201,7 +15337,7 @@ function ensureHttpProxyCaBundle(relayCaCertPath, additionalCaCertPath) {
     const relayCa = readFileSync5(relayCaCertPath, "utf8").trimEnd();
     const additionalCa = readFileSync5(additionalCaCertPath, "utf8").trim();
     if (!additionalCa) return relayCaCertPath;
-    const combinedPath = join6(dirname3(relayCaCertPath), "combined-ca.pem");
+    const combinedPath = join7(dirname3(relayCaCertPath), "combined-ca.pem");
     writePublic(combinedPath, `${relayCa}
 ${additionalCa}
 `);
@@ -14980,9 +17116,9 @@ async function runKeyringRepairCommand(accountFilter) {
 }
 
 // src/patcher.ts
-import { createHash as createHash11 } from "crypto";
+import { createHash as createHash14 } from "crypto";
 import { readFileSync as readFileSync8 } from "fs";
-import { join as join8 } from "path";
+import { join as join9 } from "path";
 
 // src/patch-transforms-routing-notice.ts
 var ROUTING_NOTICE_MARKER = "/*ccpatch:routing-notice*/";
@@ -15072,7 +17208,8 @@ function handoffPattern() {
     escaped(ROUTING_NOTICE_HANDOFF_MARKER) + 'if\\(d\\?\\.replHydration\\?\\.kind!=="resume"\\)\\{[\\s\\S]*?ccRoutingNotice\\?\\.\\(\\{type:"notification",notification:\\{[\\s\\S]*?timeoutMs:1e4\\}\\}\\)\\}'
   );
 }
-var AGENT_DESCRIPTION_SEP = "\xB7";
+var AGENT_DESCRIPTION_SEP = "\\u00b7";
+var AGENT_DESCRIPTION_SEP_PATTERN = "(?:\\\\u00b7|\\xB7)";
 function agentDescriptionSnippet(options) {
   const { descVar, modelIdVar, table, effortTable } = options;
   const serializedTable = JSON.stringify(table).replaceAll("/*ccpatch:", "\\u002f*ccpatch:");
@@ -15081,7 +17218,7 @@ function agentDescriptionSnippet(options) {
 }
 function agentDescriptionPattern() {
   return new RegExp(
-    escaped(AGENT_DESCRIPTION_MARKER) + '\\{let _ccat=Object\\.assign\\(Object\\.create\\(null\\),[\\s\\S]*?\\+\\(_ccae\\?" ' + AGENT_DESCRIPTION_SEP + ' "\\+_ccae:""\\);\\}\\}'
+    escaped(AGENT_DESCRIPTION_MARKER) + '\\{let _ccat=Object\\.assign\\(Object\\.create\\(null\\),[\\s\\S]*?\\+\\(_ccae\\?" ' + AGENT_DESCRIPTION_SEP_PATTERN + ' "\\+_ccae:""\\);\\}\\}'
   );
 }
 function agentDescriptionOutcome(status, extra) {
@@ -15215,7 +17352,7 @@ function applyRoutingNoticeTransform(source, config) {
 }
 
 // src/patch-transforms.ts
-var PATCH_TRANSFORMS_VERSION = 6;
+var PATCH_TRANSFORMS_VERSION = 7;
 var RESERVED_MODEL_ALIASES = /* @__PURE__ */ new Set(["sonnet", "opus", "haiku", "fable", "opusplan", "best", "default"]);
 var NATIVE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 var BASE_EFFORT_LEVELS = ["low", "medium", "high"];
@@ -15534,7 +17671,7 @@ import { statSync as statSync6 } from "fs";
 
 // src/patch-state.ts
 import { existsSync as existsSync9, unlinkSync as unlinkSync3 } from "fs";
-import { join as join7 } from "path";
+import { join as join8 } from "path";
 
 // src/atomic-file.ts
 import { randomUUID as randomUUID7 } from "crypto";
@@ -15546,7 +17683,7 @@ import {
   existsSync as existsSync8,
   fsyncSync,
   linkSync as linkSync2,
-  mkdirSync as mkdirSync5,
+  mkdirSync as mkdirSync6,
   openSync as openSync3,
   realpathSync as realpathSync2,
   renameSync as renameSync3,
@@ -15589,7 +17726,7 @@ function ensureDirectoryDurableSync(path, mode = 448) {
     cursor = dirname4(cursor);
   }
   for (const directory of missing.reverse()) {
-    mkdirSync5(directory, { mode });
+    mkdirSync6(directory, { mode });
     fsyncDirectorySync(dirname4(directory));
   }
 }
@@ -15660,22 +17797,22 @@ function copyImmutableFileSync(sourcePath, targetPath, options = {}) {
 // src/patch-state.ts
 var PATCH_STATE_SCHEMA_VERSION = 2;
 function getPatchStateRoot() {
-  return join7(getAppHome(), "state", "patches");
+  return join8(getAppHome(), "state", "patches");
 }
 function getPatchTargetDir(identity) {
-  return join7(getPatchStateRoot(), identity);
+  return join8(getPatchStateRoot(), identity);
 }
 function getPatchManifestPathV2(identity) {
-  return join7(getPatchTargetDir(identity), "manifest.json");
+  return join8(getPatchTargetDir(identity), "manifest.json");
 }
 function getPatchTransactionPathV2(identity) {
-  return join7(getPatchTargetDir(identity), "transaction.json");
+  return join8(getPatchTargetDir(identity), "transaction.json");
 }
 function getPatchLockPathV2(identity) {
-  return join7(getPatchTargetDir(identity), "lock");
+  return join8(getPatchTargetDir(identity), "lock");
 }
 function getPatchBaselinesDirV2(identity) {
-  return join7(getPatchTargetDir(identity), "baselines");
+  return join8(getPatchTargetDir(identity), "baselines");
 }
 function getBaselineFileName(version, baselineSha256) {
   const tag = version.replace(/[^\w.-]+/g, "_");
@@ -15683,7 +17820,7 @@ function getBaselineFileName(version, baselineSha256) {
   return `claude-${tag}-${hash}.orig`;
 }
 function getBaselinePathV2(identity, version, baselineSha256) {
-  return join7(getPatchBaselinesDirV2(identity), getBaselineFileName(version, baselineSha256));
+  return join8(getPatchBaselinesDirV2(identity), getBaselineFileName(version, baselineSha256));
 }
 var MAX_MANIFEST_BYTES = 64 * 1024;
 function isNonEmptyString(value) {
@@ -15767,7 +17904,7 @@ var clackPatchPresenter = {
 };
 
 // src/patch-transaction.ts
-import { createHash as createHash9 } from "crypto";
+import { createHash as createHash12 } from "crypto";
 import { existsSync as existsSync10, readFileSync as readFileSync6, statSync as statSync4, unlinkSync as unlinkSync4 } from "fs";
 
 // src/patch-injection.ts
@@ -15783,11 +17920,11 @@ function classifyVersionedMarker(content) {
   }
   return markers.length === 1 && markers[0] === LEVERFRAME_INJECTION_MARKER ? { state: "present", evidence: "marker-v1" } : { state: "ambiguous", evidence: "unknown-marker" };
 }
-function classifyLeverframeInjectionByHash(content, sha256, knownPatchedSha256) {
+function classifyLeverframeInjectionByHash(content, sha2564, knownPatchedSha256) {
   const marker = classifyVersionedMarker(content);
   if (marker.state !== "absent") return marker;
   if (content.includes("/*ccpatch:ctx*/")) return { state: "present", evidence: "ccpatch" };
-  if (knownPatchedSha256 && knownPatchedSha256.length > 0 && knownPatchedSha256 === sha256) {
+  if (knownPatchedSha256 && knownPatchedSha256.length > 0 && knownPatchedSha256 === sha2564) {
     return { state: "present", evidence: "manifest-hash" };
   }
   return marker;
@@ -15829,13 +17966,13 @@ function clearPatchJournal(identity) {
   }
 }
 function sha256File(path) {
-  return createHash9("sha256").update(readFileSync6(path)).digest("hex");
+  return createHash12("sha256").update(readFileSync6(path)).digest("hex");
 }
 var defaultPatchRuntime = {
   async inspect(path, knownPatchedSha256) {
     try {
       if (!statSync4(path).isFile()) throw new Error("not a file");
-      const sha256 = sha256File(path);
+      const sha2564 = sha256File(path);
       const { tryDetectInstallation, readContent } = await import("tweakcc");
       const installation = await tryDetectInstallation({ path });
       const version = installation.version;
@@ -15845,8 +17982,8 @@ var defaultPatchRuntime = {
         path,
         readable: true,
         version,
-        sha256,
-        injection: classifyLeverframeInjectionByHash(content, sha256, knownPatchedSha256)
+        sha256: sha2564,
+        injection: classifyLeverframeInjectionByHash(content, sha2564, knownPatchedSha256)
       };
     } catch {
       return {
@@ -15885,7 +18022,7 @@ function verifyPatchSites(content, config) {
 }
 function computeSemanticFingerprint(results) {
   const canonical = [...results].map((r) => [r.name, r.status]).sort((a, b) => a[0].localeCompare(b[0]));
-  return createHash9("sha256").update(JSON.stringify(canonical)).digest("hex");
+  return createHash12("sha256").update(JSON.stringify(canonical)).digest("hex");
 }
 async function validatePristineBaseline(input) {
   const { candidate, version, runtime } = input;
@@ -15901,12 +18038,12 @@ async function validatePristineBaseline(input) {
 }
 async function applyPatchTransactionV2(input, runtime = defaultPatchRuntime) {
   const { installation, desiredConfig, configHash, manifest, recoveryBaseline } = input;
-  const { identity, canonicalPath, version } = installation;
+  const { identity, canonicalPath: canonicalPath2, version } = installation;
   if (!isClaudeCodeVersionSupportedForBinaryPatching(version)) {
     return { ok: false, message: unsupportedClaudeCodeBinaryPatchingMessage(version) };
   }
   const now = () => (/* @__PURE__ */ new Date()).toISOString();
-  const live = await runtime.inspect(canonicalPath, manifest?.patchedSha256);
+  const live = await runtime.inspect(canonicalPath2, manifest?.patchedSha256);
   if (!live.readable || !live.sha256 || !live.version) {
     return { ok: false, message: "Cannot inspect the live claude binary." };
   }
@@ -15916,7 +18053,7 @@ async function applyPatchTransactionV2(input, runtime = defaultPatchRuntime) {
   if (live.injection.state === "ambiguous") {
     return { ok: false, message: "The live claude injection marker is ambiguous." };
   }
-  let baselineSourcePath = canonicalPath;
+  let baselineSourcePath = canonicalPath2;
   let provenance = "live";
   if (live.injection.state === "present") {
     const candidate = manifest ? {
@@ -15947,7 +18084,7 @@ async function applyPatchTransactionV2(input, runtime = defaultPatchRuntime) {
     schemaVersion: PATCH_JOURNAL_SCHEMA_VERSION,
     operation: "patch",
     identity,
-    canonicalPath,
+    canonicalPath: canonicalPath2,
     generation,
     expectedPreHash: live.sha256,
     claudeVersion: version,
@@ -15967,10 +18104,10 @@ async function applyPatchTransactionV2(input, runtime = defaultPatchRuntime) {
     return { ok: false, message: `Could not store the pristine baseline: ${err instanceof Error ? err.message : String(err)}` };
   }
   writeJournal({ ...journalBase, phase: "baseline_committed", baselineSha256, baselinePath, updatedAt: now() });
-  const stage = sameDirectoryStagePath(canonicalPath, "patch");
+  const stage = sameDirectoryStagePath(canonicalPath2, "patch");
   let results = [];
   try {
-    copyImmutableFileSync(baselinePath, stage, { mode: statSync4(canonicalPath).mode & 511 });
+    copyImmutableFileSync(baselinePath, stage, { mode: statSync4(canonicalPath2).mode & 511 });
     results = await runtime.patch(stage, desiredConfig);
     const stagedPatched = await runtime.inspect(stage);
     if (!stagedPatched.readable || stagedPatched.version !== version || stagedPatched.injection.evidence !== "marker-v1" || !stagedPatched.sha256) {
@@ -15986,13 +18123,13 @@ async function applyPatchTransactionV2(input, runtime = defaultPatchRuntime) {
       patchedSize,
       updatedAt: now()
     });
-    commitSameDirectoryStageSync(stage, canonicalPath);
+    commitSameDirectoryStageSync(stage, canonicalPath2);
     const manifestV2 = {
       schemaVersion: 2,
       transformVersion: currentTransformVersion(),
       generation,
       logicalPath: installation.logicalPath,
-      canonicalPath,
+      canonicalPath: canonicalPath2,
       installationKind: installation.installationKind,
       claudeVersion: version,
       baselineSha256,
@@ -16036,9 +18173,9 @@ async function applyPatchTransactionV2(input, runtime = defaultPatchRuntime) {
 }
 async function restorePatchTransactionV2(input, runtime = defaultPatchRuntime) {
   const { installation, manifest } = input;
-  const { identity, canonicalPath, version } = installation;
+  const { identity, canonicalPath: canonicalPath2, version } = installation;
   const now = () => (/* @__PURE__ */ new Date()).toISOString();
-  const live = await runtime.inspect(canonicalPath, manifest?.patchedSha256);
+  const live = await runtime.inspect(canonicalPath2, manifest?.patchedSha256);
   if (!live.readable || !live.sha256 || !live.version) {
     return { ok: false, message: "Cannot inspect the live claude binary." };
   }
@@ -16061,7 +18198,7 @@ async function restorePatchTransactionV2(input, runtime = defaultPatchRuntime) {
     schemaVersion: PATCH_JOURNAL_SCHEMA_VERSION,
     operation: "restore",
     identity,
-    canonicalPath,
+    canonicalPath: canonicalPath2,
     generation: manifest.generation + 1,
     expectedPreHash: live.sha256,
     claudeVersion: version,
@@ -16074,19 +18211,19 @@ async function restorePatchTransactionV2(input, runtime = defaultPatchRuntime) {
   };
   writeJournal({ ...journalBase, phase: "prepared", updatedAt: now() });
   writeJournal({ ...journalBase, phase: "baseline_committed", updatedAt: now() });
-  const stage = sameDirectoryStagePath(canonicalPath, "restore");
+  const stage = sameDirectoryStagePath(canonicalPath2, "restore");
   try {
-    copyImmutableFileSync(manifest.baselinePath, stage, { mode: statSync4(canonicalPath).mode & 511 });
+    copyImmutableFileSync(manifest.baselinePath, stage, { mode: statSync4(canonicalPath2).mode & 511 });
     const candidate = await runtime.inspect(stage);
     if (!candidate.readable || candidate.version !== version || candidate.injection.state !== "absent" || candidate.sha256 !== backup.sha256) {
       return { ok: false, message: "Restore candidate failed staged validation." };
     }
-    commitSameDirectoryStageSync(stage, canonicalPath);
+    commitSameDirectoryStageSync(stage, canonicalPath2);
     writeJournal({
       ...journalBase,
       phase: "binary_committed",
       patchedSha256: candidate.sha256 ?? void 0,
-      patchedSize: statSync4(canonicalPath).size,
+      patchedSize: statSync4(canonicalPath2).size,
       updatedAt: now()
     });
     removeManifestV2(identity);
@@ -16438,10 +18575,10 @@ async function runLaunchPatchCheckV2(opts = {}, presenter = clackPatchPresenter)
 
 // src/patch-diagnostics.ts
 import { existsSync as existsSync12, readFileSync as readFileSync7 } from "fs";
-import { createHash as createHash10 } from "crypto";
+import { createHash as createHash13 } from "crypto";
 function sha256File2(path) {
   try {
-    return createHash10("sha256").update(readFileSync7(path)).digest("hex");
+    return createHash13("sha256").update(readFileSync7(path)).digest("hex");
   } catch {
     return null;
   }
@@ -16651,7 +18788,7 @@ function formatPatchDiagnosticsText(report) {
 
 // src/patcher.ts
 function getPatchManifestPath() {
-  return join8(getAppHome(), "patch-state.json");
+  return join9(getAppHome(), "patch-state.json");
 }
 function readPatchManifest(path = getPatchManifestPath()) {
   try {
@@ -16720,7 +18857,7 @@ function computePatchConfigHash(config, transformVersion = PATCH_TRANSFORMS_VERS
       entry.effort ? [entry.effort.levels, entry.effort.defaultLevel] : null
     ];
   });
-  return createHash11("sha256").update(JSON.stringify([transformVersion, canonical])).digest("hex");
+  return createHash14("sha256").update(JSON.stringify([transformVersion, canonical])).digest("hex");
 }
 function buildDesiredPatchConfig() {
   const prefs = loadPreferences();

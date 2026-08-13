@@ -61,7 +61,7 @@ describe('Claude Code 2.1.226 routing notice compatibility', () => {
     // not a bare middle-dot probe, so it never false-suppresses on a
     // user-written description that happens to contain " · " already.
     expect(result.content).toContain('String(ne||"").trim().toLowerCase()');
-    expect(result.content).toContain('if(r.indexOf(" · "+_ccad)===-1){r=r+" · "+_ccad+(_ccae?" · "+_ccae:"");}}');
+    expect(result.content).toContain('if(r.indexOf(" \\u00b7 "+_ccad)===-1){r=r+" \\u00b7 "+_ccad+(_ccae?" \\u00b7 "+_ccae:"");}}');
     expect(result.content).not.toMatch(/if\(!\/ [^"]*\/\.test\(r\)\)/);
 
     const reapplied = applyRoutingNoticeTransform(result.content, CONFIG);

@@ -79,9 +79,10 @@ export function accessTokenIsExpiring(token: string | undefined, skewMs = OAUTH_
   }
 }
 
-export const NATIVE_OAUTH_PROVIDER_IDS = ['openai', 'openai-oauth'] as const;
+export const NATIVE_OAUTH_PROVIDER_IDS = ['openai', 'openai-oauth', 'github-copilot'] as const;
 export type NativeOAuthProviderId = typeof NATIVE_OAUTH_PROVIDER_IDS[number];
 
+/** Narrows providers that support Leverframe-owned native OAuth flows. */
 export function supportsNativeOAuth(providerId: string): providerId is NativeOAuthProviderId {
   return (NATIVE_OAUTH_PROVIDER_IDS as readonly string[]).includes(providerId);
 }

@@ -6,6 +6,8 @@ export const REGISTRY_SCHEMA_VERSION = 1;
 
 export type RegistrySubscriptionFilter = 'free';
 
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 export interface CachedModel {
   id: string;
   name: string;
@@ -30,6 +32,12 @@ export interface CachedModel {
   supportedParameters?: string[];
   /** Broad model metadata: model can produce reasoning/thinking output. */
   reasoning?: boolean;
+  /** Provider-confirmed support for image input. */
+  vision?: boolean;
+  /** Provider-confirmed reasoning effort values. */
+  supportedReasoningEfforts?: ReasoningEffort[];
+  /** Provider-confirmed default reasoning effort. */
+  defaultReasoningEffort?: ReasoningEffort;
   /** Streaming/interleaved reasoning field name from metadata, e.g. reasoning_content. */
   interleavedReasoningField?: string;
   /** Backend capability: model requires the Responses-Lite request shape (x-openai-internal-codex-responses-lite). */

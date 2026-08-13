@@ -23,6 +23,11 @@ import { modelPrefersResponsesApi } from '../provider-factory.js';
 import { deriveBrand } from '../models.js';
 import { getInstalledClaudeVersion } from '../launch.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
+import { refreshCopilotModels } from '../copilot/models.js';
+import {
+  createDefaultCopilotRuntime,
+  type CopilotRuntimeHandle,
+} from '../copilot/runtime.js';
 
 export interface RefreshProviderResult {
   id: string;
@@ -38,13 +43,85 @@ export interface RefreshModelsResult {
   refreshed: RefreshProviderResult[];
 }
 
+type OAuthModelRefreshResult = {
+  models: CachedModel[];
+  baseUrl?: string;
+  source: 'live' | 'seed' | 'cache';
+  failureReason?: string;
+  failureKind?: 'runtime' | 'schema';
+};
+
+/** Collects graceful and forced shutdown failures without masking the caller's error. */
+
+async function disposeCopilotRuntime(runtime: CopilotRuntimeHandle): Promise<Error[]> {
+  const errors: Error[] = [];
+  try {
+    errors.push(...await runtime.stop());
+  } catch (error) {
+    errors.push(error instanceof Error ? error : new Error(String(error)));
+  }
+  if (errors.length === 0) return errors;
+  try {
+    await runtime.forceStop();
+  } catch (error) {
+    errors.push(error instanceof Error ? error : new Error(String(error)));
+  }
+  return errors;
+}
+
+/** Runs one isolated SDK catalog request and always attempts complete runtime disposal. */
+
+async function refreshCopilotOAuthModels(
+  provider: RegistryProvider,
+  accessToken: string,
+): Promise<OAuthModelRefreshResult> {
+  const runtime = createDefaultCopilotRuntime({
+    gitHubToken: accessToken,
+    nodeVersion: process.version,
+    environment: process.env,
+  });
+  let result: OAuthModelRefreshResult | undefined;
+  let discoveryError: unknown;
+  try {
+    result = await refreshCopilotModels({
+      listModels: () => runtime.listModels(),
+      cachedModels: provider.modelsCache?.models ?? [],
+    });
+  } catch (error) {
+    discoveryError = error;
+  }
+
+  const cleanupErrors = await disposeCopilotRuntime(runtime);
+  if (discoveryError !== undefined) {
+    if (cleanupErrors.length > 0) {
+      const message = discoveryError instanceof Error ? discoveryError.message : String(discoveryError);
+      throw new AggregateError([discoveryError, ...cleanupErrors], message, {
+        cause: discoveryError,
+      });
+    }
+    throw discoveryError;
+  }
+  if (cleanupErrors.length > 0) {
+    throw new AggregateError(cleanupErrors, 'Copilot runtime did not stop cleanly');
+  }
+  if (result === undefined) {
+    throw new Error('Copilot model discovery did not return a result');
+  }
+  return result;
+}
+
 async function refreshOAuthProvider(
   provider: RegistryProvider,
   accessToken: string,
-): Promise<{ models: CachedModel[]; baseUrl?: string; source: 'live' | 'seed'; failureReason?: string }> {
-  const tpl = provider.templateId ?? provider.id;
-  if (tpl === 'openai' || tpl === 'openai-oauth') return refreshOpenAiOAuthModels(accessToken);
-  throw new Error(`refreshOAuthProvider: unsupported template "${tpl}"`);
+): Promise<OAuthModelRefreshResult> {
+  const templateId = provider.templateId ?? provider.id;
+  if (templateId === 'openai' || templateId === 'openai-oauth') {
+    return refreshOpenAiOAuthModels(accessToken);
+  }
+  if (templateId === 'github-copilot') {
+    return refreshCopilotOAuthModels(provider, accessToken);
+  }
+  throw new Error(`refreshOAuthProvider: unsupported template "${templateId}"`);
 }
 
 interface OpenAiModelEntry {
@@ -298,7 +375,10 @@ async function refreshProviderModelsInner(
     let baseUrl: string | undefined;
     let oauthFallbackReason: string | undefined;
 
-    if (provider.authType === 'oauth' && ((provider.templateId ?? provider.id) === 'openai' || provider.id === 'openai-oauth')) {
+    const oauthTemplateId = provider.templateId ?? provider.id;
+    const supportsOAuthDiscovery = provider.authType === 'oauth'
+      && ['openai', 'openai-oauth', 'github-copilot'].includes(oauthTemplateId);
+    if (supportsOAuthDiscovery) {
       if (!apiKey) {
         return {
           id: provider.id,
@@ -309,6 +389,12 @@ async function refreshProviderModelsInner(
       }
       const oauthResult = await refreshOAuthProvider(provider, apiKey);
       const failureDetail = oauthResult.failureReason ? ` (${oauthResult.failureReason})` : '';
+      if (oauthResult.source === 'cache') {
+        const reason = oauthResult.failureKind === 'schema'
+          ? `Copilot returned unexpected model data${failureDetail}. Kept your existing cached model list. Update Leverframe or its Copilot SDK before retrying.`
+          : `Live model discovery failed${failureDetail}. Kept your existing cached model list. Try refreshing again later.`;
+        return skipWithCachedModels(provider, reason);
+      }
       if (oauthResult.source === 'seed' && cachedModelCount(provider) > 0) {
         return skipWithCachedModels(
           provider,

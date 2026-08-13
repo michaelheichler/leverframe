@@ -288,6 +288,7 @@ var package_default = {
     "@ai-sdk/anthropic": "4.0.12",
     "@ai-sdk/openai": "4.0.11",
     "@ai-sdk/openai-compatible": "3.0.7",
+    "@ai-sdk/provider": "4.0.3",
     "@ai-sdk/provider-utils": "5.0.7",
     "@clack/prompts": "0.9.1",
     ai: "7.0.22",
@@ -314,6 +315,7 @@ var package_default = {
     vitest: "2.1.9"
   },
   optionalDependencies: {
+    "@github/copilot-sdk": "1.0.9",
     "@napi-rs/keyring": "1.3.0"
   },
   pnpm: {
@@ -430,7 +432,7 @@ function accessTokenIsExpiring(token, skewMs = OAUTH_REFRESH_SKEW_MS) {
     return false;
   }
 }
-var NATIVE_OAUTH_PROVIDER_IDS = ["openai", "openai-oauth"];
+var NATIVE_OAUTH_PROVIDER_IDS = ["openai", "openai-oauth", "github-copilot"];
 function supportsNativeOAuth(providerId) {
   return NATIVE_OAUTH_PROVIDER_IDS.includes(providerId);
 }
@@ -612,15 +614,18 @@ function oauthCredentialShouldRefresh(cred, providerId) {
   return false;
 }
 async function refreshStoredOAuthCredential(providerId, cred) {
-  if (!cred.refresh) {
-    throw new Error(`${providerId}: OAuth refresh token missing \u2014 run leverframe providers auth ${providerId}`);
+  if (providerId === "github-copilot") {
+    throw new Error(
+      "github-copilot: GitHub OAuth token cannot be refreshed; run leverframe providers auth github-copilot"
+    );
   }
-  let tokens;
-  if (providerId === "openai" || providerId === "openai-oauth") {
-    tokens = await refreshOpenAiAccessToken(cred.refresh);
-  } else {
+  if (!cred.refresh) {
+    throw new Error(`${providerId}: OAuth refresh token missing. Run leverframe providers auth ${providerId}`);
+  }
+  if (providerId !== "openai" && providerId !== "openai-oauth") {
     throw new Error(`OAuth refresh not implemented for provider "${providerId}"`);
   }
+  const tokens = await refreshOpenAiAccessToken(cred.refresh);
   return tokensToStoredCredential(tokens, cred.refresh, cred.accountId, cred.providerData);
 }
 
@@ -1811,6 +1816,7 @@ function buildHttpProxyChildEnv(proxyPort, caCertPath, proxyToken) {
   env["https_proxy"] = proxyUrl;
   env["http_proxy"] = proxyUrl;
   env["NODE_EXTRA_CA_CERTS"] = caCertPath;
+  env["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"] = "1";
   return env;
 }
 function oauthProviderKeyringAccount(providerId) {
@@ -2574,6 +2580,9 @@ export {
   oauthCredentialToKeychainJson,
   tokensToStoredCredential,
   supportsNativeOAuth,
+  sleepMs,
+  OAUTH_REQUEST_TIMEOUT_MS,
+  withAbortTimeout,
   extractOpenAiAccountId,
   runOpenAiDeviceCodeFlow,
   PRIVATE_DIRECTORY_MODE,
@@ -2621,4 +2630,4 @@ export {
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-PQYK4YB3.js.map
+//# sourceMappingURL=chunk-T7YRZSML.js.map

@@ -6,6 +6,7 @@ Supported provider setups include:
 
 - OpenAI API keys
 - ChatGPT/Codex plan OAuth
+- GitHub Copilot subscription OAuth
 - OpenCode Go subscription
 - Kimi Coding Plan
 - Moonshot pay-as-you-go
@@ -41,8 +42,28 @@ leverframe patch
 leverframe claude
 ```
 
-ChatGPT/Codex model context limits come from positive finite `context_window` values reported by the authenticated provider. Missing or invalid values remain unconfirmed. Leverframe does not present a seed or heuristic as a provider limit. An unconfirmed limit omits the `[1m]` suffix and the `CLAUDE_CODE_MAX_CONTEXT_TOKENS` override.
-
+ChatGPT/Codex model context limits come from positive finite `context_window` values reported by the authenticated provider. Missing or invalid values remain unconfirmed. Leverframe does not present a seed or heuristic as a provider limit. An unconfirmed limit omits the `[1m.
+]` suffix and the `CLAUDE_CODE_MAX_CONTEXT_TOKENS` override.
+### GitHub Copilot subscription
+```bash
+leverframe providers auth github-copilot
+leverframe models
+leverframe models --alias copilot=leverframe:github-copilot:<model-id>
+leverframe patch
+leverframe claude --proxy
+```
+Device authorization uses Leverframe's public OAuth App client ID. Each user authorizes their own GitHub account. The durable GitHub token stays in that user's OS credential store.
+Leverframe does not store a GitHub account, subscription, short-lived Copilot token, or static model catalog. Model refresh uses the public SDK. It lists only models available to the authorized account.
+`@github/copilot-sdk@1.0.9` is optional and stays outside the Leverframe bundle. A normal package install attempts to install the SDK and its platform binary. A missing optional install fails only the Copilot route and provides an install command.
+Copilot sessions have these limits:
+- `tool_choice: auto` exposes only the request's custom tools.
+- `tool_choice: none` exposes no tools.
+- `required` and named-tool choices fail before runtime or session creation.
+- Transcript divergence creates a new isolated session with a versioned resync.
+- Session events and checkpoints use an in-memory filesystem.
+Built-in tools, memory, skills, plugins, instruction discovery, MCP servers, session search, host Git operations, and repository context stay disabled.
+A rejected durable GitHub token is not refreshed as an OpenAI token. Reauthorize with `leverframe providers auth github-copilot`. Short-lived Copilot session credentials remain owned by the official SDK.
+Use `leverframe claude --endpoint` instead of `--proxy` to verify the same alias through endpoint mode.
 ### API-key providers
 
 ```bash
@@ -84,6 +105,7 @@ Examples:
 ```text
 leverframe:openai:gpt-5.4
 leverframe:openai-oauth:gpt-5.6-sol
+leverframe:github-copilot:<model-id>
 leverframe:kimi:k3
 leverframe:moonshot:kimi-k3
 leverframe:zai:glm-5.2
