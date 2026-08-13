@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto';
 import type { ProxyRoute } from '../proxy.js';
 import { anthropicMessagesEndpoint, type AnthropicMessagesEndpoint } from '../anthropic-endpoints.js';
 import { anthropicEffortFromRequest, extractClaudeSessionId, type AnthropicRequest } from '../sdk-adapter.js';
+import { INFERENCE_PROGRESS_INTERVAL_MS } from '../log-paths.js';
 import {
   getLatestMessagePreview,
-  INFERENCE_PROGRESS_INTERVAL_MS,
   writeInferenceRequestLog,
   writeWebSocketDiagnosticRequestLog,
 } from '../trace-log.js';

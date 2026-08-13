@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { aliasModelId, isTransientSdkStreamFailure, startProxyCatalog, type ProxyRoute } from '../src/proxy.js';
-import { getProxyDebugLogPath } from '../src/trace-log.js';
+import { getProxyDebugLogPath } from '../src/log-paths.js';
 import { buildClaudeCodeBillingSystemLine } from '../src/oauth/claude-identity.js';
 import { anthropicMessagesEndpoint, estimateAnthropicInputTokens } from '../src/anthropic-endpoints.js';
 import { useIsolatedTestHome } from './isolated-test-home.js';

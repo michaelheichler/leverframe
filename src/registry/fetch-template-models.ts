@@ -5,7 +5,8 @@ import { resolveContextWindow } from '../context-window.js';
 import type { ProviderTemplate } from '../provider-templates.js';
 import { normalizeGoogleDisplayName, normalizeGoogleModelId } from './google-model-id.js';
 import type { CachedModel } from './types.js';
-import { makeTraceLogger, getProviderDebugLogPath } from '../trace-log.js';
+import { getProviderDebugLogPath } from '../log-paths.js';
+import { makeTraceLogger } from '../trace-log.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 import { revalidateCustomEndpointUrl } from './url-security.js';
 import {

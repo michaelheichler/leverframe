@@ -52,7 +52,7 @@ import {
   registerServerRuntimeState,
   unregisterServerRuntimeState,
 } from '../server-runtime.js';
-import { getInferenceRequestLogPath, getSessionLogPath } from '../trace-log.js';
+import { getInferenceRequestLogPath, getSessionLogPath } from '../log-paths.js';
 
 export interface ServerRunConfig {
   exposedProviders: string[] | null;

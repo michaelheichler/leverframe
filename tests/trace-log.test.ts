@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { getInferenceSessionLogPath } from '../src/log-paths.js';
 import {
-  getInferenceSessionLogPath,
   getLatestMessagePreview,
   redactTraceLine,
   redactTraceLog,

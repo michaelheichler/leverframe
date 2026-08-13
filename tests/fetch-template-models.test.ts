@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fetchTemplateModels } from '../src/registry/fetch-template-models.js';
 import type { ProviderTemplate } from '../src/provider-templates.js';
-import { getProviderDebugLogPath } from '../src/trace-log.js';
+import { getProviderDebugLogPath } from '../src/log-paths.js';
 
 function template(partial: Partial<ProviderTemplate> & Pick<ProviderTemplate, 'id' | 'name' | 'npm'>): ProviderTemplate {
   return {

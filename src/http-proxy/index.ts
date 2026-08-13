@@ -9,7 +9,7 @@ import { buildHttpProxyRoutes, type HttpProxyRouteResult } from './routes.js';
 import { startHttpProxy, type HttpProxyHandle } from './server.js';
 import { ensureHttpProxyCaBundle } from './ca.js';
 import { registerServerRuntimeState, unregisterServerRuntimeState } from '../server-runtime.js';
-import { getInferenceRequestLogPath, getSessionLogPath } from '../trace-log.js';
+import { getInferenceRequestLogPath, getSessionLogPath } from '../log-paths.js';
 
 export interface LoadedHttpProxyRoutes extends HttpProxyRouteResult {
   favoriteCount: number;

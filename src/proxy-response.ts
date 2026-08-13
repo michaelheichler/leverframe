@@ -7,8 +7,10 @@ import type { ExecutionTrackingHandle } from './execution-tracking.js';
 import {
   getProxyDebugLogPath,
   INFERENCE_PROGRESS_INTERVAL_MS,
-  redactTraceLine,
   resetTraceLog,
+} from './log-paths.js';
+import {
+  redactTraceLine,
   writeInferenceResponseLifecycleLog,
 } from './trace-log.js';
 

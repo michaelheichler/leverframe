@@ -32,13 +32,13 @@ import {
   injectClaudeIdentity,
   selectBetaFlags,
 } from '../oauth/claude-identity.js';
+import { resetTraceLog } from '../log-paths.js';
 import {
   getLatestMessagePreview,
   writeInferenceRequestLog,
   writeInferenceResponseErrorLog,
   writeInferenceResponseLifecycleLog,
   writeSecureLogLine,
-  resetTraceLog,
   writeWebSocketDiagnosticLog,
   writeWebSocketDiagnosticRequestLog,
   type InferenceRequestLogEntry,

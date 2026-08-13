@@ -10,7 +10,8 @@ import { withProviderMutationLock } from './lock.js';
 import type { CachedModel, RegistryProvider } from './types.js';
 import { customProviderId, isValidProviderId, slugifyProviderId } from './validate.js';
 import { revalidateCustomEndpointUrl, validateCustomEndpointUrl } from './url-security.js';
-import { makeTraceLogger, getProviderDebugLogPath } from '../trace-log.js';
+import { getProviderDebugLogPath } from '../log-paths.js';
+import { makeTraceLogger } from '../trace-log.js';
 
 export type CustomEndpointKind = 'openai' | 'anthropic';
 
