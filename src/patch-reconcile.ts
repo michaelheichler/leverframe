@@ -272,6 +272,26 @@ function reportOutcome(outcome: ApplyOutcome, trace: boolean, presenter: PatchPr
   return 0;
 }
 
+const silentPatchPresenter: PatchPresenter = {
+  error() {},
+  warn() {},
+  success() {},
+  detail() {},
+  notice() {},
+  async confirm() { return false; },
+};
+
+/**
+ * Detect a Claude Code binary that leverframe has never patched, or that has
+ * drifted (config or claude version changed) since it was last patched, and
+ * bring it current without asking. At a real terminal this still confirms
+ * first, since a human is watching. Every other launch path (agent or
+ * background spawn, no TTY) has nobody to prompt, so leaving it merely
+ * noticed left favorites silently missing from `/model` until someone
+ * remembered to run `leverframe patch` by hand. `isCurrentPatchState` above
+ * already makes this a no-op on every launch after the first, so re-running
+ * the check on every launch is safe.
+ */
 export async function runLaunchPatchCheckV2(
   opts: {
     agentStdout?: boolean;
@@ -293,16 +313,15 @@ export async function runLaunchPatchCheckV2(
     if (Object.keys(desired.config).length === 0) return;
     if (isCurrentPatchState(state)) return;
 
-    const interactive = !opts.dryRun && !opts.agentStdout
-      && process.stdin.isTTY === true && process.stdout.isTTY === true;
-    if (!interactive) {
+    if (opts.dryRun) {
       if (!opts.agentStdout) {
         presenter.notice(`leverframe: claude binary is ${describePatchStateV2(state)} for your favorites. Run \`leverframe patch\`.`);
       }
       return;
     }
 
-    if (state === 'state_missing' && (!legacyRecovery || legacyRecovery.kind === 'unavailable')) {
+    const legacyRecoveryUnsafe = state === 'state_missing' && (!legacyRecovery || legacyRecovery.kind === 'unavailable');
+    if (legacyRecoveryUnsafe) {
       const reason = legacyRecovery?.kind === 'unavailable'
         ? ` (${legacyRecovery.reason})`
         : '';
@@ -312,14 +331,26 @@ export async function runLaunchPatchCheckV2(
       return;
     }
 
-    const message = state === 'state_missing'
-      ? 'Claude Code is injected but missing V2 state. Rebuild it from the verified pristine legacy backup now?'
-      : state === 'unpatched'
-        ? 'Claude Code is not patched for your leverframe favorites. Patch now?'
-        : 'The Claude Code patch is stale (config or claude version changed). Re-patch now?';
-    if (!await presenter.confirm(message)) return;
+    const interactive = !opts.agentStdout
+      && process.stdin.isTTY === true && process.stdout.isTTY === true;
+    if (interactive) {
+      const message = state === 'state_missing'
+        ? 'Claude Code is injected but missing V2 state. Rebuild it from the verified pristine legacy backup now?'
+        : state === 'unpatched'
+          ? 'Claude Code is not patched for your leverframe favorites. Patch now?'
+          : 'The Claude Code patch is stale (config or claude version changed). Re-patch now?';
+      if (!await presenter.confirm(message)) return;
+      await runPatchCommandV2({ installation, runtime }, presenter);
+      return;
+    }
 
-    await runPatchCommandV2({ installation, runtime }, presenter);
+    // Nobody is watching (agent or background spawn, or no TTY at all), and
+    // there is no confirmation step left to skip. Apply the patch now: an
+    // agent-spawned Claude Code process launched against an unpatched binary
+    // would reject every favorite/alias id as an unknown model. Stay silent
+    // in agent stdout mode, since the child owns stdout/stderr there.
+    // Otherwise report through the normal presenter.
+    await runPatchCommandV2({ installation, runtime }, opts.agentStdout ? silentPatchPresenter : presenter);
   } catch (err) {
     presenter.notice(`leverframe: patch check skipped (${err instanceof Error ? err.message : String(err)})`);
   }

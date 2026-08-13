@@ -184,6 +184,7 @@
 {"complexity":1,"fan_out":6,"file_lines":197,"ignores":0,"max_fn_lines":28,"path":"tests/github-copilot-provider-auth.test.ts"},
 {"complexity":0,"fan_out":8,"file_lines":176,"ignores":0,"max_fn_lines":12,"path":"tests/http-proxy-routing-decision.test.ts"},
 {"complexity":7,"fan_out":7,"file_lines":172,"ignores":0,"max_fn_lines":172,"path":"tests/launch.test.ts"},
+{"complexity":2,"fan_out":12,"file_lines":554,"ignores":0,"max_fn_lines":31,"path":"tests/patch-legacy-recovery.test.ts"},
 {"complexity":5,"fan_out":2,"file_lines":56,"ignores":0,"max_fn_lines":56,"path":"tests/patch-transforms-claude-2-1-226.test.ts"},
 {"complexity":1,"fan_out":1,"file_lines":64,"ignores":0,"max_fn_lines":42,"path":"tests/patch-transforms-routing-notice-claude-2-1-226.test.ts"},
 {"complexity":0,"fan_out":1,"file_lines":88,"ignores":0,"max_fn_lines":3,"path":"tests/patch-transforms-routing-notice-claude-2-1-227.test.ts"},

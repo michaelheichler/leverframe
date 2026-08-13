@@ -505,3 +505,49 @@ describe('exact legacy adoption', () => {
     expect(readManifestV2(f.installation.identity)?.provenance).toBe('legacy-migrated');
   });
 });
+
+describe('non-interactive launch auto-patch', () => {
+  function unpatchedFixture(name: string): { f: ReturnType<typeof fixture>; runtime: PatchRuntime; patchCalls: string[] } {
+    const f = fixture(name);
+    seedCommandInputs(f);
+    writeFileSync(f.livePath, BASELINE, { mode: 0o755 });
+    const patchCalls: string[] = [];
+    return { f, runtime: fakeRuntime({ patchCalls }), patchCalls };
+  }
+
+  it('patches automatically when there is no TTY to confirm with, instead of only noticing', async () => {
+    const { f, runtime, patchCalls } = unpatchedFixture('non-interactive-auto-patch');
+    const output = recordingPresenter();
+
+    await runLaunchPatchCheckV2({ installation: f.installation, runtime }, output.presenter);
+
+    expect(patchCalls).toHaveLength(1);
+    expect(output.confirmations).toEqual([]);
+    expect(output.successes.some(message => message.includes('Patched claude'))).toBe(true);
+    expect((await checkResolvedPatchState(f.installation, runtime)).state).toBe('patched');
+  });
+
+  it('patches automatically in agent stdout mode while staying silent', async () => {
+    const { f, runtime, patchCalls } = unpatchedFixture('non-interactive-agent-stdout');
+    const output = recordingPresenter();
+
+    await runLaunchPatchCheckV2({ installation: f.installation, runtime, agentStdout: true }, output.presenter);
+
+    expect(patchCalls).toHaveLength(1);
+    expect(output.successes).toEqual([]);
+    expect(output.errors).toEqual([]);
+    expect((await checkResolvedPatchState(f.installation, runtime)).state).toBe('patched');
+  });
+
+  it('never patches during a dry run, only notices', async () => {
+    const { f, runtime, patchCalls } = unpatchedFixture('non-interactive-dry-run');
+    const notices: string[] = [];
+    const presenter: PatchPresenter = { ...recordingPresenter().presenter, notice: message => notices.push(message) };
+
+    await runLaunchPatchCheckV2({ installation: f.installation, runtime, dryRun: true }, presenter);
+
+    expect(patchCalls).toEqual([]);
+    expect(notices).toHaveLength(1);
+    expect((await checkResolvedPatchState(f.installation, runtime)).state).toBe('unpatched');
+  });
+});

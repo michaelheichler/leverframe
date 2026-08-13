@@ -70,7 +70,7 @@ import {
   withProviderMutationLock,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-IT2BVRZ2.js";
+} from "./chunk-SFLLGI5H.js";
 
 // src/cli.ts
 import pc18 from "picocolors";
@@ -18485,6 +18485,21 @@ function reportOutcome(outcome2, trace, presenter) {
   }
   return 0;
 }
+var silentPatchPresenter = {
+  error() {
+  },
+  warn() {
+  },
+  success() {
+  },
+  detail() {
+  },
+  notice() {
+  },
+  async confirm() {
+    return false;
+  }
+};
 async function runLaunchPatchCheckV2(opts = {}, presenter = clackPatchPresenter) {
   try {
     const runtime = opts.runtime ?? defaultPatchRuntime;
@@ -18497,23 +18512,28 @@ async function runLaunchPatchCheckV2(opts = {}, presenter = clackPatchPresenter)
     const { state, desired, legacyRecovery } = await checkResolvedPatchState(installation, runtime);
     if (Object.keys(desired.config).length === 0) return;
     if (isCurrentPatchState(state)) return;
-    const interactive = !opts.dryRun && !opts.agentStdout && process.stdin.isTTY === true && process.stdout.isTTY === true;
-    if (!interactive) {
+    if (opts.dryRun) {
       if (!opts.agentStdout) {
         presenter.notice(`leverframe: claude binary is ${describePatchStateV2(state)} for your favorites. Run \`leverframe patch\`.`);
       }
       return;
     }
-    if (state === "state_missing" && (!legacyRecovery || legacyRecovery.kind === "unavailable")) {
+    const legacyRecoveryUnsafe = state === "state_missing" && (!legacyRecovery || legacyRecovery.kind === "unavailable");
+    if (legacyRecoveryUnsafe) {
       const reason = legacyRecovery?.kind === "unavailable" ? ` (${legacyRecovery.reason})` : "";
       presenter.notice(
         `leverframe: injected claude has no V2 patch state and cannot be recovered safely${reason} Run \`leverframe patch --diagnose\`.`
       );
       return;
     }
-    const message2 = state === "state_missing" ? "Claude Code is injected but missing V2 state. Rebuild it from the verified pristine legacy backup now?" : state === "unpatched" ? "Claude Code is not patched for your leverframe favorites. Patch now?" : "The Claude Code patch is stale (config or claude version changed). Re-patch now?";
-    if (!await presenter.confirm(message2)) return;
-    await runPatchCommandV2({ installation, runtime }, presenter);
+    const interactive = !opts.agentStdout && process.stdin.isTTY === true && process.stdout.isTTY === true;
+    if (interactive) {
+      const message2 = state === "state_missing" ? "Claude Code is injected but missing V2 state. Rebuild it from the verified pristine legacy backup now?" : state === "unpatched" ? "Claude Code is not patched for your leverframe favorites. Patch now?" : "The Claude Code patch is stale (config or claude version changed). Re-patch now?";
+      if (!await presenter.confirm(message2)) return;
+      await runPatchCommandV2({ installation, runtime }, presenter);
+      return;
+    }
+    await runPatchCommandV2({ installation, runtime }, opts.agentStdout ? silentPatchPresenter : presenter);
   } catch (err) {
     presenter.notice(`leverframe: patch check skipped (${err instanceof Error ? err.message : String(err)})`);
   }
