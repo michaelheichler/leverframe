@@ -1,7 +1,3 @@
-// Pins the provenance-aware context-window resolution: unconfirmed models must
-// never be advertised with a heuristic guess (over-reporting makes Claude Code
-// overfill the real provider window), and the GPT/o-series heuristic buckets
-// must reflect real input limits.
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_CONTEXT_WINDOW,
@@ -15,9 +11,17 @@ describe('resolveContextWindow provenance', () => {
     expect(resolveContextWindow('gpt-5.6-terra', 272_000, true)).toBe(272_000);
   });
 
-  it('returns the conservative default for unconfirmed models instead of heuristics', () => {
-    expect(resolveContextWindow('gpt-5.6-terra', undefined, true)).toBe(DEFAULT_CONTEXT_WINDOW);
-    expect(resolveContextWindow('gpt-5.6-sol', undefined, true)).toBe(DEFAULT_CONTEXT_WINDOW);
+  it('uses the heuristic match for unconfirmed models instead of the flat default', () => {
+    expect(resolveContextWindow('gpt-5.6-terra', undefined, true)).toBe(272_000);
+    expect(resolveContextWindow('gpt-5.6-sol', undefined, true)).toBe(272_000);
+  });
+
+  it('uses a sub-200K heuristic match for unconfirmed models, not the flat default', () => {
+    expect(resolveContextWindow('deepseek-chat', undefined, true)).toBe(64_000);
+  });
+
+  it('falls back to the flat default for an unconfirmed model with no heuristic match', () => {
+    expect(resolveContextWindow('totally-unknown-model-xyz', undefined, true)).toBe(DEFAULT_CONTEXT_WINDOW);
   });
 
   it('keeps heuristic resolution when provenance is not marked unconfirmed', () => {
@@ -41,15 +45,25 @@ describe('GPT heuristic buckets', () => {
 });
 
 describe('/v1/models advertisement', () => {
-  it('advertises the conservative default for unconfirmed models', () => {
+  it('advertises the heuristic match for an unconfirmed model', () => {
     const entry = formatAnthropicModelEntry({
       id: 'gpt-5.6-terra',
       name: 'GPT-5.6 Terra',
       contextWindow: undefined,
       contextWindowUnconfirmed: true,
     });
+    expect(entry.context_window).toBe(272_000);
+    expect(entry.max_input_tokens).toBe(272_000);
+  });
+
+  it('advertises the flat default for an unconfirmed model with no heuristic match', () => {
+    const entry = formatAnthropicModelEntry({
+      id: 'totally-unknown-model-xyz',
+      name: 'Totally Unknown Model',
+      contextWindow: undefined,
+      contextWindowUnconfirmed: true,
+    });
     expect(entry.context_window).toBe(DEFAULT_CONTEXT_WINDOW);
-    expect(entry.max_input_tokens).toBe(DEFAULT_CONTEXT_WINDOW);
   });
 
   it('advertises a provider-confirmed window unchanged', () => {
@@ -66,6 +80,6 @@ describe('/v1/models advertisement', () => {
       { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', contextWindowUnconfirmed: true },
       { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', contextWindow: 272_000 },
     ]);
-    expect(list.data.map(entry => entry.context_window)).toEqual([DEFAULT_CONTEXT_WINDOW, 272_000]);
+    expect(list.data.map(entry => entry.context_window)).toEqual([272_000, 272_000]);
   });
 });

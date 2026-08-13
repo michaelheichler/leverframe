@@ -139,12 +139,17 @@ export function lookupContextWindow(modelId: string): number {
  * Prefer an explicit limit.context (or pre-resolved value), else resolve from cache/heuristics.
  *
  * `unconfirmed` marks provenance: the provider did not confirm a context window
- * (e.g. ChatGPT OAuth seeds). Heuristic guesses must not be advertised for these
- * models — over-reporting makes Claude Code overfill the real window — so they
- * resolve to the conservative 200K default instead.
+ * (e.g. ChatGPT OAuth seeds). These models skip the OpenCode cache lookup, since
+ * that cache is keyed by third-party provider metadata rather than this
+ * provider's actual behavior, but still use the id-pattern heuristic table when
+ * a rule matches, since that table encodes known per-family limits (e.g. gpt-5's
+ * 272K max input). Advertising the flat 200K default for a model whose real
+ * window is smaller (e.g. deepseek's 64K) is what causes Claude Code to overfill
+ * the real window and get stuck retrying compaction at the same ratio. Only a
+ * genuinely unmatched id falls back to the 200K default.
  */
 export function resolveContextWindow(modelId: string, explicit?: number, unconfirmed?: boolean): number {
   if (typeof explicit === 'number' && explicit > 0) return explicit;
-  if (unconfirmed) return DEFAULT_CONTEXT_WINDOW;
+  if (unconfirmed) return contextWindowFromHeuristics(modelId);
   return lookupContextWindow(modelId);
 }
