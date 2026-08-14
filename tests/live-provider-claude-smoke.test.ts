@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { findBinaryOnPath } from '../src/binary-lookup.js';
 import { getCredentialFallbackPath } from '../src/credential-fallback-store.js';
-import { HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY } from '../src/env.js';
 import { isZeroCost } from '../src/free-models.js';
 import { httpProxyModelId } from '../src/http-proxy/routes.js';
 import { findClaudeBinary } from '../src/launch.js';
@@ -78,8 +77,9 @@ function isOkReply(text: string): boolean {
 }
 
 function redactSmokeOutput(text: string): string {
+  const ansiEscape = String.fromCharCode(0x1b);
   return text
-    .replace(/\u001B\[[0-9;]*[A-Za-z]/g, '')
+    .replace(new RegExp(`${ansiEscape}\\[[0-9;]*[A-Za-z]`, 'g'), '')
     .replace(/Authorization:\s*Bearer\s+\S+/gi, 'Authorization: Bearer [redacted]')
     .replace(/\bBearer\s+[A-Za-z0-9._\-+/=]+/g, 'Bearer [redacted]')
     .replace(/\bsk-ant-[A-Za-z0-9\-_]+/g, '[redacted-key]')

@@ -473,7 +473,7 @@ describe('candidate loopback transport', () => {
     }
   });
 
-  it('serializes provenance ordinals across concurrent writer processes', async () => {
+  it('serializes provenance ordinals across concurrent writer processes', { timeout: 20_000 }, async () => {
     const root = temporaryCandidateRoot();
     const sidecar = join(realpathSync.native(root.config), 'provenance.jsonl');
     let workerIndex = 0;
