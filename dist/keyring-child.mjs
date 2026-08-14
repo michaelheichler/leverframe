@@ -273,7 +273,26 @@ try {
     }
     if (journal?.mode === 'active') {
       if (!descriptorMatches(journal.active, current)) {
-        if (current === null) throw integrity('published keyring credential does not match its journal');
+        if (current === null) {
+          for (const descriptor of journal.retired) {
+            if (descriptor && !deleteDescriptor(descriptor)) {
+              throw integrity('keyring credential cleanup is incomplete');
+            }
+          }
+          const active = journal.active;
+          if (
+            active?.kind === 'chunks' &&
+            chunkService(active.marker) !== CHUNK_SERVICE
+          ) {
+            if (!deleteDescriptor(active)) {
+              throw integrity('keyring credential cleanup is incomplete');
+            }
+          }
+          if (!remove(JOURNAL_SERVICE, input.account)) {
+            throw integrity('keyring credential journal could not be removed');
+          }
+          return { active: null };
+        }
         const adopted = descriptorFor(current);
         const adoptedKey = adopted.kind === 'chunks' ? markerKey(adopted.marker) : null;
         const stale = [journal.active, ...journal.retired]
