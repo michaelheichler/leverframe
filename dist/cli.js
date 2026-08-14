@@ -70,7 +70,7 @@ import {
   withProviderMutationLock,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-WPLYAMNL.js";
+} from "./chunk-TAPJBQFC.js";
 
 // src/cli.ts
 import pc18 from "picocolors";
@@ -4095,7 +4095,7 @@ function createSessionEventSource(session) {
 }
 
 // src/copilot/serialized-history.ts
-import { createHash as createHash3 } from "crypto";
+import { createHash as createHash4 } from "crypto";
 
 // src/copilot/canonical-json.ts
 function encode(value, ancestors) {
@@ -4120,6 +4120,33 @@ function canonicalJson(value) {
   return encode(value, /* @__PURE__ */ new Set());
 }
 
+// src/copilot/image-part.ts
+import { createHash as createHash3 } from "crypto";
+function sha256(value) {
+  return createHash3("sha256").update(value).digest("hex");
+}
+function assertImageMediaType(mediaType) {
+  if (!mediaType.startsWith("image/")) {
+    throw new TypeError("Copilot supports only image prompt files");
+  }
+}
+function copilotImageReference(data, mediaType) {
+  assertImageMediaType(mediaType);
+  if (data instanceof URL) return { reference: data.href, mediaType };
+  if (data instanceof Uint8Array || typeof data === "string") {
+    const payload = data instanceof Uint8Array ? Buffer.from(data).toString("base64") : data;
+    return { reference: `sha256:${sha256(payload)}`, mediaType };
+  }
+  throw new TypeError("Copilot image data must be bytes, base64, or a URL");
+}
+function copilotImageBlob(data, mediaType) {
+  assertImageMediaType(mediaType);
+  if (data instanceof URL) return void 0;
+  if (data instanceof Uint8Array) return Buffer.from(data).toString("base64");
+  if (typeof data === "string") return data;
+  throw new TypeError("GitHub Copilot image data must be bytes or base64");
+}
+
 // src/copilot/history-renderer.ts
 function renderOutput(output) {
   if (output.type === "text" || output.type === "json") {
@@ -4134,17 +4161,21 @@ function renderOutput(output) {
   if (output.type === "content") return { status: "ok", output: output.value };
   throw new TypeError("Unsupported V3 tool-result output");
 }
-function remoteImage(data, mediaType) {
-  if (!(data instanceof URL) || !["http:", "https:"].includes(data.protocol)) {
-    throw new TypeError(`Copilot history does not support embedded ${mediaType} files`);
+function renderImagePart(data, mediaType) {
+  if (data instanceof URL) {
+    if (!["http:", "https:"].includes(data.protocol)) {
+      throw new TypeError(`Copilot history does not support ${mediaType} files`);
+    }
+    if (data.username || data.password || data.search || data.hash) {
+      throw new TypeError("Copilot history does not support secret-bearing image URLs");
+    }
+    if (!mediaType.startsWith("image")) {
+      throw new TypeError(`Copilot history does not support ${mediaType} files`);
+    }
+    return { type: "image", reference: data.href, mediaType };
   }
-  if (data.username || data.password || data.search || data.hash) {
-    throw new TypeError("Copilot history does not support secret-bearing image URLs");
-  }
-  if (!mediaType.startsWith("image")) {
-    throw new TypeError(`Copilot history does not support ${mediaType} files`);
-  }
-  return { type: "image", reference: data.href, mediaType };
+  const embedded = copilotImageReference(data, mediaType);
+  return { type: "image", reference: embedded.reference, mediaType: embedded.mediaType };
 }
 function renderPart(value) {
   if (value === null || typeof value !== "object") {
@@ -4157,7 +4188,7 @@ function renderPart(value) {
   }
   if (part.type === "file") {
     if (typeof part.mediaType !== "string") throw new TypeError("File mediaType must be a string");
-    return remoteImage(part.data, part.mediaType);
+    return renderImagePart(part.data, part.mediaType);
   }
   if (part.type === "tool-call") {
     if (typeof part.toolCallId !== "string" || typeof part.toolName !== "string") {
@@ -4201,37 +4232,60 @@ function renderCopilotHistory(prompt, version) {
 
 // src/copilot/serialized-history.ts
 var SERIALIZED_HISTORY_VERSION = 1;
-function sha256(value) {
-  return createHash3("sha256").update(value).digest("hex");
+function sha2562(value) {
+  return createHash4("sha256").update(value).digest("hex");
 }
 function renderCopilotHistory2(prompt) {
   return renderCopilotHistory(prompt, SERIALIZED_HISTORY_VERSION);
 }
 function historyPrefixHashes(history) {
-  const hashes = [sha256(`history-v${history.version}`)];
+  const hashes = [sha2562(`history-v${history.version}`)];
   for (const entry of history.entries) {
-    hashes.push(sha256(`${hashes.at(-1)}\0${canonicalJson(entry)}`));
+    hashes.push(sha2562(`${hashes.at(-1)}\0${canonicalJson(entry)}`));
   }
   return hashes;
 }
 
+// src/copilot/message.ts
+function imageAttachment(part) {
+  if (part.type !== "file") return void 0;
+  if (typeof part.mediaType !== "string" || !part.mediaType.startsWith("image/")) {
+    throw new TypeError("GitHub Copilot accepts only image attachments");
+  }
+  if (part.data instanceof URL) {
+    throw new TypeError("GitHub Copilot image URLs must be downloaded by the AI SDK");
+  }
+  const data = copilotImageBlob(part.data, part.mediaType);
+  if (data === void 0) return void 0;
+  return { type: "blob", data, mimeType: part.mediaType };
+}
+function v3ImageAttachments(prompt) {
+  return prompt.flatMap((message2) => message2.role === "user" ? message2.content.flatMap((part) => {
+    const attachment = imageAttachment(part);
+    return attachment === void 0 ? [] : [attachment];
+  }) : []);
+}
+function copilotMessage(prompt, attachments) {
+  return attachments.length === 0 ? { prompt } : { prompt, attachments };
+}
+
 // src/copilot/prompt.ts
-import { createHash as createHash5 } from "crypto";
+import { createHash as createHash6 } from "crypto";
 
 // src/copilot/transcript.ts
-import { createHash as createHash4 } from "crypto";
-function sha2562(value) {
-  return createHash4("sha256").update(value).digest("hex");
+import { createHash as createHash5 } from "crypto";
+function sha2563(value) {
+  return createHash5("sha256").update(value).digest("hex");
 }
 function hashSystemPrompt(systemPrompt) {
-  return sha2562(canonicalJson({ systemPrompt }));
+  return sha2563(canonicalJson({ systemPrompt }));
 }
 function hashToolSchema(tools) {
   const sorted = [...tools].sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-  return sha2562(canonicalJson(sorted));
+  return sha2563(canonicalJson(sorted));
 }
 function deriveCopilotSessionKey(input) {
-  return sha2562(canonicalJson(input));
+  return sha2563(canonicalJson(input));
 }
 function sameSessionConfiguration(previous, current) {
   if (previous.upstreamModel !== current.upstreamModel || previous.reasoningEffort !== current.reasoningEffort) {
@@ -4273,11 +4327,11 @@ function classifyTranscript(previous, current) {
 }
 
 // src/copilot/prompt.ts
-function sha2563(value) {
-  return createHash5("sha256").update(value).digest("hex");
+function sha2564(value) {
+  return createHash6("sha256").update(value).digest("hex");
 }
 function outputHash(output) {
-  return sha2563(canonicalJson(output));
+  return sha2564(canonicalJson(output));
 }
 function serializedPart(part) {
   if (part.type === "text" || part.type === "reasoning") {
@@ -4285,17 +4339,10 @@ function serializedPart(part) {
     return { type: part.type, text: part.text };
   }
   if (part.type === "file") {
-    const data = part.data;
     const mediaType = part.mediaType;
-    if (typeof mediaType !== "string" || !mediaType.startsWith("image/")) {
-      throw new TypeError("Copilot supports only image prompt files");
-    }
-    if (data instanceof URL) return { type: "image", reference: data.href, mediaType };
-    if (data instanceof Uint8Array || typeof data === "string") {
-      const payload = data instanceof Uint8Array ? Buffer.from(data).toString("base64") : data;
-      return { type: "image", reference: `sha256:${sha2563(payload)}`, mediaType };
-    }
-    throw new TypeError("Copilot image data must be bytes, base64, or a URL");
+    if (typeof mediaType !== "string") throw new TypeError("Copilot supports only image prompt files");
+    const image = copilotImageReference(part.data, mediaType);
+    return { type: "image", reference: image.reference, mediaType: image.mediaType };
   }
   if (part.type === "tool-call") {
     if (typeof part.toolCallId !== "string" || typeof part.toolName !== "string") {
@@ -4305,7 +4352,7 @@ function serializedPart(part) {
       type: "tool-call",
       toolCallId: part.toolCallId,
       toolName: part.toolName,
-      payloadHash: sha2563(canonicalJson(part.input))
+      payloadHash: sha2564(canonicalJson(part.input))
     };
   }
   if (part.type === "tool-result") {
@@ -4508,8 +4555,9 @@ async function startTurn(input) {
     if (input.decision.kind === "tool-result-continuation" && !input.recreating) {
       input.active.toolBridge.resolveToolResults(v3ToolResults(input.context.options.prompt));
     } else if (input.decision.kind !== "exact-retry" || input.recreating) {
-      const prompt = input.recreating ? renderCopilotHistory2(input.context.options.prompt) : v3LatestUserPrompt(input.context.options.prompt);
-      await input.active.session.send({ prompt });
+      const promptText = input.recreating ? renderCopilotHistory2(input.context.options.prompt) : v3LatestUserPrompt(input.context.options.prompt);
+      const attachments = v3ImageAttachments(input.context.options.prompt);
+      await input.active.session.send(copilotMessage(promptText, attachments));
     }
     return stream;
   } catch (error) {
@@ -4631,7 +4679,7 @@ function createCopilotLanguageModel(config, deps) {
     specificationVersion: "v3",
     provider: config.providerId ?? "github-copilot",
     modelId: config.modelId,
-    supportedUrls: { "image/*": [/^https:\/\//] },
+    supportedUrls: {},
     doStream,
     async doGenerate(options) {
       return collectCopilotGenerateResult((await doStream(options)).stream);
@@ -5051,7 +5099,7 @@ function createDefaultCopilotLanguageModel(input) {
 }
 
 // src/oauth/responses-websocket.ts
-import { createHash as createHash10 } from "crypto";
+import { createHash as createHash11 } from "crypto";
 
 // src/outbound-proxy.ts
 function hasOutboundProxyEnv(env = process.env) {
@@ -5310,7 +5358,7 @@ function resetContextForRetry(ctx) {
 }
 
 // src/oauth/responses-websocket-diagnostics.ts
-import { createHash as createHash6 } from "crypto";
+import { createHash as createHash7 } from "crypto";
 import { AsyncLocalStorage } from "async_hooks";
 var diagnosticContext = new AsyncLocalStorage();
 function withResponsesWebSocketDiagnosticContext(context, fn) {
@@ -5339,11 +5387,11 @@ function diagnosticTextFingerprint(field, value) {
   if (typeof value !== "string" || value.length === 0) return {};
   return {
     [`${field}Bytes`]: Buffer.byteLength(value),
-    [`${field}Hash`]: createHash6("sha256").update(value).digest("hex").slice(0, 16)
+    [`${field}Hash`]: createHash7("sha256").update(value).digest("hex").slice(0, 16)
   };
 }
 function diagnosticItemIdHash(value) {
-  return typeof value === "string" && value.length > 0 ? createHash6("sha256").update(value).digest("hex").slice(0, 16) : void 0;
+  return typeof value === "string" && value.length > 0 ? createHash7("sha256").update(value).digest("hex").slice(0, 16) : void 0;
 }
 function responseFailureDetails(event) {
   if (!event || typeof event !== "object") return {};
@@ -5642,7 +5690,7 @@ function handleTransportFailure(entry, ctx, error, diagnosticDetails, preOutputF
 }
 
 // src/oauth/responses-websocket-continuation-matching.ts
-import { createHash as createHash7 } from "crypto";
+import { createHash as createHash8 } from "crypto";
 function canonicalize(value) {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (!value || typeof value !== "object") return value;
@@ -5685,7 +5733,7 @@ function conversationItemKind(value) {
   return "object";
 }
 function conversationItemHash(value) {
-  return createHash7("sha256").update(canonicalJson2(normalizeToolCallJson(value))).digest("hex").slice(0, 16);
+  return createHash8("sha256").update(canonicalJson2(normalizeToolCallJson(value))).digest("hex").slice(0, 16);
 }
 function continuationMismatchDetails(entry, payload) {
   const full = inputArray(payload);
@@ -5731,7 +5779,7 @@ function continuationMatch(entry, payload) {
 }
 
 // src/oauth/responses-websocket-payload.ts
-import { createHash as createHash8 } from "crypto";
+import { createHash as createHash9 } from "crypto";
 var RESPONSES_LITE_HEADER = "x-openai-internal-codex-responses-lite";
 function toHeaderRecord(headers) {
   const out = {};
@@ -5754,7 +5802,7 @@ function hasResponsesLiteHeader(headers) {
 }
 function authorizationFingerprint(headers) {
   const authorization = Object.entries(headers).find(([key]) => key.toLowerCase() === "authorization")?.[1];
-  return authorization ? createHash8("sha256").update(authorization).digest("hex") : "";
+  return authorization ? createHash9("sha256").update(authorization).digest("hex") : "";
 }
 function bodyToString(body) {
   if (body == null) return "";
@@ -5774,13 +5822,13 @@ function responsesWebSocketPromptFingerprint(payload) {
   delete stable.previous_response_id;
   delete stable.stream;
   delete stable.background;
-  return createHash8("sha256").update(canonicalJson2(stable)).digest("hex");
+  return createHash9("sha256").update(canonicalJson2(stable)).digest("hex");
 }
 function responsesWebSocketPromptFieldHashes(payload) {
   const hashes = {};
   for (const key of Object.keys(payload).sort()) {
     if (key === "input" || key === "previous_response_id" || key === "stream" || key === "background") continue;
-    hashes[key] = createHash8("sha256").update(canonicalJson2(payload[key])).digest("hex").slice(0, 12);
+    hashes[key] = createHash9("sha256").update(canonicalJson2(payload[key])).digest("hex").slice(0, 12);
   }
   return hashes;
 }
@@ -5816,7 +5864,7 @@ function responsesWebSocketPartitionKey(wsUrl, payload, options = {}, credential
     promptCacheKey,
     credentialFingerprint
   ].join("");
-  return createHash8("sha256").update(material).digest("hex");
+  return createHash9("sha256").update(material).digest("hex");
 }
 
 // src/oauth/responses-websocket-response-output.ts
@@ -5952,7 +6000,7 @@ function expectedAssistantItems(ctx) {
 }
 
 // src/oauth/responses-websocket-rejected-response.ts
-import { createHash as createHash9 } from "crypto";
+import { createHash as createHash10 } from "crypto";
 var SAFE_RESPONSE_HEADERS = [
   "retry-after",
   "x-request-id",
@@ -5988,7 +6036,7 @@ function observeRejectedResponseBody(response, emit) {
   let prefixBytes = 0;
   let completed = false;
   let truncated = false;
-  const hash = createHash9("sha256");
+  const hash = createHash10("sha256");
   const finish2 = () => {
     if (completed) return;
     completed = true;
@@ -6478,10 +6526,10 @@ function createResponsesWebSocketFetch(wsUrl, log15, options = {}) {
       keyTuple: {
         wsUrl,
         providerId: options.providerId ?? "openai",
-        accountIdHash: options.accountId ? createHash10("sha256").update(options.accountId).digest("hex").slice(0, 16) : "",
+        accountIdHash: options.accountId ? createHash11("sha256").update(options.accountId).digest("hex").slice(0, 16) : "",
         model: typeof payload.model === "string" ? payload.model : void 0,
         effort: typeof payload.reasoning?.effort === "string" ? String(payload.reasoning.effort).trim().toLowerCase() : "",
-        promptCacheKeyHash: typeof payload.prompt_cache_key === "string" ? createHash10("sha256").update(payload.prompt_cache_key).digest("hex").slice(0, 16) : void 0
+        promptCacheKeyHash: typeof payload.prompt_cache_key === "string" ? createHash11("sha256").update(payload.prompt_cache_key).digest("hex").slice(0, 16) : void 0
       },
       promptFingerprint,
       promptFieldHashes,
@@ -7493,7 +7541,7 @@ function serializeToolResultContent(content) {
 }
 
 // src/sdk-request-translation.ts
-import { createHash as createHash11 } from "crypto";
+import { createHash as createHash12 } from "crypto";
 import { tool, jsonSchema } from "ai";
 
 // src/tool-search.ts
@@ -7573,7 +7621,7 @@ function extractClaudeSessionId(body, headerFallback) {
   return validClaudeSessionId(headerFallback);
 }
 function claudeSessionPromptCacheKey(sessionId) {
-  return "relay-session-" + createHash11("sha256").update(sessionId).digest("hex").slice(0, 32);
+  return "relay-session-" + createHash12("sha256").update(sessionId).digest("hex").slice(0, 32);
 }
 function anthropicEffortFromRequest(body) {
   const effort = body.output_config?.effort;
@@ -7583,7 +7631,7 @@ function anthropicEffortFromRequest(body) {
 function openAiPromptCacheKey(system, tools) {
   const toolSig = (tools ?? []).map((t) => `${t.name}${t.description ?? ""}${JSON.stringify(t.input_schema ?? {})}`).join("");
   const material = `${system ?? ""}\0${toolSig}`;
-  return "relay-" + createHash11("sha256").update(material).digest("hex").slice(0, 32);
+  return "relay-" + createHash12("sha256").update(material).digest("hex").slice(0, 32);
 }
 function supportsOpenAiPromptCacheBreakpoints(modelId) {
   const match = modelId.toLowerCase().match(/^gpt-(\d+)(?:\.(\d+))?(?:-|$)/);
@@ -7959,7 +8007,7 @@ ${COMPACT_OAUTH_INSTRUCTION}` : systemText;
 }
 
 // src/sdk-usage.ts
-import { createHash as createHash12 } from "crypto";
+import { createHash as createHash13 } from "crypto";
 function toAnthropicUsage(u, inputTokensIncludeCache) {
   const tokenCount = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
   const total = tokenCount(u?.inputTokens);
@@ -7977,7 +8025,7 @@ function toAnthropicUsage(u, inputTokensIncludeCache) {
 }
 function sdkPromptCacheKeyHash(params) {
   const key = params.providerOptions?.openai?.promptCacheKey;
-  return typeof key === "string" ? createHash12("sha256").update(key).digest("hex").slice(0, 16) : void 0;
+  return typeof key === "string" ? createHash13("sha256").update(key).digest("hex").slice(0, 16) : void 0;
 }
 
 // src/sdk-streaming-response.ts
@@ -8656,9 +8704,9 @@ async function generateAnthropicResponse(model, params, modelId, options) {
 }
 
 // src/provider-runtime-cache.ts
-import { createHash as createHash13 } from "crypto";
+import { createHash as createHash14 } from "crypto";
 function fingerprintCredential(credential) {
-  return createHash13("sha256").update(credential).digest("hex");
+  return createHash14("sha256").update(credential).digest("hex");
 }
 function immutableSnapshot(generation, credential) {
   return Object.freeze({
@@ -8859,7 +8907,7 @@ async function listenTcpServer(server, port, host) {
 import { randomUUID as randomUUID2 } from "crypto";
 
 // src/checkpoint-store.ts
-import { createHash as createHash14 } from "crypto";
+import { createHash as createHash15 } from "crypto";
 import { existsSync as existsSync7, lstatSync, readdirSync, rmSync } from "fs";
 import { join as join5 } from "path";
 var MAX_DOCUMENT_BYTES = 512 * 1024;
@@ -8867,7 +8915,7 @@ function getExecutionsRoot() {
   return join5(getAppHome(), "state", "executions");
 }
 function workspaceOrSessionHash(scopeIdentifier) {
-  return createHash14("sha256").update("leverframe-execution-scope\0").update(scopeIdentifier).digest("hex").slice(0, 32);
+  return createHash15("sha256").update("leverframe-execution-scope\0").update(scopeIdentifier).digest("hex").slice(0, 32);
 }
 function getExecutionDir(scopeHash, executionId) {
   return join5(getExecutionsRoot(), scopeHash, executionId);
@@ -8966,7 +9014,7 @@ function isExpired(expiresAtIso, now = Date.now) {
 }
 
 // src/execution-checkpoint.ts
-import { createHash as createHash15 } from "crypto";
+import { createHash as createHash16 } from "crypto";
 var CHECKPOINT_SCHEMA_VERSION = 1;
 var DEFAULT_CHECKPOINT_TTL_MS = 24 * 60 * 60 * 1e3;
 var TOOL_STATUSES = /* @__PURE__ */ new Set([
@@ -9042,7 +9090,7 @@ function boundedDigest(content) {
   const buffer = Buffer.from(content, "utf8");
   const truncated = buffer.subarray(0, DIGEST_TRUNCATE_BYTES);
   return {
-    digest: createHash15("sha256").update(truncated).digest("hex"),
+    digest: createHash16("sha256").update(truncated).digest("hex"),
     byteCount: buffer.byteLength
   };
 }
@@ -9061,7 +9109,7 @@ function digestMessages(messages) {
   }));
 }
 function conversationFingerprint(messages) {
-  const hash = createHash15("sha256");
+  const hash = createHash16("sha256");
   for (const message2 of messages) {
     hash.update(typeof message2.role === "string" ? message2.role : "unknown").update("\0");
     hash.update(stableStringify(message2.content)).update("");
@@ -10136,6 +10184,32 @@ function cancelAllActiveRequestExecutions() {
   for (const lifecycle of activeLifecycles) lifecycle.cancel("local");
 }
 
+// src/request-pipeline.ts
+function wireClientDisconnectAbort(req, res) {
+  const clientAbort = new AbortController();
+  const abort = () => {
+    if (!clientAbort.signal.aborted) {
+      clientAbort.abort(new DOMException("Client disconnected", "AbortError"));
+    }
+  };
+  const onClose = () => {
+    if (!res.writableFinished) abort();
+  };
+  req.once("aborted", abort);
+  res.once("close", onClose);
+  return {
+    controller: clientAbort,
+    detach: () => {
+      req.removeListener("aborted", abort);
+      res.removeListener("close", onClose);
+    }
+  };
+}
+function attachRequestExecutionDisposal(res, requestExecution) {
+  res.once("finish", () => requestExecution.dispose());
+  res.once("close", () => requestExecution.dispose());
+}
+
 // src/proxy-retry.ts
 var TRANSIENT_CONNECTION_CODES = /* @__PURE__ */ new Set([
   "ECONNABORTED",
@@ -10450,14 +10524,7 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
           anthropicError(res, 401, "Invalid proxy token");
           return;
         }
-        const clientAbort = new AbortController();
-        const abortForClientDisconnect = () => {
-          if (!clientAbort.signal.aborted) clientAbort.abort(new Error("Client disconnected"));
-        };
-        req.once("aborted", abortForClientDisconnect);
-        res.once("close", () => {
-          if (!res.writableFinished) abortForClientDisconnect();
-        });
+        const { controller: clientAbort } = wireClientDisconnectAbort(req, res);
         const raw = await readBody(req);
         const parsedRequest = parseAnthropicRequest(raw);
         if (!parsedRequest.ok) {
@@ -10500,8 +10567,7 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
           signal: clientAbort.signal,
           deadlines: route.requestDeadlines
         });
-        res.once("finish", () => requestExecution.dispose());
-        res.once("close", () => requestExecution.dispose());
+        attachRequestExecutionDisposal(res, requestExecution);
         if (messagesEndpoint === "count_tokens") {
           if (route.modelFormat !== "anthropic") {
             const inputTokens = estimateAnthropicInputTokens(anthropicBody);
@@ -11891,15 +11957,7 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
     provider: inferenceProvider(model),
     model: model.id
   });
-  const clientAbort = new AbortController();
-  const abortClientRequest = () => {
-    if (!clientAbort.signal.aborted) clientAbort.abort(new DOMException("Client disconnected", "AbortError"));
-  };
-  const abortClosedResponse = () => {
-    if (!res.writableEnded) abortClientRequest();
-  };
-  req.once("aborted", abortClientRequest);
-  res.once("close", abortClosedResponse);
+  const { controller: clientAbort, detach: detachClientAbort } = wireClientDisconnectAbort(req, res);
   const requestExecution = createRequestExecutionContext({
     requestId,
     provider: inferenceProvider(model),
@@ -11907,8 +11965,7 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
     correlationId: requestId,
     signal: clientAbort.signal
   });
-  res.once("finish", () => requestExecution.dispose());
-  res.once("close", () => requestExecution.dispose());
+  attachRequestExecutionDisposal(res, requestExecution);
   requestExecution.startResolving();
   reconcileIncomingToolResults({ sessionKey: executionSessionKey, toolResults: extractAnthropicToolResults(body) });
   let tracking;
@@ -12203,8 +12260,7 @@ data: ${JSON.stringify({
         res.end();
       }
     } finally {
-      req.removeListener("aborted", abortClientRequest);
-      res.removeListener("close", abortClosedResponse);
+      detachClientAbort();
     }
     return;
   }
@@ -12921,7 +12977,7 @@ function parseMessagesRequest(input) {
   let route;
   try {
     parsed = JSON.parse(input.rawBody.toString("utf8"));
-    if (typeof parsed.model === "string") route = input.routesById.get(parsed.model);
+    if (typeof parsed.model === "string") route = lookupRoute(input.routesById, parsed.model);
   } catch {
   }
   const modelId = typeof parsed?.model === "string" ? parsed.model : "unknown";
@@ -13823,9 +13879,8 @@ async function startHttpProxy(options) {
     close: async () => {
       adapterAgent.destroy();
       for (const socket of sockets) socket.destroy();
-      adapterAgent.destroy();
       await new Promise((resolve3) => proxyServer.close(() => resolve3()));
-      mitmServer.close();
+      await new Promise((resolve3) => mitmServer.close(() => resolve3()));
       await closeAdapter();
     }
   };
@@ -16943,7 +16998,7 @@ async function runKeyringRepairCommand(accountFilter) {
 }
 
 // src/patcher.ts
-import { createHash as createHash19 } from "crypto";
+import { createHash as createHash20 } from "crypto";
 import { readFileSync as readFileSync8 } from "fs";
 import { join as join9 } from "path";
 
@@ -17497,7 +17552,7 @@ function applyLeverframePatches(source, config) {
 import { statSync as statSync6 } from "fs";
 
 // src/claude-installation.ts
-import { createHash as createHash16 } from "crypto";
+import { createHash as createHash17 } from "crypto";
 import { execFileSync } from "child_process";
 import { existsSync as existsSync8, lstatSync as lstatSync3, realpathSync, statSync as statSync2 } from "fs";
 import { homedir } from "os";
@@ -17560,7 +17615,7 @@ function unsupportedClaudeCodeBinaryPatchingMessage(version) {
   return `Claude Code ${version} is not supported for binary patching. Upgrade to Claude Code 2.1.223 or newer.`;
 }
 function computeIdentity(canonicalPath2) {
-  return createHash16("sha256").update(canonicalPath2).digest("hex");
+  return createHash17("sha256").update(canonicalPath2).digest("hex");
 }
 function discoverLogicalPath(explicitTarget) {
   if (explicitTarget?.trim()) {
@@ -17850,7 +17905,7 @@ var clackPatchPresenter = {
 };
 
 // src/patch-transaction.ts
-import { createHash as createHash17 } from "crypto";
+import { createHash as createHash18 } from "crypto";
 import { existsSync as existsSync11, readFileSync as readFileSync6, statSync as statSync4, unlinkSync as unlinkSync4 } from "fs";
 
 // src/patch-injection.ts
@@ -17866,11 +17921,11 @@ function classifyVersionedMarker(content) {
   }
   return markers.length === 1 && markers[0] === LEVERFRAME_INJECTION_MARKER ? { state: "present", evidence: "marker-v1" } : { state: "ambiguous", evidence: "unknown-marker" };
 }
-function classifyLeverframeInjectionByHash(content, sha2564, knownPatchedSha256) {
+function classifyLeverframeInjectionByHash(content, sha2565, knownPatchedSha256) {
   const marker = classifyVersionedMarker(content);
   if (marker.state !== "absent") return marker;
   if (content.includes("/*ccpatch:ctx*/")) return { state: "present", evidence: "ccpatch" };
-  if (knownPatchedSha256 && knownPatchedSha256.length > 0 && knownPatchedSha256 === sha2564) {
+  if (knownPatchedSha256 && knownPatchedSha256.length > 0 && knownPatchedSha256 === sha2565) {
     return { state: "present", evidence: "manifest-hash" };
   }
   return marker;
@@ -17912,13 +17967,13 @@ function clearPatchJournal(identity) {
   }
 }
 function sha256File(path) {
-  return createHash17("sha256").update(readFileSync6(path)).digest("hex");
+  return createHash18("sha256").update(readFileSync6(path)).digest("hex");
 }
 var defaultPatchRuntime = {
   async inspect(path, knownPatchedSha256) {
     try {
       if (!statSync4(path).isFile()) throw new Error("not a file");
-      const sha2564 = sha256File(path);
+      const sha2565 = sha256File(path);
       const { tryDetectInstallation, readContent } = await import("tweakcc");
       const installation = await tryDetectInstallation({ path });
       const version = installation.version;
@@ -17928,8 +17983,8 @@ var defaultPatchRuntime = {
         path,
         readable: true,
         version,
-        sha256: sha2564,
-        injection: classifyLeverframeInjectionByHash(content, sha2564, knownPatchedSha256)
+        sha256: sha2565,
+        injection: classifyLeverframeInjectionByHash(content, sha2565, knownPatchedSha256)
       };
     } catch {
       return {
@@ -17968,7 +18023,7 @@ function verifyPatchSites(content, config) {
 }
 function computeSemanticFingerprint(results) {
   const canonical = [...results].map((r) => [r.name, r.status]).sort((a, b) => a[0].localeCompare(b[0]));
-  return createHash17("sha256").update(JSON.stringify(canonical)).digest("hex");
+  return createHash18("sha256").update(JSON.stringify(canonical)).digest("hex");
 }
 async function validatePristineBaseline(input) {
   const { candidate, version, runtime } = input;
@@ -18541,10 +18596,10 @@ async function runLaunchPatchCheckV2(opts = {}, presenter = clackPatchPresenter)
 
 // src/patch-diagnostics.ts
 import { existsSync as existsSync13, readFileSync as readFileSync7 } from "fs";
-import { createHash as createHash18 } from "crypto";
+import { createHash as createHash19 } from "crypto";
 function sha256File2(path) {
   try {
-    return createHash18("sha256").update(readFileSync7(path)).digest("hex");
+    return createHash19("sha256").update(readFileSync7(path)).digest("hex");
   } catch {
     return null;
   }
@@ -18823,7 +18878,7 @@ function computePatchConfigHash(config, transformVersion = PATCH_TRANSFORMS_VERS
       entry.effort ? [entry.effort.levels, entry.effort.defaultLevel] : null
     ];
   });
-  return createHash19("sha256").update(JSON.stringify([transformVersion, canonical])).digest("hex");
+  return createHash20("sha256").update(JSON.stringify([transformVersion, canonical])).digest("hex");
 }
 function buildDesiredPatchConfig() {
   const prefs = loadPreferences();

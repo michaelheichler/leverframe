@@ -23,6 +23,7 @@ try {
     'README.md',
     'dist/claude-wrapper.js',
     'dist/cli.js',
+    'dist/keyring-child.mjs',
     'docs/background-agents.md',
     'docs/model-picker.png',
     'package.json',
