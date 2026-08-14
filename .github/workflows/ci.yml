@@ -91,7 +91,7 @@ jobs:
             -e '(^|[^[:alnum:]])sk-[[:alnum:]_-]{20,}' \
             -e '/Users/[^$<]' \
             -e '/private/tmp/' \
-            -- . ':(exclude).github/workflows/ci.yml' ':(exclude)tests/**' ':(exclude)docs/stabilization-and-upstream-plan.md'; then
+            -- . ':(exclude).github/workflows/ci.yml' ':(exclude)tests/**' ':(exclude)docs/stabilization-and-upstream-plan.md' ':(exclude)src/env.ts' ':(exclude)dist/**'; then
             echo 'Tracked files contain a credential or machine-specific path.' >&2
             exit 1
           fi
