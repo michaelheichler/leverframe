@@ -4291,11 +4291,20 @@ function imageAttachment(part) {
   if (data === void 0) return void 0;
   return { type: "blob", data, mimeType: part.mediaType };
 }
-function v3ImageAttachments(prompt) {
-  return prompt.flatMap((message2) => message2.role === "user" ? message2.content.flatMap((part) => {
+function userImageAttachments(content) {
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((part) => {
     const attachment = imageAttachment(part);
     return attachment === void 0 ? [] : [attachment];
-  }) : []);
+  });
+}
+function v3ImageAttachments(prompt) {
+  return prompt.flatMap((message2) => message2.role === "user" ? userImageAttachments(message2.content) : []);
+}
+function v3LatestUserImageAttachments(prompt) {
+  const user = [...prompt].reverse().find((message2) => message2.role === "user");
+  if (user === void 0) return [];
+  return userImageAttachments(user.content);
 }
 function copilotMessage(prompt, attachments) {
   return attachments.length === 0 ? { prompt } : { prompt, attachments };
@@ -4588,7 +4597,7 @@ async function startTurn(input) {
       input.active.toolBridge.resolveToolResults(v3ToolResults(input.context.options.prompt));
     } else if (input.decision.kind !== "exact-retry" || input.recreating) {
       const promptText = input.recreating ? renderCopilotHistory2(input.context.options.prompt) : v3LatestUserPrompt(input.context.options.prompt);
-      const attachments = v3ImageAttachments(input.context.options.prompt);
+      const attachments = input.recreating ? v3ImageAttachments(input.context.options.prompt) : v3LatestUserImageAttachments(input.context.options.prompt);
       await input.active.session.send(copilotMessage(promptText, attachments));
     }
     return stream;
