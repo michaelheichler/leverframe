@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import type { LanguageModelV3Prompt } from '@ai-sdk/provider';
 import type { ModelMessage } from 'ai';
 import { canonicalJson } from './canonical-json.js';
+import { copilotImageReference } from './image-part.js';
 import { renderCopilotHistory as renderHistory } from './history-renderer.js';
 
 export const SERIALIZED_HISTORY_VERSION = 1;
@@ -158,15 +159,19 @@ function serializePart(part: PromptPart, messageIndex: number): SerializedHistor
     };
   }
   if (part.type === 'file') {
-    const reference = urlReference(part.data);
-    if (
-      reference === undefined
-      || typeof part.mediaType !== 'string'
-      || !part.mediaType.startsWith('image')
-    ) {
+    if (typeof part.mediaType !== 'string') {
       throw new UnsupportedContentError(messageIndex, 'file');
     }
-    return { type: 'image', reference, mediaType: part.mediaType };
+    const remote = urlReference(part.data);
+    if (remote !== undefined) {
+      return { type: 'image', reference: remote, mediaType: part.mediaType };
+    }
+    try {
+      const image = copilotImageReference(part.data, part.mediaType);
+      return { type: 'image', reference: image.reference, mediaType: image.mediaType };
+    } catch {
+      throw new UnsupportedContentError(messageIndex, 'file');
+    }
   }
   throw new UnsupportedContentError(messageIndex, String(part.type ?? 'unknown'));
 }

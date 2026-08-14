@@ -168,10 +168,7 @@ export async function runHttpProxyServerCommand(
   console.log(pc.dim('Use `/model <listed-name>` for a favorite or saved alias.'));
   console.log(pc.dim('Press Ctrl+C to stop.'));
 
-  // Advertise the running server for discovery (e.g. the leverframe-claude wrapper).
-  // Only the standalone `leverframe server` command writes this — the per-session
-  // proxy spawned by `leverframe claude --proxy` never does, and --no-discovery /
-  // LEVERFRAME_NO_DISCOVERY opts a standalone server out too.
+  // Standalone server only: a per-session proxy must not overwrite discovery state.
   if (!noDiscovery) {
     registerServerRuntimeState({
       mode: 'proxy',

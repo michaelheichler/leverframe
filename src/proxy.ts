@@ -59,6 +59,7 @@ import {
 import { resolveExecutionSessionKey } from './execution-session-key.js';
 import { buildProviderCapabilities } from './provider-capabilities.js';
 import { createRequestExecutionContext, cancelAllActiveRequestExecutions } from './request-execution-context.js';
+import { attachRequestExecutionDisposal, wireClientDisconnectAbort } from './request-pipeline.js';
 import { autoReplayMaxRetries } from './request-lifecycle.js';
 import { createSseHeartbeat, DELAY_FIRST_HEARTBEAT } from './sse-heartbeat.js';
 import { isTransientSdkStreamFailure } from './proxy-retry.js';
@@ -203,14 +204,7 @@ export async function startProxyCatalog(
         return;
       }
 
-      const clientAbort = new AbortController();
-      const abortForClientDisconnect = () => {
-        if (!clientAbort.signal.aborted) clientAbort.abort(new Error('Client disconnected'));
-      };
-      req.once('aborted', abortForClientDisconnect);
-      res.once('close', () => {
-        if (!res.writableFinished) abortForClientDisconnect();
-      });
+      const { controller: clientAbort } = wireClientDisconnectAbort(req, res);
 
       const raw = await readBody(req);
       const parsedRequest = parseAnthropicRequest(raw);
@@ -278,8 +272,7 @@ export async function startProxyCatalog(
       // or 'close' (torn down before finishing); either one is this
       // request's single terminal-disposal point regardless of which early
       // return produced it.
-      res.once('finish', () => requestExecution.dispose());
-      res.once('close', () => requestExecution.dispose());
+      attachRequestExecutionDisposal(res, requestExecution);
 
       if (messagesEndpoint === 'count_tokens') {
         if (route.modelFormat !== 'anthropic') {

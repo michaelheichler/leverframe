@@ -11,6 +11,7 @@ import type {
   LanguageModelV3ToolResultPart,
 } from '@ai-sdk/provider';
 import { canonicalJson } from './canonical-json.js';
+import { copilotImageReference } from './image-part.js';
 import {
   type SerializedHistory,
   type SerializedHistoryPart,
@@ -36,17 +37,10 @@ function serializedPart(part: Record<string, unknown>): SerializedHistoryPart {
     return { type: part.type, text: part.text };
   }
   if (part.type === 'file') {
-    const data = part.data;
     const mediaType = part.mediaType;
-    if (typeof mediaType !== 'string' || !mediaType.startsWith('image/')) {
-      throw new TypeError('Copilot supports only image prompt files');
-    }
-    if (data instanceof URL) return { type: 'image', reference: data.href, mediaType };
-    if (data instanceof Uint8Array || typeof data === 'string') {
-      const payload = data instanceof Uint8Array ? Buffer.from(data).toString('base64') : data;
-      return { type: 'image', reference: `sha256:${sha256(payload)}`, mediaType };
-    }
-    throw new TypeError('Copilot image data must be bytes, base64, or a URL');
+    if (typeof mediaType !== 'string') throw new TypeError('Copilot supports only image prompt files');
+    const image = copilotImageReference(part.data, mediaType);
+    return { type: 'image', reference: image.reference, mediaType: image.mediaType };
   }
   if (part.type === 'tool-call') {
     if (typeof part.toolCallId !== 'string' || typeof part.toolName !== 'string') {

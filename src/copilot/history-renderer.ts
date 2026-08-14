@@ -9,6 +9,7 @@ import type {
   LanguageModelV3ToolResultOutput,
 } from '@ai-sdk/provider';
 import { canonicalJson } from './canonical-json.js';
+import { copilotImageReference } from './image-part.js';
 
 interface RenderedPart {
   type: string;
@@ -39,17 +40,21 @@ function renderOutput(output: LanguageModelV3ToolResultOutput): {
   throw new TypeError('Unsupported V3 tool-result output');
 }
 
-function remoteImage(data: unknown, mediaType: string): RenderedPart {
-  if (!(data instanceof URL) || !['http:', 'https:'].includes(data.protocol)) {
-    throw new TypeError(`Copilot history does not support embedded ${mediaType} files`);
+function renderImagePart(data: unknown, mediaType: string): RenderedPart {
+  if (data instanceof URL) {
+    if (!['http:', 'https:'].includes(data.protocol)) {
+      throw new TypeError(`Copilot history does not support ${mediaType} files`);
+    }
+    if (data.username || data.password || data.search || data.hash) {
+      throw new TypeError('Copilot history does not support secret-bearing image URLs');
+    }
+    if (!mediaType.startsWith('image')) {
+      throw new TypeError(`Copilot history does not support ${mediaType} files`);
+    }
+    return { type: 'image', reference: data.href, mediaType };
   }
-  if (data.username || data.password || data.search || data.hash) {
-    throw new TypeError('Copilot history does not support secret-bearing image URLs');
-  }
-  if (!mediaType.startsWith('image')) {
-    throw new TypeError(`Copilot history does not support ${mediaType} files`);
-  }
-  return { type: 'image', reference: data.href, mediaType };
+  const embedded = copilotImageReference(data, mediaType);
+  return { type: 'image', reference: embedded.reference, mediaType: embedded.mediaType };
 }
 
 function renderPart(value: unknown): RenderedPart {
@@ -63,7 +68,7 @@ function renderPart(value: unknown): RenderedPart {
   }
   if (part.type === 'file') {
     if (typeof part.mediaType !== 'string') throw new TypeError('File mediaType must be a string');
-    return remoteImage(part.data, part.mediaType);
+    return renderImagePart(part.data, part.mediaType);
   }
   if (part.type === 'tool-call') {
     if (typeof part.toolCallId !== 'string' || typeof part.toolName !== 'string') {

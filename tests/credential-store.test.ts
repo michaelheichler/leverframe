@@ -10,6 +10,7 @@ import {
   _credentialStoreInternals,
   buildKeyringHelperEnv,
   classifyKeyringError,
+  KEYRING_TIMEOUT_MS,
   deleteFallbackCredential,
   deleteStoredCredential,
   diagnoseCredentialStorage,
@@ -311,6 +312,23 @@ describe('legacy keychain migration', () => {
 });
 
 describe('isolated keyring operations', () => {
+  it('kills a blocked child using KEYRING_TIMEOUT_MS by default', async () => {
+    vi.useFakeTimers();
+    const child = fakeChild();
+    const result = runIsolatedKeyringOperation(
+      { operation: 'read', service: 'leverframe', account: 'probe' },
+      { moduleUrl: 'file:///missing.mjs', spawnImpl: asSpawn(() => child), skipAvailabilityCheck: true },
+    );
+
+    vi.advanceTimersByTime(KEYRING_TIMEOUT_MS);
+    await expect(result).resolves.toEqual({
+      ok: false,
+      error: `keyring operation timed out after ${KEYRING_TIMEOUT_MS}ms`,
+    });
+    expect(child.kill).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
   function fakeChild() {
     const child = new EventEmitter() as EventEmitter & {
       stdin: PassThrough;

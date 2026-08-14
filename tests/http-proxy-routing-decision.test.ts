@@ -174,6 +174,32 @@ describe('decideHttpProxyRoute logging and privacy', () => {
   });
 });
 
+describe('decideHttpProxyRoute lookupRoute parity', () => {
+  it('resolves [1m] context suffix variants to the canonical route', () => {
+    const matched = route({ aliasId: 'leverframe:openai-oauth:gpt-5.6-luna', realModelId: 'gpt-5.6-luna' });
+    const routesById = buildProxyRoutesById([matched]);
+    const decision = decideHttpProxyRoute(baseInput({
+      routesById,
+      hasAdapter: true,
+      rawBody: Buffer.from(JSON.stringify({ model: 'gpt-5.6-luna[1m]' })),
+    }));
+    expect(decision.action).toBe('translated');
+    if (decision.action === 'translated') expect(decision.route).toBe(matched);
+  });
+
+  it('resolves models/ prefix variants to the canonical route', () => {
+    const matched = route({ aliasId: 'leverframe:google:gemini-2.5', realModelId: 'gemini-2.5' });
+    const routesById = buildProxyRoutesById([matched]);
+    const decision = decideHttpProxyRoute(baseInput({
+      routesById,
+      hasAdapter: true,
+      rawBody: Buffer.from(JSON.stringify({ model: 'models/gemini-2.5' })),
+    }));
+    expect(decision.action).toBe('translated');
+    if (decision.action === 'translated') expect(decision.route).toBe(matched);
+  });
+});
+
 describe('buildProxyRoutesById (bare Agent-tool model ids)', () => {
   it('resolves a bare realModelId sent by an Agent-tool child session to its route', () => {
     const matched = route({ aliasId: 'leverframe:openai-oauth:gpt-5.6-luna', realModelId: 'gpt-5.6-luna' });

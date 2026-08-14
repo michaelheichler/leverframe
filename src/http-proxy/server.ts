@@ -1036,9 +1036,8 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
     close: async () => {
       adapterAgent.destroy();
       for (const socket of sockets) socket.destroy();
-      adapterAgent.destroy();
       await new Promise<void>(resolve => proxyServer.close(() => resolve()));
-      mitmServer.close();
+      await new Promise<void>(resolve => mitmServer.close(() => resolve()));
       await closeAdapter();
     },
   };

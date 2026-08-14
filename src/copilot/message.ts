@@ -4,6 +4,7 @@
  */
 
 import type { LanguageModelV3Prompt } from '@ai-sdk/provider';
+import { copilotImageBlob } from './image-part.js';
 
 export interface CopilotBlobAttachment {
   type: 'blob';
@@ -24,17 +25,9 @@ function imageAttachment(part: Record<string, unknown>): CopilotBlobAttachment |
   if (part.data instanceof URL) {
     throw new TypeError('GitHub Copilot image URLs must be downloaded by the AI SDK');
   }
-  if (part.data instanceof Uint8Array) {
-    return {
-      type: 'blob',
-      data: Buffer.from(part.data).toString('base64'),
-      mimeType: part.mediaType,
-    };
-  }
-  if (typeof part.data === 'string') {
-    return { type: 'blob', data: part.data, mimeType: part.mediaType };
-  }
-  throw new TypeError('GitHub Copilot image data must be bytes or base64');
+  const data = copilotImageBlob(part.data, part.mediaType);
+  if (data === undefined) return undefined;
+  return { type: 'blob', data, mimeType: part.mediaType };
 }
 
 /** Collects every user image in transcript order for the current request. */
