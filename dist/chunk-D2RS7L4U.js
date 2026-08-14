@@ -1094,12 +1094,33 @@ async function promoteFallbackCredential(account, value, diag) {
   if (!removeFallbackCredential(account, diag)) return null;
   return value;
 }
+async function readKeyringAfterIntegrityRepair(opts) {
+  const { account, primary, diag } = opts;
+  if (primary.ok || !isIntegrityError(primary.error)) return { primary, repaired: false };
+  reportWarning(diag, `${classifyKeyringError(primary.error)} (account ${account}); repairing keyring journal`);
+  const repaired = await _credentialStoreInternals.keyringOperation({
+    operation: "repair",
+    service: KEYRING_SERVICE,
+    account
+  });
+  if (!repaired.ok) {
+    reportWarning(diag, classifyKeyringError(repaired.error));
+    return { primary, repaired: false };
+  }
+  if (repaired.value !== null) return { primary: { ok: true, value: repaired.value }, repaired: true };
+  return { primary: await readKeyringService(KEYRING_SERVICE, account), repaired: true };
+}
 async function readStoredCredential(account, diag) {
   return withCredentialMutationLock(`keyring:${account}`, async () => {
-    const primary = await readKeyringService(KEYRING_SERVICE, account);
+    const { primary, repaired } = await readKeyringAfterIntegrityRepair({
+      account,
+      primary: await readKeyringService(KEYRING_SERVICE, account),
+      diag
+    });
     if (!primary.ok) {
       if (isIntegrityError(primary.error)) {
-        reportWarning(diag, `${classifyKeyringError(primary.error)} (account ${account}); run \`leverframe keyring repair\` to rebuild the journal`);
+        const suffix = repaired ? " after automatic keyring repair" : "; run `leverframe keyring repair` to rebuild the journal";
+        reportWarning(diag, `${classifyKeyringError(primary.error)} (account ${account})${suffix}`);
         return null;
       }
       reportWarning(diag, classifyKeyringError(primary.error));
@@ -2359,4 +2380,4 @@ export {
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-7QI7KYTU.js.map
+//# sourceMappingURL=chunk-D2RS7L4U.js.map
