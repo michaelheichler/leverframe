@@ -141,7 +141,10 @@ export async function readStoredCredential(account: string, diag?: (msg: string)
     });
     if (!primary.ok) {
       if (isIntegrityError(primary.error)) {
-        reportWarning(diag, `${classifyKeyringError(primary.error)} (account ${account}); run \`leverframe keyring repair\` to rebuild the journal`);
+        const suffix = repaired
+          ? ' after automatic keyring repair'
+          : '; run `leverframe keyring repair` to rebuild the journal';
+        reportWarning(diag, `${classifyKeyringError(primary.error)} (account ${account})${suffix}`);
         return null;
       }
       reportWarning(diag, classifyKeyringError(primary.error));
