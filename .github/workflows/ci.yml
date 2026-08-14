@@ -88,12 +88,22 @@ jobs:
           set -euo pipefail
           if git grep -nIE \
             -e 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY' \
-            -e '(^|[^[:alnum:]])sk-[[:alnum:]_-]{20,}' \
             -e '/Users/[^$<]' \
             -e '/private/tmp/' \
-            -- . ':(exclude).github/workflows/ci.yml' ':(exclude)tests/**' ':(exclude)docs/stabilization-and-upstream-plan.md' ':(exclude)src/env.ts' ':(exclude)dist/**'; then
+            -- . ':(exclude).github/workflows/ci.yml' ':(exclude)tests/**' ':(exclude)docs/stabilization-and-upstream-plan.md'; then
             echo 'Tracked files contain a credential or machine-specific path.' >&2
             exit 1
+          fi
+          sk_matches=$(git grep -nIE \
+            -e '(^|[^[:alnum:]])sk-[[:alnum:]_-]{20,}' \
+            -- . ':(exclude).github/workflows/ci.yml' ':(exclude)tests/**' ':(exclude)docs/stabilization-and-upstream-plan.md' || true)
+          if [ -n "$sk_matches" ]; then
+            filtered=$(printf '%s\n' "$sk_matches" | grep -v 'sk-ant-api03-leverframe-http-proxy' || true)
+            if [ -n "$filtered" ]; then
+              printf '%s\n' "$filtered" >&2
+              echo 'Tracked files contain a credential or machine-specific path.' >&2
+              exit 1
+            fi
           fi
           if git ls-files | grep -E '(^|/)(checkpoint\.json|credentials-fallback\.json|patch-state\.json|server-runtime\.json|manifest\.json|transaction\.json|tool-call-ledger\.json|credential-cleanup-journal\.json|[^/]+\.tmp)$'; then
             echo 'Tracked files contain runtime state or temporary output.' >&2
