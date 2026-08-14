@@ -273,7 +273,10 @@ try {
     }
     if (journal?.mode === 'active') {
       if (!descriptorMatches(journal.active, current)) {
-        if (current === null) throw integrity('published keyring credential does not match its journal');
+        if (current === null) {
+          remove(JOURNAL_SERVICE, input.account);
+          return { active: null };
+        }
         const adopted = descriptorFor(current);
         const adoptedKey = adopted.kind === 'chunks' ? markerKey(adopted.marker) : null;
         const stale = [journal.active, ...journal.retired]
