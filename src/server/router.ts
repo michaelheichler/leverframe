@@ -86,6 +86,7 @@ import { loadCheckpoint, type DigestableMessage } from '../execution-checkpoint.
 import { loadLedger } from '../tool-call-ledger.js';
 import { reconcileExecution, type ReconcileOutcome } from '../execution-recovery.js';
 import { createRequestExecutionContext, cancelAllActiveRequestExecutions } from '../request-execution-context.js';
+import { attachRequestExecutionDisposal, wireClientDisconnectAbort } from '../request-pipeline.js';
 import { createSseHeartbeat, DELAY_FIRST_HEARTBEAT } from '../sse-heartbeat.js';
 
 export interface ServerOptions {
@@ -556,15 +557,7 @@ async function handleAnthropicMessages(
   // Anthropic-passthrough and SDK-translated branches below. Local shutdown
   // is owned separately, via `cancelAllActiveRequestExecutions()` in
   // `ServerHandle.close()`.
-  const clientAbort = new AbortController();
-  const abortClientRequest = () => {
-    if (!clientAbort.signal.aborted) clientAbort.abort(new DOMException('Client disconnected', 'AbortError'));
-  };
-  const abortClosedResponse = () => {
-    if (!res.writableEnded) abortClientRequest();
-  };
-  req.once('aborted', abortClientRequest);
-  res.once('close', abortClosedResponse);
+  const { controller: clientAbort, detach: detachClientAbort } = wireClientDisconnectAbort(req, res);
 
   // Owns accepted/validated/dispatched/first-output/terminal transitions,
   // the four deadline classes, and downstream-disconnect/local-shutdown
@@ -576,8 +569,7 @@ async function handleAnthropicMessages(
     correlationId: requestId,
     signal: clientAbort.signal,
   });
-  res.once('finish', () => requestExecution.dispose());
-  res.once('close', () => requestExecution.dispose());
+  attachRequestExecutionDisposal(res, requestExecution);
   requestExecution.startResolving();
   reconcileIncomingToolResults({ sessionKey: executionSessionKey, toolResults: extractAnthropicToolResults(body) });
   let tracking: ExecutionTrackingHandle;
@@ -891,8 +883,7 @@ async function handleAnthropicMessages(
         res.end();
       }
     } finally {
-      req.removeListener('aborted', abortClientRequest);
-      res.removeListener('close', abortClosedResponse);
+      detachClientAbort();
     }
     return;
   }

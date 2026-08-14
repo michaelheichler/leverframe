@@ -10,6 +10,7 @@ import {
   _credentialStoreInternals,
   buildKeyringHelperEnv,
   classifyKeyringError,
+  KEYRING_TIMEOUT_MS,
   deleteFallbackCredential,
   deleteStoredCredential,
   diagnoseCredentialStorage,
@@ -24,12 +25,15 @@ import { resolveProviderCredential, saveProviderCredential } from '../src/env.js
 
 const originalHome = process.env['LEVERFRAME_HOME'];
 const originalDbus = process.env['DBUS_SESSION_BUS_ADDRESS'];
+const originalXdgRuntime = process.env['XDG_RUNTIME_DIR'];
 
 afterEach(() => {
   if (originalHome === undefined) delete process.env['LEVERFRAME_HOME'];
   else process.env['LEVERFRAME_HOME'] = originalHome;
   if (originalDbus === undefined) delete process.env['DBUS_SESSION_BUS_ADDRESS'];
   else process.env['DBUS_SESSION_BUS_ADDRESS'] = originalDbus;
+  if (originalXdgRuntime === undefined) delete process.env['XDG_RUNTIME_DIR'];
+  else process.env['XDG_RUNTIME_DIR'] = originalXdgRuntime;
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -38,6 +42,13 @@ function temporaryHome(): string {
   const directory = mkdtempSync(join(tmpdir(), 'leverframe-credentials-'));
   process.env['LEVERFRAME_HOME'] = join(directory, 'home');
   return process.env['LEVERFRAME_HOME'];
+}
+
+function isolateFromSystemDbus(): string {
+  delete process.env['DBUS_SESSION_BUS_ADDRESS'];
+  const runtimeDir = mkdtempSync(join(tmpdir(), 'leverframe-no-dbus-'));
+  process.env['XDG_RUNTIME_DIR'] = runtimeDir;
+  return runtimeDir;
 }
 
 describe('credential fallback', () => {
@@ -115,7 +126,7 @@ describe('credential fallback', () => {
 
   it.runIf(process.platform === 'linux')('saves and resolves through fallback when Linux D-Bus is unavailable', async () => {
     temporaryHome();
-    delete process.env['DBUS_SESSION_BUS_ADDRESS'];
+    isolateFromSystemDbus();
     const diagnostics: string[] = [];
 
     expect(await saveProviderCredential('keyring:provider:openai', 'fallback-secret', message => diagnostics.push(message))).toBe(true);
@@ -311,6 +322,23 @@ describe('legacy keychain migration', () => {
 });
 
 describe('isolated keyring operations', () => {
+  it('kills a blocked child using KEYRING_TIMEOUT_MS by default', async () => {
+    vi.useFakeTimers();
+    const child = fakeChild();
+    const result = runIsolatedKeyringOperation(
+      { operation: 'read', service: 'leverframe', account: 'probe' },
+      { moduleUrl: 'file:///missing.mjs', spawnImpl: asSpawn(() => child), skipAvailabilityCheck: true },
+    );
+
+    vi.advanceTimersByTime(KEYRING_TIMEOUT_MS);
+    await expect(result).resolves.toEqual({
+      ok: false,
+      error: `keyring operation timed out after ${KEYRING_TIMEOUT_MS}ms`,
+    });
+    expect(child.kill).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
   function fakeChild() {
     const child = new EventEmitter() as EventEmitter & {
       stdin: PassThrough;
@@ -562,8 +590,12 @@ describe('isolated keyring operations', () => {
 describe('headless diagnostics', () => {
   it.runIf(process.platform === 'linux')('explains D-Bus remediation, GUI independence, and fallback storage before OAuth', async () => {
     const home = temporaryHome();
-    delete process.env['DBUS_SESSION_BUS_ADDRESS'];
-    const diagnostics = await diagnoseCredentialStorage({ LEVERFRAME_HOME: home, SSH_CONNECTION: 'client server' });
+    const isolatedRuntime = mkdtempSync(join(tmpdir(), 'leverframe-no-dbus-'));
+    const diagnostics = await diagnoseCredentialStorage({
+      LEVERFRAME_HOME: home,
+      SSH_CONNECTION: 'client server',
+      XDG_RUNTIME_DIR: isolatedRuntime,
+    });
     const text = diagnostics.map(item => item.message).join('\n');
 
     expect(text).toMatch(/does not require a GUI/i);

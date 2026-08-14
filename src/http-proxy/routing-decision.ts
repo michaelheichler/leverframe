@@ -4,6 +4,7 @@ import type { ProxyRoute } from '../proxy.js';
 import { anthropicMessagesEndpoint, type AnthropicMessagesEndpoint } from '../anthropic-endpoints.js';
 import { anthropicEffortFromRequest, extractClaudeSessionId, type AnthropicRequest } from '../sdk-adapter.js';
 import { INFERENCE_PROGRESS_INTERVAL_MS } from '../log-paths.js';
+import { lookupRoute } from '../proxy-request.js';
 import {
   getLatestMessagePreview,
   writeInferenceRequestLog,
@@ -48,7 +49,7 @@ export interface HttpProxyRouteInput {
   rawBody: Buffer;
   /** Positive allowlist of relay routes, keyed by every id the client may send. */
   routesById: Map<string, ProxyRoute>;
-  /** Whether a relay adapter is running; a route with no adapter still fails closed to passthrough. */
+  /** Whether a relay adapter is running, a route with no adapter still fails closed to passthrough. */
   hasAdapter: boolean;
   inferenceLogPath?: string;
   webSocketDiagnosticsLogPath?: string;
@@ -72,9 +73,9 @@ function parseMessagesRequest(input: HttpProxyRouteInput): ParsedMessagesRequest
   let route: ProxyRoute | undefined;
   try {
     parsed = JSON.parse(input.rawBody.toString('utf8')) as AnthropicRequest;
-    if (typeof parsed.model === 'string') route = input.routesById.get(parsed.model);
+    if (typeof parsed.model === 'string') route = lookupRoute(input.routesById, parsed.model);
   } catch {
-    // Fail safe: an unreadable body is Anthropic traffic, never a relay route.
+    // Unreadable body stays passthrough and never becomes a relay route.
   }
   const modelId = typeof parsed?.model === 'string' ? parsed.model : 'unknown';
   const headerValue = input.headers['x-claude-code-session-id'];
@@ -83,7 +84,6 @@ function parseMessagesRequest(input: HttpProxyRouteInput): ParsedMessagesRequest
   return { parsed, route, modelId, claudeSessionId };
 }
 
-/** Everything downstream logging/lifecycle wiring needs about one decided request. */
 interface DecisionContext {
   input: HttpProxyRouteInput;
   messagesEndpoint: AnthropicMessagesEndpoint;
@@ -93,7 +93,6 @@ interface DecisionContext {
   routeKind: 'translated' | 'passthrough';
 }
 
-/** Append the request-side inference/diagnostic log entries, if the caller opted in. */
 function writeRequestLogs(ctx: DecisionContext): void {
   if (ctx.messagesEndpoint !== 'messages') return;
   const { input, request, requestId, provider, routeKind } = ctx;

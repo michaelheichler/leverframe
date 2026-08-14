@@ -33,3 +33,4 @@
 !/dist/
 /dist/*
 !/dist/*.js
+!/dist/*.mjs

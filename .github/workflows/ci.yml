@@ -40,6 +40,16 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
+
+      - name: Reject debug telemetry in src
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -nE '127\.0\.0\.1:7286|X-Debug-Session-Id|/ingest/' -- src; then
+            echo 'Debug telemetry patterns are not allowed under src/.' >&2
+            exit 1
+          fi
+
       - run: pnpm test
 
       - name: Build runtime files

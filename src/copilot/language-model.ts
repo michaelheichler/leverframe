@@ -18,6 +18,7 @@ import type {
   TranscriptComparisonState,
   TranscriptDecision,
 } from './transcript.js';
+import { copilotMessage, v3ImageAttachments } from './message.js';
 import {
   v3ComparisonState,
   v3LatestUserPrompt,
@@ -264,10 +265,11 @@ async function startTurn(input: {
     if (input.decision.kind === 'tool-result-continuation' && !input.recreating) {
       input.active.toolBridge.resolveToolResults(v3ToolResults(input.context.options.prompt));
     } else if (input.decision.kind !== 'exact-retry' || input.recreating) {
-      const prompt = input.recreating
+      const promptText = input.recreating
         ? renderCopilotHistory(input.context.options.prompt)
         : v3LatestUserPrompt(input.context.options.prompt);
-      await input.active.session.send({ prompt });
+      const attachments = v3ImageAttachments(input.context.options.prompt);
+      await input.active.session.send(copilotMessage(promptText, attachments));
     }
     return stream;
   } catch (error) {
@@ -443,7 +445,7 @@ export function createCopilotLanguageModel(
     specificationVersion: 'v3',
     provider: config.providerId ?? 'github-copilot',
     modelId: config.modelId,
-    supportedUrls: { 'image/*': [/^https:\/\//] },
+    supportedUrls: {},
     doStream,
     async doGenerate(options) {
       return collectCopilotGenerateResult((await doStream(options)).stream);
