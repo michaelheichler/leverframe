@@ -164,7 +164,7 @@ function serializePart(part: PromptPart, messageIndex: number): SerializedHistor
     }
     const remote = urlReference(part.data);
     if (remote !== undefined) {
-      if (!part.mediaType.startsWith('image')) {
+      if (part.mediaType !== 'image' && !part.mediaType.startsWith('image/')) {
         throw new UnsupportedContentError(messageIndex, 'file');
       }
       return { type: 'image', reference: remote, mediaType: part.mediaType };

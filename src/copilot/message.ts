@@ -53,9 +53,11 @@ export function v3ImageAttachments(
 export function v3LatestUserImageAttachments(
   prompt: LanguageModelV3Prompt,
 ): CopilotBlobAttachment[] {
-  const user = [...prompt].reverse().find(message => message.role === 'user');
-  if (user === undefined) return [];
-  return userImageAttachments(user.content);
+  for (let index = prompt.length - 1; index >= 0; index -= 1) {
+    const message = prompt[index];
+    if (message.role === 'user') return userImageAttachments(message.content);
+  }
+  return [];
 }
 
 /** Adds attachments only when the request contains images. */

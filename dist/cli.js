@@ -4302,9 +4302,11 @@ function v3ImageAttachments(prompt) {
   return prompt.flatMap((message2) => message2.role === "user" ? userImageAttachments(message2.content) : []);
 }
 function v3LatestUserImageAttachments(prompt) {
-  const user = [...prompt].reverse().find((message2) => message2.role === "user");
-  if (user === void 0) return [];
-  return userImageAttachments(user.content);
+  for (let index = prompt.length - 1; index >= 0; index -= 1) {
+    const message2 = prompt[index];
+    if (message2.role === "user") return userImageAttachments(message2.content);
+  }
+  return [];
 }
 function copilotMessage(prompt, attachments) {
   return attachments.length === 0 ? { prompt } : { prompt, attachments };
