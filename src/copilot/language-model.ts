@@ -18,7 +18,7 @@ import type {
   TranscriptComparisonState,
   TranscriptDecision,
 } from './transcript.js';
-import { copilotMessage, v3ImageAttachments } from './message.js';
+import { copilotMessage, v3ImageAttachments, v3LatestUserImageAttachments } from './message.js';
 import {
   v3ComparisonState,
   v3LatestUserPrompt,
@@ -268,7 +268,9 @@ async function startTurn(input: {
       const promptText = input.recreating
         ? renderCopilotHistory(input.context.options.prompt)
         : v3LatestUserPrompt(input.context.options.prompt);
-      const attachments = v3ImageAttachments(input.context.options.prompt);
+      const attachments = input.recreating
+        ? v3ImageAttachments(input.context.options.prompt)
+        : v3LatestUserImageAttachments(input.context.options.prompt);
       await input.active.session.send(copilotMessage(promptText, attachments));
     }
     return stream;

@@ -77,6 +77,18 @@ function userFileImageUrl(url: string): ModelMessage {
   };
 }
 
+function userRemotePdfFile(): ModelMessage {
+  return {
+    role: 'user',
+    content: [{
+      type: 'file',
+      data: new URL('https://example.com/report.pdf'),
+      mediaType: 'application/pdf',
+      filename: 'report.pdf',
+    }],
+  };
+}
+
 function userUnsupportedFile(): ModelMessage {
   return {
     role: 'user',
@@ -232,6 +244,18 @@ describe('serializeHistory image references', () => {
     }]);
   });
 
+  it('rejects remote non-image file URLs', () => {
+    expect(() => serializeHistory([{
+      role: 'user',
+      content: [{
+        type: 'file',
+        data: new URL('https://example.test/report.pdf'),
+        mediaType: 'application/pdf',
+        filename: 'report.pdf',
+      }],
+    }])).toThrow(UnsupportedContentError);
+  });
+
   it('serializes a URL-referenced image file', () => {
     const history = serializeHistory([
       userFileImageUrl('https://example.test/diagram.png'),
@@ -252,6 +276,10 @@ describe('serializeHistory unsupported content', () => {
 
   it('rejects non-image file attachments instead of dropping them', () => {
     expect(() => serializeHistory([userUnsupportedFile()])).toThrow(UnsupportedContentError);
+  });
+
+  it('rejects remote non-image files', () => {
+    expect(() => serializeHistory([userRemotePdfFile()])).toThrow(UnsupportedContentError);
   });
 
 
