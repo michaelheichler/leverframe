@@ -274,6 +274,11 @@ try {
     if (journal?.mode === 'active') {
       if (!descriptorMatches(journal.active, current)) {
         if (current === null) {
+          for (const descriptor of [journal.active, ...journal.retired]) {
+            if (descriptor && !deleteDescriptor(descriptor)) {
+              throw integrity('keyring credential cleanup is incomplete');
+            }
+          }
           remove(JOURNAL_SERVICE, input.account);
           return { active: null };
         }
