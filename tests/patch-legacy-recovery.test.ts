@@ -48,7 +48,7 @@ const BASELINE = [
   'function RS(e,t){let r=FAc();if(r!==void 0)return r;if(EHi(e,t))return Dve;return $Ac(e,t)}',
 ].join('\n');
 
-function sha256(content: string): string {
+function sha256(content: string | Buffer): string {
   return createHash('sha256').update(content).digest('hex');
 }
 

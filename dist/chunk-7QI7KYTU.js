@@ -278,7 +278,7 @@ var package_default = {
     node: ">=22"
   },
   scripts: {
-    build: "tsup && cp src/keyring-child.mjs dist/keyring-child.mjs",
+    build: `tsup && node --input-type=module -e "import { copyFileSync } from 'node:fs'; copyFileSync('src/keyring-child.mjs', 'dist/keyring-child.mjs');"`,
     "build:test-candidate": "tsup $(find src -name 'candidate-?li.ts' -print) --format esm --target node22 --out-dir dist-${LEVERFRAME_CANDIDATE_OUTPUT:-test} --sourcemap false --clean",
     "check:package": "node scripts/verify-package-contents.mjs",
     dev: "tsup --watch",
@@ -2359,4 +2359,4 @@ export {
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-BHV3EWW3.js.map
+//# sourceMappingURL=chunk-7QI7KYTU.js.map

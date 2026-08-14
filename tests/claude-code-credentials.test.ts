@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { EventEmitter } from 'node:events';
 import {
   claudeCodeApiKeyServiceName,
   claudeCodeCredentialsServiceName,
@@ -40,7 +41,6 @@ describe('claude keychain service names', () => {
 describe('readMacSecurityPassword', () => {
   it('returns stdout password and never requires stderr', async () => {
     const { readMacSecurityPassword } = await import('../src/claude-code-credentials.js');
-    const { EventEmitter } = await import('node:events');
     const fakeSpawn = ((_cmd: string, _args: readonly string[]) => {
       const child = new EventEmitter() as EventEmitter & {
         stdout: EventEmitter;
@@ -61,7 +61,6 @@ describe('readMacSecurityPassword', () => {
 
   it('returns null when security exits non-zero', async () => {
     const { readMacSecurityPassword } = await import('../src/claude-code-credentials.js');
-    const { EventEmitter } = await import('node:events');
     const fakeSpawn = (() => {
       const child = new EventEmitter() as EventEmitter & {
         stdout: EventEmitter;
