@@ -279,7 +279,18 @@ try {
               throw integrity('keyring credential cleanup is incomplete');
             }
           }
-          remove(JOURNAL_SERVICE, input.account);
+          const active = journal.active;
+          if (
+            active?.kind === 'chunks' &&
+            chunkService(active.marker) !== CHUNK_SERVICE
+          ) {
+            if (!deleteDescriptor(active)) {
+              throw integrity('keyring credential cleanup is incomplete');
+            }
+          }
+          if (!remove(JOURNAL_SERVICE, input.account)) {
+            throw integrity('keyring credential journal could not be removed');
+          }
           return { active: null };
         }
         const adopted = descriptorFor(current);
