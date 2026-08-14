@@ -12,7 +12,7 @@ export async function loadRegistryProviders(
   const keys = new Map<string, string>();
   const oauthAccountIds = new Map<string, string>();
   const oauthProviderData = new Map<string, Record<string, unknown>>();
-  await Promise.all(registry.providers.map(async provider => {
+  for (const provider of registry.providers) {
     try {
       const key = await resolveProviderCredential(provider.id, provider.authRef, diag);
       if (key) keys.set(provider.id, key);
@@ -28,7 +28,7 @@ export async function loadRegistryProviders(
       } catch {
       }
     }
-  }));
+  }
   return materializeRegistry(registry, provider => keys.get(provider.id) ?? null, opts)
     .map(provider => ({
       ...provider,
