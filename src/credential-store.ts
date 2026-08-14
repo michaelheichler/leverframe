@@ -159,6 +159,7 @@ export async function readStoredCredential(account: string, diag?: (msg: string)
     if (fallback !== null) return promoteFallbackCredential(account, fallback, diag);
     if (primary.ok && primary.deleted) return null;
     if (primary.ok && primary.value !== null) return primary.value;
+    if (repaired) return null;
 
     for (const service of LEGACY_KEYRING_SERVICES) {
       const legacy = await readKeyringService(service, account);

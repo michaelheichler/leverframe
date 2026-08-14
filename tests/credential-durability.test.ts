@@ -217,6 +217,26 @@ describe('generational keyring durability', () => {
     expect(journal.active.digest).toBe(createHash('sha256').update('live-secret').digest('hex'));
   });
 
+  it('self-heals a stale active journal when the published credential is missing', async () => {
+    const fake = fakeKeyring();
+    const account = 'provider:missing';
+    saveState(fake.statePath, {
+      'leverframe-journal': {
+        [account]: JSON.stringify({
+          schemaVersion: 1,
+          mode: 'active',
+          active: { kind: 'short', digest: createHash('sha256').update('gone-secret').digest('hex') },
+          retired: [],
+        }),
+      },
+    });
+
+    await expect(operation(fake.moduleUrl, {
+      operation: 'read', service: 'leverframe', account,
+    })).resolves.toEqual({ ok: true, value: null });
+    expect(state(fake.statePath)['leverframe-journal']?.[account]).toBeUndefined();
+  });
+
   it('repair rebuilds a corrupt journal while keeping a readable credential', async () => {
     const fake = fakeKeyring();
     const account = 'provider:repairable';
