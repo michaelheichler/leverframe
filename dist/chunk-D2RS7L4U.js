@@ -1125,7 +1125,6 @@ async function readStoredCredential(account, diag) {
       }
       reportWarning(diag, classifyKeyringError(primary.error));
     }
-    if (repaired && primary.ok && primary.value !== null) return primary.value;
     let fallback;
     try {
       fallback = readFallbackCredential(account);
@@ -2381,4 +2380,4 @@ export {
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-DX2U3XXB.js.map
+//# sourceMappingURL=chunk-D2RS7L4U.js.map

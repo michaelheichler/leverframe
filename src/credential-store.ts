@@ -149,8 +149,6 @@ export async function readStoredCredential(account: string, diag?: (msg: string)
       }
       reportWarning(diag, classifyKeyringError(primary.error));
     }
-    if (repaired && primary.ok && primary.value !== null) return primary.value;
-
     let fallback: string | null;
     try {
       fallback = readFallbackCredential(account);
