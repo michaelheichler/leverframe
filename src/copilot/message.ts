@@ -30,18 +30,34 @@ function imageAttachment(part: Record<string, unknown>): CopilotBlobAttachment |
   return { type: 'blob', data, mimeType: part.mediaType };
 }
 
+function userImageAttachments(
+  content: LanguageModelV3Prompt[number]['content'],
+): CopilotBlobAttachment[] {
+  if (!Array.isArray(content)) return [];
+  return content.flatMap(part => {
+    const attachment = imageAttachment(part as unknown as Record<string, unknown>);
+    return attachment === undefined ? [] : [attachment];
+  });
+}
+
 /** Collects every user image in transcript order for the current request. */
 export function v3ImageAttachments(
   prompt: LanguageModelV3Prompt,
 ): CopilotBlobAttachment[] {
   return prompt.flatMap(message => (
-    message.role === 'user'
-      ? message.content.flatMap(part => {
-          const attachment = imageAttachment(part as unknown as Record<string, unknown>);
-          return attachment === undefined ? [] : [attachment];
-        })
-      : []
+    message.role === 'user' ? userImageAttachments(message.content) : []
   ));
+}
+
+/** Collects images from the latest user message only. */
+export function v3LatestUserImageAttachments(
+  prompt: LanguageModelV3Prompt,
+): CopilotBlobAttachment[] {
+  for (let index = prompt.length - 1; index >= 0; index -= 1) {
+    const message = prompt[index];
+    if (message.role === 'user') return userImageAttachments(message.content);
+  }
+  return [];
 }
 
 /** Adds attachments only when the request contains images. */
