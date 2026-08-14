@@ -4,6 +4,7 @@ import {
   CODEX_RESPONSES_LITE_WS_URL,
   CODEX_RESPONSES_WEBSOCKETS_BETA,
   DEFAULT_SERVER_PORT,
+  HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY,
   MAX_MODEL_CATALOG,
   OAUTH_REQUEST_TIMEOUT_MS,
   OPENCODE_CACHE_PATH,
@@ -28,6 +29,7 @@ import {
   getAppHome,
   getAppPathOverride,
   getCredentialCleanupPath,
+  getDefaultAppHome,
   getInstalledClaudeVersion,
   getLogsPath,
   getProvidersPath,
@@ -47,11 +49,13 @@ import {
   recordLaunchSelection,
   registerServerRuntimeState,
   repairStoredCredential,
+  resolveAppHomeOverride,
   resolveBridgeMode,
   resolveProviderCredential,
   resolveProviderOAuthAccountId,
   resolveProviderOAuthProviderData,
   routeLookupIds,
+  runIsolatedKeyringOperation,
   runOpenAiDeviceCodeFlow,
   savePreferences,
   saveProviderCredential,
@@ -68,9 +72,10 @@ import {
   withAbortTimeout,
   withCredentialMutationLock,
   withProviderMutationLock,
+  withProxyAnthropicOriginSettings,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-TAPJBQFC.js";
+} from "./chunk-BHV3EWW3.js";
 
 // src/cli.ts
 import pc18 from "picocolors";
@@ -3182,11 +3187,41 @@ function isContextLengthExceededError(err, formattedMessage = "") {
   const hasTokenCount = (value) => /\d+\s*tokens?/i.test(value);
   return candidates.some((value) => /context_length_exceeded/i.test(value) || /maximum context length/i.test(value) || /context window/i.test(value) && hasTokenCount(value) || /prompt is too long/i.test(value) && hasTokenCount(value));
 }
+function messageFromErrorPayload(payload) {
+  if (!payload?.trim()) return void 0;
+  const trimmed = payload.trim();
+  if (!trimmed.startsWith("{")) return void 0;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed.error?.message === "string" && parsed.error.message.trim()) {
+      return parsed.error.message.trim();
+    }
+    if (typeof parsed.message === "string" && parsed.message.trim()) {
+      return parsed.message.trim();
+    }
+  } catch {
+  }
+  return void 0;
+}
+function isTerminalUsageLimitText(...parts) {
+  const text3 = parts.filter((part) => typeof part === "string").join("\n");
+  if (!text3) return false;
+  return /GoUsageLimitError|monthly usage limit|weekly limit|out of quota|credit balance is too low|insufficient credits?|usage limit reached|hit your[\s\S]{0,40}limit/i.test(text3);
+}
+function clientFacingAnthropicStatus(upstreamStatus, message2, errorContent) {
+  if (isTerminalUsageLimitText(message2, errorContent)) return 400;
+  return upstreamStatus;
+}
 function formatUpstreamError(err) {
   if (!err || typeof err !== "object") return "Upstream model request failed.";
   const details = sdkUpstreamErrorDetails(err);
   if (details?.failurePhase) {
     return details.statusCode ? `${details.errorContent} (HTTP ${details.statusCode})` : details.errorContent;
+  }
+  const fromDetails = messageFromErrorPayload(details?.errorContent);
+  if (fromDetails) {
+    const short = sanitizeMessage(fromDetails);
+    return details?.statusCode ? `${short} (HTTP ${details.statusCode})` : short;
   }
   const rec = err;
   if (rec.data?.error?.message) {
@@ -3194,13 +3229,10 @@ function formatUpstreamError(err) {
     return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
   }
   if (rec.responseBody) {
-    try {
-      const parsed = JSON.parse(rec.responseBody);
-      if (parsed.error?.message) {
-        const short = sanitizeMessage(parsed.error.message);
-        return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
-      }
-    } catch {
+    const fromBody = messageFromErrorPayload(rec.responseBody);
+    if (fromBody) {
+      const short = sanitizeMessage(fromBody);
+      return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
     }
   }
   const last = rec.lastError;
@@ -10895,6 +10927,12 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
             const message2 = formatUpstreamError(err);
             const details = sdkUpstreamErrorDetails(err);
             const upstreamStatus = details?.statusCode ?? upstreamHttpStatus(err, message2);
+            const clientStatus = clientFacingAnthropicStatus(
+              upstreamStatus,
+              message2,
+              details?.errorContent
+            );
+            const terminalUsageLimit = clientStatus !== upstreamStatus && isTerminalUsageLimitText(message2, details?.errorContent);
             const contextLengthExceeded = upstreamStatus === 400 && isContextLengthExceededError(err, message2);
             const clientMessage = contextLengthExceeded ? anthropicPromptTooLongMessage(
               anthropicBody,
@@ -10909,30 +10947,32 @@ async function startProxyCatalog(routes, defaultAliasId, debug = false, inferenc
                 route: "translated",
                 statusCode: upstreamStatus,
                 errorContent: details?.errorContent ?? message2,
-                isRetryable: details?.isRetryable,
+                isRetryable: terminalUsageLimit ? false : details?.isRetryable,
                 attemptCount: details?.attemptCount
               });
             }
             if (!res.headersSent) {
-              for (const [name, value] of Object.entries(sdkUpstreamResponseHeaders(details))) {
-                res.setHeader(name, value);
+              if (!terminalUsageLimit) {
+                for (const [name, value] of Object.entries(sdkUpstreamResponseHeaders(details))) {
+                  res.setHeader(name, value);
+                }
               }
               anthropicError(
                 res,
-                upstreamStatus === 500 ? 502 : upstreamStatus,
+                clientStatus === 500 ? 502 : clientStatus,
                 clientMessage,
                 contextLengthExceeded ? relayRequestId ?? randomUUID3() : void 0
               );
             } else {
-              const errorType = anthropicErrorType(upstreamStatus);
+              const errorType = anthropicErrorType(clientStatus);
               res.write(`event: error
 data: ${JSON.stringify({
                 type: "error",
                 error: {
                   type: errorType,
                   message: clientMessage,
-                  status_code: upstreamStatus,
-                  ...details?.retryAfterMs !== void 0 ? { retry_after: Math.ceil(details.retryAfterMs / 1e3) } : {}
+                  status_code: clientStatus,
+                  ...!terminalUsageLimit && details?.retryAfterMs !== void 0 ? { retry_after: Math.ceil(details.retryAfterMs / 1e3) } : {}
                 },
                 ...contextLengthExceeded ? { request_id: relayRequestId ?? randomUUID3() } : {}
               })}
@@ -12223,6 +12263,8 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
       const message2 = formatUpstreamError(err);
       const details = sdkUpstreamErrorDetails(err);
       const status = auditSdkError(options, body.model, model, err, message2);
+      const clientStatus = clientFacingAnthropicStatus(status, message2, details?.errorContent);
+      const terminalUsageLimit = clientStatus !== status && isTerminalUsageLimitText(message2, details?.errorContent);
       const contextLengthExceeded = status === 400 && isContextLengthExceededError(err, message2);
       const clientMessage = contextLengthExceeded ? anthropicPromptTooLongMessage(
         body,
@@ -12230,8 +12272,10 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
       ) : message2;
       plog(() => `sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message2}${details?.errorContent ? `, body: ${details.errorContent}` : ""}`);
       if (!res.headersSent) {
-        for (const [name, value] of Object.entries(sdkUpstreamResponseHeaders(details))) {
-          res.setHeader(name, value);
+        if (!terminalUsageLimit) {
+          for (const [name, value] of Object.entries(sdkUpstreamResponseHeaders(details))) {
+            res.setHeader(name, value);
+          }
         }
         if (contextLengthExceeded) {
           sendJson(res, 400, {
@@ -12240,18 +12284,21 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
             request_id: requestId
           });
         } else {
-          sendJson(res, status === 500 ? 502 : status, { error: { message: clientMessage } });
+          sendJson(res, clientStatus === 500 ? 502 : clientStatus, {
+            type: "error",
+            error: { type: anthropicErrorType(clientStatus), message: clientMessage }
+          });
         }
       } else {
-        const errorType = anthropicErrorType(status);
+        const errorType = anthropicErrorType(clientStatus);
         res.write(`event: error
 data: ${JSON.stringify({
           type: "error",
           error: {
             type: errorType,
             message: clientMessage,
-            status_code: status,
-            ...details?.retryAfterMs !== void 0 ? { retry_after: Math.ceil(details.retryAfterMs / 1e3) } : {}
+            status_code: clientStatus,
+            ...!terminalUsageLimit && details?.retryAfterMs !== void 0 ? { retry_after: Math.ceil(details.retryAfterMs / 1e3) } : {}
           },
           ...contextLengthExceeded ? { request_id: requestId } : {}
         })}
@@ -12981,8 +13028,8 @@ function parseMessagesRequest(input) {
   } catch {
   }
   const modelId = typeof parsed?.model === "string" ? parsed.model : "unknown";
-  const headerValue2 = input.headers["x-claude-code-session-id"];
-  const claudeSessionIdHeader = Array.isArray(headerValue2) ? headerValue2[0] : headerValue2;
+  const headerValue3 = input.headers["x-claude-code-session-id"];
+  const claudeSessionIdHeader = Array.isArray(headerValue3) ? headerValue3[0] : headerValue3;
   const claudeSessionId = parsed ? extractClaudeSessionId(parsed, claudeSessionIdHeader) : void 0;
   return { parsed, route, modelId, claudeSessionId };
 }
@@ -13049,10 +13096,286 @@ function decideHttpProxyRoute(input) {
   return { action: "passthrough-messages", requestId, modelId, lifecycle };
 }
 
+// src/claude-code-credentials.ts
+import { spawn } from "child_process";
+import { createHash as createHash17 } from "crypto";
+import { readFileSync as readFileSync6 } from "fs";
+import { homedir, userInfo } from "os";
+import { join as join7 } from "path";
+var CREDENTIALS_SERVICE_SUFFIX = "-credentials";
+function claudeConfigHomeDir(env = process.env) {
+  const override = env["CLAUDE_CONFIG_DIR"]?.trim();
+  if (override) return override;
+  return join7(homedir(), ".claude");
+}
+function claudeCodeCredentialsServiceName(env = process.env) {
+  const configDir = claudeConfigHomeDir(env);
+  const isDefaultDir = !env["CLAUDE_CONFIG_DIR"]?.trim();
+  const dirHash = isDefaultDir ? "" : `-${createHash17("sha256").update(configDir).digest("hex").slice(0, 8)}`;
+  return `Claude Code${CREDENTIALS_SERVICE_SUFFIX}${dirHash}`;
+}
+function claudeCodeApiKeyServiceName(env = process.env) {
+  const configDir = claudeConfigHomeDir(env);
+  const isDefaultDir = !env["CLAUDE_CONFIG_DIR"]?.trim();
+  const dirHash = isDefaultDir ? "" : `-${createHash17("sha256").update(configDir).digest("hex").slice(0, 8)}`;
+  return `Claude Code${dirHash}`;
+}
+function keychainAccount(env = process.env) {
+  const fromEnv = env["USER"]?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    return userInfo().username;
+  } catch {
+    return "claude-code-user";
+  }
+}
+function parseClaudeSecureStorageJson(raw) {
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!data || typeof data !== "object") return null;
+  const oauth = data.claudeAiOauth;
+  if (oauth && typeof oauth === "object") {
+    const accessToken = oauth.accessToken;
+    if (typeof accessToken === "string" && accessToken.trim()) {
+      return { kind: "oauth", token: accessToken.trim() };
+    }
+  }
+  return null;
+}
+function readMacSecurityPassword(service, account, spawnImpl = spawn) {
+  return new Promise((resolve3) => {
+    let child;
+    try {
+      child = spawnImpl("security", [
+        "find-generic-password",
+        "-a",
+        account,
+        "-w",
+        "-s",
+        service
+      ], {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true
+      });
+    } catch {
+      resolve3(null);
+      return;
+    }
+    const chunks = [];
+    child.stdout?.on("data", (chunk) => {
+      chunks.push(chunk);
+    });
+    child.stderr?.resume();
+    child.on("error", () => resolve3(null));
+    child.on("close", (code) => {
+      if (code !== 0) {
+        resolve3(null);
+        return;
+      }
+      const value = Buffer.concat(chunks).toString("utf8").replace(/\r?\n$/, "");
+      resolve3(value || null);
+    });
+  });
+}
+async function readKeychainRaw(service, account) {
+  if (process.platform === "darwin") {
+    const viaSecurity = await readMacSecurityPassword(service, account);
+    if (viaSecurity) return viaSecurity;
+  }
+  const result = await runIsolatedKeyringOperation({
+    operation: "read",
+    service,
+    account
+  });
+  if (!result.ok) return null;
+  const value = result.value?.trim();
+  return value || null;
+}
+function readPlaintextCredentialsFile(env = process.env) {
+  const path = join7(claudeConfigHomeDir(env), ".credentials.json");
+  try {
+    return readFileSync6(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+async function readClaudeCodeAuthMaterial(env = process.env) {
+  const envOauth = env["CLAUDE_CODE_OAUTH_TOKEN"]?.trim();
+  if (envOauth) return { kind: "oauth", token: envOauth };
+  const account = keychainAccount(env);
+  const oauthRaw = await readKeychainRaw(claudeCodeCredentialsServiceName(env), account);
+  if (oauthRaw) {
+    const parsed = parseClaudeSecureStorageJson(oauthRaw);
+    if (parsed) return parsed;
+  }
+  const fileRaw = readPlaintextCredentialsFile(env);
+  if (fileRaw) {
+    const parsed = parseClaudeSecureStorageJson(fileRaw);
+    if (parsed) return parsed;
+  }
+  const apiKeyRaw = await readKeychainRaw(claudeCodeApiKeyServiceName(env), account);
+  if (apiKeyRaw && !apiKeyRaw.trimStart().startsWith("{")) {
+    return { kind: "api_key", token: apiKeyRaw.trim() };
+  }
+  return null;
+}
+
+// src/http-proxy/claude-passthrough-auth.ts
+var OAUTH_BETA = "oauth-2025-04-20";
+function headerNameEquals(name, expected) {
+  return name.toLowerCase() === expected.toLowerCase();
+}
+function ensureOauthBeta(existing) {
+  if (!existing?.trim()) return OAUTH_BETA;
+  const parts = existing.split(",").map((part) => part.trim()).filter(Boolean);
+  if (parts.some((part) => part === OAUTH_BETA)) return parts.join(",");
+  return [OAUTH_BETA, ...parts].join(",");
+}
+function rewriteUpstreamAuthHeaders(rawHeaders, auth) {
+  const out = [];
+  let sawAuthorization = false;
+  let sawUserAgent = false;
+  let sawXApp = false;
+  let sawBeta = false;
+  let sawApiKey = false;
+  for (let i = 0; i < rawHeaders.length; i += 2) {
+    const name = rawHeaders[i] ?? "";
+    const value = rawHeaders[i + 1] ?? "";
+    if (headerNameEquals(name, "authorization")) {
+      sawAuthorization = true;
+      out.push(name, `Bearer ${auth.token}`);
+      continue;
+    }
+    if (headerNameEquals(name, "x-api-key")) {
+      sawApiKey = true;
+      if (auth.kind === "api_key") out.push(name, auth.token);
+      continue;
+    }
+    if (headerNameEquals(name, "user-agent")) {
+      sawUserAgent = true;
+      if (auth.kind === "oauth") out.push(name, CLAUDE_CODE_USER_AGENT);
+      else out.push(name, value);
+      continue;
+    }
+    if (headerNameEquals(name, "x-app")) {
+      sawXApp = true;
+      if (auth.kind === "oauth") out.push(name, "cli");
+      else out.push(name, value);
+      continue;
+    }
+    if (headerNameEquals(name, "anthropic-beta")) {
+      sawBeta = true;
+      out.push(name, auth.kind === "oauth" ? ensureOauthBeta(value) : value);
+      continue;
+    }
+    out.push(name, value);
+  }
+  if (!sawAuthorization) out.push("Authorization", `Bearer ${auth.token}`);
+  if (auth.kind === "api_key" && !sawApiKey) out.push("x-api-key", auth.token);
+  if (auth.kind === "oauth") {
+    if (!sawUserAgent) out.push("User-Agent", CLAUDE_CODE_USER_AGENT);
+    if (!sawXApp) out.push("x-app", "cli");
+    if (!sawBeta) out.push("anthropic-beta", OAUTH_BETA);
+  }
+  return out;
+}
+
+// src/http-proxy/copy-response.ts
+var MAX_ERROR_BODY_BYTES = 64 * 1024;
+function rebuildRawHeaders(rawHeaders, options) {
+  const out = [];
+  let sawContentLength = false;
+  for (let i = 0; i < rawHeaders.length; i += 2) {
+    const name = rawHeaders[i] ?? "";
+    const value = rawHeaders[i + 1] ?? "";
+    const lower = name.toLowerCase();
+    if (lower === "transfer-encoding") continue;
+    if (options.stripRetryAfter && lower === "retry-after") continue;
+    if (lower === "content-length") {
+      sawContentLength = true;
+      out.push(name, String(options.contentLength));
+      continue;
+    }
+    out.push(name, value);
+  }
+  if (!sawContentLength) out.push("Content-Length", String(options.contentLength));
+  return out;
+}
+function copyResponse(upstream, res, options = {}) {
+  const upstreamStatus = upstream.statusCode ?? 502;
+  const contentType = upstream.headers["content-type"];
+  if (upstreamStatus < 400 && options.onResponseUsage && typeof contentType === "string" && contentType.includes("text/event-stream") && options.observeSuccessSseUsage) {
+    options.observeSuccessSseUsage(upstream, upstream.headers["content-encoding"], {
+      onUsage: options.onResponseUsage,
+      onComplete: options.onResponseUsageComplete ?? (() => {
+      })
+    });
+  } else {
+    options.onResponseUsageComplete?.();
+  }
+  if (upstreamStatus < 400) {
+    res.writeHead(upstreamStatus, upstream.statusMessage, upstream.rawHeaders);
+    upstream.once("error", () => res.destroy());
+    upstream.pipe(res);
+    return;
+  }
+  const errorChunks = [];
+  let capturedBytes = 0;
+  let truncated = false;
+  let settled = false;
+  const finish2 = (suffix = "") => {
+    if (settled || res.headersSent) return;
+    settled = true;
+    const body = Buffer.concat(errorChunks);
+    const bodyText = `${body.toString("utf8")}${truncated ? " [truncated]" : ""}${suffix}`;
+    options.onErrorResponse?.(upstreamStatus, bodyText);
+    const clientStatus = clientFacingAnthropicStatus(upstreamStatus, bodyText, bodyText);
+    const stripRetryAfter = clientStatus !== upstreamStatus || isTerminalUsageLimitText(bodyText);
+    const headers = rebuildRawHeaders(upstream.rawHeaders, {
+      stripRetryAfter,
+      contentLength: body.length
+    });
+    res.writeHead(clientStatus, upstream.statusMessage, headers);
+    res.end(body);
+  };
+  upstream.on("data", (chunk) => {
+    if (capturedBytes >= MAX_ERROR_BODY_BYTES) {
+      truncated = true;
+      return;
+    }
+    const available = MAX_ERROR_BODY_BYTES - capturedBytes;
+    const captured = chunk.length > available ? chunk.subarray(0, available) : chunk;
+    errorChunks.push(Buffer.from(captured));
+    capturedBytes += captured.length;
+    if (captured.length < chunk.length) truncated = true;
+  });
+  upstream.once("end", () => finish2());
+  upstream.once("error", (err) => {
+    finish2(` [stream error: ${err.message}]`);
+    if (!res.writableEnded) res.destroy();
+  });
+}
+
 // src/http-proxy/server.ts
 var ANTHROPIC_HOST = "api.anthropic.com";
+function headerValue2(headers, name) {
+  const raw = headers[name];
+  if (Array.isArray(raw)) return raw[0];
+  return raw;
+}
+function requestUsesHttpProxyPlaceholderKey(headers) {
+  const apiKey = headerValue2(headers, "x-api-key")?.trim();
+  if (apiKey === HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY) return true;
+  const authorization = headerValue2(headers, "authorization");
+  if (!authorization) return false;
+  const match = /^Bearer\s+(\S+)/i.exec(authorization.trim());
+  return match?.[1] === HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY;
+}
 var MAX_BODY_BYTES = 50 * 1024 * 1024;
-var MAX_ERROR_BODY_BYTES = 64 * 1024;
 var MAX_USAGE_SSE_BLOCK_BYTES = 64 * 1024;
 function numericUsage(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : void 0;
@@ -13237,48 +13560,15 @@ function readRawBody(req) {
     req.on("error", reject);
   });
 }
-function copyResponse(upstream, res, options = {}) {
-  const statusCode = upstream.statusCode ?? 502;
-  const contentType = upstream.headers["content-type"];
-  if (statusCode < 400 && options.onResponseUsage && typeof contentType === "string" && contentType.includes("text/event-stream")) {
-    observeResponseUsage(upstream, upstream.headers["content-encoding"], {
-      onUsage: options.onResponseUsage,
-      onComplete: options.onResponseUsageComplete ?? (() => {
-      })
-    });
-  } else {
-    options.onResponseUsageComplete?.();
-  }
-  const errorChunks = [];
-  let capturedBytes = 0;
-  let truncated = false;
-  let errorLogged = false;
-  const logErrorResponse = (suffix = "") => {
-    if (errorLogged || statusCode < 400 || !options.onErrorResponse) return;
-    errorLogged = true;
-    const body = Buffer.concat(errorChunks).toString("utf8");
-    options.onErrorResponse(statusCode, `${body}${truncated ? " [truncated]" : ""}${suffix}`);
-  };
-  if (statusCode >= 400 && options.onErrorResponse) {
-    upstream.on("data", (chunk) => {
-      if (capturedBytes >= MAX_ERROR_BODY_BYTES) {
-        truncated = true;
-        return;
-      }
-      const available = MAX_ERROR_BODY_BYTES - capturedBytes;
-      const captured = chunk.length > available ? chunk.subarray(0, available) : chunk;
-      errorChunks.push(Buffer.from(captured));
-      capturedBytes += captured.length;
-      if (captured.length < chunk.length) truncated = true;
-    });
-    upstream.once("end", () => logErrorResponse());
-  }
-  res.writeHead(statusCode, upstream.statusMessage, upstream.rawHeaders);
-  upstream.once("error", (err) => {
-    logErrorResponse(` [stream error: ${err.message}]`);
-    res.destroy();
+function copyResponse2(upstream, res, options = {}) {
+  copyResponse(upstream, res, {
+    onErrorResponse: options.onErrorResponse,
+    onResponseUsage: options.onResponseUsage,
+    onResponseUsageComplete: options.onResponseUsageComplete,
+    observeSuccessSseUsage: (message2, contentEncoding, hooks) => {
+      observeResponseUsage(message2, contentEncoding, hooks);
+    }
   });
-  upstream.pipe(res);
 }
 function requestHeadersWithoutProxyHeaders(req) {
   const headers = [];
@@ -13289,7 +13579,7 @@ function requestHeadersWithoutProxyHeaders(req) {
   }
   return headers;
 }
-function forwardRawAnthropicRequest(req, res, rawBody, origin, rejectUnauthorized, onErrorResponse, onResponseUsage, lifecycle) {
+function forwardRawAnthropicRequest(req, res, rawBody, origin, rejectUnauthorized, onErrorResponse, onResponseUsage, lifecycle, upstreamHeaders) {
   return new Promise((resolve3) => {
     const startedAt = Date.now();
     let lastActivityAt = startedAt;
@@ -13350,7 +13640,7 @@ function forwardRawAnthropicRequest(req, res, rawBody, origin, rejectUnauthorize
       port: origin.port || 443,
       method: req.method,
       path: req.url,
-      headers: requestHeadersWithoutProxyHeaders(req),
+      headers: upstreamHeaders ?? requestHeadersWithoutProxyHeaders(req),
       servername: net.isIP(origin.hostname) ? void 0 : origin.hostname,
       rejectUnauthorized
     }, (upstreamRes) => {
@@ -13371,7 +13661,7 @@ function forwardRawAnthropicRequest(req, res, rawBody, origin, rejectUnauthorize
         bytes += chunk.length;
         chunks += 1;
       });
-      copyResponse(upstreamRes, res, {
+      copyResponse2(upstreamRes, res, {
         onErrorResponse,
         onResponseUsage,
         onResponseUsageComplete: lifecycle ? () => resolveResponseUsageComplete?.() : void 0
@@ -13600,7 +13890,7 @@ function forwardToAdapter(req, res, rawBody, adapter, adapterRequest, adapterAge
         bytes += chunk.length;
         chunks += 1;
       });
-      copyResponse(upstreamRes, res, {
+      copyResponse2(upstreamRes, res, {
         onResponseUsage: lifecycle ? (usage) => writeLifecycle("response_usage", usage) : void 0,
         onResponseUsageComplete: lifecycle ? () => resolveResponseUsageComplete?.() : void 0
       });
@@ -13663,7 +13953,7 @@ function forwardPlainHttp(req, res) {
     method: req.method,
     path: `${target.pathname}${target.search}`,
     headers: requestHeadersWithoutProxyHeaders(req)
-  }, (upstreamRes) => copyResponse(upstreamRes, res));
+  }, (upstreamRes) => copyResponse2(upstreamRes, res));
   upstream.on("error", (err) => {
     if (!res.headersSent) res.writeHead(502, { "Content-Type": "text/plain" });
     res.end(`Proxy upstream unreachable: ${err.message}`);
@@ -13747,6 +14037,38 @@ async function startHttpProxy(options) {
       }
       case "passthrough-messages": {
         const lifecycle = decision.lifecycle;
+        let upstreamHeaders;
+        if (requestUsesHttpProxyPlaceholderKey(req.headers)) {
+          const resolveAuth = options.resolveClaudeCodeAuth ?? readClaudeCodeAuthMaterial;
+          const auth = await resolveAuth();
+          if (!auth) {
+            const message2 = "Claude --bare placeholder cannot call Anthropic and no Claude Code OAuth/API credential was found. Run `claude /login` or set ANTHROPIC_API_KEY.";
+            const errorBody = JSON.stringify({
+              type: "error",
+              error: { type: "invalid_request_error", message: message2 }
+            });
+            if (lifecycle) {
+              writeInferenceResponseErrorLog(lifecycle.logPath, {
+                requestId: decision.requestId,
+                modelId: decision.modelId,
+                provider: "anthropic",
+                route: "passthrough",
+                statusCode: 400,
+                errorContent: errorBody
+              });
+            }
+            res.writeHead(400, {
+              "Content-Type": "application/json",
+              "Content-Length": String(Buffer.byteLength(errorBody))
+            });
+            res.end(errorBody);
+            return;
+          }
+          upstreamHeaders = rewriteUpstreamAuthHeaders(
+            requestHeadersWithoutProxyHeaders(req),
+            auth
+          );
+        }
         await forwardRawAnthropicRequest(
           req,
           res,
@@ -13769,7 +14091,8 @@ async function startHttpProxy(options) {
             route: "passthrough",
             ...usage
           }) : void 0,
-          lifecycle
+          lifecycle,
+          upstreamHeaders
         );
         return;
       }
@@ -16998,9 +17321,9 @@ async function runKeyringRepairCommand(accountFilter) {
 }
 
 // src/patcher.ts
-import { createHash as createHash20 } from "crypto";
-import { readFileSync as readFileSync8 } from "fs";
-import { join as join9 } from "path";
+import { createHash as createHash21 } from "crypto";
+import { readFileSync as readFileSync9 } from "fs";
+import { join as join10 } from "path";
 
 // src/patch-transforms-routing-notice.ts
 var ROUTING_NOTICE_MARKER = "/*ccpatch:routing-notice*/";
@@ -17552,15 +17875,15 @@ function applyLeverframePatches(source, config) {
 import { statSync as statSync6 } from "fs";
 
 // src/claude-installation.ts
-import { createHash as createHash17 } from "crypto";
+import { createHash as createHash18 } from "crypto";
 import { execFileSync } from "child_process";
 import { existsSync as existsSync8, lstatSync as lstatSync3, realpathSync, statSync as statSync2 } from "fs";
-import { homedir } from "os";
-import { join as join7, sep } from "path";
+import { homedir as homedir2 } from "os";
+import { join as join8, sep } from "path";
 function classifyInstallationKind(canonicalPath2) {
-  const home = homedir();
-  const nativeLocalBin = join7(home, ".local", "bin", "claude");
-  if (canonicalPath2 === nativeLocalBin || canonicalPath2.startsWith(`${join7(home, ".local", "bin")}${sep}`)) {
+  const home = homedir2();
+  const nativeLocalBin = join8(home, ".local", "bin", "claude");
+  if (canonicalPath2 === nativeLocalBin || canonicalPath2.startsWith(`${join8(home, ".local", "bin")}${sep}`)) {
     return "native-local-bin";
   }
   if (canonicalPath2.includes(`${sep}homebrew${sep}`) || canonicalPath2.startsWith("/opt/homebrew/") || canonicalPath2.startsWith("/usr/local/Cellar/")) {
@@ -17615,7 +17938,7 @@ function unsupportedClaudeCodeBinaryPatchingMessage(version) {
   return `Claude Code ${version} is not supported for binary patching. Upgrade to Claude Code 2.1.223 or newer.`;
 }
 function computeIdentity(canonicalPath2) {
-  return createHash17("sha256").update(canonicalPath2).digest("hex");
+  return createHash18("sha256").update(canonicalPath2).digest("hex");
 }
 function discoverLogicalPath(explicitTarget) {
   if (explicitTarget?.trim()) {
@@ -17633,7 +17956,7 @@ function discoverLogicalPath(explicitTarget) {
   if (savedOverride) {
     return existsSync8(savedOverride) ? { path: savedOverride, source: "saved-app-override" } : null;
   }
-  const nativeSymlink = join7(homedir(), ".local", "bin", "claude");
+  const nativeSymlink = join8(homedir2(), ".local", "bin", "claude");
   if (existsSync8(nativeSymlink)) {
     return { path: nativeSymlink, source: "native-local-bin" };
   }
@@ -17672,7 +17995,7 @@ function resolveClaudeInstallation(options = {}) {
 
 // src/patch-state.ts
 import { existsSync as existsSync10, unlinkSync as unlinkSync3 } from "fs";
-import { join as join8 } from "path";
+import { join as join9 } from "path";
 
 // src/atomic-file.ts
 import { randomUUID as randomUUID7 } from "crypto";
@@ -17798,22 +18121,22 @@ function copyImmutableFileSync(sourcePath, targetPath, options = {}) {
 // src/patch-state.ts
 var PATCH_STATE_SCHEMA_VERSION = 2;
 function getPatchStateRoot() {
-  return join8(getAppHome(), "state", "patches");
+  return join9(getAppHome(), "state", "patches");
 }
 function getPatchTargetDir(identity) {
-  return join8(getPatchStateRoot(), identity);
+  return join9(getPatchStateRoot(), identity);
 }
 function getPatchManifestPathV2(identity) {
-  return join8(getPatchTargetDir(identity), "manifest.json");
+  return join9(getPatchTargetDir(identity), "manifest.json");
 }
 function getPatchTransactionPathV2(identity) {
-  return join8(getPatchTargetDir(identity), "transaction.json");
+  return join9(getPatchTargetDir(identity), "transaction.json");
 }
 function getPatchLockPathV2(identity) {
-  return join8(getPatchTargetDir(identity), "lock");
+  return join9(getPatchTargetDir(identity), "lock");
 }
 function getPatchBaselinesDirV2(identity) {
-  return join8(getPatchTargetDir(identity), "baselines");
+  return join9(getPatchTargetDir(identity), "baselines");
 }
 function getBaselineFileName(version, baselineSha256) {
   const tag = version.replace(/[^\w.-]+/g, "_");
@@ -17821,7 +18144,7 @@ function getBaselineFileName(version, baselineSha256) {
   return `claude-${tag}-${hash}.orig`;
 }
 function getBaselinePathV2(identity, version, baselineSha256) {
-  return join8(getPatchBaselinesDirV2(identity), getBaselineFileName(version, baselineSha256));
+  return join9(getPatchBaselinesDirV2(identity), getBaselineFileName(version, baselineSha256));
 }
 var MAX_MANIFEST_BYTES = 64 * 1024;
 function isNonEmptyString(value) {
@@ -17850,6 +18173,26 @@ function readManifestV2(identity) {
   } catch {
     return null;
   }
+}
+function readManifestV2File(path) {
+  if (!existsSync10(path)) return null;
+  try {
+    const raw = readFileStrict(path, { maxBytes: MAX_MANIFEST_BYTES, description: "Patch manifest" });
+    return parseManifestV2(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+function readManifestV2FromHome(home, identity) {
+  return readManifestV2File(join9(home, "state", "patches", identity, "manifest.json"));
+}
+function defaultHomeOwnsPatchedBinary(identity, liveSha256, env = process.env) {
+  if (!liveSha256) return false;
+  const override = resolveAppHomeOverride(env);
+  if (!override) return false;
+  const defaultHome = getDefaultAppHome(env);
+  if (override === defaultHome) return false;
+  return readManifestV2FromHome(defaultHome, identity)?.patchedSha256 === liveSha256;
 }
 function writeManifestV2(identity, manifest) {
   ensurePrivateDirectory(getPatchTargetDir(identity));
@@ -17905,8 +18248,8 @@ var clackPatchPresenter = {
 };
 
 // src/patch-transaction.ts
-import { createHash as createHash18 } from "crypto";
-import { existsSync as existsSync11, readFileSync as readFileSync6, statSync as statSync4, unlinkSync as unlinkSync4 } from "fs";
+import { createHash as createHash19 } from "crypto";
+import { existsSync as existsSync11, readFileSync as readFileSync7, statSync as statSync4, unlinkSync as unlinkSync4 } from "fs";
 
 // src/patch-injection.ts
 var LEVERFRAME_INJECTION_MARKER = "/*leverframe:patch:v1*/";
@@ -17967,7 +18310,7 @@ function clearPatchJournal(identity) {
   }
 }
 function sha256File(path) {
-  return createHash18("sha256").update(readFileSync6(path)).digest("hex");
+  return createHash19("sha256").update(readFileSync7(path)).digest("hex");
 }
 var defaultPatchRuntime = {
   async inspect(path, knownPatchedSha256) {
@@ -18023,7 +18366,7 @@ function verifyPatchSites(content, config) {
 }
 function computeSemanticFingerprint(results) {
   const canonical = [...results].map((r) => [r.name, r.status]).sort((a, b) => a[0].localeCompare(b[0]));
-  return createHash18("sha256").update(JSON.stringify(canonical)).digest("hex");
+  return createHash19("sha256").update(JSON.stringify(canonical)).digest("hex");
 }
 async function validatePristineBaseline(input) {
   const { candidate, version, runtime } = input;
@@ -18575,6 +18918,10 @@ async function runLaunchPatchCheckV2(opts = {}, presenter = clackPatchPresenter)
     }
     const legacyRecoveryUnsafe = state === "state_missing" && (!legacyRecovery || legacyRecovery.kind === "unavailable");
     if (legacyRecoveryUnsafe) {
+      const live = await runtime.inspect(installation.canonicalPath);
+      if (defaultHomeOwnsPatchedBinary(installation.identity, live.sha256)) {
+        return;
+      }
       const reason = legacyRecovery?.kind === "unavailable" ? ` (${legacyRecovery.reason})` : "";
       presenter.notice(
         `leverframe: injected claude has no V2 patch state and cannot be recovered safely${reason} Run \`leverframe patch --diagnose\`.`
@@ -18595,11 +18942,11 @@ async function runLaunchPatchCheckV2(opts = {}, presenter = clackPatchPresenter)
 }
 
 // src/patch-diagnostics.ts
-import { existsSync as existsSync13, readFileSync as readFileSync7 } from "fs";
-import { createHash as createHash19 } from "crypto";
+import { existsSync as existsSync13, readFileSync as readFileSync8 } from "fs";
+import { createHash as createHash20 } from "crypto";
 function sha256File2(path) {
   try {
-    return createHash19("sha256").update(readFileSync7(path)).digest("hex");
+    return createHash20("sha256").update(readFileSync8(path)).digest("hex");
   } catch {
     return null;
   }
@@ -18809,11 +19156,11 @@ function formatPatchDiagnosticsText(report) {
 
 // src/patcher.ts
 function getPatchManifestPath() {
-  return join9(getAppHome(), "patch-state.json");
+  return join10(getAppHome(), "patch-state.json");
 }
 function readPatchManifest(path = getPatchManifestPath()) {
   try {
-    const parsed = JSON.parse(readFileSync8(path, "utf8"));
+    const parsed = JSON.parse(readFileSync9(path, "utf8"));
     if (parsed && typeof parsed.binaryPath === "string" && typeof parsed.configHash === "string") {
       return parsed;
     }
@@ -18878,7 +19225,7 @@ function computePatchConfigHash(config, transformVersion = PATCH_TRANSFORMS_VERS
       entry.effort ? [entry.effort.levels, entry.effort.defaultLevel] : null
     ];
   });
-  return createHash20("sha256").update(JSON.stringify([transformVersion, canonical])).digest("hex");
+  return createHash21("sha256").update(JSON.stringify([transformVersion, canonical])).digest("hex");
 }
 function buildDesiredPatchConfig() {
   const prefs = loadPreferences();
@@ -20168,7 +20515,7 @@ async function runClaudeHttpProxyCommand(options) {
       const loaded2 = await loadHttpProxyRoutes();
       console.log("");
       console.log(pc17.bold(pc17.cyan("  DRY RUN \u2014 proxy bridge mode")));
-      console.log("  ANTHROPIC_BASE_URL is not set by leverframe.");
+      console.log("  ANTHROPIC_BASE_URL=https://api.anthropic.com (pinned so Claude settings cannot hijack MITM routing).");
       console.log("  HTTPS_PROXY/HTTP_PROXY=http://127.0.0.1:<random-port>");
       console.log("  NODE_EXTRA_CA_CERTS=~/.leverframe/http-proxy/leverframe-ca.pem");
       console.log("");
@@ -20243,7 +20590,7 @@ async function runClaudeHttpProxyCommand(options) {
       installation,
       env: childEnv,
       model: void 0,
-      extraArgs: [...traceArgs, ...claudeArgs]
+      extraArgs: [...traceArgs, ...withProxyAnthropicOriginSettings(claudeArgs)]
     });
     if (debugLogPath) printTraceLog(debugLogPath);
     return exitCode;

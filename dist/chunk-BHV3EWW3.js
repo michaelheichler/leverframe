@@ -32,6 +32,9 @@ function getAppHome(env = process.env) {
   if (override) return override;
   return join(userHome(env), `.${APP_DIR_NAME}`);
 }
+function getDefaultAppHome(env = process.env) {
+  return join(userHome(env), `.${APP_DIR_NAME}`);
+}
 function getLegacyAppHome(env = process.env) {
   return join(userHome(env), `.${LEGACY_APP_DIR_NAME}`);
 }
@@ -2055,6 +2058,23 @@ async function refreshStoredOAuthCredential(providerId, cred) {
 
 // src/env.ts
 var HTTP_PROXY_AUTH_USER = "leverframe";
+var HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY = "sk-ant-api03-leverframe-http-proxy";
+var ANTHROPIC_API_ORIGIN = "https://api.anthropic.com";
+function ensureAnthropicProxyChildAuth(env) {
+  const apiKey = env["ANTHROPIC_API_KEY"]?.trim();
+  const authToken = env["ANTHROPIC_AUTH_TOKEN"]?.trim();
+  if (apiKey || authToken) return;
+  env["ANTHROPIC_API_KEY"] = HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY;
+}
+function withProxyAnthropicOriginSettings(claudeArgs) {
+  const hasSettings = claudeArgs.some((arg) => arg === "--settings" || arg.startsWith("--settings="));
+  if (hasSettings) return [...claudeArgs];
+  return [
+    "--settings",
+    JSON.stringify({ env: { ANTHROPIC_BASE_URL: ANTHROPIC_API_ORIGIN } }),
+    ...claudeArgs
+  ];
+}
 function detectConflicts() {
   return CONFLICTING_ENV_VARS.filter((name) => process.env[name] !== void 0).map((name) => ({ name, value: process.env[name] }));
 }
@@ -2103,6 +2123,7 @@ function applyAnthropicProxyEnvNormalization(env) {
       delete env["no_proxy"];
     }
   }
+  env["ANTHROPIC_BASE_URL"] = ANTHROPIC_API_ORIGIN;
 }
 function buildHttpProxyChildEnv(proxyPort, caCertPath, proxyToken) {
   const env = { ...process.env };
@@ -2114,6 +2135,7 @@ function buildHttpProxyChildEnv(proxyPort, caCertPath, proxyToken) {
   env["http_proxy"] = proxyUrl;
   env["NODE_EXTRA_CA_CERTS"] = caCertPath;
   env["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"] = "1";
+  ensureAnthropicProxyChildAuth(env);
   return env;
 }
 function oauthProviderKeyringAccount(providerId) {
@@ -2257,7 +2279,9 @@ async function deleteProviderCredential(authRef, diag) {
 }
 
 export {
+  resolveAppHomeOverride,
   getAppHome,
+  getDefaultAppHome,
   ensureLegacyAppHomeMigrated,
   getProvidersPath,
   getCredentialCleanupPath,
@@ -2293,6 +2317,7 @@ export {
   withCredentialMutationLock,
   withProviderMutationLock,
   classifyKeyringError,
+  runIsolatedKeyringOperation,
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
   ensurePrivateDirectory,
@@ -2300,6 +2325,9 @@ export {
   durableAtomicWrite,
   repairStoredCredential,
   diagnoseCredentialStorage,
+  HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY,
+  ensureAnthropicProxyChildAuth,
+  withProxyAnthropicOriginSettings,
   detectConflicts,
   buildChildEnv,
   applyAnthropicProxyEnvNormalization,
@@ -2331,4 +2359,4 @@ export {
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-TAPJBQFC.js.map
+//# sourceMappingURL=chunk-BHV3EWW3.js.map

@@ -17,10 +17,33 @@ import {
   writeInferenceResponseErrorLog,
   type InferenceResponsePhase,
 } from '../trace-log.js';
+import { HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY } from '../env.js';
+import {
+  readClaudeCodeAuthMaterial,
+  type ClaudeCodeCredentialReader,
+} from '../claude-code-credentials.js';
+import { rewriteUpstreamAuthHeaders } from './claude-passthrough-auth.js';
+import { copyResponse as copyHttpProxyResponse } from './copy-response.js';
 
 const ANTHROPIC_HOST = 'api.anthropic.com';
+
+function headerValue(headers: http.IncomingHttpHeaders, name: string): string | undefined {
+  const raw = headers[name];
+  if (Array.isArray(raw)) return raw[0];
+  return raw;
+}
+
+/** Why: placeholder auth must not reach Anthropic (Claude retries 401 for minutes). */
+function requestUsesHttpProxyPlaceholderKey(headers: http.IncomingHttpHeaders): boolean {
+  const apiKey = headerValue(headers, 'x-api-key')?.trim();
+  if (apiKey === HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY) return true;
+  const authorization = headerValue(headers, 'authorization');
+  if (!authorization) return false;
+  const match = /^Bearer\s+(\S+)/i.exec(authorization.trim());
+  return match?.[1] === HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY;
+}
+
 const MAX_BODY_BYTES = 50 * 1024 * 1024;
-const MAX_ERROR_BODY_BYTES = 64 * 1024;
 const MAX_USAGE_SSE_BLOCK_BYTES = 64 * 1024;
 
 type ResponseUsage = {
@@ -190,6 +213,8 @@ export interface HttpProxyOptions {
    * token is generated and returned on HttpProxyHandle.token.
    */
   proxyAuthToken?: string;
+  /** Why: tests inject Claude auth without touching the real keychain. */
+  resolveClaudeCodeAuth?: ClaudeCodeCredentialReader;
 }
 
 export interface HttpProxyHandle {
@@ -312,46 +337,14 @@ function copyResponse(
     onResponseUsageComplete?: () => void;
   } = {},
 ): void {
-  const statusCode = upstream.statusCode ?? 502;
-  const contentType = upstream.headers['content-type'];
-  if (statusCode < 400 && options.onResponseUsage && typeof contentType === 'string' && contentType.includes('text/event-stream')) {
-    observeResponseUsage(upstream, upstream.headers['content-encoding'], {
-      onUsage: options.onResponseUsage,
-      onComplete: options.onResponseUsageComplete ?? (() => {}),
-    });
-  } else {
-    options.onResponseUsageComplete?.();
-  }
-  const errorChunks: Buffer[] = [];
-  let capturedBytes = 0;
-  let truncated = false;
-  let errorLogged = false;
-  const logErrorResponse = (suffix = '') => {
-    if (errorLogged || statusCode < 400 || !options.onErrorResponse) return;
-    errorLogged = true;
-    const body = Buffer.concat(errorChunks).toString('utf8');
-    options.onErrorResponse(statusCode, `${body}${truncated ? ' [truncated]' : ''}${suffix}`);
-  };
-  if (statusCode >= 400 && options.onErrorResponse) {
-    upstream.on('data', (chunk: Buffer) => {
-      if (capturedBytes >= MAX_ERROR_BODY_BYTES) {
-        truncated = true;
-        return;
-      }
-      const available = MAX_ERROR_BODY_BYTES - capturedBytes;
-      const captured = chunk.length > available ? chunk.subarray(0, available) : chunk;
-      errorChunks.push(Buffer.from(captured));
-      capturedBytes += captured.length;
-      if (captured.length < chunk.length) truncated = true;
-    });
-    upstream.once('end', () => logErrorResponse());
-  }
-  res.writeHead(statusCode, upstream.statusMessage, upstream.rawHeaders);
-  upstream.once('error', err => {
-    logErrorResponse(` [stream error: ${err.message}]`);
-    res.destroy();
+  copyHttpProxyResponse(upstream, res, {
+    onErrorResponse: options.onErrorResponse,
+    onResponseUsage: options.onResponseUsage,
+    onResponseUsageComplete: options.onResponseUsageComplete,
+    observeSuccessSseUsage: (message, contentEncoding, hooks) => {
+      observeResponseUsage(message, contentEncoding, hooks);
+    },
   });
-  upstream.pipe(res);
 }
 
 function requestHeadersWithoutProxyHeaders(req: http.IncomingMessage): string[] {
@@ -379,6 +372,7 @@ function forwardRawAnthropicRequest(
     provider: string;
     progressIntervalMs: number;
   },
+  upstreamHeaders?: string[],
 ): Promise<void> {
   return new Promise(resolve => {
     const startedAt = Date.now();
@@ -445,7 +439,7 @@ function forwardRawAnthropicRequest(
       port: origin.port || 443,
       method: req.method,
       path: req.url,
-      headers: requestHeadersWithoutProxyHeaders(req),
+      headers: upstreamHeaders ?? requestHeadersWithoutProxyHeaders(req),
       servername: net.isIP(origin.hostname) ? undefined : origin.hostname,
       rejectUnauthorized,
     }, upstreamRes => {
@@ -893,6 +887,40 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
       }
       case 'passthrough-messages': {
         const lifecycle = decision.lifecycle;
+        let upstreamHeaders: string[] | undefined;
+        if (requestUsesHttpProxyPlaceholderKey(req.headers)) {
+          const resolveAuth = options.resolveClaudeCodeAuth ?? readClaudeCodeAuthMaterial;
+          const auth = await resolveAuth();
+          if (!auth) {
+            const message =
+              'Claude --bare placeholder cannot call Anthropic and no Claude Code '
+              + 'OAuth/API credential was found. Run `claude /login` or set ANTHROPIC_API_KEY.';
+            const errorBody = JSON.stringify({
+              type: 'error',
+              error: { type: 'invalid_request_error', message },
+            });
+            if (lifecycle) {
+              writeInferenceResponseErrorLog(lifecycle.logPath, {
+                requestId: decision.requestId,
+                modelId: decision.modelId,
+                provider: 'anthropic',
+                route: 'passthrough',
+                statusCode: 400,
+                errorContent: errorBody,
+              });
+            }
+            res.writeHead(400, {
+              'Content-Type': 'application/json',
+              'Content-Length': String(Buffer.byteLength(errorBody)),
+            });
+            res.end(errorBody);
+            return;
+          }
+          upstreamHeaders = rewriteUpstreamAuthHeaders(
+            requestHeadersWithoutProxyHeaders(req),
+            auth,
+          );
+        }
         await forwardRawAnthropicRequest(
           req,
           res,
@@ -920,6 +948,7 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
               })
             : undefined,
           lifecycle,
+          upstreamHeaders,
         );
         return;
       }

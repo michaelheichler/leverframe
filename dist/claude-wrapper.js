@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import {
   applyAnthropicProxyEnvNormalization,
+  ensureAnthropicProxyChildAuth,
   findClaudeBinary,
   orderWrapperServerCandidates,
   readLiveServerRuntimeStates
-} from "./chunk-TAPJBQFC.js";
+} from "./chunk-BHV3EWW3.js";
 
 // src/claude-wrapper.ts
 import { spawn } from "child_process";
@@ -24,6 +25,7 @@ function computeWrapperEnv(baseEnv, state) {
     const proxyUrl = state.token ? `http://${PROXY_AUTH_USER}:${encodeURIComponent(state.token)}@127.0.0.1:${state.port}` : `http://127.0.0.1:${state.port}`;
     for (const name of PROXY_ENV_VARS) env[name] = proxyUrl;
     if (state.caPath) env["NODE_EXTRA_CA_CERTS"] = state.caPath;
+    ensureAnthropicProxyChildAuth(env);
     return env;
   }
   for (const name of PROXY_ENV_VARS) delete env[name];

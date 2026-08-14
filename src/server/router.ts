@@ -47,8 +47,10 @@ import type { LanguageModel } from 'ai';
 import { createLanguageModel, isSdkMigratedNpm, maxToolsForNpm } from '../provider-factory.js';
 import {
   anthropicErrorType,
+  clientFacingAnthropicStatus,
   formatUpstreamError,
   isContextLengthExceededError,
+  isTerminalUsageLimitText,
   sdkUpstreamErrorDetails,
   sdkUpstreamResponseHeaders,
   upstreamHttpStatus,
@@ -846,6 +848,9 @@ async function handleAnthropicMessages(
       const message = formatUpstreamError(err);
       const details = sdkUpstreamErrorDetails(err);
       const status = auditSdkError(options, body.model, model, err, message);
+      const clientStatus = clientFacingAnthropicStatus(status, message, details?.errorContent);
+      const terminalUsageLimit = clientStatus !== status
+        && isTerminalUsageLimitText(message, details?.errorContent);
       const contextLengthExceeded = status === 400
         && isContextLengthExceededError(err, message);
       const clientMessage = contextLengthExceeded
@@ -856,8 +861,10 @@ async function handleAnthropicMessages(
         : message;
       plog(() => `sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message}${details?.errorContent ? `, body: ${details.errorContent}` : ''}`);
       if (!res.headersSent) {
-        for (const [name, value] of Object.entries(sdkUpstreamResponseHeaders(details))) {
-          res.setHeader(name, value);
+        if (!terminalUsageLimit) {
+          for (const [name, value] of Object.entries(sdkUpstreamResponseHeaders(details))) {
+            res.setHeader(name, value);
+          }
         }
         if (contextLengthExceeded) {
           sendJson(res, 400, {
@@ -866,17 +873,22 @@ async function handleAnthropicMessages(
             request_id: requestId,
           });
         } else {
-          sendJson(res, status === 500 ? 502 : status, { error: { message: clientMessage } });
+          sendJson(res, clientStatus === 500 ? 502 : clientStatus, {
+            type: 'error',
+            error: { type: anthropicErrorType(clientStatus), message: clientMessage },
+          });
         }
       } else {
-        const errorType = anthropicErrorType(status);
+        const errorType = anthropicErrorType(clientStatus);
         res.write(`event: error\ndata: ${JSON.stringify({
           type: 'error',
           error: {
             type: errorType,
             message: clientMessage,
-            status_code: status,
-            ...(details?.retryAfterMs !== undefined ? { retry_after: Math.ceil(details.retryAfterMs / 1_000) } : {}),
+            status_code: clientStatus,
+            ...(!terminalUsageLimit && details?.retryAfterMs !== undefined
+              ? { retry_after: Math.ceil(details.retryAfterMs / 1_000) }
+              : {}),
           },
           ...(contextLengthExceeded ? { request_id: requestId } : {}),
         })}\n\n`);

@@ -29,6 +29,12 @@ export function getAppHome(env: HomeEnv = process.env): string {
   return join(userHome(env), `.${APP_DIR_NAME}`);
 }
 
+/** User-level ~/.leverframe, ignoring LEVERFRAME_HOME. Patch injection lives on
+ *  the global Claude binary; V2 manifests for that identity may only exist here. */
+export function getDefaultAppHome(env: HomeEnv = process.env): string {
+  return join(userHome(env), `.${APP_DIR_NAME}`);
+}
+
 export function getLegacyAppHome(env: HomeEnv = process.env): string {
   return join(userHome(env), `.${LEGACY_APP_DIR_NAME}`);
 }

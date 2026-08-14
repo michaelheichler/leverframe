@@ -4,13 +4,17 @@ import {
   ToolResultImageError,
 } from '../src/provider-error.js';
 import {
+  clientFacingAnthropicStatus,
   formatUpstreamError,
   isContextLengthExceededError,
+  isTerminalUsageLimitText,
+  messageFromErrorPayload,
   sdkUpstreamErrorDetails,
   sdkUpstreamResponseHeaders,
   upstreamHttpStatus,
 } from '../src/upstream-error.js';
 import { anthropicPromptTooLongMessage } from '../src/anthropic-endpoints.js';
+import { APICallError, RetryError } from 'ai';
 
 describe('typed provider transport errors', () => {
   const error = new ProviderTransportError({
@@ -78,6 +82,51 @@ describe('typed provider transport errors', () => {
       'Retry-After': '3',
       'X-Provider-Request-Id': 'provider-request-123',
     });
+  });
+});
+
+describe('terminal usage limit surfacing', () => {
+  const goUsageBody = JSON.stringify({
+    type: 'error',
+    error: {
+      type: 'GoUsageLimitError',
+      message: 'Monthly usage limit reached. Resets in 13 days.',
+    },
+  });
+
+  it('extracts error.message from OpenCode-style JSON bodies', () => {
+    expect(messageFromErrorPayload(goUsageBody)).toBe(
+      'Monthly usage limit reached. Resets in 13 days.',
+    );
+  });
+
+  it('classifies GoUsageLimitError text as a terminal usage ceiling', () => {
+    expect(isTerminalUsageLimitText(goUsageBody)).toBe(true);
+    expect(isTerminalUsageLimitText('rate limit exceeded')).toBe(false);
+  });
+
+  it('remaps terminal usage ceilings to HTTP 400 for Anthropic clients', () => {
+    expect(clientFacingAnthropicStatus(429, 'Monthly usage limit reached.', goUsageBody)).toBe(400);
+    expect(clientFacingAnthropicStatus(429, 'rate limit exceeded')).toBe(429);
+  });
+
+  it('surfaces GoUsageLimitError text through RetryError wrappers', () => {
+    const inner = new APICallError({
+      message: 'Failed after 2 attempts',
+      url: 'https://example.test',
+      requestBodyValues: {},
+      statusCode: 429,
+      responseBody: goUsageBody,
+      isRetryable: true,
+    });
+    const wrapped = new RetryError({
+      message: 'Failed after 2 attempts. Last error: Failed after 2 attempts',
+      reason: 'maxRetriesExceeded',
+      errors: [inner],
+    });
+    expect(formatUpstreamError(wrapped)).toBe(
+      'Monthly usage limit reached. Resets in 13 days. (HTTP 429)',
+    );
   });
 });
 

@@ -19,6 +19,7 @@ import {
   type PatchRuntime,
 } from './patch-transaction.js';
 import {
+  defaultHomeOwnsPatchedBinary,
   readManifestV2,
   writeManifestV2,
   type PatchManifestV2,
@@ -322,6 +323,10 @@ export async function runLaunchPatchCheckV2(
 
     const legacyRecoveryUnsafe = state === 'state_missing' && (!legacyRecovery || legacyRecovery.kind === 'unavailable');
     if (legacyRecoveryUnsafe) {
+      const live = await runtime.inspect(installation.canonicalPath);
+      if (defaultHomeOwnsPatchedBinary(installation.identity, live.sha256)) {
+        return;
+      }
       const reason = legacyRecovery?.kind === 'unavailable'
         ? ` (${legacyRecovery.reason})`
         : '';

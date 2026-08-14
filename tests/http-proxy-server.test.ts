@@ -10,6 +10,7 @@ import { once } from 'node:events';
 import { gzipSync } from 'node:zlib';
 import { ensureHttpProxyCaBundle, ensureHttpProxyCertificates } from '../src/http-proxy/ca.js';
 import { shouldInterceptConnect, startHttpProxy } from '../src/http-proxy/server.js';
+import { HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY } from '../src/env.js';
 
 const testHome = mkdtempSync(join(tmpdir(), 'leverframe-http-proxy-'));
 const previousRelayHome = process.env['LEVERFRAME_HOME'];
@@ -1231,4 +1232,180 @@ describe('selective HTTP proxy auth', () => {
       await proxy.close();
     }
   });
+
+  it('remaps Anthropic weekly-limit 429 to non-retryable 400 for Claude --print', async () => {
+    const certificates = ensureHttpProxyCertificates();
+    let sawRetryAfter = false;
+    const origin = https.createServer({
+      key: certificates.serverKey,
+      cert: certificates.serverCert,
+    }, async (req, res) => {
+      const ended = once(req, 'end');
+      req.resume();
+      await ended;
+      res.writeHead(429, {
+        'Content-Type': 'application/json',
+        'Retry-After': '60',
+        'Connection': 'close',
+      });
+      res.end(JSON.stringify({
+        type: 'error',
+        error: { type: 'rate_limit_error', message: 'You have hit your weekly limit' },
+      }));
+      sawRetryAfter = true;
+    });
+    const originPort = await listen(origin);
+    const proxy = await startHttpProxy({
+      routes: [],
+      anthropicOrigin: `https://127.0.0.1:${originPort}`,
+      anthropicRejectUnauthorized: false,
+    });
+    try {
+      const body = JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        messages: [{ role: 'user', content: 'Reply with exactly one word: OK' }],
+        max_tokens: 16,
+      });
+      const secure = await connectMitm(proxy.port, certificates.caCert, proxy.token);
+      let response = '';
+      secure.on('data', chunk => { response += chunk.toString(); });
+      secure.write([
+        'POST /v1/messages HTTP/1.1',
+        'Host: api.anthropic.com',
+        'Authorization: Bearer subscription-oauth-token',
+        'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(body)}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n') + body);
+      await once(secure, 'close');
+      expect(sawRetryAfter).toBe(true);
+      expect(response).toMatch(/^HTTP\/1\.1 400 /m);
+      expect(response).toContain('weekly limit');
+      expect(response.toLowerCase()).not.toContain('retry-after');
+    } finally {
+      await proxy.close();
+      await new Promise<void>(resolve => origin.close(() => resolve()));
+    }
+  }, 20_000);
+
+  it('keeps transient Anthropic rate-limit 429 unchanged', async () => {
+    const certificates = ensureHttpProxyCertificates();
+    const origin = https.createServer({
+      key: certificates.serverKey,
+      cert: certificates.serverCert,
+    }, async (req, res) => {
+      const ended = once(req, 'end');
+      req.resume();
+      await ended;
+      res.writeHead(429, {
+        'Content-Type': 'application/json',
+        'Retry-After': '12',
+        'Connection': 'close',
+      });
+      res.end(JSON.stringify({
+        type: 'error',
+        error: { type: 'rate_limit_error', message: 'rate limit exceeded' },
+      }));
+    });
+    const originPort = await listen(origin);
+    const proxy = await startHttpProxy({
+      routes: [],
+      anthropicOrigin: `https://127.0.0.1:${originPort}`,
+      anthropicRejectUnauthorized: false,
+    });
+    try {
+      const body = JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        messages: [{ role: 'user', content: 'hi' }],
+        max_tokens: 8,
+      });
+      const secure = await connectMitm(proxy.port, certificates.caCert, proxy.token);
+      let response = '';
+      secure.on('data', chunk => { response += chunk.toString(); });
+      secure.write([
+        'POST /v1/messages HTTP/1.1',
+        'Host: api.anthropic.com',
+        'Authorization: Bearer subscription-oauth-token',
+        'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(body)}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n') + body);
+      await once(secure, 'close');
+      expect(response).toMatch(/^HTTP\/1\.1 429 /m);
+      expect(response.toLowerCase()).toContain('retry-after');
+      expect(response).toContain('rate limit exceeded');
+    } finally {
+      await proxy.close();
+      await new Promise<void>(resolve => origin.close(() => resolve()));
+    }
+  }, 20_000);
+
+  it('substitutes Claude OAuth for placeholder keys and never forwards the placeholder', async () => {
+    const certificates = ensureHttpProxyCertificates();
+    const seenAuth: string[] = [];
+    const seenApiKeys: string[] = [];
+    const origin = https.createServer({
+      key: certificates.serverKey,
+      cert: certificates.serverCert,
+    }, async (req, res) => {
+      const auth = req.headers['authorization'];
+      const apiKey = req.headers['x-api-key'];
+      if (typeof auth === 'string') seenAuth.push(auth);
+      if (typeof apiKey === 'string') seenApiKeys.push(apiKey);
+      const ended = once(req, 'end');
+      req.resume();
+      await ended;
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Connection': 'close' });
+      res.end(JSON.stringify({
+        id: 'msg_test',
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'OK' }],
+        model: 'claude-haiku-4-5-20251001',
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }));
+    });
+    const originPort = await listen(origin);
+    const proxy = await startHttpProxy({
+      routes: [],
+      anthropicOrigin: `https://127.0.0.1:${originPort}`,
+      anthropicRejectUnauthorized: false,
+      resolveClaudeCodeAuth: async () => ({ kind: 'oauth', token: 'claude-oauth-from-store' }),
+    });
+    try {
+      const body = JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        messages: [{ role: 'user', content: 'Reply with exactly one word: OK' }],
+        max_tokens: 16,
+      });
+      const secure = await connectMitm(proxy.port, certificates.caCert, proxy.token);
+      let response = '';
+      secure.on('data', chunk => { response += chunk.toString(); });
+      secure.write([
+        'POST /v1/messages HTTP/1.1',
+        'Host: api.anthropic.com',
+        `Authorization: Bearer ${HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY}`,
+        `x-api-key: ${HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY}`,
+        'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(body)}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n') + body);
+      await once(secure, 'close');
+      expect(response).toMatch(/^HTTP\/1\.1 200 /m);
+      expect(response).toContain('"OK"');
+      expect(seenAuth).toEqual(['Bearer claude-oauth-from-store']);
+      expect(seenApiKeys).toEqual([]);
+      expect(seenAuth.join('\n')).not.toContain(HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY);
+    } finally {
+      await proxy.close();
+      await new Promise<void>(resolve => origin.close(() => resolve()));
+    }
+  }, 20_000);
 });

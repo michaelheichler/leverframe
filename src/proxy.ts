@@ -27,8 +27,10 @@ import {
 } from './sdk-adapter.js';
 import {
   anthropicErrorType,
+  clientFacingAnthropicStatus,
   formatUpstreamError,
   isContextLengthExceededError,
+  isTerminalUsageLimitText,
   sdkUpstreamErrorDetails,
   sdkUpstreamResponseHeaders,
   upstreamHttpStatus,
@@ -642,6 +644,13 @@ export async function startProxyCatalog(
           const message = formatUpstreamError(err);
           const details = sdkUpstreamErrorDetails(err);
           const upstreamStatus = details?.statusCode ?? upstreamHttpStatus(err, message);
+          const clientStatus = clientFacingAnthropicStatus(
+            upstreamStatus,
+            message,
+            details?.errorContent,
+          );
+          const terminalUsageLimit = clientStatus !== upstreamStatus
+            && isTerminalUsageLimitText(message, details?.errorContent);
           const contextLengthExceeded = upstreamStatus === 400
             && isContextLengthExceededError(err, message);
           const clientMessage = contextLengthExceeded
@@ -659,29 +668,33 @@ export async function startProxyCatalog(
               route: 'translated',
               statusCode: upstreamStatus,
               errorContent: details?.errorContent ?? message,
-              isRetryable: details?.isRetryable,
+              isRetryable: terminalUsageLimit ? false : details?.isRetryable,
               attemptCount: details?.attemptCount,
             });
           }
           if (!res.headersSent) {
-            for (const [name, value] of Object.entries(sdkUpstreamResponseHeaders(details))) {
-              res.setHeader(name, value);
+            if (!terminalUsageLimit) {
+              for (const [name, value] of Object.entries(sdkUpstreamResponseHeaders(details))) {
+                res.setHeader(name, value);
+              }
             }
             anthropicError(
               res,
-              upstreamStatus === 500 ? 502 : upstreamStatus,
+              clientStatus === 500 ? 502 : clientStatus,
               clientMessage,
               contextLengthExceeded ? (relayRequestId ?? randomUUID()) : undefined,
             );
           } else {
-            const errorType = anthropicErrorType(upstreamStatus);
+            const errorType = anthropicErrorType(clientStatus);
             res.write(`event: error\ndata: ${JSON.stringify({
               type: 'error',
               error: {
                 type: errorType,
                 message: clientMessage,
-                status_code: upstreamStatus,
-                ...(details?.retryAfterMs !== undefined ? { retry_after: Math.ceil(details.retryAfterMs / 1_000) } : {}),
+                status_code: clientStatus,
+                ...(!terminalUsageLimit && details?.retryAfterMs !== undefined
+                  ? { retry_after: Math.ceil(details.retryAfterMs / 1_000) }
+                  : {}),
               },
               ...(contextLengthExceeded ? { request_id: relayRequestId ?? randomUUID() } : {}),
             })}\n\n`);

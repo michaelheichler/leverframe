@@ -8,7 +8,7 @@
 
 import { existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { getAppHome } from './paths.js';
+import { getAppHome, getDefaultAppHome, resolveAppHomeOverride } from './paths.js';
 import { ensurePrivateDirectory, readFileStrict } from './durable-io.js';
 import { atomicWriteJsonSync, copyImmutableFileSync } from './atomic-file.js';
 import { PATCH_TRANSFORMS_VERSION } from './patch-transforms.js';
@@ -102,6 +102,39 @@ export function readManifestV2(identity: string): PatchManifestV2 | null {
   } catch {
     return null;
   }
+}
+
+function readManifestV2File(path: string): PatchManifestV2 | null {
+  if (!existsSync(path)) return null;
+  try {
+    const raw = readFileStrict(path, { maxBytes: MAX_MANIFEST_BYTES, description: 'Patch manifest' });
+    return parseManifestV2(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+/** Read a V2 manifest from an explicit Leverframe home (not the current LEVERFRAME_HOME). */
+export function readManifestV2FromHome(home: string, identity: string): PatchManifestV2 | null {
+  return readManifestV2File(join(home, 'state', 'patches', identity, 'manifest.json'));
+}
+
+/**
+ * True when LEVERFRAME_HOME is an override that has no V2 state, but the
+ * default ~/.leverframe already recorded this live binary as a completed V2
+ * patch. Launch must not report "injected claude has no V2 patch state".
+ */
+export function defaultHomeOwnsPatchedBinary(
+  identity: string,
+  liveSha256: string | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (!liveSha256) return false;
+  const override = resolveAppHomeOverride(env);
+  if (!override) return false;
+  const defaultHome = getDefaultAppHome(env);
+  if (override === defaultHome) return false;
+  return readManifestV2FromHome(defaultHome, identity)?.patchedSha256 === liveSha256;
 }
 
 /** Publish a target's V2 manifest atomically and durably. */

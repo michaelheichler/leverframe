@@ -19,6 +19,41 @@ export { classifyKeyringError } from './credential-store.js';
 
 const HTTP_PROXY_AUTH_USER = 'leverframe';
 
+/** Placeholder so Claude Code --bare (no keychain/OAuth) still authenticates
+ *  locally and sends /v1/messages the HTTP MITM can route. Not an Anthropic
+ *  credential; translated favorites use Leverframe provider OAuth, and
+ *  Anthropic passthrough still uses a real ANTHROPIC_API_KEY when the parent
+ *  provided one. */
+export const HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY = 'sk-ant-api03-leverframe-http-proxy';
+
+/** Official Anthropic origin. Pinning this in proxy-mode child env overrides
+ *  Claude settings.json ANTHROPIC_BASE_URL (e.g. a local Headroom gateway)
+ *  so --bare API-key traffic still CONNECTs to api.anthropic.com through the MITM. */
+export const ANTHROPIC_API_ORIGIN = 'https://api.anthropic.com';
+
+/** Claude --bare reads only ANTHROPIC_API_KEY / apiKeyHelper. Inject a
+ *  placeholder when the child has neither an API key nor an auth token so
+ *  proxy mode does not die at "Not logged in · Please run /login". */
+export function ensureAnthropicProxyChildAuth(env: NodeJS.ProcessEnv): void {
+  const apiKey = env['ANTHROPIC_API_KEY']?.trim();
+  const authToken = env['ANTHROPIC_AUTH_TOKEN']?.trim();
+  if (apiKey || authToken) return;
+  env['ANTHROPIC_API_KEY'] = HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY;
+}
+
+/** Claude user settings.env.ANTHROPIC_BASE_URL overlays process env (Headroom
+ *  etc.). Pass additional --settings so MITM still sees CONNECT api.anthropic.com.
+ *  Leaves the user's --settings flag untouched. */
+export function withProxyAnthropicOriginSettings(claudeArgs: string[]): string[] {
+  const hasSettings = claudeArgs.some(arg => arg === '--settings' || arg.startsWith('--settings='));
+  if (hasSettings) return [...claudeArgs];
+  return [
+    '--settings',
+    JSON.stringify({ env: { ANTHROPIC_BASE_URL: ANTHROPIC_API_ORIGIN } }),
+    ...claudeArgs,
+  ];
+}
+
 export function detectConflicts(): ConflictInfo[] {
   return CONFLICTING_ENV_VARS
     .filter(name => process.env[name] !== undefined)
@@ -107,6 +142,7 @@ export function applyAnthropicProxyEnvNormalization(env: NodeJS.ProcessEnv): voi
       delete env['no_proxy'];
     }
   }
+  env['ANTHROPIC_BASE_URL'] = ANTHROPIC_API_ORIGIN;
 }
 
 export function buildHttpProxyChildEnv(
@@ -126,6 +162,7 @@ export function buildHttpProxyChildEnv(
   env['NODE_EXTRA_CA_CERTS'] = caCertPath;
   // Leverframe maps provider context errors, but Claude cannot compact one oversized tool result.
   env['CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT'] = '1';
+  ensureAnthropicProxyChildAuth(env);
   return env;
 }
 

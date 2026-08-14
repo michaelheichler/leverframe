@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { computeWrapperEnv, PROXY_AUTH_USER } from '../src/wrapper-env.js';
+import { HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY } from '../src/env.js';
 import {
   readLiveServerRuntimeState,
   registerServerRuntimeState,
@@ -18,7 +19,7 @@ const baseEnv: NodeJS.ProcessEnv = {
 };
 
 describe('computeWrapperEnv', () => {
-  it('proxy-mode server: injects proxy vars + CA and removes ANTHROPIC_BASE_URL', () => {
+  it('proxy-mode server: injects proxy vars + CA and pins ANTHROPIC_BASE_URL to the official origin', () => {
     const state: ServerRuntimeState = {
       mode: 'proxy',
       port: 17645,
@@ -30,13 +31,27 @@ describe('computeWrapperEnv', () => {
 
     const env = computeWrapperEnv(baseEnv, state);
 
-    expect(env['ANTHROPIC_BASE_URL']).toBeUndefined();
+    expect(env['ANTHROPIC_BASE_URL']).toBe('https://api.anthropic.com');
     const expectedUrl = `http://${PROXY_AUTH_USER}:proxy-secret-123@127.0.0.1:17645`;
     for (const name of ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy']) {
       expect(env[name]).toBe(expectedUrl);
     }
     expect(env['NODE_EXTRA_CA_CERTS']).toBe('/home/u/.leverframe/http-proxy/leverframe-ca.pem');
     expect(env['PATH']).toBe('/usr/bin');
+    expect(env['ANTHROPIC_API_KEY']).toBe(HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY);
+  });
+
+  it('proxy-mode server keeps a parent Anthropic API key instead of the placeholder', () => {
+    const state: ServerRuntimeState = {
+      mode: 'proxy',
+      port: 17645,
+      pid: process.pid,
+      caPath: '/tmp/ca.pem',
+      token: 'proxy-secret-123',
+      startedAt: '2026-07-20T00:00:00.000Z',
+    };
+    const env = computeWrapperEnv({ ...baseEnv, ANTHROPIC_API_KEY: 'sk-ant-child' }, state);
+    expect(env['ANTHROPIC_API_KEY']).toBe('sk-ant-child');
   });
 
   it('proxy-mode server without token emits a credential-less URL (legacy upgrade)', () => {
@@ -175,7 +190,7 @@ describe('computeWrapperEnv proxy-mode env normalization', () => {
     expect(env['ANTHROPIC_VERTEX_PROJECT_ID']).toBeUndefined();
     expect(env['ANTHROPIC_BEDROCK_BASE_URL']).toBeUndefined();
     expect(env['ANTHROPIC_FOUNDRY_API_KEY']).toBeUndefined();
-    expect(env['ANTHROPIC_BASE_URL']).toBeUndefined();
+    expect(env['ANTHROPIC_BASE_URL']).toBe('https://api.anthropic.com');
   });
 
   it('preserves the child Anthropic auth + model env vars', () => {

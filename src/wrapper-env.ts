@@ -1,6 +1,6 @@
 // src/wrapper-env.ts
 import type { ServerRuntimeState } from './server-runtime.js';
-import { applyAnthropicProxyEnvNormalization } from './env.js';
+import { applyAnthropicProxyEnvNormalization, ensureAnthropicProxyChildAuth } from './env.js';
 
 const PROXY_ENV_VARS = ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy'] as const;
 
@@ -20,6 +20,7 @@ export function computeWrapperEnv(
       : `http://127.0.0.1:${state.port}`;
     for (const name of PROXY_ENV_VARS) env[name] = proxyUrl;
     if (state.caPath) env['NODE_EXTRA_CA_CERTS'] = state.caPath;
+    ensureAnthropicProxyChildAuth(env);
     return env;
   }
 

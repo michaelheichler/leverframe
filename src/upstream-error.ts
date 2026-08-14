@@ -111,6 +111,42 @@ export function isContextLengthExceededError(err: unknown, formattedMessage = ''
   ));
 }
 
+export function messageFromErrorPayload(payload: string | undefined): string | undefined {
+  if (!payload?.trim()) return undefined;
+  const trimmed = payload.trim();
+  if (!trimmed.startsWith('{')) return undefined;
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      error?: { message?: string };
+      message?: string;
+    };
+    if (typeof parsed.error?.message === 'string' && parsed.error.message.trim()) {
+      return parsed.error.message.trim();
+    }
+    if (typeof parsed.message === 'string' && parsed.message.trim()) {
+      return parsed.message.trim();
+    }
+  } catch { /* ignore */ }
+  return undefined;
+}
+
+/** Why: Claude --print retries HTTP 429 until timeout, so terminal ceilings must not stay 429. */
+export function isTerminalUsageLimitText(...parts: Array<string | undefined>): boolean {
+  const text = parts.filter((part): part is string => typeof part === 'string').join('\n');
+  if (!text) return false;
+  return /GoUsageLimitError|monthly usage limit|weekly limit|out of quota|credit balance is too low|insufficient credits?|usage limit reached|hit your[\s\S]{0,40}limit/i.test(text);
+}
+
+/** Why: remap quota ceilings to 400 so Claude exits with the limit message instead of hanging. */
+export function clientFacingAnthropicStatus(
+  upstreamStatus: number,
+  message: string,
+  errorContent?: string,
+): number {
+  if (isTerminalUsageLimitText(message, errorContent)) return 400;
+  return upstreamStatus;
+}
+
 export function formatUpstreamError(err: unknown): string {
   if (!err || typeof err !== 'object') return 'Upstream model request failed.';
 
@@ -121,6 +157,13 @@ export function formatUpstreamError(err: unknown): string {
       : details.errorContent;
   }
 
+  // Why: outer RetryError often drops responseBody, hiding OpenCode GoUsageLimitError text.
+  const fromDetails = messageFromErrorPayload(details?.errorContent);
+  if (fromDetails) {
+    const short = sanitizeMessage(fromDetails);
+    return details?.statusCode ? `${short} (HTTP ${details.statusCode})` : short;
+  }
+
   const rec = err as ApiCallLike;
 
   if (rec.data?.error?.message) {
@@ -129,13 +172,11 @@ export function formatUpstreamError(err: unknown): string {
   }
 
   if (rec.responseBody) {
-    try {
-      const parsed = JSON.parse(rec.responseBody) as { error?: { message?: string } };
-      if (parsed.error?.message) {
-        const short = sanitizeMessage(parsed.error.message);
-        return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
-      }
-    } catch { /* ignore */ }
+    const fromBody = messageFromErrorPayload(rec.responseBody);
+    if (fromBody) {
+      const short = sanitizeMessage(fromBody);
+      return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
+    }
   }
 
   const last = rec.lastError;

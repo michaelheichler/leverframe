@@ -11,7 +11,7 @@ import {
 } from '../src/patch-legacy-recovery.js';
 import { addLeverframeInjectionMarker, classifyLeverframeInjectionByHash } from '../src/patch-injection.js';
 import { diagnosePatchV2, formatPatchDiagnosticsText } from '../src/patch-diagnostics.js';
-import { readManifestV2 } from '../src/patch-state.js';
+import { defaultHomeOwnsPatchedBinary, readManifestV2 } from '../src/patch-state.js';
 import {
   checkResolvedPatchState,
   runLaunchPatchCheckV2,
@@ -551,3 +551,84 @@ describe('non-interactive launch auto-patch', () => {
     expect((await checkResolvedPatchState(f.installation, runtime)).state).toBe('unpatched');
   });
 });
+
+describe('default-home V2 ownership across LEVERFRAME_HOME', () => {
+  it('recognizes a live hash recorded in ~/.leverframe while LEVERFRAME_HOME is isolated', () => {
+    const f = fixture('default-home-owns');
+    const previousUserHome = process.env['HOME'];
+    const defaultHome = join(f.root, 'user-home');
+    mkdirSync(join(defaultHome, '.leverframe', 'state', 'patches', f.installation.identity), { recursive: true });
+    const liveHash = sha256(readFileSync(f.livePath));
+    writeFileSync(join(defaultHome, '.leverframe', 'state', 'patches', f.installation.identity, 'manifest.json'), JSON.stringify({
+      schemaVersion: 2,
+      transformVersion: 7,
+      generation: 1,
+      logicalPath: f.installation.logicalPath,
+      canonicalPath: f.installation.canonicalPath,
+      installationKind: 'custom',
+      claudeVersion: VERSION,
+      baselineSha256: sha256(BASELINE),
+      baselinePath: f.backupPath,
+      patchedSha256: liveHash,
+      patchedSize: Buffer.byteLength(f.liveContent),
+      semanticFingerprint: 'test-fingerprint',
+      configHash: 'test-config',
+      provenance: 'live',
+      completedAt: '2026-08-14T00:00:00.000Z',
+    }));
+    process.env['HOME'] = defaultHome;
+    try {
+      expect(defaultHomeOwnsPatchedBinary(f.installation.identity, liveHash)).toBe(true);
+      expect(defaultHomeOwnsPatchedBinary(f.installation.identity, 'other-hash')).toBe(false);
+    } finally {
+      if (previousUserHome === undefined) delete process.env['HOME'];
+      else process.env['HOME'] = previousUserHome;
+    }
+  });
+
+  it('does not warn that V2 state is unrecoverable when the default home already owns this binary', async () => {
+    const f = fixture('default-home-launch-skip');
+    seedCommandInputs(f);
+    const previousUserHome = process.env['HOME'];
+    const defaultHome = join(f.root, 'user-home');
+    mkdirSync(join(defaultHome, '.leverframe', 'state', 'patches', f.installation.identity), { recursive: true });
+    const liveHash = sha256(readFileSync(f.livePath));
+    writeFileSync(join(defaultHome, '.leverframe', 'state', 'patches', f.installation.identity, 'manifest.json'), JSON.stringify({
+      schemaVersion: 2,
+      transformVersion: 7,
+      generation: 1,
+      logicalPath: f.installation.logicalPath,
+      canonicalPath: f.installation.canonicalPath,
+      installationKind: 'custom',
+      claudeVersion: VERSION,
+      baselineSha256: sha256(BASELINE),
+      baselinePath: f.backupPath,
+      patchedSha256: liveHash,
+      patchedSize: Buffer.byteLength(f.liveContent),
+      semanticFingerprint: 'test-fingerprint',
+      configHash: 'test-config',
+      provenance: 'live',
+      completedAt: '2026-08-14T00:00:00.000Z',
+    }));
+    process.env['HOME'] = defaultHome;
+    // Isolated homes used by live smoke have no legacy backup of the global
+    // Claude binary; recovery is unavailable and used to warn on every launch.
+    rmSync(f.backupPath, { force: true });
+    const notices: string[] = [];
+    const recorded = recordingPresenter();
+    const presenter = { ...recorded.presenter, notice: (message: string) => notices.push(message) };
+    const patchCalls: string[] = [];
+    try {
+      await runLaunchPatchCheckV2(
+        { installation: f.installation, runtime: fakeRuntime({ patchCalls }) },
+        presenter,
+      );
+      expect(notices.some(message => message.includes('no V2 patch state'))).toBe(false);
+      expect(patchCalls).toEqual([]);
+    } finally {
+      if (previousUserHome === undefined) delete process.env['HOME'];
+      else process.env['HOME'] = previousUserHome;
+    }
+  });
+});
+

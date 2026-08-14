@@ -3,7 +3,7 @@ import * as p from '@clack/prompts';
 import { leverframeIntro, providerSelectOption } from './ui.js';
 import { launchClaude } from './launch.js';
 import { resolveClaudeInstallation, type ClaudeInstallation } from './claude-installation.js';
-import { detectConflicts, buildChildEnv, buildHttpProxyChildEnv } from './env.js';
+import { detectConflicts, buildChildEnv, buildHttpProxyChildEnv, withProxyAnthropicOriginSettings } from './env.js';
 import { claudeCodeClientModelId } from './context-model-id.js';
 import { needsFirstRunSetup, runFirstRunWizard } from './first-run.js';
 import { startProxy, startProxyCatalog } from './proxy.js';
@@ -113,7 +113,7 @@ async function runClaudeHttpProxyCommand(options: HttpProxyLaunchOptions): Promi
       const loaded = await loadHttpProxyRoutes();
       console.log('');
       console.log(pc.bold(pc.cyan('  DRY RUN — proxy bridge mode')));
-      console.log('  ANTHROPIC_BASE_URL is not set by leverframe.');
+      console.log('  ANTHROPIC_BASE_URL=https://api.anthropic.com (pinned so Claude settings cannot hijack MITM routing).');
       console.log('  HTTPS_PROXY/HTTP_PROXY=http://127.0.0.1:<random-port>');
       console.log('  NODE_EXTRA_CA_CERTS=~/.leverframe/http-proxy/leverframe-ca.pem');
       console.log('');
@@ -197,7 +197,7 @@ async function runClaudeHttpProxyCommand(options: HttpProxyLaunchOptions): Promi
       installation,
       env: childEnv,
       model: undefined,
-      extraArgs: [...traceArgs, ...claudeArgs],
+      extraArgs: [...traceArgs, ...withProxyAnthropicOriginSettings(claudeArgs)],
     });
     if (debugLogPath) printTraceLog(debugLogPath);
     return exitCode;
