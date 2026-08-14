@@ -1135,7 +1135,7 @@ async function readStoredCredential(account, diag) {
     if (fallback !== null) return promoteFallbackCredential(account, fallback, diag);
     if (primary.ok && primary.deleted) return null;
     if (primary.ok && primary.value !== null) return primary.value;
-    if (repaired) return null;
+    if (repaired && primary.ok) return null;
     for (const service of LEGACY_KEYRING_SERVICES) {
       const legacy = await readKeyringService(service, account);
       if (legacy.ok && legacy.value !== null) {
@@ -2381,4 +2381,4 @@ export {
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-4ZAB5OMV.js.map
+//# sourceMappingURL=chunk-6QC5RULD.js.map

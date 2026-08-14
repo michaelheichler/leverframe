@@ -306,6 +306,34 @@ describe('credential fallback', () => {
     ]);
   });
 
+  it('still migrates legacy secrets when post-repair re-read fails without integrity', async () => {
+    temporaryHome();
+    const account = 'provider:openai';
+    let leverframeReads = 0;
+    const operation = vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockImplementation(async input => {
+      if (input.operation === 'read' && input.service === 'leverframe') {
+        leverframeReads += 1;
+        if (leverframeReads === 1) {
+          return { ok: false, error: 'integrity: published keyring credential does not match its journal' };
+        }
+        return { ok: false, error: 'Secret Service unavailable' };
+      }
+      if (input.operation === 'repair') return { ok: true, value: null };
+      if (input.operation === 'read' && input.service === 'clodex') return { ok: true, value: 'legacy-secret' };
+      if (input.operation === 'write' && input.service === 'leverframe') return { ok: true, value: null };
+      throw new Error(`Unexpected keyring operation: ${input.operation} ${input.service}`);
+    });
+
+    await expect(readStoredCredential(account)).resolves.toBe('legacy-secret');
+    expect(operation.mock.calls.map(call => [call[0].operation, call[0].service])).toEqual([
+      ['read', 'leverframe'],
+      ['repair', 'leverframe'],
+      ['read', 'leverframe'],
+      ['read', 'clodex'],
+      ['write', 'leverframe'],
+    ]);
+  });
+
   it('removes fallback data before starting explicit keyring deletion', async () => {
     temporaryHome();
     const account = 'provider:openai';
