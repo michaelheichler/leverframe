@@ -236,7 +236,25 @@ describe('credential fallback', () => {
     });
 
     await expect(readStoredCredential(account)).resolves.toBeNull();
-    expect(operation).toHaveBeenCalledOnce();
+    expect(operation).toHaveBeenCalledTimes(2);
+    expect(operation.mock.calls.map(call => call[0].operation)).toEqual(['read', 'repair']);
+    expect(readFallbackCredential(account)).toBe('fallback-token');
+  });
+
+  it('auto-repairs transient keyring integrity errors before reading fallback', async () => {
+    temporaryHome();
+    const account = 'provider:openai';
+    writeFallbackCredential(account, 'fallback-token');
+    const operation = vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockImplementation(async input => {
+      if (input.operation === 'read') {
+        return { ok: false, error: 'integrity: published keyring credential does not match its journal' };
+      }
+      if (input.operation === 'repair') return { ok: true, value: 'live-token' };
+      throw new Error(`Unexpected keyring operation: ${input.operation}`);
+    });
+
+    await expect(readStoredCredential(account)).resolves.toBe('live-token');
+    expect(operation.mock.calls.map(call => call[0].operation)).toEqual(['read', 'repair']);
     expect(readFallbackCredential(account)).toBe('fallback-token');
   });
 
