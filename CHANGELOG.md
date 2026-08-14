@@ -2,6 +2,31 @@
 
 All notable changes to Leverframe are recorded here.
 
+## [0.3.8] - 2026-08-14
+
+### Added
+
+- Live Claude Code provider smoke test (`tests/live-provider-claude-smoke.test.ts`) that routes each configured provider through `leverframe claude --proxy` with `--bare --tools ""`. Quota and rate-limit responses count as pass.
+- Copilot message tests for latest-turn-only image attachment on stateful sessions.
+- Credential durability test for self-healing a stale active journal when the published credential is missing.
+
+### Changed
+
+- Provider credential loading during catalog startup is sequential instead of parallel, reducing Linux D-Bus keyring timeouts when many providers are registered.
+- Copilot stateful sessions attach images from the latest user turn only, not the full conversation history.
+- Build copies `keyring-child.mjs` with Node `copyFileSync` instead of `cp` for cross-platform compatibility.
+
+### Fixed
+
+- `--bare` Claude Code proxy runs authenticate correctly (Anthropic origin pinning, placeholder key handling, passthrough OAuth on macOS via `security` CLI).
+- Anthropic usage-limit responses map to client-facing 400 instead of 503 where appropriate.
+- V2 patch false positive when smoke tests use a temporary `LEVERFRAME_HOME`.
+- Keyring journal self-heals when the active descriptor is stale. Clears orphaned retired chunks, verifies journal removal, and drops only retired chunk material when the published slot is empty.
+- Credential reads auto-repair transient keyring integrity errors before falling back or failing. Staged fallback still wins over a readable but older keyring value.
+- After a successful auto-repair that leaves the leverframe slot empty, legacy `clodex`/`relay-ai` secrets are not revived. Post-repair re-read failures still allow legacy migration.
+- Copilot rejects remote non-image file parts in serialized history (requires `image/*` media type).
+- CI secret scan allowlists the documented HTTP proxy placeholder key. Provenance test timeout adjusted for Ubuntu CI.
+
 ## Unreleased
 
 ### Added

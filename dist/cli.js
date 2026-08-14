@@ -75,7 +75,7 @@ import {
   withProxyAnthropicOriginSettings,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-6QC5RULD.js";
+} from "./chunk-JSKJ4645.js";
 
 // src/cli.ts
 import pc18 from "picocolors";
