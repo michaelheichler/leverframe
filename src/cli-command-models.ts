@@ -6,7 +6,7 @@ import { fetchProviderCatalog, providersForPicker } from './provider-catalog.js'
 import { MAX_MODEL_CATALOG } from './constants.js';
 import type { FavoriteModel, LocalProvider, LocalProviderModel } from './types.js';
 import { addFavorite, removeFavorite, isFavorite } from './favorites.js';
-import { isValidModelAlias, modelAliasTarget, parseModelAliasAssignment } from './model-aliases.js';
+import { canonicalizeModelAliasName, modelAliasTarget, parseModelAliasAssignment } from './model-aliases.js';
 import {
   browseByProviderChoice,
   buildGlobalFavoriteIndex,
@@ -53,8 +53,8 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
     return 0;
   }
   if (opts.unalias !== undefined) {
-    const name = opts.unalias.trim();
-    if (!isValidModelAlias(name)) {
+    const name = canonicalizeModelAliasName(opts.unalias);
+    if (name === null) {
       p.log.error('Alias names must be 1-64 letters, numbers, dots, underscores, or hyphens.');
       return 1;
     }

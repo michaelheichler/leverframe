@@ -16,6 +16,7 @@ import {
   buildChildEnv,
   buildClaudeVersionProbe,
   buildHttpProxyChildEnv,
+  canonicalizeModelAliasName,
   classifyKeyringError,
   claudeCodeClientModelId,
   deleteProviderCredential,
@@ -40,11 +41,14 @@ import {
   getServerListenMode,
   getServerMaskGatewayIds,
   isDiscoveryDisabled,
+  isValidModelAlias,
   launchClaude,
   loadPreferences,
+  modelAliasTarget,
   oauthCredentialToKeychainJson,
   oauthProviderKeyringAccount,
   parseAuthRef,
+  parseModelAliasAssignment,
   readFileStrict,
   recordLaunchSelection,
   registerServerRuntimeState,
@@ -75,7 +79,7 @@ import {
   withProxyAnthropicOriginSettings,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-JSKJ4645.js";
+} from "./chunk-JZFX7JTQ.js";
 
 // src/cli.ts
 import pc18 from "picocolors";
@@ -11114,38 +11118,6 @@ function buildCatalogRoutes(startingRoute, favorites, resolveRoute, max = MAX_MO
   return { routes, droppedFavorites };
 }
 
-// src/model-aliases.ts
-var MODEL_ALIAS_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-function isValidModelAlias(name) {
-  return MODEL_ALIAS_PATTERN.test(name);
-}
-function parseModelAliasAssignment(value) {
-  const separator = value.indexOf("=");
-  if (separator < 1 || separator === value.length - 1) {
-    return { error: "Alias must use name=leverframe:<provider-id>:<model-id>." };
-  }
-  const name = value.slice(0, separator).trim();
-  if (!isValidModelAlias(name)) {
-    return { error: "Alias names must be 1-64 letters, numbers, dots, underscores, or hyphens." };
-  }
-  const rawTarget = value.slice(separator + 1).trim();
-  const target = rawTarget.startsWith("leverframe:") ? rawTarget.slice("leverframe:".length) : rawTarget;
-  const targetSeparator = target.indexOf(":");
-  if (targetSeparator < 1 || targetSeparator === target.length - 1) {
-    return { error: "Alias target must use leverframe:<provider-id>:<model-id>." };
-  }
-  return {
-    name,
-    providerId: target.slice(0, targetSeparator),
-    // `models --list` prints Claude's synthetic context suffix. It is a client
-    // routing hint, not part of the provider catalog id stored in favorites.
-    modelId: stripOneMContextSuffix(target.slice(targetSeparator + 1))
-  };
-}
-function modelAliasTarget(alias) {
-  return `leverframe:${alias.providerId}:${alias.modelId}`;
-}
-
 // src/http-proxy/routes.ts
 var HTTP_PROXY_MODEL_PREFIX = "leverframe:";
 function httpProxyModelId(providerId, modelId) {
@@ -20128,8 +20100,8 @@ async function runModelsCommand(opts = {}) {
     return 0;
   }
   if (opts.unalias !== void 0) {
-    const name = opts.unalias.trim();
-    if (!isValidModelAlias(name)) {
+    const name = canonicalizeModelAliasName(opts.unalias);
+    if (name === null) {
       p13.log.error("Alias names must be 1-64 letters, numbers, dots, underscores, or hyphens.");
       return 1;
     }

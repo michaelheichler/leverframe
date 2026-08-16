@@ -1,6 +1,21 @@
 # Changelog
 
+<!-- markdownlint-configure-file {"MD024": {"siblings_only": true}} -->
+
 All notable changes to Leverframe are recorded here.
+
+## [0.3.9] - 2026-08-16
+
+### Fixed
+
+- Model aliases are canonicalized to lowercase at the config boundary, matching the lowercase identities emitted by the Claude Code patch and restoring short-alias routing for Kimi, GitHub Copilot, OpenCode Go, and other non-OpenAI providers.
+- Existing mixed-case aliases work immediately on read and are durably migrated on the next preference write without changing provider or upstream model identifiers.
+- `models --alias` and `models --unalias` use the same canonical alias identity.
+
+### Safety
+
+- Aliases that collide after lowercase normalization fail with both conflicting targets instead of silently selecting a route.
+- Malformed external alias entries fail with an actionable configuration error, while unknown model ids continue to fail closed to Anthropic passthrough.
 
 ## [0.3.8] - 2026-08-14
 

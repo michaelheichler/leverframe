@@ -27,6 +27,7 @@ import {
   getOlderLegacyAppHome,
   resetLegacyMigrationForTests,
 } from '../src/paths.js';
+import { ModelAliasCollisionError } from '../src/model-aliases.js';
 
 let tempHome: string;
 let previousHome: string | undefined;
@@ -93,6 +94,57 @@ describe('dotfolder config', () => {
       favoriteModels: [{ providerId: 'openai-oauth', modelId: 'gpt-5.6-sol' }],
       modelAliases: [{ name: 'sol', providerId: 'openai-oauth', modelId: 'gpt-5.6-sol' }],
     });
+  });
+
+  it('normalizes legacy mixed-case aliases in memory without writing during a read', () => {
+    const configPath = getConfigPath();
+    mkdirSync(dirname(configPath), { recursive: true });
+    const original = `${JSON.stringify({
+      lastModel: 'k3',
+      modelAliases: [{ name: 'Kimi3-KCP', providerId: 'kimi', modelId: 'k3' }],
+    }, null, 2)}\n`;
+    writeFileSync(configPath, original, { encoding: 'utf8', mode: 0o600 });
+
+    expect(loadPreferences()).toMatchObject({
+      lastModel: 'k3',
+      modelAliases: [{ name: 'kimi3-kcp', providerId: 'kimi', modelId: 'k3' }],
+    });
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+  });
+
+  it('durably migrates existing aliases on the next ordinary preference save', () => {
+    const configPath = getConfigPath();
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(configPath, JSON.stringify({
+      lastProvider: 'kimi',
+      modelAliases: [{ name: 'Kimi3-KCP', providerId: 'kimi', modelId: 'k3' }],
+    }), { encoding: 'utf8', mode: 0o600 });
+
+    savePreferences({ lastModel: 'k3' });
+
+    expect(JSON.parse(readFileSync(configPath, 'utf8'))).toEqual({
+      lastProvider: 'kimi',
+      lastModel: 'k3',
+      modelAliases: [{ name: 'kimi3-kcp', providerId: 'kimi', modelId: 'k3' }],
+    });
+    if (process.platform !== 'win32') expect(statSync(configPath).mode & 0o777).toBe(0o600);
+  });
+
+  it('rejects case-fold collisions without changing the config file', () => {
+    const configPath = getConfigPath();
+    mkdirSync(dirname(configPath), { recursive: true });
+    const original = JSON.stringify({
+      lastModel: 'unchanged',
+      modelAliases: [
+        { name: 'Kimi3-KCP', providerId: 'kimi', modelId: 'k3' },
+        { name: 'kimi3-kcp', providerId: 'github-copilot', modelId: 'kimi-k3' },
+      ],
+    });
+    writeFileSync(configPath, original, { encoding: 'utf8', mode: 0o600 });
+
+    expect(() => loadPreferences()).toThrow(ModelAliasCollisionError);
+    expect(() => savePreferences({ lastModel: 'changed' })).toThrow(ModelAliasCollisionError);
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
   });
 
   it('saves and clears app path overrides', () => {

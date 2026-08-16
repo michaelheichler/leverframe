@@ -245,7 +245,7 @@ import { join as join3 } from "path";
 // package.json
 var package_default = {
   name: "@michaelheichler/leverframe",
-  version: "0.3.8",
+  version: "0.3.9",
   description: "Bridge Claude Code to OpenAI-compatible providers, including OpenAI, ChatGPT/Codex OAuth, Kimi, Moonshot, and z.ai",
   author: "Michael Heichler",
   license: "MIT",
@@ -1436,6 +1436,118 @@ async function acquireServerPasswordLock() {
   }
 }
 
+// src/context-model-id.ts
+var ONE_M_CONTEXT_SUFFIX = "[1m]";
+var ONE_M_CONTEXT_WINDOW = 1e6;
+function stripOneMContextSuffix(modelId) {
+  return modelId.replace(/\[1m\]$/i, "");
+}
+function claudeCodeClientModelId(modelId, contextWindow) {
+  const bare = stripOneMContextSuffix(modelId);
+  if (typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow >= ONE_M_CONTEXT_WINDOW) {
+    return `${bare}${ONE_M_CONTEXT_SUFFIX}`;
+  }
+  return bare;
+}
+function routeLookupIds(id) {
+  const bare = stripOneMContextSuffix(id);
+  const googleBare = bare.startsWith("models/") ? bare.slice("models/".length) : bare;
+  return [.../* @__PURE__ */ new Set([
+    id,
+    bare,
+    `${bare}${ONE_M_CONTEXT_SUFFIX}`,
+    googleBare,
+    `${googleBare}${ONE_M_CONTEXT_SUFFIX}`,
+    `models/${googleBare}`,
+    `models/${bare}`
+  ])];
+}
+
+// src/model-aliases.ts
+var MODEL_ALIAS_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+var InvalidModelAliasError = class extends Error {
+  constructor(name) {
+    super(`Invalid model alias "${name}": names must be 1-64 letters, numbers, dots, underscores, or hyphens.`);
+    this.name = "InvalidModelAliasError";
+  }
+};
+var InvalidModelAliasConfigurationError = class extends Error {
+  constructor(detail) {
+    super(`Invalid model alias configuration: ${detail}. Fix modelAliases in config.json, then re-run.`);
+    this.name = "InvalidModelAliasConfigurationError";
+  }
+};
+var ModelAliasCollisionError = class extends Error {
+  constructor(name, first, second) {
+    super(
+      `Model aliases "${first.name}" and "${second.name}" both normalize to "${name}" but target ${modelAliasTarget(first)} and ${modelAliasTarget(second)}. Rename or remove one alias, then re-run.`
+    );
+    this.name = "ModelAliasCollisionError";
+  }
+};
+function isValidModelAlias(name) {
+  return MODEL_ALIAS_PATTERN.test(name);
+}
+function canonicalizeModelAliasName(name) {
+  const trimmed = name.trim();
+  return isValidModelAlias(trimmed) ? trimmed.toLowerCase() : null;
+}
+function normalizeModelAliases(aliases) {
+  if (!Array.isArray(aliases)) {
+    throw new InvalidModelAliasConfigurationError("modelAliases must be an array");
+  }
+  const seen = /* @__PURE__ */ new Map();
+  return aliases.map((value, index) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new InvalidModelAliasConfigurationError(`entry ${index + 1} must be an object`);
+    }
+    const candidate = value;
+    if (typeof candidate["name"] !== "string" || typeof candidate["providerId"] !== "string" || typeof candidate["modelId"] !== "string") {
+      throw new InvalidModelAliasConfigurationError(
+        `entry ${index + 1} requires string name, providerId, and modelId fields`
+      );
+    }
+    const alias = {
+      name: candidate["name"],
+      providerId: candidate["providerId"],
+      modelId: candidate["modelId"]
+    };
+    const name = canonicalizeModelAliasName(alias.name);
+    if (name === null) throw new InvalidModelAliasError(alias.name);
+    const normalized = { ...alias, name };
+    const existing = seen.get(name);
+    if (existing) throw new ModelAliasCollisionError(name, existing, alias);
+    seen.set(name, normalized);
+    return normalized;
+  });
+}
+function parseModelAliasAssignment(value) {
+  const separator = value.indexOf("=");
+  if (separator < 1 || separator === value.length - 1) {
+    return { error: "Alias must use name=leverframe:<provider-id>:<model-id>." };
+  }
+  const name = canonicalizeModelAliasName(value.slice(0, separator));
+  if (name === null) {
+    return { error: "Alias names must be 1-64 letters, numbers, dots, underscores, or hyphens." };
+  }
+  const rawTarget = value.slice(separator + 1).trim();
+  const target = rawTarget.startsWith("leverframe:") ? rawTarget.slice("leverframe:".length) : rawTarget;
+  const targetSeparator = target.indexOf(":");
+  if (targetSeparator < 1 || targetSeparator === target.length - 1) {
+    return { error: "Alias target must use leverframe:<provider-id>:<model-id>." };
+  }
+  return {
+    name,
+    providerId: target.slice(0, targetSeparator),
+    // `models --list` prints Claude's synthetic context suffix. It is a client
+    // routing hint, not part of the provider catalog id stored in favorites.
+    modelId: stripOneMContextSuffix(target.slice(targetSeparator + 1))
+  };
+}
+function modelAliasTarget(alias) {
+  return `leverframe:${alias.providerId}:${alias.modelId}`;
+}
+
 // src/config.ts
 var CONFIG_FILE_MODE = 384;
 function validateLaunchConfig(raw) {
@@ -1495,12 +1607,13 @@ function loadPreferences() {
     }
     throw err;
   }
+  const modelAliases = config.modelAliases === void 0 ? void 0 : normalizeModelAliases(config.modelAliases);
   return {
     lastModel: config.lastModel,
     lastProvider: config.lastProvider,
     recentModelsByProvider: config.recentModelsByProvider,
     favoriteModels: config.favoriteModels,
-    modelAliases: config.modelAliases,
+    modelAliases,
     claudeBridgeMode: config.claudeBridgeMode,
     serverBridgeMode: config.serverBridgeMode,
     appPathOverrides: config.appPathOverrides,
@@ -1516,7 +1629,8 @@ function savePreferences(prefs) {
     if (prefs.lastProvider !== void 0) config.lastProvider = prefs.lastProvider;
     if (prefs.recentModelsByProvider !== void 0) config.recentModelsByProvider = prefs.recentModelsByProvider;
     if (prefs.favoriteModels !== void 0) config.favoriteModels = prefs.favoriteModels;
-    if (prefs.modelAliases !== void 0) config.modelAliases = prefs.modelAliases;
+    const modelAliases = prefs.modelAliases ?? config.modelAliases;
+    if (modelAliases !== void 0) config.modelAliases = normalizeModelAliases(modelAliases);
     if (prefs.claudeBridgeMode !== void 0) config.claudeBridgeMode = prefs.claudeBridgeMode;
     if (prefs.serverBridgeMode !== void 0) config.serverBridgeMode = prefs.serverBridgeMode;
     if (prefs.appPathOverrides !== void 0) config.appPathOverrides = prefs.appPathOverrides;
@@ -1809,33 +1923,6 @@ function launchClaude(options) {
       resolve(1);
     });
   });
-}
-
-// src/context-model-id.ts
-var ONE_M_CONTEXT_SUFFIX = "[1m]";
-var ONE_M_CONTEXT_WINDOW = 1e6;
-function stripOneMContextSuffix(modelId) {
-  return modelId.replace(/\[1m\]$/i, "");
-}
-function claudeCodeClientModelId(modelId, contextWindow) {
-  const bare = stripOneMContextSuffix(modelId);
-  if (typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow >= ONE_M_CONTEXT_WINDOW) {
-    return `${bare}${ONE_M_CONTEXT_SUFFIX}`;
-  }
-  return bare;
-}
-function routeLookupIds(id) {
-  const bare = stripOneMContextSuffix(id);
-  const googleBare = bare.startsWith("models/") ? bare.slice("models/".length) : bare;
-  return [.../* @__PURE__ */ new Set([
-    id,
-    bare,
-    `${bare}${ONE_M_CONTEXT_SUFFIX}`,
-    googleBare,
-    `${googleBare}${ONE_M_CONTEXT_SUFFIX}`,
-    `models/${googleBare}`,
-    `models/${bare}`
-  ])];
 }
 
 // src/oauth/types.ts
@@ -2361,6 +2448,10 @@ export {
   resolveProviderOAuthProviderData,
   saveProviderCredential,
   deleteProviderCredential,
+  isValidModelAlias,
+  canonicalizeModelAliasName,
+  parseModelAliasAssignment,
+  modelAliasTarget,
   loadPreferences,
   savePreferences,
   getAppPathOverride,
@@ -2381,4 +2472,4 @@ export {
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-JSKJ4645.js.map
+//# sourceMappingURL=chunk-JZFX7JTQ.js.map

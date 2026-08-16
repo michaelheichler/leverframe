@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { buildHttpProxyRoutes, httpProxyModelId } from '../src/http-proxy/routes.js';
+import { decideHttpProxyRoute } from '../src/http-proxy/routing-decision.js';
+import { buildProxyRoutesById } from '../src/http-proxy/server.js';
+import { normalizeModelAliases } from '../src/model-aliases.js';
 import type { LocalProvider } from '../src/types.js';
 
 const providers: LocalProvider[] = [
@@ -112,5 +115,54 @@ describe('HTTP proxy routes', () => {
       { name: 'missing', providerId: 'groq', modelId: 'gone' },
       { name: 'bad:name', providerId: 'groq', modelId: 'llama-3.3-70b' },
     ]);
+  });
+
+  it('routes Claude lowercase output for a legacy mixed-case Kimi alias', () => {
+    const kimi: LocalProvider = {
+      id: 'kimi',
+      name: 'Kimi (Coding Plan)',
+      apiKey: 'kimi-key',
+      models: [{
+        id: 'k3',
+        upstreamModelId: 'k3',
+        name: 'Kimi K3',
+        family: 'kimi',
+        brand: 'Kimi',
+        modelFormat: 'openai',
+        npm: '@ai-sdk/openai-compatible',
+        contextWindow: 1_048_576,
+      }],
+    };
+    const aliases = normalizeModelAliases([
+      { name: 'Kimi3-KCP', providerId: 'kimi', modelId: 'k3' },
+    ]);
+    const loaded = buildHttpProxyRoutes(
+      [kimi],
+      [{ providerId: 'kimi', modelId: 'k3' }],
+      aliases,
+    );
+    const routesById = buildProxyRoutesById(loaded.routes, loaded.aliases);
+
+    const translated = decideHttpProxyRoute({
+      method: 'POST',
+      url: '/v1/messages',
+      headers: {},
+      rawBody: Buffer.from(JSON.stringify({ model: 'kimi3-kcp' })),
+      routesById,
+      hasAdapter: true,
+    });
+    const unknown = decideHttpProxyRoute({
+      method: 'POST',
+      url: '/v1/messages',
+      headers: {},
+      rawBody: Buffer.from(JSON.stringify({ model: 'unknown-kimi-alias' })),
+      routesById,
+      hasAdapter: true,
+    });
+
+    expect(loaded.aliases[0]?.name).toBe('kimi3-kcp');
+    expect(translated.action).toBe('translated');
+    if (translated.action === 'translated') expect(translated.route.providerId).toBe('kimi');
+    expect(unknown.action).toBe('passthrough-messages');
   });
 });
