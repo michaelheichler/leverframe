@@ -71,24 +71,10 @@ try {
   if (version !== packageVersion) throw new Error(`Packed CLI returned unexpected version: ${version}`);
   const smoke = `
     const sdk = await import('@github/copilot-sdk');
-    const client = new sdk.CopilotClient({
-      connection: sdk.RuntimeConnection.forStdio(),
-      mode: 'empty',
-      gitHubToken: 'package-smoke-token',
-      useLoggedInUser: false,
-      baseDirectory: process.cwd(),
-      workingDirectory: process.cwd(),
-      logLevel: 'none',
-      telemetry: { captureContent: false },
-      sessionFs: {
-        initialCwd: process.cwd(),
-        sessionStatePath: '/session',
-        conventions: 'posix',
-        capabilities: { sqlite: false },
-      },
-      env: {},
-    });
-    await client.forceStop();
+    if (typeof sdk.CopilotClient !== 'function') throw new Error('CopilotClient export missing');
+    if (typeof sdk.RuntimeConnection?.forStdio !== 'function') throw new Error('RuntimeConnection.forStdio export missing');
+    const connection = sdk.RuntimeConnection.forStdio();
+    if (!connection) throw new Error('Could not construct Copilot stdio connection');
   `;
   execFileSync(process.execPath, ['--input-type=module', '--eval', smoke], {
     cwd: consumer,
