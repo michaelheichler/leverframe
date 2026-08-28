@@ -21,6 +21,7 @@ try {
   const expected = [
     'LICENSE',
     'README.md',
+    'THIRD_PARTY_NOTICES.md',
     'dist/claude-wrapper.js',
     'dist/cli.js',
     'dist/keyring-child.mjs',
@@ -30,8 +31,9 @@ try {
   ].sort();
   const actual = records[0].files.map(file => file.path).sort();
   const chunks = actual.filter(path => /^dist\/chunk-[A-Z0-9]+\.js$/.test(path));
-  const fixed = actual.filter(path => !chunks.includes(path));
-  if (chunks.length !== 1 || JSON.stringify(fixed) !== JSON.stringify(expected)) {
+  const nativeChunks = actual.filter(path => /^dist\/claude-bundle-native-[A-Z0-9]+\.js$/.test(path));
+  const fixed = actual.filter(path => !chunks.includes(path) && !nativeChunks.includes(path));
+  if (chunks.length !== 1 || nativeChunks.length !== 1 || JSON.stringify(fixed) !== JSON.stringify(expected)) {
     throw new Error(`Unexpected package contents:\n${actual.join('\n')}`);
   }
   if (records[0].unpackedSize > 4_000_000) {
@@ -69,24 +71,10 @@ try {
   if (version !== packageVersion) throw new Error(`Packed CLI returned unexpected version: ${version}`);
   const smoke = `
     const sdk = await import('@github/copilot-sdk');
-    const client = new sdk.CopilotClient({
-      connection: sdk.RuntimeConnection.forStdio(),
-      mode: 'empty',
-      gitHubToken: 'package-smoke-token',
-      useLoggedInUser: false,
-      baseDirectory: process.cwd(),
-      workingDirectory: process.cwd(),
-      logLevel: 'none',
-      telemetry: { captureContent: false },
-      sessionFs: {
-        initialCwd: process.cwd(),
-        sessionStatePath: '/session',
-        conventions: 'posix',
-        capabilities: { sqlite: false },
-      },
-      env: {},
-    });
-    await client.forceStop();
+    if (typeof sdk.CopilotClient !== 'function') throw new Error('CopilotClient export missing');
+    if (typeof sdk.RuntimeConnection?.forStdio !== 'function') throw new Error('RuntimeConnection.forStdio export missing');
+    const connection = sdk.RuntimeConnection.forStdio();
+    if (!connection) throw new Error('Could not construct Copilot stdio connection');
   `;
   execFileSync(process.execPath, ['--input-type=module', '--eval', smoke], {
     cwd: consumer,

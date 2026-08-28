@@ -157,6 +157,51 @@ const callSignatureAnchor = new RegExp(
   + ',' + IDENT + ',' + IDENT + ',' + IDENT + '\\)\\{',
 );
 
+const CURRENT_ROUTING_MARKER = '/*ccintegration:routing*/';
+const currentCallSignatureAnchor = new RegExp(
+  'async call\\(\\{prompt:' + IDENT + ',subagent_type:' + IDENT + ',description:(' + IDENT + '),model:' + IDENT
+  + ',run_in_background:' + IDENT + ',name:' + IDENT + ',isolation:' + IDENT + ',cwd:' + IDENT + '\\},' + IDENT
+  + ',' + IDENT + ',' + IDENT + ',(' + IDENT + ')\\)\\{',
+);
+const currentResolvedModelAnchor = new RegExp(
+  '((?:let|,))(' + IDENT + ')=' + IDENT + '\\([^;{}]{1,400}\\);(' + IDENT + ')\\.agentLifecycle\\.markTypeInvoked\\((' + IDENT + ')\\.agentType\\);',
+);
+
+function applyCurrentRoutingSite(source: string, config: PatchScriptModelConfig): RoutingNoticePatchOutcome | undefined {
+  if (source.includes(CURRENT_ROUTING_MARKER)) {
+    return {
+      content: source,
+      results: [
+        { status: 'SKIP', name: 'PATCH 10: routing notice', extra: 'already integrated' },
+        { status: 'SKIP', name: 'PATCH 10d: agent description indicator', extra: 'already integrated' },
+      ],
+    };
+  }
+  if (count(source, currentCallSignatureAnchor) !== 1 || count(source, currentResolvedModelAnchor) !== 1) return undefined;
+  const signature = source.match(currentCallSignatureAnchor)!;
+  const resolved = source.match(currentResolvedModelAnchor)!;
+  const descVar = signature[1]!;
+  const noticeVar = signature[2]!;
+  const modelVar = resolved[2]!;
+  const agentDefVar = resolved[4]!;
+  const table = JSON.stringify(buildRoutingDisplayTable(config));
+  const efforts = JSON.stringify(buildRoutingEffortTable(config));
+  const snippet = `${CURRENT_ROUTING_MARKER}{let _lft=Object.assign(Object.create(null),${table})[String(${modelVar}||"").trim().toLowerCase()],`
+    + `_lfd=_lft!==void 0?_lft:String(${modelVar}||""),_lfe=Object.assign(Object.create(null),${efforts})[String(${modelVar}||"").trim().toLowerCase()]||"";`
+    + `_lfd=String(_lfd).trim().replace(/\\s+/g," ");_lfe=String(_lfe).trim().replace(/\\s+/g," ");`
+    + `if(${descVar}.indexOf(" \\u00b7 "+_lfd)===-1)${descVar}=${descVar}+" \\u00b7 "+_lfd+(_lfe?" \\u00b7 "+_lfe:"");`
+    + `${noticeVar}?.({type:"notification",notification:{key:"leverframe-routing-success-"+${agentDefVar}.agentType,text:"Routing successful. Model "+_lfd+" with Reasoning "+_lfe,priority:"high",timeoutMs:1e4}})}`;
+  const patched = replaceOnce(source, currentResolvedModelAnchor, (match: string) => `${match}${snippet}`);
+  if (patched === undefined) return undefined;
+  return {
+    content: patched,
+    results: [
+      { status: 'OK', name: 'PATCH 10: routing notice' },
+      { status: 'OK', name: 'PATCH 10d: agent description indicator' },
+    ],
+  };
+}
+
 interface RunnerCaptures {
   runnerFn: string;
   requiresStructuredOutputParam: string;
@@ -412,7 +457,13 @@ export function applyRoutingNoticeTransform(
   source: string,
   config: PatchScriptModelConfig,
 ): RoutingNoticePatchOutcome {
+  if (source.includes(CURRENT_ROUTING_MARKER)) return applyCurrentRoutingSite(source, config)!;
   const base = existingRoutingNoticeOutcome(source, config) ?? patchFreshRoutingNotice(source, config);
   const described = applyAgentDescriptionSite(base.content, config);
-  return { content: described.content, results: [...base.results, described.result] };
+  const legacy = { content: described.content, results: [...base.results, described.result] };
+  const unrecognized = legacy.results.every(result =>
+    result.status === 'SKIP' && result.extra?.toLowerCase().includes('anchor not recognized')
+  );
+  if (unrecognized) return applyCurrentRoutingSite(source, config) ?? legacy;
+  return legacy;
 }

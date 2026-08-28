@@ -9,6 +9,7 @@ import {
 } from './atomic-file.js';
 import {
   isClaudeCodeVersionSupportedForBinaryPatching,
+  resolveClaudeInstallation,
   unsupportedClaudeCodeBinaryPatchingMessage,
   type ClaudeInstallation,
 } from './claude-installation.js';
@@ -27,8 +28,9 @@ import {
   classifyLeverframeInjectionByHash,
   type InjectionClassification,
 } from './patch-injection.js';
+import { readClaudeContent, writeClaudeContent } from './claude-bundle.js';
+import { applyLeverframeIntegration, ClaudeIntegrationCompatibilityError } from './claude-model-integration.js';
 import {
-  applyLeverframePatches,
   PatchApplyError,
   type PatchScriptModelConfig,
   type PatchSiteResult,
@@ -115,11 +117,10 @@ export const defaultPatchRuntime: PatchRuntime = {
     try {
       if (!statSync(path).isFile()) throw new Error('not a file');
       const sha256 = sha256File(path);
-      const { tryDetectInstallation, readContent } = await import('tweakcc');
-      const installation = await tryDetectInstallation({ path });
-      const version = installation.version;
-      if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('embedded version unavailable');
-      const content = await readContent(installation);
+      const installation = resolveClaudeInstallation({ target: path });
+      const version = installation?.version ?? null;
+      if (!version || !/^\d+\.\d+\.\d+$/.test(version)) throw new Error('embedded version unavailable');
+      const content = await readClaudeContent(path);
       return {
         path,
         readable: true,
@@ -138,16 +139,13 @@ export const defaultPatchRuntime: PatchRuntime = {
     }
   },
   async patch(path, config) {
-    const { tryDetectInstallation, readContent, writeContent } = await import('tweakcc');
-    const installation = await tryDetectInstallation({ path });
-    const source = await readContent(installation);
-    const patched = applyLeverframePatches(source, config);
-    await writeContent(installation, addLeverframeInjectionMarker(patched.content));
+    const source = await readClaudeContent(path);
+    const patched = applyLeverframeIntegration(source, config);
+    await writeClaudeContent(path, addLeverframeInjectionMarker(patched.content));
     return patched.results;
   },
   async readContent(path) {
-    const { tryDetectInstallation, readContent } = await import('tweakcc');
-    return readContent(await tryDetectInstallation({ path }));
+    return readClaudeContent(path);
   },
 };
 
@@ -156,12 +154,13 @@ export function verifyPatchSites(
   config: PatchScriptModelConfig,
 ): { complete: boolean; results: PatchSiteResult[] } {
   try {
-    const patched = applyLeverframePatches(content, config);
+    const patched = applyLeverframeIntegration(content, config);
     return {
       complete: patched.content === content && patched.results.every(result => result.status !== 'FAIL'),
       results: patched.results,
     };
   } catch (err) {
+    if (err instanceof ClaudeIntegrationCompatibilityError) return { complete: false, results: err.results };
     if (err instanceof PatchApplyError) return { complete: false, results: err.results };
     return { complete: false, results: [] };
   }

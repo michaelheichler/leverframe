@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -8,16 +8,14 @@ import {
   resolveClaudeInstallation,
   type ClaudeInstallation,
 } from '../src/claude-installation.js';
-import { diagnosePatchV2 } from '../src/patch-diagnostics.js';
-import { runLaunchPatchCheckV2, runPatchCommandV2 } from '../src/patch-reconcile.js';
+import { runPatchCommandV2 } from '../src/patch-reconcile.js';
 import type { PatchPresenter } from '../src/patch-presenter.js';
-import { applyPatchTransactionV2, type PatchRuntime } from '../src/patch-transaction.js';
+import type { PatchRuntime } from '../src/patch-transaction.js';
 import { currentTransformVersion, readManifestV2, writeManifestV2 } from '../src/patch-state.js';
 
 const dirs: string[] = [];
 const previousHome = process.env['LEVERFRAME_HOME'];
 const unsupportedVersion = '2.1.220';
-const upgradeMessage = `Claude Code ${unsupportedVersion} is not supported for binary patching. Upgrade to Claude Code 2.1.223 or newer.`;
 
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -56,21 +54,6 @@ function recorder(): { presenter: PatchPresenter; errors: string[]; notices: str
         confirmations.push(message);
         return true;
       },
-    },
-  };
-}
-
-function runtime(inspections: string[]): PatchRuntime {
-  return {
-    async inspect(path) {
-      inspections.push(path);
-      throw new Error('policy gate must run before inspection');
-    },
-    async patch() {
-      throw new Error('policy gate must run before patching');
-    },
-    async readContent() {
-      throw new Error('policy gate must run before content reads');
     },
   };
 }
@@ -145,78 +128,19 @@ describe('Claude Code binary patch version policy', () => {
     expect(resolveClaudeInstallation({ target: writeVersionProbe(dir, 'claude-beta', '2.1.223-beta (Claude Code)') })).toBeNull();
   });
 
-  it('accepts 2.1.223 and newer numeric semvers', () => {
+  it('accepts every exact numeric semver for structural compatibility probing', () => {
+    expect(isClaudeCodeVersionSupportedForBinaryPatching('1.0.0')).toBe(true);
     expect(isClaudeCodeVersionSupportedForBinaryPatching('2.1.223')).toBe(true);
     expect(isClaudeCodeVersionSupportedForBinaryPatching('2.1.224')).toBe(true);
     expect(isClaudeCodeVersionSupportedForBinaryPatching('2.2.0')).toBe(true);
     expect(isClaudeCodeVersionSupportedForBinaryPatching('3.0.0')).toBe(true);
   });
 
-  it('rejects older and malformed versions', () => {
-    expect(isClaudeCodeVersionSupportedForBinaryPatching('2.1.222')).toBe(false);
+  it('rejects malformed versions without imposing a release floor', () => {
+    expect(isClaudeCodeVersionSupportedForBinaryPatching('2.1.222')).toBe(true);
     expect(isClaudeCodeVersionSupportedForBinaryPatching('2.1.223.1')).toBe(false);
     expect(isClaudeCodeVersionSupportedForBinaryPatching('2.01.223')).toBe(false);
     expect(isClaudeCodeVersionSupportedForBinaryPatching('not-a-version')).toBe(false);
-  });
-
-  it('refuses an unsupported version before state inspection', async () => {
-    const output = recorder();
-    const inspections: string[] = [];
-
-    const exitCode = await runPatchCommandV2(
-      { installation: installation(), runtime: runtime(inspections) },
-      output.presenter,
-    );
-
-    expect(exitCode).toBe(1);
-    expect(output.errors).toEqual([upgradeMessage]);
-    expect(inspections).toEqual([]);
-  });
-
-  it('refuses direct V2 transactions for an unsupported version before patch work', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'leverframe-version-transaction-'));
-    dirs.push(dir);
-    process.env['LEVERFRAME_HOME'] = join(dir, 'home');
-    const target = join(dir, 'claude');
-    writeFileSync(target, 'original', { mode: 0o755 });
-    const calls = { inspect: 0, patch: 0, readContent: 0 };
-    const directRuntime: PatchRuntime = {
-      async inspect() {
-        calls.inspect += 1;
-        throw new Error('policy gate must run before inspection');
-      },
-      async patch() {
-        calls.patch += 1;
-        throw new Error('policy gate must run before patching');
-      },
-      async readContent() {
-        calls.readContent += 1;
-        throw new Error('policy gate must run before content reads');
-      },
-    };
-
-    const outcome = await applyPatchTransactionV2(
-      {
-        installation: {
-          ...installation(),
-          logicalPath: target,
-          canonicalPath: target,
-          installationPath: target,
-          identity: 'unsupported-version-direct-transaction',
-        },
-        desiredConfig: { 'leverframe:openai:model': { alias: 'model', context: 272_000 } },
-        configHash: 'fixture',
-        manifest: null,
-        trace: false,
-      },
-      directRuntime,
-    );
-
-    expect(outcome).toEqual({ ok: false, message: upgradeMessage });
-    expect(calls).toEqual({ inspect: 0, patch: 0, readContent: 0 });
-    expect(existsSync(process.env['LEVERFRAME_HOME'])).toBe(false);
-    expect(readdirSync(dir)).toEqual(['claude']);
-    expect(readFileSync(target, 'utf8')).toBe('original');
   });
 
   it('restores a valid V2 state for an unsupported version', async () => {
@@ -266,34 +190,4 @@ describe('Claude Code binary patch version policy', () => {
     expect(existsSync(baselinePath)).toBe(true);
   });
 
-  it('keeps launch available without inspection or confirmation for an unsupported version', async () => {
-    const output = recorder();
-    const inspections: string[] = [];
-
-    await runLaunchPatchCheckV2(
-      { installation: installation(), runtime: runtime(inspections) },
-      output.presenter,
-    );
-
-    expect(output.notices).toEqual([upgradeMessage]);
-    expect(output.confirmations).toEqual([]);
-    expect(inspections).toEqual([]);
-  });
-
-  it('reports unsupported binary patching without inspecting the target', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'leverframe-version-policy-'));
-    dirs.push(dir);
-    const target = join(dir, 'claude');
-    writeFileSync(target, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${unsupportedVersion} (Claude Code)"; exit 0; fi\n`, { mode: 0o755 });
-    chmodSync(target, 0o755);
-    const inspections: string[] = [];
-
-    const report = await diagnosePatchV2(target, runtime(inspections));
-
-    expect(report.resolved).toBe(true);
-    expect(report.supported).toBe(false);
-    expect(report.state).toBe('unsupported');
-    expect(report.nextAction).toBe(upgradeMessage);
-    expect(inspections).toEqual([]);
-  });
 });

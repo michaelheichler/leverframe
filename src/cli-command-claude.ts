@@ -239,8 +239,13 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     persist: Boolean(parsed.saveBridgeMode) && !dryRun,
   });
 
-  // Launch-time patch check: prompt on TTY, notice otherwise. Never blocks the launch.
-  await runLaunchPatchCheck({ agentStdout, dryRun, installation });
+  // Launch-time patch check: prompt on TTY, auto-apply otherwise. Blocks launch
+  // when integration cannot be applied; the check already reported the error.
+  try {
+    await runLaunchPatchCheck({ agentStdout, dryRun, installation });
+  } catch {
+    return 1;
+  }
 
   if (bridgeMode === 'proxy') {
     return runClaudeHttpProxyCommand({ parsed, claudeArgs, agentStdout, installation });

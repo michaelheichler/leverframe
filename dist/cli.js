@@ -79,7 +79,7 @@ import {
   withProxyAnthropicOriginSettings,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-JZFX7JTQ.js";
+} from "./chunk-MLCPFBZ6.js";
 
 // src/cli.ts
 import pc18 from "picocolors";
@@ -17373,6 +17373,43 @@ var runnerContextAnchor = new RegExp(
 var callSignatureAnchor = new RegExp(
   "async call\\(\\{prompt:" + IDENT + ",subagent_type:" + IDENT + ",description:(" + IDENT + "),model:" + IDENT + ",run_in_background:" + IDENT + ",name:" + IDENT + ",isolation:" + IDENT + ",cwd:" + IDENT + "\\}," + IDENT + "," + IDENT + "," + IDENT + "," + IDENT + "\\)\\{"
 );
+var CURRENT_ROUTING_MARKER = "/*ccintegration:routing*/";
+var currentCallSignatureAnchor = new RegExp(
+  "async call\\(\\{prompt:" + IDENT + ",subagent_type:" + IDENT + ",description:(" + IDENT + "),model:" + IDENT + ",run_in_background:" + IDENT + ",name:" + IDENT + ",isolation:" + IDENT + ",cwd:" + IDENT + "\\}," + IDENT + "," + IDENT + "," + IDENT + ",(" + IDENT + ")\\)\\{"
+);
+var currentResolvedModelAnchor = new RegExp(
+  "((?:let|,))(" + IDENT + ")=" + IDENT + "\\([^;{}]{1,400}\\);(" + IDENT + ")\\.agentLifecycle\\.markTypeInvoked\\((" + IDENT + ")\\.agentType\\);"
+);
+function applyCurrentRoutingSite(source, config) {
+  if (source.includes(CURRENT_ROUTING_MARKER)) {
+    return {
+      content: source,
+      results: [
+        { status: "SKIP", name: "PATCH 10: routing notice", extra: "already integrated" },
+        { status: "SKIP", name: "PATCH 10d: agent description indicator", extra: "already integrated" }
+      ]
+    };
+  }
+  if (count(source, currentCallSignatureAnchor) !== 1 || count(source, currentResolvedModelAnchor) !== 1) return void 0;
+  const signature = source.match(currentCallSignatureAnchor);
+  const resolved = source.match(currentResolvedModelAnchor);
+  const descVar = signature[1];
+  const noticeVar = signature[2];
+  const modelVar = resolved[2];
+  const agentDefVar = resolved[4];
+  const table = JSON.stringify(buildRoutingDisplayTable(config));
+  const efforts = JSON.stringify(buildRoutingEffortTable(config));
+  const snippet = `${CURRENT_ROUTING_MARKER}{let _lft=Object.assign(Object.create(null),${table})[String(${modelVar}||"").trim().toLowerCase()],_lfd=_lft!==void 0?_lft:String(${modelVar}||""),_lfe=Object.assign(Object.create(null),${efforts})[String(${modelVar}||"").trim().toLowerCase()]||"";_lfd=String(_lfd).trim().replace(/\\s+/g," ");_lfe=String(_lfe).trim().replace(/\\s+/g," ");if(${descVar}.indexOf(" \\u00b7 "+_lfd)===-1)${descVar}=${descVar}+" \\u00b7 "+_lfd+(_lfe?" \\u00b7 "+_lfe:"");${noticeVar}?.({type:"notification",notification:{key:"leverframe-routing-success-"+${agentDefVar}.agentType,text:"Routing successful. Model "+_lfd+" with Reasoning "+_lfe,priority:"high",timeoutMs:1e4}})}`;
+  const patched = replaceOnce(source, currentResolvedModelAnchor, (match) => `${match}${snippet}`);
+  if (patched === void 0) return void 0;
+  return {
+    content: patched,
+    results: [
+      { status: "OK", name: "PATCH 10: routing notice" },
+      { status: "OK", name: "PATCH 10d: agent description indicator" }
+    ]
+  };
+}
 function callbackSnippet(modelIdVar) {
   return `${ROUTING_NOTICE_MARKER}onRoutingNotice:d,ccRoutingModelId:${modelIdVar}`;
 }
@@ -17534,13 +17571,19 @@ function existingRoutingNoticeOutcome(source, config) {
   return refreshRoutingNotice(source, config);
 }
 function applyRoutingNoticeTransform(source, config) {
+  if (source.includes(CURRENT_ROUTING_MARKER)) return applyCurrentRoutingSite(source, config);
   const base = existingRoutingNoticeOutcome(source, config) ?? patchFreshRoutingNotice(source, config);
   const described = applyAgentDescriptionSite(base.content, config);
-  return { content: described.content, results: [...base.results, described.result] };
+  const legacy = { content: described.content, results: [...base.results, described.result] };
+  const unrecognized = legacy.results.every(
+    (result) => result.status === "SKIP" && result.extra?.toLowerCase().includes("anchor not recognized")
+  );
+  if (unrecognized) return applyCurrentRoutingSite(source, config) ?? legacy;
+  return legacy;
 }
 
 // src/patch-transforms.ts
-var PATCH_TRANSFORMS_VERSION = 7;
+var PATCH_TRANSFORMS_VERSION = 8;
 var RESERVED_MODEL_ALIASES = /* @__PURE__ */ new Set(["sonnet", "opus", "haiku", "fable", "opusplan", "best", "default"]);
 var NATIVE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 var BASE_EFFORT_LEVELS = ["low", "medium", "high"];
@@ -17560,9 +17603,6 @@ var PatchApplyError = class extends Error {
     this.results = results;
   }
 };
-function formatPatchSiteLine(result) {
-  return "  " + result.status.padEnd(4) + " " + result.name + (result.extra ? ": " + result.extra : "");
-}
 function applyLeverframePatches(source, config) {
   let js = source;
   const MODEL_CONFIG = config;
@@ -17736,11 +17776,13 @@ function applyLeverframePatches(source, config) {
     const inject = missing.length ? "[" + entries + "].forEach(function(_o){if(!e.some(function(_i){return _i.value===_o.value}))e.push(_o)});" : "";
     if (ALIASES.length === 0) {
       log15("SKIP", "PATCH 5: model picker options", "no aliases configured");
+    } else if (missing.length === 0) {
+      log15("SKIP", "PATCH 5: model picker options", "already integrated");
     } else {
       applyOnce(
         "PATCH 5: model picker options",
-        /(\?\[[\w$]+,r\]:\[r\];for\(let [\w$]+ of [\w$]+\)[\w$]+\(e,[\w$]+,t\);)/,
-        (m) => m + inject,
+        /(function [\w$]+\(e,[\w$]+,[\w$]+\)\{let [^{}]{0,400}?;for\(let [\w$]+ of [\w$]+\)[\w$]+\(e,[\w$]+,[\w$]+\);)(return e\})/,
+        (_m, head, tail) => head + inject + tail,
         { required: false, noopIsSkip: true }
       );
     }
@@ -17753,7 +17795,7 @@ function applyLeverframePatches(source, config) {
     }).join("; ");
     applyOnce(
       "PATCH 4: Agent tool model description",
-      /(describe\(`Optional model override for this agent[^`]*?)(`\))/,
+      /(describe\(`Optional model override for this agent[^`]*?)(`)/,
       (_m, body, close) => body.includes("Additional custom models") ? body + close : body + " Additional custom models: " + listing + "." + close,
       { required: false, noopIsSkip: true }
     );
@@ -17899,7 +17941,6 @@ function readExactClaudeVersion(path) {
     return null;
   }
 }
-var minimumClaudeCodeBinaryPatchVersion = [2, 1, 223];
 function parseNumericSemver(version) {
   const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(version);
   if (!match) return null;
@@ -17908,17 +17949,10 @@ function parseNumericSemver(version) {
   return [parsed[0], parsed[1], parsed[2]];
 }
 function isClaudeCodeVersionSupportedForBinaryPatching(version) {
-  const parsed = parseNumericSemver(version);
-  if (!parsed) return false;
-  for (let index = 0; index < minimumClaudeCodeBinaryPatchVersion.length; index += 1) {
-    if (parsed[index] !== minimumClaudeCodeBinaryPatchVersion[index]) {
-      return parsed[index] > minimumClaudeCodeBinaryPatchVersion[index];
-    }
-  }
-  return true;
+  return parseNumericSemver(version) !== null;
 }
 function unsupportedClaudeCodeBinaryPatchingMessage(version) {
-  return `Claude Code ${version} is not supported for binary patching. Upgrade to Claude Code 2.1.223 or newer.`;
+  return `Claude Code ${version} could not be structurally validated for Leverframe integration.`;
 }
 function computeIdentity(canonicalPath2) {
   return createHash18("sha256").update(canonicalPath2).digest("hex");
@@ -18265,6 +18299,91 @@ function addLeverframeInjectionMarker(content) {
 ${LEVERFRAME_INJECTION_MARKER}`;
 }
 
+// src/claude-bundle.ts
+import { readFile, writeFile } from "fs/promises";
+function classifyClaudeExecutable(head) {
+  if (head.length >= 4) {
+    const u32le = head.readUInt32LE(0);
+    const u32be = head.readUInt32BE(0);
+    if (u32le === 1179403647 || u32le === 4277009103 || u32be === 4277009103 || u32le === 4277009102 || u32be === 4277009102 || head[0] === 77 && head[1] === 90) return "native";
+  }
+  return "script";
+}
+async function readClaudeContent(path) {
+  const bytes = await readFile(path);
+  if (classifyClaudeExecutable(bytes.subarray(0, 4)) === "script") return bytes.toString("utf8");
+  const { extractClaudeJsFromNativeInstallation, resolveNixBinaryWrapper } = await import("./claude-bundle-native-4ZVNVHXH.js");
+  const resolved = resolveNixBinaryWrapper(path) ?? path;
+  const extracted = extractClaudeJsFromNativeInstallation(resolved);
+  if (!extracted.data) {
+    throw new Error(`Failed to extract Claude JavaScript module graph: ${extracted.error ?? "unknown format"}`);
+  }
+  return extracted.data.toString("utf8");
+}
+async function writeClaudeContent(path, content) {
+  const head = (await readFile(path)).subarray(0, 4);
+  if (classifyClaudeExecutable(head) === "script") {
+    await writeFile(path, content, "utf8");
+    return;
+  }
+  const { repackNativeInstallation, resolveNixBinaryWrapper } = await import("./claude-bundle-native-4ZVNVHXH.js");
+  const resolved = resolveNixBinaryWrapper(path) ?? path;
+  repackNativeInstallation(resolved, Buffer.from(content), path, true);
+}
+
+// src/claude-model-integration.ts
+var CAPABILITY_NAMES = {
+  "1": "agent-model-schema",
+  "3": "known-model-identities",
+  "4": "agent-model-description",
+  "5": "model-picker",
+  "6": "model-alias-resolution",
+  "7": "context-window",
+  "8a": "effort",
+  "8b": "xhigh-effort",
+  "8c": "max-effort",
+  "9": "default-effort",
+  "10": "routing-notice",
+  "10a": "routing-notice",
+  "10b": "routing-notice",
+  "10c": "routing-notice",
+  "10d": "agent-row-display",
+  "11": "session-restore"
+};
+var ClaudeIntegrationCompatibilityError = class extends Error {
+  constructor(results, routingRequired = false) {
+    const failed = results.filter((result) => isIncompatible(result, routingRequired));
+    super(`Claude model integration is structurally incompatible: ${failed.map((result) => result.name).join(", ")}`);
+    this.results = results;
+    this.name = "ClaudeIntegrationCompatibilityError";
+  }
+  results;
+};
+function isIncompatible(result, routingRequired) {
+  return result.status === "FAIL" || routingRequired && (result.name === "routing-notice" || result.name === "agent-row-display") && result.status === "SKIP" && /anchor not recognized|could not be patched|ambiguous/i.test(result.extra ?? "");
+}
+function capabilityResults(results) {
+  return results.map((result) => {
+    const match = /^PATCH ([0-9]+[a-z]?):/.exec(result.name);
+    const name = match ? CAPABILITY_NAMES[match[1]] ?? result.name.replace(/^PATCH [^:]+:\s*/, "") : result.name;
+    return { ...result, name };
+  });
+}
+function applyLeverframeIntegration(source, config) {
+  const routingRequired = source.includes("async call({prompt:") && source.includes("agentLifecycle.markTypeInvoked");
+  let patched;
+  try {
+    patched = applyLeverframePatches(source, config);
+  } catch (error) {
+    if (error instanceof PatchApplyError) throw new ClaudeIntegrationCompatibilityError(capabilityResults(error.results), routingRequired);
+    throw error;
+  }
+  const results = capabilityResults(patched.results);
+  const incompatible = results.some((result) => isIncompatible(result, routingRequired));
+  if (incompatible) throw new ClaudeIntegrationCompatibilityError(results, routingRequired);
+  return { content: patched.content, results };
+}
+
 // src/patch-transaction.ts
 var PATCH_JOURNAL_SCHEMA_VERSION = 1;
 function getPatchJournalPath(identity) {
@@ -18300,11 +18419,10 @@ var defaultPatchRuntime = {
     try {
       if (!statSync4(path).isFile()) throw new Error("not a file");
       const sha2565 = sha256File(path);
-      const { tryDetectInstallation, readContent } = await import("tweakcc");
-      const installation = await tryDetectInstallation({ path });
-      const version = installation.version;
-      if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("embedded version unavailable");
-      const content = await readContent(installation);
+      const installation = resolveClaudeInstallation({ target: path });
+      const version = installation?.version ?? null;
+      if (!version || !/^\d+\.\d+\.\d+$/.test(version)) throw new Error("embedded version unavailable");
+      const content = await readClaudeContent(path);
       return {
         path,
         readable: true,
@@ -18323,26 +18441,24 @@ var defaultPatchRuntime = {
     }
   },
   async patch(path, config) {
-    const { tryDetectInstallation, readContent, writeContent } = await import("tweakcc");
-    const installation = await tryDetectInstallation({ path });
-    const source = await readContent(installation);
-    const patched = applyLeverframePatches(source, config);
-    await writeContent(installation, addLeverframeInjectionMarker(patched.content));
+    const source = await readClaudeContent(path);
+    const patched = applyLeverframeIntegration(source, config);
+    await writeClaudeContent(path, addLeverframeInjectionMarker(patched.content));
     return patched.results;
   },
   async readContent(path) {
-    const { tryDetectInstallation, readContent } = await import("tweakcc");
-    return readContent(await tryDetectInstallation({ path }));
+    return readClaudeContent(path);
   }
 };
 function verifyPatchSites(content, config) {
   try {
-    const patched = applyLeverframePatches(content, config);
+    const patched = applyLeverframeIntegration(content, config);
     return {
       complete: patched.content === content && patched.results.every((result) => result.status !== "FAIL"),
       results: patched.results
     };
   } catch (err) {
+    if (err instanceof ClaudeIntegrationCompatibilityError) return { complete: false, results: err.results };
     if (err instanceof PatchApplyError) return { complete: false, results: err.results };
     return { complete: false, results: [] };
   }
@@ -18909,18 +19025,21 @@ async function runLaunchPatchCheckV2(opts = {}, presenter = clackPatchPresenter)
       presenter.notice(
         `leverframe: injected claude has no V2 patch state and cannot be recovered safely${reason} Run \`leverframe patch --diagnose\`.`
       );
-      return;
+      throw new Error("Claude integration state cannot be recovered safely");
     }
     const interactive = !opts.agentStdout && process.stdin.isTTY === true && process.stdout.isTTY === true;
     if (interactive) {
       const message2 = state === "state_missing" ? "Claude Code is injected but missing V2 state. Rebuild it from the verified pristine legacy backup now?" : state === "unpatched" ? "Claude Code is not patched for your leverframe favorites. Patch now?" : "The Claude Code patch is stale (config or claude version changed). Re-patch now?";
-      if (!await presenter.confirm(message2)) return;
-      await runPatchCommandV2({ installation, runtime }, presenter);
+      if (!await presenter.confirm(message2)) throw new Error("Claude integration is required before launch");
+      const exitCode2 = await runPatchCommandV2({ installation, runtime }, presenter);
+      if (exitCode2 !== 0) throw new Error("Claude integration failed; launch blocked");
       return;
     }
-    await runPatchCommandV2({ installation, runtime }, opts.agentStdout ? silentPatchPresenter : presenter);
+    const exitCode = await runPatchCommandV2({ installation, runtime }, opts.agentStdout ? silentPatchPresenter : presenter);
+    if (exitCode !== 0) throw new Error("Claude integration failed; launch blocked");
   } catch (err) {
-    presenter.notice(`leverframe: patch check skipped (${err instanceof Error ? err.message : String(err)})`);
+    presenter.error(`leverframe: Claude integration unavailable (${err instanceof Error ? err.message : String(err)})`);
+    throw err;
   }
 }
 
@@ -18982,7 +19101,7 @@ async function diagnosePatchV2(target, runtime = defaultPatchRuntime) {
       transaction: { pending: false },
       lock: { path: "", held: false },
       migration: { ...legacyDiag2, eligible: false, reason: "No installation resolved." },
-      patchSites: [],
+      integration: { status: "unavailable", capabilities: [] },
       state: "not_resolved",
       nextAction: nextActionFor("not_resolved")
     };
@@ -19006,7 +19125,7 @@ async function diagnosePatchV2(target, runtime = defaultPatchRuntime) {
       transaction: { pending: false },
       lock: { path: "", held: false },
       migration: { legacyManifestPresent: false, eligible: false, reason: "Binary patching is not supported for this Claude Code version." },
-      patchSites: [],
+      integration: { status: "incompatible", capabilities: [] },
       state: "unsupported",
       nextAction: unsupportedClaudeCodeBinaryPatchingMessage(installation.version)
     };
@@ -19092,7 +19211,10 @@ async function diagnosePatchV2(target, runtime = defaultPatchRuntime) {
       eligible: true,
       mode: legacyRecovery.kind
     },
-    patchSites,
+    integration: {
+      status: patchSites.some((site) => site.status === "FAIL") ? "incompatible" : live.injection.state === "present" && semanticSitesComplete !== false ? "integrated" : "compatible",
+      capabilities: patchSites
+    },
     state,
     nextAction: nextActionFor(state, legacyRecovery)
   };
@@ -19113,7 +19235,7 @@ function formatPatchDiagnosticsText(report) {
   lines.push(`${pad("discovery source")}${report.identity.discoverySource}`);
   lines.push(`${pad("installation kind")}${report.identity.installationKind}`);
   lines.push(`${pad("claude version")}${report.identity.version}`);
-  lines.push(`${pad("binary patching")}${report.supported ? "supported" : "unsupported"}`);
+  lines.push(`${pad("Claude integration")}${report.integration.status}`);
   lines.push(`${pad("schema / transform")}v${report.leverframe.schemaVersion} / v${report.leverframe.transformVersion}`);
   lines.push(`${pad("manifest")}${report.manifest.present ? `generation ${report.manifest.generation}, ${report.manifest.provenance}` : "absent"}`);
   if (report.manifest.present) {
@@ -19130,9 +19252,11 @@ function formatPatchDiagnosticsText(report) {
   lines.push(`${pad("legacy migration")}${report.migration.eligible ? `eligible - ${report.migration.mode}` : report.migration.legacyManifestPresent ? `not eligible - ${report.migration.reason}` : "no legacy state"}`);
   lines.push(`${pad("state")}${report.state}`);
   lines.push(`${pad("next action")}${report.nextAction}`);
-  if (report.patchSites.length) {
-    lines.push("  patch sites:");
-    for (const site of report.patchSites) lines.push(formatPatchSiteLine(site));
+  if (report.integration.capabilities.length) {
+    lines.push("  capabilities:");
+    for (const capability of report.integration.capabilities) {
+      lines.push(`  ${capability.status.padEnd(4)} ${capability.name}${capability.extra ? `: ${capability.extra}` : ""}`);
+    }
   }
   return lines;
 }
@@ -20611,7 +20735,11 @@ async function runClaudeCommand(parsed) {
   const bridgeMode = resolveBridgeMode("claude", parsed.bridgeMode, {
     persist: Boolean(parsed.saveBridgeMode) && !dryRun
   });
-  await runLaunchPatchCheck({ agentStdout, dryRun, installation });
+  try {
+    await runLaunchPatchCheck({ agentStdout, dryRun, installation });
+  } catch {
+    return 1;
+  }
   if (bridgeMode === "proxy") {
     return runClaudeHttpProxyCommand({ parsed, claudeArgs, agentStdout, installation });
   }

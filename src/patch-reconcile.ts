@@ -333,7 +333,7 @@ export async function runLaunchPatchCheckV2(
       presenter.notice(
         `leverframe: injected claude has no V2 patch state and cannot be recovered safely${reason} Run \`leverframe patch --diagnose\`.`,
       );
-      return;
+      throw new Error('Claude integration state cannot be recovered safely');
     }
 
     const interactive = !opts.agentStdout
@@ -344,8 +344,9 @@ export async function runLaunchPatchCheckV2(
         : state === 'unpatched'
           ? 'Claude Code is not patched for your leverframe favorites. Patch now?'
           : 'The Claude Code patch is stale (config or claude version changed). Re-patch now?';
-      if (!await presenter.confirm(message)) return;
-      await runPatchCommandV2({ installation, runtime }, presenter);
+      if (!await presenter.confirm(message)) throw new Error('Claude integration is required before launch');
+      const exitCode = await runPatchCommandV2({ installation, runtime }, presenter);
+      if (exitCode !== 0) throw new Error('Claude integration failed; launch blocked');
       return;
     }
 
@@ -355,8 +356,10 @@ export async function runLaunchPatchCheckV2(
     // would reject every favorite/alias id as an unknown model. Stay silent
     // in agent stdout mode, since the child owns stdout/stderr there.
     // Otherwise report through the normal presenter.
-    await runPatchCommandV2({ installation, runtime }, opts.agentStdout ? silentPatchPresenter : presenter);
+    const exitCode = await runPatchCommandV2({ installation, runtime }, opts.agentStdout ? silentPatchPresenter : presenter);
+    if (exitCode !== 0) throw new Error('Claude integration failed; launch blocked');
   } catch (err) {
-    presenter.notice(`leverframe: patch check skipped (${err instanceof Error ? err.message : String(err)})`);
+    presenter.error(`leverframe: Claude integration unavailable (${err instanceof Error ? err.message : String(err)})`);
+    throw err;
   }
 }
