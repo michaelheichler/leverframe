@@ -868,7 +868,7 @@ function locateBundle(
  * Note: If the binary might be a Nix `makeBinaryWrapper` wrapper, callers
  * should resolve it first using `resolveNixBinaryWrapper()` and pass the
  * real binary path here. This is handled at detection time in
- * `installationDetection.ts`.
+ * `resolveClaudeInstallation`.
  */
 function fetchNpmSource(version: string): Buffer | null {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'leverframe-claude-'));
@@ -1819,7 +1819,7 @@ function repackELFOverlay(
  * Note: If the binary might be a Nix `makeBinaryWrapper` wrapper, callers
  * should resolve it first using `resolveNixBinaryWrapper()` and pass the
  * real binary path here. This is handled at detection time in
- * `installationDetection.ts`, so `nativeInstallationPath` should already
+ * `resolveClaudeInstallation`, so `nativeInstallationPath` should already
  * point to the real binary.
  *
  * @param binPath - Path to the original native installation binary

@@ -21,8 +21,9 @@ export function classifyClaudeExecutable(head: Buffer): ClaudeExecutableFormat {
 export async function readClaudeContent(path: string): Promise<string> {
   const bytes = await readFile(path);
   if (classifyClaudeExecutable(bytes.subarray(0, 4)) === 'script') return bytes.toString('utf8');
-  const { extractClaudeJsFromNativeInstallation } = await import('./claude-bundle-native.js');
-  const extracted = extractClaudeJsFromNativeInstallation(path);
+  const { extractClaudeJsFromNativeInstallation, resolveNixBinaryWrapper } = await import('./claude-bundle-native.js');
+  const resolved = resolveNixBinaryWrapper(path) ?? path;
+  const extracted = extractClaudeJsFromNativeInstallation(resolved);
   if (!extracted.data) {
     throw new Error(`Failed to extract Claude JavaScript module graph: ${extracted.error ?? 'unknown format'}`);
   }
@@ -35,6 +36,7 @@ export async function writeClaudeContent(path: string, content: string): Promise
     await writeFile(path, content, 'utf8');
     return;
   }
-  const { repackNativeInstallation } = await import('./claude-bundle-native.js');
-  repackNativeInstallation(path, Buffer.from(content), path, true);
+  const { repackNativeInstallation, resolveNixBinaryWrapper } = await import('./claude-bundle-native.js');
+  const resolved = resolveNixBinaryWrapper(path) ?? path;
+  repackNativeInstallation(resolved, Buffer.from(content), resolved, true);
 }
