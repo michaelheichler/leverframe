@@ -1,10 +1,8 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
-import { classifyClaudeExecutable } from './claude-bundle.js';
-import { resolveNixBinaryWrapper } from './claude-bundle-native.js';
 import { getAppPathOverride } from './config.js';
 import { buildClaudeVersionProbe, findClaudeBinary } from './launch.js';
 
@@ -97,24 +95,6 @@ function computeIdentity(canonicalPath: string): string {
   return createHash('sha256').update(canonicalPath).digest('hex');
 }
 
-function followNixBinaryWrapper(path: string): string {
-  try {
-    if (classifyClaudeExecutable(readFileSync(path).subarray(0, 4)) !== 'native') return path;
-  } catch {
-    return path;
-  }
-  const unwrapped = resolveNixBinaryWrapper(path);
-  if (!unwrapped) return path;
-  try {
-    const resolved = realpathSync(unwrapped);
-    const stats = lstatSync(resolved);
-    if (stats.isSymbolicLink() || !statSync(resolved).isFile()) return path;
-    return resolved;
-  } catch {
-    return path;
-  }
-}
-
 /**
  * Locate the candidate logical path plus how it was found, honoring explicit
  * overrides before native and package-manager fallbacks. This is the one
@@ -181,8 +161,6 @@ export function resolveClaudeInstallation(options: ResolveInstallationOptions = 
   } catch {
     return null;
   }
-
-  canonicalPath = followNixBinaryWrapper(canonicalPath);
 
   const version = readExactClaudeVersion(canonicalPath);
   if (!version) return null;

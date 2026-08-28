@@ -38,5 +38,5 @@ export async function writeClaudeContent(path: string, content: string): Promise
   }
   const { repackNativeInstallation, resolveNixBinaryWrapper } = await import('./claude-bundle-native.js');
   const resolved = resolveNixBinaryWrapper(path) ?? path;
-  repackNativeInstallation(resolved, Buffer.from(content), resolved, true);
+  repackNativeInstallation(resolved, Buffer.from(content), path, true);
 }
