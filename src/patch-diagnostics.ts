@@ -9,7 +9,7 @@ import { getPatchTargetLockPath } from './patch-lock.js';
 import { readPatchJournal, verifyPatchSites, defaultPatchRuntime, type PatchRuntime } from './patch-transaction.js';
 import { currentTransformVersion, readManifestV2, type PatchManifestV2 } from './patch-state.js';
 import { evaluatePatchStateV2, type PatchStateV2 } from './patch-classify.js';
-import { formatPatchSiteLine, type PatchSiteResult } from './patch-transforms.js';
+import type { PatchSiteResult } from './patch-transforms.js';
 import {
   inspectLegacyPatchRecovery,
   type LegacyPatchRecoveryInspection,
@@ -77,7 +77,10 @@ export interface PatchDiagnosticsReport {
     mode?: Extract<LegacyPatchRecoveryInspection['kind'], 'exact-adoption' | 'baseline-recovery'>;
     reason?: string;
   };
-  patchSites: PatchSiteResult[];
+  integration: {
+    status: 'unavailable' | 'compatible' | 'integrated' | 'incompatible';
+    capabilities: PatchSiteResult[];
+  };
   state: PatchStateV2 | 'not_resolved';
   nextAction: string;
 }
@@ -128,7 +131,7 @@ export async function diagnosePatchV2(
       transaction: { pending: false },
       lock: { path: '', held: false },
       migration: { ...legacyDiag, eligible: false, reason: 'No installation resolved.' },
-      patchSites: [],
+      integration: { status: 'unavailable', capabilities: [] },
       state: 'not_resolved',
       nextAction: nextActionFor('not_resolved'),
     };
@@ -153,7 +156,7 @@ export async function diagnosePatchV2(
       transaction: { pending: false },
       lock: { path: '', held: false },
       migration: { legacyManifestPresent: false, eligible: false, reason: 'Binary patching is not supported for this Claude Code version.' },
-      patchSites: [],
+      integration: { status: 'incompatible', capabilities: [] },
       state: 'unsupported',
       nextAction: unsupportedClaudeCodeBinaryPatchingMessage(installation.version),
     };
@@ -251,7 +254,14 @@ export async function diagnosePatchV2(
           eligible: true,
           mode: legacyRecovery.kind,
         },
-    patchSites,
+    integration: {
+      status: patchSites.some(site => site.status === 'FAIL')
+        ? 'incompatible'
+        : live.injection.state === 'present' && semanticSitesComplete !== false
+          ? 'integrated'
+          : 'compatible',
+      capabilities: patchSites,
+    },
     state,
     nextAction: nextActionFor(state, legacyRecovery),
   };
@@ -274,7 +284,7 @@ export function formatPatchDiagnosticsText(report: PatchDiagnosticsReport): stri
   lines.push(`${pad('discovery source')}${report.identity.discoverySource}`);
   lines.push(`${pad('installation kind')}${report.identity.installationKind}`);
   lines.push(`${pad('claude version')}${report.identity.version}`);
-  lines.push(`${pad('binary patching')}${report.supported ? 'supported' : 'unsupported'}`);
+  lines.push(`${pad('Claude integration')}${report.integration.status}`);
   lines.push(`${pad('schema / transform')}v${report.leverframe.schemaVersion} / v${report.leverframe.transformVersion}`);
   lines.push(`${pad('manifest')}${report.manifest.present ? `generation ${report.manifest.generation}, ${report.manifest.provenance}` : 'absent'}`);
   if (report.manifest.present) {
@@ -291,9 +301,11 @@ export function formatPatchDiagnosticsText(report: PatchDiagnosticsReport): stri
   lines.push(`${pad('legacy migration')}${report.migration.eligible ? `eligible - ${report.migration.mode}` : (report.migration.legacyManifestPresent ? `not eligible - ${report.migration.reason}` : 'no legacy state')}`);
   lines.push(`${pad('state')}${report.state}`);
   lines.push(`${pad('next action')}${report.nextAction}`);
-  if (report.patchSites.length) {
-    lines.push('  patch sites:');
-    for (const site of report.patchSites) lines.push(formatPatchSiteLine(site));
+  if (report.integration.capabilities.length) {
+    lines.push('  capabilities:');
+    for (const capability of report.integration.capabilities) {
+      lines.push(`  ${capability.status.padEnd(4)} ${capability.name}${capability.extra ? `: ${capability.extra}` : ''}`);
+    }
   }
   return lines;
 }

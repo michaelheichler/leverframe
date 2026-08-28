@@ -21,6 +21,7 @@ try {
   const expected = [
     'LICENSE',
     'README.md',
+    'THIRD_PARTY_NOTICES.md',
     'dist/claude-wrapper.js',
     'dist/cli.js',
     'dist/keyring-child.mjs',
@@ -30,8 +31,9 @@ try {
   ].sort();
   const actual = records[0].files.map(file => file.path).sort();
   const chunks = actual.filter(path => /^dist\/chunk-[A-Z0-9]+\.js$/.test(path));
-  const fixed = actual.filter(path => !chunks.includes(path));
-  if (chunks.length !== 1 || JSON.stringify(fixed) !== JSON.stringify(expected)) {
+  const nativeChunks = actual.filter(path => /^dist\/claude-bundle-native-[A-Z0-9]+\.js$/.test(path));
+  const fixed = actual.filter(path => !chunks.includes(path) && !nativeChunks.includes(path));
+  if (chunks.length !== 1 || nativeChunks.length !== 1 || JSON.stringify(fixed) !== JSON.stringify(expected)) {
     throw new Error(`Unexpected package contents:\n${actual.join('\n')}`);
   }
   if (records[0].unpackedSize > 4_000_000) {

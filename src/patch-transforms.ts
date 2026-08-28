@@ -265,11 +265,13 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
       : '';
     if (ALIASES.length === 0) {
       log('SKIP', 'PATCH 5: model picker options', 'no aliases configured');
+    } else if (missing.length === 0) {
+      log('SKIP', 'PATCH 5: model picker options', 'already integrated');
     } else {
       applyOnce(
         'PATCH 5: model picker options',
-        /(\?\[[\w$]+,r\]:\[r\];for\(let [\w$]+ of [\w$]+\)[\w$]+\(e,[\w$]+,t\);)/,
-        (m) => m + inject,
+        /(function [\w$]+\(e,[\w$]+,[\w$]+\)\{let [^{}]{0,400}?;for\(let [\w$]+ of [\w$]+\)[\w$]+\(e,[\w$]+,[\w$]+\);)(return e\})/,
+        (_m, head, tail) => head! + inject + tail!,
         { required: false, noopIsSkip: true }
       );
     }
@@ -283,7 +285,7 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     }).join('; ');
     applyOnce(
       'PATCH 4: Agent tool model description',
-      /(describe\(`Optional model override for this agent[^`]*?)(`\))/,
+      /(describe\(`Optional model override for this agent[^`]*?)(`)/,
       (_m, body, close) =>
         body!.includes('Additional custom models')
           ? body! + close!

@@ -272,6 +272,7 @@ var package_default = {
     "dist/*.mjs",
     "docs/background-agents.md",
     "docs/model-picker.png",
+    "THIRD_PARTY_NOTICES.md",
     "README.md"
   ],
   engines: {
@@ -300,9 +301,9 @@ var package_default = {
     "ipaddr.js": "2.4.0",
     "node-forge": "1.4.0",
     "node-gyp-build": "4.8.4",
+    "node-lief": "1.3.2",
     open: "11.0.0",
     picocolors: "1.1.1",
-    tweakcc: "4.3.3",
     undici: "7.28.0",
     ws: "8.21.0"
   },
@@ -2472,4 +2473,4 @@ export {
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-JZFX7JTQ.js.map
+//# sourceMappingURL=chunk-MLCPFBZ6.js.map

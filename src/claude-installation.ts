@@ -75,8 +75,6 @@ function readExactClaudeVersion(path: string): string | null {
   }
 }
 
-const minimumClaudeCodeBinaryPatchVersion = [2, 1, 223] as const;
-
 function parseNumericSemver(version: string): readonly [number, number, number] | null {
   const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(version);
   if (!match) return null;
@@ -86,18 +84,11 @@ function parseNumericSemver(version: string): readonly [number, number, number] 
 }
 
 export function isClaudeCodeVersionSupportedForBinaryPatching(version: string): boolean {
-  const parsed = parseNumericSemver(version);
-  if (!parsed) return false;
-  for (let index = 0; index < minimumClaudeCodeBinaryPatchVersion.length; index += 1) {
-    if (parsed[index] !== minimumClaudeCodeBinaryPatchVersion[index]) {
-      return parsed[index] > minimumClaudeCodeBinaryPatchVersion[index];
-    }
-  }
-  return true;
+  return parseNumericSemver(version) !== null;
 }
 
 export function unsupportedClaudeCodeBinaryPatchingMessage(version: string): string {
-  return `Claude Code ${version} is not supported for binary patching. Upgrade to Claude Code 2.1.223 or newer.`;
+  return `Claude Code ${version} could not be structurally validated for Leverframe integration.`;
 }
 
 function computeIdentity(canonicalPath: string): string {

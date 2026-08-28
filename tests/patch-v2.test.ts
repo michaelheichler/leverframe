@@ -630,7 +630,7 @@ describe('verifyPatchSites (read-only semantic verification)', () => {
     expect(result.complete).toBe(true);
     expect(result.results).toContainEqual({
       status: 'SKIP',
-      name: 'PATCH 10: routing notice',
+      name: 'routing-notice',
       extra: 'Agent call-site anchor not recognized',
     });
   });
