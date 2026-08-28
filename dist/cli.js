@@ -17583,7 +17583,7 @@ function applyRoutingNoticeTransform(source, config) {
 }
 
 // src/patch-transforms.ts
-var PATCH_TRANSFORMS_VERSION = 7;
+var PATCH_TRANSFORMS_VERSION = 8;
 var RESERVED_MODEL_ALIASES = /* @__PURE__ */ new Set(["sonnet", "opus", "haiku", "fable", "opusplan", "best", "default"]);
 var NATIVE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 var BASE_EFFORT_LEVELS = ["low", "medium", "high"];
@@ -18312,8 +18312,9 @@ function classifyClaudeExecutable(head) {
 async function readClaudeContent(path) {
   const bytes = await readFile(path);
   if (classifyClaudeExecutable(bytes.subarray(0, 4)) === "script") return bytes.toString("utf8");
-  const { extractClaudeJsFromNativeInstallation } = await import("./claude-bundle-native-JMLDQG2L.js");
-  const extracted = extractClaudeJsFromNativeInstallation(path);
+  const { extractClaudeJsFromNativeInstallation, resolveNixBinaryWrapper } = await import("./claude-bundle-native-4ZVNVHXH.js");
+  const resolved = resolveNixBinaryWrapper(path) ?? path;
+  const extracted = extractClaudeJsFromNativeInstallation(resolved);
   if (!extracted.data) {
     throw new Error(`Failed to extract Claude JavaScript module graph: ${extracted.error ?? "unknown format"}`);
   }
@@ -18325,8 +18326,9 @@ async function writeClaudeContent(path, content) {
     await writeFile(path, content, "utf8");
     return;
   }
-  const { repackNativeInstallation } = await import("./claude-bundle-native-JMLDQG2L.js");
-  repackNativeInstallation(path, Buffer.from(content), path, true);
+  const { repackNativeInstallation, resolveNixBinaryWrapper } = await import("./claude-bundle-native-4ZVNVHXH.js");
+  const resolved = resolveNixBinaryWrapper(path) ?? path;
+  repackNativeInstallation(resolved, Buffer.from(content), path, true);
 }
 
 // src/claude-model-integration.ts
@@ -20733,7 +20735,11 @@ async function runClaudeCommand(parsed) {
   const bridgeMode = resolveBridgeMode("claude", parsed.bridgeMode, {
     persist: Boolean(parsed.saveBridgeMode) && !dryRun
   });
-  await runLaunchPatchCheck({ agentStdout, dryRun, installation });
+  try {
+    await runLaunchPatchCheck({ agentStdout, dryRun, installation });
+  } catch {
+    return 1;
+  }
   if (bridgeMode === "proxy") {
     return runClaudeHttpProxyCommand({ parsed, claudeArgs, agentStdout, installation });
   }
