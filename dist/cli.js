@@ -15201,8 +15201,8 @@ function applyTemplateModelMetadata(models, template) {
     return contextWindow === void 0 ? model : { ...model, contextWindow };
   });
 }
-function applyHeuristicContextWindows(models) {
-  return models.map((model) => typeof model.contextWindow === "number" && model.contextWindow > 0 ? model : { ...model, contextWindow: resolveContextWindow(model.id) });
+function markUnconfirmedContextWindows(models) {
+  return models.map((model) => typeof model.contextWindow === "number" && model.contextWindow > 0 ? model : { ...model, contextWindow: void 0, contextWindowUnconfirmed: true });
 }
 async function applyDynamicSupplierMetadata(models, template) {
   if (!template.modelsDevProviderId) return models;
@@ -15331,7 +15331,7 @@ async function fetchTemplateModels(template, apiKey, baseUrlOverride, extraHeade
     }
     const listedModels = applyTemplateModelMetadata(parseModelList(json, template.npm), template);
     const supplied = await applyDynamicSupplierMetadata(listedModels, template);
-    const models = supplied ? applyHeuristicContextWindows(supplied) : null;
+    const models = supplied ? markUnconfirmedContextWindows(supplied) : null;
     if (!models) {
       return {
         models: [],
