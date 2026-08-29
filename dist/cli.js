@@ -79,7 +79,7 @@ import {
   withProxyAnthropicOriginSettings,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-MLCPFBZ6.js";
+} from "./chunk-AVWKCNOR.js";
 
 // src/cli.ts
 import pc18 from "picocolors";
@@ -3780,9 +3780,35 @@ function closeOpenParts(state) {
   state.openTools.clear();
   return parts;
 }
+function callFailureMessage(raw, statusCode) {
+  const fallback = statusCode === void 0 ? "Copilot model call failed" : `Copilot model call failed with status ${statusCode}`;
+  if (raw === void 0 || raw.length === 0) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed !== null && typeof parsed === "object" && "message" in parsed) {
+      const message2 = parsed.message;
+      if (typeof message2 === "string" && message2.length > 0) return message2;
+    }
+  } catch {
+  }
+  return raw;
+}
+function recordCallFailure(state, event) {
+  const data = dataRecord(event);
+  const raw = typeof data["errorMessage"] === "string" ? data["errorMessage"] : void 0;
+  const statusCode = typeof data["statusCode"] === "number" ? data["statusCode"] : void 0;
+  state.callFailure = { message: callFailureMessage(raw, statusCode), statusCode };
+}
 function finish(state, rawOverride) {
   const closingParts = closeOpenParts(state);
   state.closed = true;
+  const failure = state.callFailure;
+  if (failure !== void 0) {
+    return [
+      ...closingParts,
+      { type: "error", error: { errorType: "model_call_failure", message: failure.message, statusCode: failure.statusCode } }
+    ];
+  }
   return [
     ...closingParts,
     {
@@ -3821,6 +3847,14 @@ function assistantParts(state, event) {
 function eventParts(state, event) {
   if (event.agentId !== void 0) return [];
   if (state.closed) throw new CopilotEventStreamClosedError();
+  if (event.type === "model.call_start") {
+    state.callFailure = void 0;
+    return [];
+  }
+  if (event.type === "model.call_failure") {
+    recordCallFailure(state, event);
+    return [];
+  }
   if (event.type.startsWith("assistant.")) return assistantParts(state, event);
   if (event.type === "session.error") return errorPart(state, event);
   if (event.type === "abort") {
@@ -15136,7 +15170,7 @@ function parseModelList(body, npm) {
     const freeStatus = classifyFreeStatus({
       model: { cost, isFree: row.isFree }
     });
-    const contextWindow = row.context_length ?? row.contextWindow ?? row.context_window ?? resolveContextWindow(id);
+    const contextWindow = row.context_length ?? row.contextWindow ?? row.context_window;
     models.push({
       id,
       name: normalizeGoogleDisplayName(row.name, id),
@@ -15162,9 +15196,13 @@ function applyTemplateModelMetadata(models, template) {
   );
   if (declaredContextById.size === 0) return models;
   return models.map((model) => {
+    if (typeof model.contextWindow === "number" && model.contextWindow > 0) return model;
     const contextWindow = declaredContextById.get(model.id);
     return contextWindow === void 0 ? model : { ...model, contextWindow };
   });
+}
+function applyHeuristicContextWindows(models) {
+  return models.map((model) => typeof model.contextWindow === "number" && model.contextWindow > 0 ? model : { ...model, contextWindow: resolveContextWindow(model.id) });
 }
 async function applyDynamicSupplierMetadata(models, template) {
   if (!template.modelsDevProviderId) return models;
@@ -15178,7 +15216,7 @@ async function applyDynamicSupplierMetadata(models, template) {
     const capabilities = providerModel ?? findModelsDevModelAnywhere(model.id, catalog);
     const supplied = supplier?.get(model.id);
     const npm = supplied?.npm ?? providerModel?.provider?.npm ?? provider.npm ?? model.npm;
-    const contextWindow = capabilities?.limit?.context;
+    const contextWindow = model.contextWindow ?? capabilities?.limit?.context;
     return {
       ...model,
       name: capabilities?.name ?? model.name,
@@ -15292,7 +15330,8 @@ async function fetchTemplateModels(template, apiKey, baseUrlOverride, extraHeade
     } catch {
     }
     const listedModels = applyTemplateModelMetadata(parseModelList(json, template.npm), template);
-    const models = await applyDynamicSupplierMetadata(listedModels, template);
+    const supplied = await applyDynamicSupplierMetadata(listedModels, template);
+    const models = supplied ? applyHeuristicContextWindows(supplied) : null;
     if (!models) {
       return {
         models: [],
