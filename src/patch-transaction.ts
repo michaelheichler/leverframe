@@ -15,6 +15,7 @@ import {
 } from './claude-installation.js';
 import {
   currentTransformVersion,
+  ensureBaselineExecutable,
   ensureBaselineStored,
   getPatchTargetDir,
   getPatchTransactionPathV2,
@@ -224,9 +225,16 @@ async function validatePristineBaseline(input: {
 }): Promise<string | null> {
   const { candidate, version, runtime } = input;
   if (!existsSync(candidate.sourcePath)) return 'The verified recovery baseline is missing.';
+  ensureBaselineExecutable(candidate.sourcePath);
   const inspected = await runtime.inspect(candidate.sourcePath);
-  if (!inspected.readable || inspected.version !== version || inspected.injection.state !== 'absent') {
-    return 'The recovery baseline is unreadable, version-mismatched, or injected.';
+  if (!inspected.readable) {
+    return `The recovery baseline could not be read: ${inspected.error ?? 'unknown reason'}`;
+  }
+  if (inspected.version !== version) {
+    return `The recovery baseline is Claude Code ${inspected.version ?? 'unknown'}, not ${version}.`;
+  }
+  if (inspected.injection.state !== 'absent') {
+    return `The recovery baseline is already injected (${inspected.injection.evidence}).`;
   }
   if (inspected.sha256 !== candidate.sha256) {
     return 'The recovery baseline hash changed after verification.';
