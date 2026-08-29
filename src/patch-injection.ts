@@ -10,7 +10,12 @@ export type InjectionState = 'present' | 'absent' | 'ambiguous';
 
 export interface InjectionClassification {
   state: InjectionState;
-  evidence: 'marker-v1' | 'manifest-hash' | 'ccpatch' | 'none' | 'unknown-marker';
+  /**
+   * `inspect-failed` records that no marker scan ever ran because the binary
+   * could not be read. It is not evidence of a conflicting marker, and callers
+   * must not report it as one.
+   */
+  evidence: 'marker-v1' | 'manifest-hash' | 'ccpatch' | 'none' | 'unknown-marker' | 'inspect-failed';
 }
 
 export function classifyVersionedMarker(content: string): InjectionClassification {

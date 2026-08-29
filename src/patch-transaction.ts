@@ -104,6 +104,14 @@ export interface PatchRuntimeInspection {
   version: string | null;
   sha256: string | null;
   injection: InjectionClassification;
+  /** Why inspection failed, when `readable` is false. */
+  error?: string;
+}
+
+export function describeInspectFailure(live: PatchRuntimeInspection): string {
+  return live.error
+    ? `Cannot inspect the live claude binary: ${live.error}`
+    : 'Cannot inspect the live claude binary.';
 }
 
 export interface PatchRuntime {
@@ -128,13 +136,14 @@ export const defaultPatchRuntime: PatchRuntime = {
         sha256,
         injection: classifyLeverframeInjectionByHash(content, sha256, knownPatchedSha256),
       };
-    } catch {
+    } catch (err) {
       return {
         path,
         readable: false,
         version: null,
         sha256: null,
-        injection: { state: 'ambiguous', evidence: 'unknown-marker' },
+        injection: { state: 'ambiguous', evidence: 'inspect-failed' },
+        error: err instanceof Error ? err.message : String(err),
       };
     }
   },
@@ -247,7 +256,7 @@ export async function applyPatchTransactionV2(
 
   const live = await runtime.inspect(canonicalPath, manifest?.patchedSha256);
   if (!live.readable || !live.sha256 || !live.version) {
-    return { ok: false, message: 'Cannot inspect the live claude binary.' };
+    return { ok: false, message: describeInspectFailure(live) };
   }
   if (live.version !== version) {
     return { ok: false, message: 'The live claude version changed during inspection.' };
@@ -414,7 +423,7 @@ export async function restorePatchTransactionV2(
 
   const live = await runtime.inspect(canonicalPath, manifest?.patchedSha256);
   if (!live.readable || !live.sha256 || !live.version) {
-    return { ok: false, message: 'Cannot inspect the live claude binary.' };
+    return { ok: false, message: describeInspectFailure(live) };
   }
   if (live.version !== version) {
     return { ok: false, message: 'The live claude version changed during inspection.' };
