@@ -29,6 +29,18 @@ interface EventBridgeState {
   openTools: Map<string, OpenToolInput>;
   usage: CopilotUsageState;
   sawToolCalls: boolean;
+  /**
+   * Last `model.call_failure` with no successful retry after it. Copilot emits
+   * `assistant.turn_end` before `session.error`, so without this the turn would
+   * close cleanly and the real cause (quota, auth, upstream 4xx) would be lost
+   * behind a generic empty-response error.
+   */
+  callFailure?: CopilotCallFailure;
+}
+
+interface CopilotCallFailure {
+  message: string;
+  statusCode?: number;
 }
 
 interface ToolRequest {
@@ -280,9 +292,45 @@ function closeOpenParts(state: EventBridgeState): LanguageModelV3StreamPart[] {
   return parts;
 }
 
+/**
+ * `model.call_failure.errorMessage` carries the upstream body, usually JSON
+ * like `{"message":"You have exceeded your monthly quota"}`. Prefer that
+ * message, fall back to the raw string.
+ */
+function callFailureMessage(raw: string | undefined, statusCode: number | undefined): string {
+  const fallback = statusCode === undefined
+    ? 'Copilot model call failed'
+    : `Copilot model call failed with status ${statusCode}`;
+  if (raw === undefined || raw.length === 0) return fallback;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed !== null && typeof parsed === 'object' && 'message' in parsed) {
+      const message = (parsed as { message: unknown }).message;
+      if (typeof message === 'string' && message.length > 0) return message;
+    }
+  } catch {
+    // Not JSON, use the raw body below.
+  }
+  return raw;
+}
+
+function recordCallFailure(state: EventBridgeState, event: CopilotSessionEvent): void {
+  const data = dataRecord(event);
+  const raw = typeof data['errorMessage'] === 'string' ? data['errorMessage'] : undefined;
+  const statusCode = typeof data['statusCode'] === 'number' ? data['statusCode'] : undefined;
+  state.callFailure = { message: callFailureMessage(raw, statusCode), statusCode };
+}
+
 function finish(state: EventBridgeState, rawOverride: string | undefined): LanguageModelV3StreamPart[] {
   const closingParts = closeOpenParts(state);
   state.closed = true;
+  const failure = state.callFailure;
+  if (failure !== undefined) {
+    return [
+      ...closingParts,
+      { type: 'error', error: { errorType: 'model_call_failure', message: failure.message, statusCode: failure.statusCode } },
+    ];
+  }
   return [
     ...closingParts,
     {
@@ -332,6 +380,16 @@ function eventParts(
 ): LanguageModelV3StreamPart[] {
   if (event.agentId !== undefined) return [];
   if (state.closed) throw new CopilotEventStreamClosedError();
+  // A fresh attempt supersedes an earlier failed one, so a retried call that
+  // succeeds does not inherit the previous failure.
+  if (event.type === 'model.call_start') {
+    state.callFailure = undefined;
+    return [];
+  }
+  if (event.type === 'model.call_failure') {
+    recordCallFailure(state, event);
+    return [];
+  }
   if (event.type.startsWith('assistant.')) return assistantParts(state, event);
   if (event.type === 'session.error') return errorPart(state, event);
   if (event.type === 'abort') {

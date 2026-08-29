@@ -79,7 +79,7 @@ import {
   withProxyAnthropicOriginSettings,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-MLCPFBZ6.js";
+} from "./chunk-TKZ2CEPS.js";
 
 // src/cli.ts
 import pc18 from "picocolors";
@@ -3780,9 +3780,35 @@ function closeOpenParts(state) {
   state.openTools.clear();
   return parts;
 }
+function callFailureMessage(raw, statusCode) {
+  const fallback = statusCode === void 0 ? "Copilot model call failed" : `Copilot model call failed with status ${statusCode}`;
+  if (raw === void 0 || raw.length === 0) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed !== null && typeof parsed === "object" && "message" in parsed) {
+      const message2 = parsed.message;
+      if (typeof message2 === "string" && message2.length > 0) return message2;
+    }
+  } catch {
+  }
+  return raw;
+}
+function recordCallFailure(state, event) {
+  const data = dataRecord(event);
+  const raw = typeof data["errorMessage"] === "string" ? data["errorMessage"] : void 0;
+  const statusCode = typeof data["statusCode"] === "number" ? data["statusCode"] : void 0;
+  state.callFailure = { message: callFailureMessage(raw, statusCode), statusCode };
+}
 function finish(state, rawOverride) {
   const closingParts = closeOpenParts(state);
   state.closed = true;
+  const failure = state.callFailure;
+  if (failure !== void 0) {
+    return [
+      ...closingParts,
+      { type: "error", error: { errorType: "model_call_failure", message: failure.message, statusCode: failure.statusCode } }
+    ];
+  }
   return [
     ...closingParts,
     {
@@ -3821,6 +3847,14 @@ function assistantParts(state, event) {
 function eventParts(state, event) {
   if (event.agentId !== void 0) return [];
   if (state.closed) throw new CopilotEventStreamClosedError();
+  if (event.type === "model.call_start") {
+    state.callFailure = void 0;
+    return [];
+  }
+  if (event.type === "model.call_failure") {
+    recordCallFailure(state, event);
+    return [];
+  }
   if (event.type.startsWith("assistant.")) return assistantParts(state, event);
   if (event.type === "session.error") return errorPart(state, event);
   if (event.type === "abort") {
@@ -15136,7 +15170,7 @@ function parseModelList(body, npm) {
     const freeStatus = classifyFreeStatus({
       model: { cost, isFree: row.isFree }
     });
-    const contextWindow = row.context_length ?? row.contextWindow ?? row.context_window ?? resolveContextWindow(id);
+    const contextWindow = row.context_length ?? row.contextWindow ?? row.context_window;
     models.push({
       id,
       name: normalizeGoogleDisplayName(row.name, id),
@@ -15162,9 +15196,13 @@ function applyTemplateModelMetadata(models, template) {
   );
   if (declaredContextById.size === 0) return models;
   return models.map((model) => {
+    if (typeof model.contextWindow === "number" && model.contextWindow > 0) return model;
     const contextWindow = declaredContextById.get(model.id);
     return contextWindow === void 0 ? model : { ...model, contextWindow };
   });
+}
+function markUnconfirmedContextWindows(models) {
+  return models.map((model) => typeof model.contextWindow === "number" && model.contextWindow > 0 ? model : { ...model, contextWindow: void 0, contextWindowUnconfirmed: true });
 }
 async function applyDynamicSupplierMetadata(models, template) {
   if (!template.modelsDevProviderId) return models;
@@ -15178,7 +15216,7 @@ async function applyDynamicSupplierMetadata(models, template) {
     const capabilities = providerModel ?? findModelsDevModelAnywhere(model.id, catalog);
     const supplied = supplier?.get(model.id);
     const npm = supplied?.npm ?? providerModel?.provider?.npm ?? provider.npm ?? model.npm;
-    const contextWindow = capabilities?.limit?.context;
+    const contextWindow = model.contextWindow ?? capabilities?.limit?.context;
     return {
       ...model,
       name: capabilities?.name ?? model.name,
@@ -15292,7 +15330,8 @@ async function fetchTemplateModels(template, apiKey, baseUrlOverride, extraHeade
     } catch {
     }
     const listedModels = applyTemplateModelMetadata(parseModelList(json, template.npm), template);
-    const models = await applyDynamicSupplierMetadata(listedModels, template);
+    const supplied = await applyDynamicSupplierMetadata(listedModels, template);
+    const models = supplied ? markUnconfirmedContextWindows(supplied) : null;
     if (!models) {
       return {
         models: [],
@@ -15803,6 +15842,7 @@ function parseOpenAiModelEntries(body) {
       id: m.slug ?? "",
       name: m.title ?? m.name ?? m.slug ?? "",
       context_window: m.context_window,
+      max_context_window: m.max_context_window,
       ...readCapabilityFlags(m)
     })).filter((m) => m.id.length > 0);
   }
@@ -15811,6 +15851,7 @@ function parseOpenAiModelEntries(body) {
       id: m.id ?? "",
       name: m.name ?? m.id ?? "",
       context_window: m.context_window,
+      max_context_window: m.max_context_window,
       ...readCapabilityFlags(m)
     })).filter((m) => m.id.length > 0);
   }
@@ -15819,10 +15860,12 @@ function parseOpenAiModelEntries(body) {
 function buildDynamicOAuthModel(entry, seedById) {
   const seed = seedById.get(entry.id);
   const contextWindow = confirmedContextWindow(entry.context_window);
+  const maxContextWindow = confirmedContextWindow(entry.max_context_window);
   if (seed) {
     return {
       ...seed,
       contextWindow,
+      maxContextWindow,
       contextWindowUnconfirmed: contextWindow === void 0 ? true : void 0,
       useResponsesLite: entry.useResponsesLite ?? seed.useResponsesLite,
       preferWebSockets: entry.preferWebSockets ?? seed.preferWebSockets
@@ -15837,6 +15880,7 @@ function buildDynamicOAuthModel(entry, seedById) {
     family: prefix,
     brand: deriveBrand(prefix),
     contextWindow,
+    maxContextWindow,
     contextWindowUnconfirmed: contextWindow === void 0 ? true : void 0,
     modelFormat: "openai",
     npm: "@ai-sdk/openai",
@@ -17308,6 +17352,42 @@ import { createHash as createHash21 } from "crypto";
 import { readFileSync as readFileSync9 } from "fs";
 import { join as join10 } from "path";
 
+// src/context-ceilings.ts
+function modelContextCeiling(model) {
+  const max = model.maxContextWindow;
+  if (typeof max !== "number" || !Number.isFinite(max) || max <= 0) return void 0;
+  const current = model.contextWindow;
+  if (typeof current === "number" && current > 0 && max <= current) return void 0;
+  return max;
+}
+function contextCeilingCandidates() {
+  const candidates = [];
+  for (const provider of loadRegistry().providers) {
+    for (const model of provider.modelsCache?.models ?? []) {
+      const ceiling = modelContextCeiling(model);
+      if (ceiling === void 0) continue;
+      candidates.push({
+        modelId: model.id,
+        providerId: provider.id,
+        providerName: provider.name,
+        contextWindow: model.contextWindow ?? 0,
+        maxContextWindow: ceiling
+      });
+    }
+  }
+  return candidates;
+}
+function findContextCeilingCandidate(modelId) {
+  const wanted = modelId.trim().toLowerCase();
+  return contextCeilingCandidates().find((entry) => entry.modelId.toLowerCase() === wanted);
+}
+function resolveContextCeilingOverride(model, enabledIds) {
+  if (!enabledIds || enabledIds.length === 0) return void 0;
+  const wanted = model.id.toLowerCase();
+  if (!enabledIds.some((id) => id.toLowerCase() === wanted)) return void 0;
+  return modelContextCeiling(model);
+}
+
 // src/patch-transforms-routing-notice.ts
 var ROUTING_NOTICE_MARKER = "/*ccpatch:routing-notice*/";
 var ROUTING_NOTICE_HANDOFF_MARKER = "/*ccpatch:routing-notice-handoff*/";
@@ -18011,7 +18091,7 @@ function resolveClaudeInstallation(options = {}) {
 }
 
 // src/patch-state.ts
-import { existsSync as existsSync10, unlinkSync as unlinkSync3 } from "fs";
+import { existsSync as existsSync10, unlinkSync as unlinkSync3, chmodSync as chmodSync7 } from "fs";
 import { join as join9 } from "path";
 
 // src/atomic-file.ts
@@ -18221,10 +18301,20 @@ function removeManifestV2(identity) {
   } catch {
   }
 }
+var BASELINE_FILE_MODE = 448;
+function ensureBaselineExecutable(path) {
+  try {
+    chmodSync7(path, BASELINE_FILE_MODE);
+  } catch {
+  }
+}
 function ensureBaselineStored(input) {
   const dest = getBaselinePathV2(input.identity, input.version, input.baselineSha256);
-  if (existsSync10(dest)) return dest;
-  copyImmutableFileSync(input.sourcePath, dest, { mode: 384 });
+  if (existsSync10(dest)) {
+    ensureBaselineExecutable(dest);
+    return dest;
+  }
+  copyImmutableFileSync(input.sourcePath, dest, { mode: BASELINE_FILE_MODE });
   return dest;
 }
 function currentTransformVersion() {
@@ -18309,10 +18399,26 @@ function classifyClaudeExecutable(head) {
   }
   return "script";
 }
+function isModuleNotFound2(error) {
+  return error !== null && typeof error === "object" && "code" in error && error.code === "ERR_MODULE_NOT_FOUND";
+}
+async function loadNativeBundleSupport() {
+  try {
+    return await import("./claude-bundle-native-4ZVNVHXH.js");
+  } catch (err) {
+    if (isModuleNotFound2(err)) {
+      const detail = err instanceof Error ? err.message.split("\n")[0] : String(err);
+      throw new Error(
+        `native binary support is unavailable because a required dependency is missing (${detail}). Reinstall Leverframe dependencies (\`pnpm install\` in a checkout, or \`npm install -g @michaelheichler/leverframe\`) and retry.`
+      );
+    }
+    throw err;
+  }
+}
 async function readClaudeContent(path) {
   const bytes = await readFile(path);
   if (classifyClaudeExecutable(bytes.subarray(0, 4)) === "script") return bytes.toString("utf8");
-  const { extractClaudeJsFromNativeInstallation, resolveNixBinaryWrapper } = await import("./claude-bundle-native-4ZVNVHXH.js");
+  const { extractClaudeJsFromNativeInstallation, resolveNixBinaryWrapper } = await loadNativeBundleSupport();
   const resolved = resolveNixBinaryWrapper(path) ?? path;
   const extracted = extractClaudeJsFromNativeInstallation(resolved);
   if (!extracted.data) {
@@ -18326,7 +18432,7 @@ async function writeClaudeContent(path, content) {
     await writeFile(path, content, "utf8");
     return;
   }
-  const { repackNativeInstallation, resolveNixBinaryWrapper } = await import("./claude-bundle-native-4ZVNVHXH.js");
+  const { repackNativeInstallation, resolveNixBinaryWrapper } = await loadNativeBundleSupport();
   const resolved = resolveNixBinaryWrapper(path) ?? path;
   repackNativeInstallation(resolved, Buffer.from(content), path, true);
 }
@@ -18414,6 +18520,9 @@ function clearPatchJournal(identity) {
 function sha256File(path) {
   return createHash19("sha256").update(readFileSync7(path)).digest("hex");
 }
+function describeInspectFailure(live) {
+  return live.error ? `Cannot inspect the live claude binary: ${live.error}` : "Cannot inspect the live claude binary.";
+}
 var defaultPatchRuntime = {
   async inspect(path, knownPatchedSha256) {
     try {
@@ -18430,13 +18539,14 @@ var defaultPatchRuntime = {
         sha256: sha2565,
         injection: classifyLeverframeInjectionByHash(content, sha2565, knownPatchedSha256)
       };
-    } catch {
+    } catch (err) {
       return {
         path,
         readable: false,
         version: null,
         sha256: null,
-        injection: { state: "ambiguous", evidence: "unknown-marker" }
+        injection: { state: "ambiguous", evidence: "inspect-failed" },
+        error: err instanceof Error ? err.message : String(err)
       };
     }
   },
@@ -18470,9 +18580,16 @@ function computeSemanticFingerprint(results) {
 async function validatePristineBaseline(input) {
   const { candidate, version, runtime } = input;
   if (!existsSync11(candidate.sourcePath)) return "The verified recovery baseline is missing.";
+  ensureBaselineExecutable(candidate.sourcePath);
   const inspected = await runtime.inspect(candidate.sourcePath);
-  if (!inspected.readable || inspected.version !== version || inspected.injection.state !== "absent") {
-    return "The recovery baseline is unreadable, version-mismatched, or injected.";
+  if (!inspected.readable) {
+    return `The recovery baseline could not be read: ${inspected.error ?? "unknown reason"}`;
+  }
+  if (inspected.version !== version) {
+    return `The recovery baseline is Claude Code ${inspected.version ?? "unknown"}, not ${version}.`;
+  }
+  if (inspected.injection.state !== "absent") {
+    return `The recovery baseline is already injected (${inspected.injection.evidence}).`;
   }
   if (inspected.sha256 !== candidate.sha256) {
     return "The recovery baseline hash changed after verification.";
@@ -18488,7 +18605,7 @@ async function applyPatchTransactionV2(input, runtime = defaultPatchRuntime) {
   const now = () => (/* @__PURE__ */ new Date()).toISOString();
   const live = await runtime.inspect(canonicalPath2, manifest?.patchedSha256);
   if (!live.readable || !live.sha256 || !live.version) {
-    return { ok: false, message: "Cannot inspect the live claude binary." };
+    return { ok: false, message: describeInspectFailure(live) };
   }
   if (live.version !== version) {
     return { ok: false, message: "The live claude version changed during inspection." };
@@ -18620,7 +18737,7 @@ async function restorePatchTransactionV2(input, runtime = defaultPatchRuntime) {
   const now = () => (/* @__PURE__ */ new Date()).toISOString();
   const live = await runtime.inspect(canonicalPath2, manifest?.patchedSha256);
   if (!live.readable || !live.sha256 || !live.version) {
-    return { ok: false, message: "Cannot inspect the live claude binary." };
+    return { ok: false, message: describeInspectFailure(live) };
   }
   if (live.version !== version) {
     return { ok: false, message: "The live claude version changed during inspection." };
@@ -18630,9 +18747,16 @@ async function restorePatchTransactionV2(input, runtime = defaultPatchRuntime) {
   }
   if (!manifest) return { ok: false, message: "Injected claude has no patch manifest for this target." };
   if (!existsSync11(manifest.baselinePath)) return { ok: false, message: "The saved baseline is missing." };
+  ensureBaselineExecutable(manifest.baselinePath);
   const backup = await runtime.inspect(manifest.baselinePath);
-  if (!backup.readable || backup.version !== version || backup.injection.state !== "absent") {
-    return { ok: false, message: "The saved baseline is unreadable, version-mismatched, or injected." };
+  if (!backup.readable) {
+    return { ok: false, message: `The saved baseline could not be read: ${backup.error ?? "unknown reason"}` };
+  }
+  if (backup.version !== version) {
+    return { ok: false, message: `The saved baseline is Claude Code ${backup.version ?? "unknown"}, not ${version}.` };
+  }
+  if (backup.injection.state !== "absent") {
+    return { ok: false, message: `The saved baseline is already injected (${backup.injection.evidence}).` };
   }
   if (backup.sha256 !== manifest.baselineSha256) {
     return { ok: false, message: "The saved baseline hash does not match the patch manifest." };
@@ -19053,7 +19177,7 @@ function sha256File2(path) {
     return null;
   }
 }
-function nextActionFor(state, legacyRecovery) {
+function nextActionFor(state, legacyRecovery, inspectError) {
   switch (state) {
     case "not_resolved":
       return "Install Claude Code, or set TWEAKCC_CC_INSTALLATION_PATH / LEVERFRAME_CLAUDE_PATH, or pass --target.";
@@ -19080,10 +19204,12 @@ function nextActionFor(state, legacyRecovery) {
       return "The Leverframe patch sites still verify; no action required, though the exact bytes changed (e.g. re-signing).";
     case "partially_patched":
       return "The patch is damaged. Run `leverframe patch --restore` then `leverframe patch` to repair it.";
-    case "unsupported":
-      return "Could not confidently classify this target. Run `leverframe patch --diagnose --json` and inspect manually.";
+    case "unsupported": {
+      if (inspectError) return `The claude binary could not be inspected: ${inspectError}`;
+      return "Could not confidently classify this target. Inspect the drift and integration sections above.";
+    }
     default:
-      return "Run `leverframe patch --diagnose` again.";
+      return "Could not classify this target. Inspect the drift and integration sections above.";
   }
 }
 async function diagnosePatchV2(target, runtime = defaultPatchRuntime) {
@@ -19191,7 +19317,9 @@ async function diagnosePatchV2(target, runtime = defaultPatchRuntime) {
       observedSha256,
       expectedPatchedSha256: manifest?.patchedSha256 ?? null,
       hashesMatch: manifest ? observedSha256 === manifest.patchedSha256 : null,
-      injectionState: live.injection.state,
+      // An unreadable binary was never marker-scanned, so report the state as
+      // unknown rather than as an observed ambiguous marker.
+      injectionState: live.readable ? live.injection.state : null,
       semanticSitesComplete
     },
     transaction: journal ? {
@@ -19216,7 +19344,7 @@ async function diagnosePatchV2(target, runtime = defaultPatchRuntime) {
       capabilities: patchSites
     },
     state,
-    nextAction: nextActionFor(state, legacyRecovery)
+    nextAction: nextActionFor(state, legacyRecovery, live.error)
   };
 }
 function pad(label) {
@@ -19291,6 +19419,9 @@ function reasoningEffortForPatch(provider, model) {
   return { levels: [...caps.levels], defaultLevel: caps.defaultLevel };
 }
 function resolveContextForPatch(meta) {
+  if (meta?.contextCeilingOverride !== void 0 && meta.contextCeilingOverride > 0) {
+    return { context: meta.contextCeilingOverride, provenance: "override" };
+  }
   const context = meta?.contextWindow;
   if (context === void 0 || context <= 0) {
     return { provenance: meta?.contextWindowUnconfirmed ? "unconfirmed" : "missing" };
@@ -19348,6 +19479,7 @@ function buildDesiredPatchConfig() {
         // if provider-confirmed.
         contextWindow: !model.contextWindowUnconfirmed && model.contextWindow && model.contextWindow > 0 ? model.contextWindow : void 0,
         contextWindowUnconfirmed: model.contextWindowUnconfirmed,
+        contextCeilingOverride: resolveContextCeilingOverride(model, prefs.contextCeilingOverrides),
         displayName: httpProxyDisplayName(model, provider.name),
         effort: reasoningEffortForPatch(provider, model)
       });
@@ -19691,6 +19823,16 @@ function parseArgs(args) {
         if (!consumed) return parsed2;
         parsed2.favoritesUnalias = consumed.value;
         i = consumed.next;
+      } else if (arg === "--context-ceiling" || arg.startsWith("--context-ceiling=")) {
+        const consumed = consumeServerOptionValue(arg, rest, i, "--context-ceiling", parsed2);
+        if (!consumed) return parsed2;
+        parsed2.favoritesContextCeiling = consumed.value;
+        i = consumed.next;
+      } else if (arg === "--no-context-ceiling" || arg.startsWith("--no-context-ceiling=")) {
+        const consumed = consumeServerOptionValue(arg, rest, i, "--no-context-ceiling", parsed2);
+        if (!consumed) return parsed2;
+        parsed2.favoritesNoContextCeiling = consumed.value;
+        i = consumed.next;
       } else if (!parsed2.error) parsed2.error = `Unknown models option: ${arg}`;
     }
     return parsed2;
@@ -19989,6 +20131,7 @@ ${pc13.bold("Usage:")}
   leverframe models --list
   leverframe models --alias sol=leverframe:openai-oauth:gpt-5.6-sol
   leverframe models --unalias sol
+  leverframe models --context-ceiling gpt-5.6-sol
   leverframe models
   leverframe favorites --help
   leverframe favorites --version
@@ -20002,6 +20145,15 @@ ${pc13.bold("Behavior:")}
   --alias <name=target> saves a short name for a proxy-mode favorite. The
   target is leverframe:<provider-id>:<model-id> (the leverframe: prefix is optional).
   --unalias <name> removes a saved short name.
+  --context-ceiling <model-id> opts a model in to the maximum context window its
+  provider reports, for providers that serve a smaller tuned default. The
+  maximum is read from live provider metadata (ChatGPT/Codex reports both
+  context_window and max_context_window), never from a bundled number, because
+  it varies by account. Run it with an unknown model to list the models that
+  currently offer one. Nothing is applied automatically, and an opted-in window
+  is recorded as an override rather than as provider-confirmed metadata. Run
+  leverframe patch afterwards to apply it.
+  --no-context-ceiling <model-id> returns a model to the window it is served.
 
 ${pc13.bold("How it works:")}
   claude and server use the global favorites list.
@@ -20196,7 +20348,55 @@ async function pickGlobalFavoriteModel(providers, favorites, opts) {
 }
 
 // src/cli-command-models.ts
+function runContextCeilingChange(modelId, enable) {
+  const id = modelId.trim().toLowerCase();
+  if (!enable) {
+    const current2 = loadPreferences().contextCeilingOverrides ?? [];
+    const without2 = current2.filter((entry) => entry.toLowerCase() !== id);
+    if (without2.length === current2.length) {
+      p13.log.error(`${id} is not opted in to a context ceiling.`);
+      return 1;
+    }
+    savePreferences({ contextCeilingOverrides: without2 });
+    p13.log.success(`${id} now uses the window its provider reports.`);
+    p13.log.info("Run `leverframe patch` to apply it to Claude Code.");
+    return 0;
+  }
+  const candidate = findContextCeilingCandidate(id);
+  if (candidate === void 0) {
+    p13.log.error(`${modelId} reports no context window above the one its provider serves.`);
+    const available = contextCeilingCandidates();
+    if (available.length === 0) {
+      p13.log.info("No configured model currently reports a higher maximum. Refresh provider models and retry.");
+    } else {
+      p13.log.info("Models that do:");
+      for (const entry of available) {
+        p13.log.info(
+          `  ${entry.modelId} (${entry.providerName}): ${entry.contextWindow.toLocaleString("en-US")} \u2192 ${entry.maxContextWindow.toLocaleString("en-US")}`
+        );
+      }
+    }
+    return 1;
+  }
+  const ceiling = candidate.maxContextWindow;
+  const current = loadPreferences().contextCeilingOverrides ?? [];
+  const without = current.filter((entry) => entry.toLowerCase() !== id);
+  if (without.length !== current.length) {
+    p13.log.info(`${id} already uses its ${ceiling.toLocaleString("en-US")}-token ceiling.`);
+    return 0;
+  }
+  savePreferences({ contextCeilingOverrides: [...without, id] });
+  p13.log.success(`${id} now uses its ${ceiling.toLocaleString("en-US")}-token ceiling.`);
+  p13.log.info("Run `leverframe patch` to apply it to Claude Code.");
+  return 0;
+}
 async function runModelsCommand(opts = {}) {
+  if (opts.contextCeiling !== void 0 && opts.noContextCeiling !== void 0) {
+    p13.log.error("--context-ceiling and --no-context-ceiling apply one at a time.");
+    return 1;
+  }
+  if (opts.contextCeiling !== void 0) return runContextCeilingChange(opts.contextCeiling, true);
+  if (opts.noContextCeiling !== void 0) return runContextCeilingChange(opts.noContextCeiling, false);
   const changesAlias = opts.alias !== void 0 || opts.unalias !== void 0;
   if (changesAlias && (opts.list || opts.alias !== void 0 && opts.unalias !== void 0)) {
     p13.log.error("--alias/--unalias apply one at a time to proxy-mode favorites.");
@@ -21102,7 +21302,9 @@ Error: ${parsed.error}
     return runModelsCommand({
       list: parsed.favoritesList,
       alias: parsed.favoritesAlias,
-      unalias: parsed.favoritesUnalias
+      unalias: parsed.favoritesUnalias,
+      contextCeiling: parsed.favoritesContextCeiling,
+      noContextCeiling: parsed.favoritesNoContextCeiling
     });
   }
   if (parsed.command === "providers") {

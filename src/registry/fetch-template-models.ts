@@ -116,11 +116,13 @@ function parseModelList(body: OpenAiModelListResponse, npm: string): CachedModel
     const freeStatus = classifyFreeStatus({
       model: { cost, isFree: row.isFree },
     });
+    // Live listing metadata only. Template, supplier, and heuristic fallbacks
+    // are layered on afterwards so each source can tell whether the provider
+    // actually reported a window for this model.
     const contextWindow =
       row.context_length ??
       row.contextWindow ??
-      row.context_window ??
-      resolveContextWindow(id);
+      row.context_window;
     models.push({
       id,
       name: normalizeGoogleDisplayName(row.name, id),
@@ -154,9 +156,33 @@ function applyTemplateModelMetadata(
   if (declaredContextById.size === 0) return models;
 
   return models.map(model => {
+    // A window the provider actually reported always wins. The template's
+    // declared value is a fallback for models the listing did not describe,
+    // never an override of live data, so a stale constant cannot outrank the
+    // provider's own catalog.
+    if (typeof model.contextWindow === 'number' && model.contextWindow > 0) return model;
     const contextWindow = declaredContextById.get(model.id);
     return contextWindow === undefined ? model : { ...model, contextWindow };
   });
+}
+
+/**
+ * Runs after live, template, and supplier metadata have all had their turn. A
+ * model none of them described keeps no window at all and is marked
+ * unconfirmed, rather than carrying a guess that reads as provider-confirmed.
+ *
+ * Downstream then fails soft in the way each consumer needs: the patcher
+ * withholds an unconfirmed window so Claude Code applies its own default, and
+ * the serving paths resolve one through `resolveContextWindow`, which takes the
+ * unconfirmed flag and answers from the id-pattern heuristic. Leverframe has to
+ * answer there because it is the server.
+ */
+function markUnconfirmedContextWindows(models: CachedModel[]): CachedModel[] {
+  return models.map(model => (
+    typeof model.contextWindow === 'number' && model.contextWindow > 0
+      ? model
+      : { ...model, contextWindow: undefined, contextWindowUnconfirmed: true }
+  ));
 }
 
 async function applyDynamicSupplierMetadata(
@@ -178,7 +204,10 @@ async function applyDynamicSupplierMetadata(
     const capabilities = providerModel ?? findModelsDevModelAnywhere(model.id, catalog);
     const supplied = supplier?.get(model.id);
     const npm = supplied?.npm ?? providerModel?.provider?.npm ?? provider.npm ?? model.npm;
-    const contextWindow = capabilities?.limit?.context;
+    // Supplier metadata fills gaps, it does not overwrite what the provider's
+    // own listing reported. Discarding a live value for a model the supplier
+    // catalog happens not to cover would be a downgrade, not an enrichment.
+    const contextWindow = model.contextWindow ?? capabilities?.limit?.context;
     return {
       ...model,
       name: capabilities?.name ?? model.name,
@@ -322,7 +351,8 @@ export async function fetchTemplateModels(
     }
 
     const listedModels = applyTemplateModelMetadata(parseModelList(json, template.npm), template);
-    const models = await applyDynamicSupplierMetadata(listedModels, template);
+    const supplied = await applyDynamicSupplierMetadata(listedModels, template);
+    const models = supplied ? markUnconfirmedContextWindows(supplied) : null;
     if (!models) {
       return {
         models: [],

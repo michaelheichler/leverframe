@@ -88,6 +88,7 @@ export interface PatchDiagnosticsReport {
 function nextActionFor(
   state: PatchStateV2 | 'not_resolved',
   legacyRecovery?: LegacyPatchRecoveryInspection,
+  inspectError?: string,
 ): string {
   switch (state) {
     case 'not_resolved': return 'Install Claude Code, or set TWEAKCC_CC_INSTALLATION_PATH / LEVERFRAME_CLAUDE_PATH, or pass --target.';
@@ -107,8 +108,12 @@ function nextActionFor(
     case 'modified': return 'The binary was replaced or modified outside Leverframe. Run `leverframe patch` to patch it fresh.';
     case 'modified_but_injected': return 'The Leverframe patch sites still verify; no action required, though the exact bytes changed (e.g. re-signing).';
     case 'partially_patched': return 'The patch is damaged. Run `leverframe patch --restore` then `leverframe patch` to repair it.';
-    case 'unsupported': return 'Could not confidently classify this target. Run `leverframe patch --diagnose --json` and inspect manually.';
-    default: return 'Run `leverframe patch --diagnose` again.';
+    case 'unsupported': {
+      // Never send the reader back to the command that produced this report.
+      if (inspectError) return `The claude binary could not be inspected: ${inspectError}`;
+      return 'Could not confidently classify this target. Inspect the drift and integration sections above.';
+    }
+    default: return 'Could not classify this target. Inspect the drift and integration sections above.';
   }
 }
 
@@ -232,7 +237,9 @@ export async function diagnosePatchV2(
       observedSha256,
       expectedPatchedSha256: manifest?.patchedSha256 ?? null,
       hashesMatch: manifest ? observedSha256 === manifest.patchedSha256 : null,
-      injectionState: live.injection.state,
+      // An unreadable binary was never marker-scanned, so report the state as
+      // unknown rather than as an observed ambiguous marker.
+      injectionState: live.readable ? live.injection.state : null,
       semanticSitesComplete,
     },
     transaction: journal ? {
@@ -263,7 +270,7 @@ export async function diagnosePatchV2(
       capabilities: patchSites,
     },
     state,
-    nextAction: nextActionFor(state, legacyRecovery),
+    nextAction: nextActionFor(state, legacyRecovery, live.error),
   };
 }
 

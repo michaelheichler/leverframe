@@ -6,7 +6,7 @@
 // each other's manifest or pristine baseline. Baselines are stored
 // content-addressed and immutable: `claude-<version>-<baselineSha256>.orig`.
 
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, unlinkSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { getAppHome, getDefaultAppHome, resolveAppHomeOverride } from './paths.js';
 import { ensurePrivateDirectory, readFileStrict } from './durable-io.js';
@@ -158,6 +158,28 @@ export interface StoreBaselineInput {
 }
 
 /**
+ * Owner-executable, because a stored baseline is verified by running it:
+ * `readExactClaudeVersion` (src/claude-installation.ts) shells out to
+ * `<binary> --version`. A non-executable copy fails that probe, surfaces as
+ * "embedded version unavailable", and rejects every re-patch of an
+ * already-injected target.
+ */
+const BASELINE_FILE_MODE = 0o700;
+
+/**
+ * Restore the executable bit on a stored baseline. Baselines written before
+ * this mode was corrected are owner-read-only, so verification of them fails
+ * until the bit is back. Safe to call on every verification attempt.
+ */
+export function ensureBaselineExecutable(path: string): void {
+  try {
+    chmodSync(path, BASELINE_FILE_MODE);
+  } catch {
+    // Verification reports the real problem if the file is unusable.
+  }
+}
+
+/**
  * Publish `sourcePath` into the target's content-addressed, immutable baseline
  * store. A no-op if a baseline already exists at that content-addressed path
  * (the name is derived from its own hash, so an existing file is guaranteed
@@ -165,8 +187,11 @@ export interface StoreBaselineInput {
  */
 export function ensureBaselineStored(input: StoreBaselineInput): string {
   const dest = getBaselinePathV2(input.identity, input.version, input.baselineSha256);
-  if (existsSync(dest)) return dest;
-  copyImmutableFileSync(input.sourcePath, dest, { mode: 0o600 });
+  if (existsSync(dest)) {
+    ensureBaselineExecutable(dest);
+    return dest;
+  }
+  copyImmutableFileSync(input.sourcePath, dest, { mode: BASELINE_FILE_MODE });
   return dest;
 }
 

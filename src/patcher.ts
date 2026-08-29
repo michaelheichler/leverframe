@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { getAppHome } from './paths.js';
 import { loadPreferences } from './config.js';
 import { loadRegistry } from './registry/io.js';
+import { resolveContextCeilingOverride } from './context-ceilings.js';
 import { httpProxyDisplayName, httpProxyModelId } from './http-proxy/routes.js';
 import { stripOneMContextSuffix } from './context-model-id.js';
 import {
@@ -62,7 +63,7 @@ export function readPatchManifest(path = getPatchManifestPath()): PatchManifest 
  * (materialize.ts:83's rule: unconfirmed is withheld from the patch, not
  * reported as "missing").
  */
-export type PatchContextProvenance = 'confirmed' | 'unconfirmed' | 'missing';
+export type PatchContextProvenance = 'confirmed' | 'unconfirmed' | 'missing' | 'override';
 
 export interface DesiredPatchConfig {
   config: PatchScriptModelConfig;
@@ -81,6 +82,12 @@ export interface PatchModelMeta {
    * from "genuinely missing" so only the latter lands in `unknownWindows`.
    */
   contextWindowUnconfirmed?: boolean;
+  /**
+   * Documented ceiling the user opted this model into, when its provider
+   * reports a lower tuned default (src/context-ceilings.ts). Outranks
+   * `contextWindow` and is recorded with `override` provenance.
+   */
+  contextCeilingOverride?: number;
   displayName?: string;
   /**
    * Raw supplier reasoning-capability ladder (pre-projection), e.g. straight
@@ -128,6 +135,11 @@ export function reasoningEffortForPatch(provider: RegistryProvider, model: Cache
 function resolveContextForPatch(
   meta: PatchModelMeta | undefined,
 ): { context?: number; provenance: PatchContextProvenance } {
+  // An opted-in ceiling wins over the reported window and keeps its own
+  // provenance, so diagnostics never present it as provider-confirmed.
+  if (meta?.contextCeilingOverride !== undefined && meta.contextCeilingOverride > 0) {
+    return { context: meta.contextCeilingOverride, provenance: 'override' };
+  }
   const context = meta?.contextWindow;
   if (context === undefined || context <= 0) {
     return { provenance: meta?.contextWindowUnconfirmed ? 'unconfirmed' : 'missing' };
@@ -201,6 +213,7 @@ export function buildDesiredPatchConfig(): DesiredPatchConfig {
           ? model.contextWindow
           : undefined,
         contextWindowUnconfirmed: model.contextWindowUnconfirmed,
+        contextCeilingOverride: resolveContextCeilingOverride(model, prefs.contextCeilingOverrides),
         displayName: httpProxyDisplayName(model, provider.name),
         effort: reasoningEffortForPatch(provider, model),
       });

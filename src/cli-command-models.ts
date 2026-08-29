@@ -7,6 +7,7 @@ import { MAX_MODEL_CATALOG } from './constants.js';
 import type { FavoriteModel, LocalProvider, LocalProviderModel } from './types.js';
 import { addFavorite, removeFavorite, isFavorite } from './favorites.js';
 import { canonicalizeModelAliasName, modelAliasTarget, parseModelAliasAssignment } from './model-aliases.js';
+import { contextCeilingCandidates, findContextCeilingCandidate } from './context-ceilings.js';
 import {
   browseByProviderChoice,
   buildGlobalFavoriteIndex,
@@ -23,9 +24,68 @@ interface FavoritesCommandOptions {
   list?: boolean;
   alias?: string;
   unalias?: string;
+  contextCeiling?: string;
+  noContextCeiling?: string;
+}
+
+/**
+ * Opt a model in or out of its documented context ceiling. Enable only accepts
+ * ids that currently report a higher maximum, so this can never assert a window
+ * Leverframe has no basis for. Disable drops a stored opt-in even after that
+ * maximum has gone inert, matching config loading which keeps vanished
+ * ceilings in prefs rather than deleting them.
+ */
+function runContextCeilingChange(modelId: string, enable: boolean): number {
+  const id = modelId.trim().toLowerCase();
+  if (!enable) {
+    const current = loadPreferences().contextCeilingOverrides ?? [];
+    const without = current.filter(entry => entry.toLowerCase() !== id);
+    if (without.length === current.length) {
+      p.log.error(`${id} is not opted in to a context ceiling.`);
+      return 1;
+    }
+    savePreferences({ contextCeilingOverrides: without });
+    p.log.success(`${id} now uses the window its provider reports.`);
+    p.log.info('Run `leverframe patch` to apply it to Claude Code.');
+    return 0;
+  }
+  const candidate = findContextCeilingCandidate(id);
+  if (candidate === undefined) {
+    p.log.error(`${modelId} reports no context window above the one its provider serves.`);
+    const available = contextCeilingCandidates();
+    if (available.length === 0) {
+      p.log.info('No configured model currently reports a higher maximum. Refresh provider models and retry.');
+    } else {
+      p.log.info('Models that do:');
+      for (const entry of available) {
+        p.log.info(
+          `  ${entry.modelId} (${entry.providerName}): `
+          + `${entry.contextWindow.toLocaleString('en-US')} → ${entry.maxContextWindow.toLocaleString('en-US')}`,
+        );
+      }
+    }
+    return 1;
+  }
+  const ceiling = candidate.maxContextWindow;
+  const current = loadPreferences().contextCeilingOverrides ?? [];
+  const without = current.filter(entry => entry.toLowerCase() !== id);
+  if (without.length !== current.length) {
+    p.log.info(`${id} already uses its ${ceiling.toLocaleString('en-US')}-token ceiling.`);
+    return 0;
+  }
+  savePreferences({ contextCeilingOverrides: [...without, id] });
+  p.log.success(`${id} now uses its ${ceiling.toLocaleString('en-US')}-token ceiling.`);
+  p.log.info('Run `leverframe patch` to apply it to Claude Code.');
+  return 0;
 }
 
 export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Promise<number> {
+  if (opts.contextCeiling !== undefined && opts.noContextCeiling !== undefined) {
+    p.log.error('--context-ceiling and --no-context-ceiling apply one at a time.');
+    return 1;
+  }
+  if (opts.contextCeiling !== undefined) return runContextCeilingChange(opts.contextCeiling, true);
+  if (opts.noContextCeiling !== undefined) return runContextCeilingChange(opts.noContextCeiling, false);
   const changesAlias = opts.alias !== undefined || opts.unalias !== undefined;
   if (changesAlias && (opts.list || (opts.alias !== undefined && opts.unalias !== undefined))) {
     p.log.error('--alias/--unalias apply one at a time to proxy-mode favorites.');

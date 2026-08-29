@@ -46,6 +46,8 @@ All notable changes to Leverframe are recorded here.
 
 ### Added
 
+- `leverframe models --context-ceiling <model-id>` opts a model in to the maximum context window its provider reports, and `--no-context-ceiling` undoes it. ChatGPT/Codex reports `max_context_window` alongside the smaller `context_window` it serves, and only the latter was read before. The maximum is read live per account, never bundled, because it differs by account and by model.
+
 - Claude Code Agent launches now show a colored routing confirmation with the resolved model and effective reasoning level. The notice is rendered through Claude Code's notification UI and is not written to process output.
 - Context infrastructure for budgeting, compaction planning, summaries, trusted metadata, encrypted memory, local inference profiling, retention, vector memory, and worker supervision.
 - Read-only patch diagnostics with installation identity, version support, manifest, drift, transaction, lock, and legacy recovery details.
@@ -60,6 +62,10 @@ All notable changes to Leverframe are recorded here.
 
 ### Fixed
 
+- Stored patch baselines are owner-executable. Verifying a baseline runs it (`<binary> --version`), so the previous read-only mode failed with "embedded version unavailable" and rejected every re-patch of an already-injected install. Baselines already on disk are repaired before verification.
+- A missing `node-lief` no longer surfaces as an unreadable Claude Code binary. Inspection failures report their real cause instead of a fabricated ambiguous injection marker.
+- GitHub Copilot failures report the upstream reason. Copilot emits `assistant.turn_end` before `session.error`, so the turn closed before the cause was read and every failure became "Upstream returned no content". An exhausted quota now reports as HTTP 402 with its own message.
+- Live provider context windows are no longer overwritten by bundled template constants, and supplier metadata no longer discards a context window the provider reported.
 - Claude Code 2.1.226 Agent model validation now supports the current function-style schema while retaining the legacy enum schema.
 - Patch publication records the staged binary identity before the atomic rename, closing a crash-recovery gap.
 - Model alias and context lookup tables use null-prototype objects to prevent prototype-key collisions.

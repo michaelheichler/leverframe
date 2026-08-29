@@ -42,8 +42,9 @@ leverframe patch
 leverframe claude
 ```
 
-ChatGPT/Codex model context limits come from positive finite `context_window` values reported by the authenticated provider. Missing or invalid values remain unconfirmed. Leverframe does not present a seed or heuristic as a provider limit. An unconfirmed limit omits the `[1m.
-]` suffix and the `CLAUDE_CODE_MAX_CONTEXT_TOKENS` override.
+ChatGPT/Codex model context limits come from positive finite `context_window` values reported by the authenticated provider. Missing or invalid values remain unconfirmed. Leverframe does not present a seed or heuristic as a provider limit. An unconfirmed limit omits the `[1m]` suffix and the `CLAUDE_CODE_MAX_CONTEXT_TOKENS` override.
+
+The same endpoint also reports `max_context_window`, the maximum a model accepts, which is often far above the window it serves by default. Opt a model in with `leverframe models --context-ceiling <model-id>`, then re-run `leverframe patch`. Run it with an unknown model id to list the models that currently offer more. The maximum is read live per account and is never bundled, because it differs between accounts and between models on one account. Long-context requests are usually billed at a higher rate, which is why nothing is applied automatically.
 ### GitHub Copilot subscription
 ```bash
 leverframe providers auth github-copilot

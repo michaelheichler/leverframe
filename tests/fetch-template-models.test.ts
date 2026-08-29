@@ -29,6 +29,28 @@ const openaiCompatTemplate = template({
   defaultBaseUrl: 'https://api.compat.example/v1',
 });
 
+const supplierBackedTemplate = template({
+  id: 'supplier-backed',
+  name: 'Supplier Backed',
+  npm: '@ai-sdk/openai-compatible',
+  defaultBaseUrl: 'https://api.supplier.example/v1',
+  modelsDevProviderId: 'supplier-backed',
+});
+
+/** Routes the provider listing and the models.dev catalog to separate bodies. */
+function stubSupplierFetch(listing: unknown, catalog: unknown): void {
+  vi.mocked(fetch).mockImplementation(async (input: unknown) => {
+    if (String(input).includes('models.dev')) {
+      return { ok: true, status: 200, json: async () => catalog } as unknown as Response;
+    }
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(listing),
+    } as unknown as Response;
+  });
+}
+
 describe('fetchTemplateModels', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
@@ -218,5 +240,28 @@ describe('fetchTemplateModels', () => {
       freeStatus: 'verified_free',
       cost: { input: 0, output: 0 },
     });
+  });
+
+  it('keeps a live context window the supplier catalog does not cover', async () => {
+    stubSupplierFetch(
+      { data: [{ id: 'live-only', name: 'Live Only', context_length: 262_144 }] },
+      { 'supplier-backed': { models: {} } },
+    );
+
+    const result = await fetchTemplateModels(supplierBackedTemplate, 'sk-test');
+
+    expect(result.models[0]).toMatchObject({ id: 'live-only', contextWindow: 262_144 });
+    expect(result.models[0]?.contextWindowUnconfirmed).toBeFalsy();
+  });
+
+  it('fills a missing context window from the supplier catalog', async () => {
+    stubSupplierFetch(
+      { data: [{ id: 'supplier-only', name: 'Supplier Only' }] },
+      { 'supplier-backed': { models: { 'supplier-only': { limit: { context: 131_072 } } } } },
+    );
+
+    const result = await fetchTemplateModels(supplierBackedTemplate, 'sk-test');
+
+    expect(result.models[0]).toMatchObject({ id: 'supplier-only', contextWindow: 131_072 });
   });
 });

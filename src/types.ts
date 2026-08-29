@@ -86,6 +86,11 @@ export interface UserPreferences {
   /** Manual binary path overrides (e.g. the claude binary). */
   appPathOverrides?: Record<string, string>;
   recentLaunchFolders?: string[];
+  /**
+   * Bare model ids opted in to their documented context ceiling, for providers
+   * that report a lower tuned default. See src/context-ceilings.ts.
+   */
+  contextCeilingOverrides?: string[];
   /** Launch behavior for `leverframe claude`. */
   launch?: {
     /** Append --dangerously-skip-permissions unless the user already passed a permission flag. */
@@ -143,6 +148,10 @@ export interface ParsedArgs {
   favoritesAlias?: string;
   /** Remove a saved short proxy-mode model alias. */
   favoritesUnalias?: string;
+  /** Opt a model in to its documented context ceiling (src/context-ceilings.ts). */
+  favoritesContextCeiling?: string;
+  /** Return a model to the context window its provider reports. */
+  favoritesNoContextCeiling?: string;
   /** leverframe patch: restore the pristine Claude Code binary. */
   patchRestore?: boolean;
   /** leverframe patch --diagnose: read-only, network-free installation/state report. */

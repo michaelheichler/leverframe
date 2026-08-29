@@ -27,6 +27,12 @@ export interface CachedModel {
   usageMultiplierApplies?: boolean;
   deprecated?: boolean;
   contextWindowUnconfirmed?: boolean;
+  /**
+   * Maximum window the provider reports for this model, when it differs from
+   * the window it serves by default (ChatGPT/Codex `max_context_window`).
+   * Applied only when the user opts in, see src/context-ceilings.ts.
+   */
+  maxContextWindow?: number;
   isFree?: boolean;
   freeStatus?: FreeStatus;
   modelFormat: 'anthropic' | 'openai' | 'cloud-code';

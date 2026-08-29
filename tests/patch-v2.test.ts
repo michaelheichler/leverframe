@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -227,6 +227,52 @@ describe('applyPatchTransactionV2 / restorePatchTransactionV2', () => {
     expect(readManifestV2(installation.identity)).toBeNull();
     expect(readPatchJournal(installation.identity)?.phase).toBe('completed');
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'repairs a stored baseline that lost its executable bit before restore inspects it',
+    async () => {
+      useTempHome();
+      const dir = mkdtempSync(join(tmpdir(), 'leverframe-restore-baseline-mode-'));
+      dirs.push(dir);
+      const canonicalPath = join(dir, 'claude');
+      writeFileSync(canonicalPath, BASELINE);
+      chmodSync(canonicalPath, 0o755);
+      const installation = makeInstallation(canonicalPath);
+      const inner = fakeRuntime();
+      const executeRequired: PatchRuntime = {
+        ...inner,
+        async inspect(path, knownPatchedSha256) {
+          if ((statSync(path).mode & 0o100) === 0) {
+            return {
+              path,
+              readable: false,
+              version: null,
+              sha256: null,
+              injection: { state: 'ambiguous', evidence: 'inspect-failed' },
+              error: 'embedded version unavailable',
+            };
+          }
+          return inner.inspect(path, knownPatchedSha256);
+        },
+      };
+
+      await applyPatchTransactionV2(
+        { installation, desiredConfig: CONFIG, configHash: 'hash-a', manifest: null, trace: false },
+        inner,
+      );
+      const patchedManifest = readManifestV2(installation.identity)!;
+      chmodSync(canonicalPath, 0o755);
+      chmodSync(patchedManifest.baselinePath, 0o600);
+
+      const restored = await restorePatchTransactionV2(
+        { installation, manifest: patchedManifest },
+        executeRequired,
+      );
+      expect(restored.ok).toBe(true);
+      expect(readFileSync(canonicalPath, 'utf8')).toBe(BASELINE);
+      expect(statSync(patchedManifest.baselinePath).mode & 0o777).toBe(0o700);
+    },
+  );
 
   it('refuses to patch when the target changed version mid-inspection, leaving the target untouched', async () => {
     useTempHome();

@@ -201,6 +201,18 @@ export function parseArgs(args: string[]): ParsedArgs {
         parsed.favoritesUnalias = consumed.value;
         i = consumed.next;
       }
+      else if (arg === '--context-ceiling' || arg.startsWith('--context-ceiling=')) {
+        const consumed = consumeServerOptionValue(arg, rest, i, '--context-ceiling', parsed);
+        if (!consumed) return parsed;
+        parsed.favoritesContextCeiling = consumed.value;
+        i = consumed.next;
+      }
+      else if (arg === '--no-context-ceiling' || arg.startsWith('--no-context-ceiling=')) {
+        const consumed = consumeServerOptionValue(arg, rest, i, '--no-context-ceiling', parsed);
+        if (!consumed) return parsed;
+        parsed.favoritesNoContextCeiling = consumed.value;
+        i = consumed.next;
+      }
       else if (!parsed.error) parsed.error = `Unknown models option: ${arg}`;
     }
     return parsed;

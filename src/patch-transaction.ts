@@ -15,6 +15,7 @@ import {
 } from './claude-installation.js';
 import {
   currentTransformVersion,
+  ensureBaselineExecutable,
   ensureBaselineStored,
   getPatchTargetDir,
   getPatchTransactionPathV2,
@@ -104,6 +105,14 @@ export interface PatchRuntimeInspection {
   version: string | null;
   sha256: string | null;
   injection: InjectionClassification;
+  /** Why inspection failed, when `readable` is false. */
+  error?: string;
+}
+
+export function describeInspectFailure(live: PatchRuntimeInspection): string {
+  return live.error
+    ? `Cannot inspect the live claude binary: ${live.error}`
+    : 'Cannot inspect the live claude binary.';
 }
 
 export interface PatchRuntime {
@@ -128,13 +137,14 @@ export const defaultPatchRuntime: PatchRuntime = {
         sha256,
         injection: classifyLeverframeInjectionByHash(content, sha256, knownPatchedSha256),
       };
-    } catch {
+    } catch (err) {
       return {
         path,
         readable: false,
         version: null,
         sha256: null,
-        injection: { state: 'ambiguous', evidence: 'unknown-marker' },
+        injection: { state: 'ambiguous', evidence: 'inspect-failed' },
+        error: err instanceof Error ? err.message : String(err),
       };
     }
   },
@@ -215,9 +225,16 @@ async function validatePristineBaseline(input: {
 }): Promise<string | null> {
   const { candidate, version, runtime } = input;
   if (!existsSync(candidate.sourcePath)) return 'The verified recovery baseline is missing.';
+  ensureBaselineExecutable(candidate.sourcePath);
   const inspected = await runtime.inspect(candidate.sourcePath);
-  if (!inspected.readable || inspected.version !== version || inspected.injection.state !== 'absent') {
-    return 'The recovery baseline is unreadable, version-mismatched, or injected.';
+  if (!inspected.readable) {
+    return `The recovery baseline could not be read: ${inspected.error ?? 'unknown reason'}`;
+  }
+  if (inspected.version !== version) {
+    return `The recovery baseline is Claude Code ${inspected.version ?? 'unknown'}, not ${version}.`;
+  }
+  if (inspected.injection.state !== 'absent') {
+    return `The recovery baseline is already injected (${inspected.injection.evidence}).`;
   }
   if (inspected.sha256 !== candidate.sha256) {
     return 'The recovery baseline hash changed after verification.';
@@ -247,7 +264,7 @@ export async function applyPatchTransactionV2(
 
   const live = await runtime.inspect(canonicalPath, manifest?.patchedSha256);
   if (!live.readable || !live.sha256 || !live.version) {
-    return { ok: false, message: 'Cannot inspect the live claude binary.' };
+    return { ok: false, message: describeInspectFailure(live) };
   }
   if (live.version !== version) {
     return { ok: false, message: 'The live claude version changed during inspection.' };
@@ -414,7 +431,7 @@ export async function restorePatchTransactionV2(
 
   const live = await runtime.inspect(canonicalPath, manifest?.patchedSha256);
   if (!live.readable || !live.sha256 || !live.version) {
-    return { ok: false, message: 'Cannot inspect the live claude binary.' };
+    return { ok: false, message: describeInspectFailure(live) };
   }
   if (live.version !== version) {
     return { ok: false, message: 'The live claude version changed during inspection.' };
@@ -425,9 +442,18 @@ export async function restorePatchTransactionV2(
   if (!manifest) return { ok: false, message: 'Injected claude has no patch manifest for this target.' };
   if (!existsSync(manifest.baselinePath)) return { ok: false, message: 'The saved baseline is missing.' };
 
+  // Pre-fix baselines were stored owner-read-only; inspect shells out to
+  // `--version` and treats that as unreadable unless the execute bit is back.
+  ensureBaselineExecutable(manifest.baselinePath);
   const backup = await runtime.inspect(manifest.baselinePath);
-  if (!backup.readable || backup.version !== version || backup.injection.state !== 'absent') {
-    return { ok: false, message: 'The saved baseline is unreadable, version-mismatched, or injected.' };
+  if (!backup.readable) {
+    return { ok: false, message: `The saved baseline could not be read: ${backup.error ?? 'unknown reason'}` };
+  }
+  if (backup.version !== version) {
+    return { ok: false, message: `The saved baseline is Claude Code ${backup.version ?? 'unknown'}, not ${version}.` };
+  }
+  if (backup.injection.state !== 'absent') {
+    return { ok: false, message: `The saved baseline is already injected (${backup.injection.evidence}).` };
   }
   if (backup.sha256 !== manifest.baselineSha256) {
     return { ok: false, message: 'The saved baseline hash does not match the patch manifest.' };
