@@ -446,8 +446,14 @@ export async function restorePatchTransactionV2(
   // `--version` and treats that as unreadable unless the execute bit is back.
   ensureBaselineExecutable(manifest.baselinePath);
   const backup = await runtime.inspect(manifest.baselinePath);
-  if (!backup.readable || backup.version !== version || backup.injection.state !== 'absent') {
-    return { ok: false, message: 'The saved baseline is unreadable, version-mismatched, or injected.' };
+  if (!backup.readable) {
+    return { ok: false, message: `The saved baseline could not be read: ${backup.error ?? 'unknown reason'}` };
+  }
+  if (backup.version !== version) {
+    return { ok: false, message: `The saved baseline is Claude Code ${backup.version ?? 'unknown'}, not ${version}.` };
+  }
+  if (backup.injection.state !== 'absent') {
+    return { ok: false, message: `The saved baseline is already injected (${backup.injection.evidence}).` };
   }
   if (backup.sha256 !== manifest.baselineSha256) {
     return { ok: false, message: 'The saved baseline hash does not match the patch manifest.' };
