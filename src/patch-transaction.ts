@@ -442,6 +442,9 @@ export async function restorePatchTransactionV2(
   if (!manifest) return { ok: false, message: 'Injected claude has no patch manifest for this target.' };
   if (!existsSync(manifest.baselinePath)) return { ok: false, message: 'The saved baseline is missing.' };
 
+  // Pre-fix baselines were stored owner-read-only; inspect shells out to
+  // `--version` and treats that as unreadable unless the execute bit is back.
+  ensureBaselineExecutable(manifest.baselinePath);
   const backup = await runtime.inspect(manifest.baselinePath);
   if (!backup.readable || backup.version !== version || backup.injection.state !== 'absent') {
     return { ok: false, message: 'The saved baseline is unreadable, version-mismatched, or injected.' };

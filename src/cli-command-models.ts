@@ -29,12 +29,26 @@ interface FavoritesCommandOptions {
 }
 
 /**
- * Opt a model in or out of its documented context ceiling. Only ids with a
- * ceiling on record are accepted, so this can never assert a window Leverframe
- * has no basis for.
+ * Opt a model in or out of its documented context ceiling. Enable only accepts
+ * ids that currently report a higher maximum, so this can never assert a window
+ * Leverframe has no basis for. Disable drops a stored opt-in even after that
+ * maximum has gone inert, matching config loading which keeps vanished
+ * ceilings in prefs rather than deleting them.
  */
 function runContextCeilingChange(modelId: string, enable: boolean): number {
   const id = modelId.trim().toLowerCase();
+  if (!enable) {
+    const current = loadPreferences().contextCeilingOverrides ?? [];
+    const without = current.filter(entry => entry.toLowerCase() !== id);
+    if (without.length === current.length) {
+      p.log.error(`${id} is not opted in to a context ceiling.`);
+      return 1;
+    }
+    savePreferences({ contextCeilingOverrides: without });
+    p.log.success(`${id} now uses the window its provider reports.`);
+    p.log.info('Run `leverframe patch` to apply it to Claude Code.');
+    return 0;
+  }
   const candidate = findContextCeilingCandidate(id);
   if (candidate === undefined) {
     p.log.error(`${modelId} reports no context window above the one its provider serves.`);
@@ -55,22 +69,12 @@ function runContextCeilingChange(modelId: string, enable: boolean): number {
   const ceiling = candidate.maxContextWindow;
   const current = loadPreferences().contextCeilingOverrides ?? [];
   const without = current.filter(entry => entry.toLowerCase() !== id);
-  if (enable) {
-    if (without.length !== current.length) {
-      p.log.info(`${id} already uses its ${ceiling.toLocaleString('en-US')}-token ceiling.`);
-      return 0;
-    }
-    savePreferences({ contextCeilingOverrides: [...without, id] });
-    p.log.success(`${id} now uses its ${ceiling.toLocaleString('en-US')}-token ceiling.`);
-    p.log.info('Run `leverframe patch` to apply it to Claude Code.');
+  if (without.length !== current.length) {
+    p.log.info(`${id} already uses its ${ceiling.toLocaleString('en-US')}-token ceiling.`);
     return 0;
   }
-  if (without.length === current.length) {
-    p.log.error(`${id} is not opted in to a context ceiling.`);
-    return 1;
-  }
-  savePreferences({ contextCeilingOverrides: without });
-  p.log.success(`${id} now uses the window its provider reports.`);
+  savePreferences({ contextCeilingOverrides: [...without, id] });
+  p.log.success(`${id} now uses its ${ceiling.toLocaleString('en-US')}-token ceiling.`);
   p.log.info('Run `leverframe patch` to apply it to Claude Code.');
   return 0;
 }

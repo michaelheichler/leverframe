@@ -338,6 +338,17 @@ function runLeverframeClaudePrint(modelRef: string, smokeHome: string): Promise<
       stderr: '',
     });
   }
+  const claudePath = stagedClaudeBinary;
+  if (!claudePath) {
+    return Promise.resolve({
+      exitCode: null,
+      signal: null,
+      timedOut: false,
+      spawnError: 'disposable Claude binary was not staged; refusing to patch the real installation',
+      stdout: '',
+      stderr: '',
+    });
+  }
   const args = [
     ...cli.prefixArgs,
     'claude',
@@ -359,7 +370,7 @@ function runLeverframeClaudePrint(modelRef: string, smokeHome: string): Promise<
         ...process.env,
         PATH: `${LOCAL_BIN}${delimiter}${process.env['PATH'] ?? ''}`,
         LEVERFRAME_HOME: smokeHome,
-        ...(stagedClaudeBinary ? { LEVERFRAME_CLAUDE_PATH: stagedClaudeBinary } : {}),
+        LEVERFRAME_CLAUDE_PATH: claudePath,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -504,6 +515,11 @@ describe.skipIf(!livePlan.runLive && !livePlan.forceFailReason).sequential(
       if (!livePlan.runLive) return;
       smokeHome = writeSmokeHome(livePlan.cases);
       stagedClaudeBinary = stageDisposableClaudeBinary(smokeHome);
+      if (!stagedClaudeBinary) {
+        throw new Error(
+          'Could not stage a disposable Claude binary; refusing to patch the live installation.',
+        );
+      }
     });
 
     afterAll(() => {
@@ -521,6 +537,10 @@ describe.skipIf(!livePlan.runLive && !livePlan.forceFailReason).sequential(
         async (smokeCase) => {
           if (!smokeHome) {
             expect.fail('temp LEVERFRAME_HOME was not created for live smoke');
+            return;
+          }
+          if (!stagedClaudeBinary) {
+            expect.fail('disposable Claude binary was not staged; refusing to patch the live installation');
             return;
           }
           const result = await runLeverframeClaudePrint(smokeCase.modelRef, smokeHome);
