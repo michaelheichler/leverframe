@@ -18309,10 +18309,26 @@ function classifyClaudeExecutable(head) {
   }
   return "script";
 }
+function isModuleNotFound2(error) {
+  return error !== null && typeof error === "object" && "code" in error && error.code === "ERR_MODULE_NOT_FOUND";
+}
+async function loadNativeBundleSupport() {
+  try {
+    return await import("./claude-bundle-native-4ZVNVHXH.js");
+  } catch (err) {
+    if (isModuleNotFound2(err)) {
+      const detail = err instanceof Error ? err.message.split("\n")[0] : String(err);
+      throw new Error(
+        `native binary support is unavailable because a required dependency is missing (${detail}). Reinstall Leverframe dependencies (\`pnpm install\` in a checkout, or \`npm install -g @michaelheichler/leverframe\`) and retry.`
+      );
+    }
+    throw err;
+  }
+}
 async function readClaudeContent(path) {
   const bytes = await readFile(path);
   if (classifyClaudeExecutable(bytes.subarray(0, 4)) === "script") return bytes.toString("utf8");
-  const { extractClaudeJsFromNativeInstallation, resolveNixBinaryWrapper } = await import("./claude-bundle-native-4ZVNVHXH.js");
+  const { extractClaudeJsFromNativeInstallation, resolveNixBinaryWrapper } = await loadNativeBundleSupport();
   const resolved = resolveNixBinaryWrapper(path) ?? path;
   const extracted = extractClaudeJsFromNativeInstallation(resolved);
   if (!extracted.data) {
@@ -18326,7 +18342,7 @@ async function writeClaudeContent(path, content) {
     await writeFile(path, content, "utf8");
     return;
   }
-  const { repackNativeInstallation, resolveNixBinaryWrapper } = await import("./claude-bundle-native-4ZVNVHXH.js");
+  const { repackNativeInstallation, resolveNixBinaryWrapper } = await loadNativeBundleSupport();
   const resolved = resolveNixBinaryWrapper(path) ?? path;
   repackNativeInstallation(resolved, Buffer.from(content), path, true);
 }
@@ -18414,6 +18430,9 @@ function clearPatchJournal(identity) {
 function sha256File(path) {
   return createHash19("sha256").update(readFileSync7(path)).digest("hex");
 }
+function describeInspectFailure(live) {
+  return live.error ? `Cannot inspect the live claude binary: ${live.error}` : "Cannot inspect the live claude binary.";
+}
 var defaultPatchRuntime = {
   async inspect(path, knownPatchedSha256) {
     try {
@@ -18430,13 +18449,14 @@ var defaultPatchRuntime = {
         sha256: sha2565,
         injection: classifyLeverframeInjectionByHash(content, sha2565, knownPatchedSha256)
       };
-    } catch {
+    } catch (err) {
       return {
         path,
         readable: false,
         version: null,
         sha256: null,
-        injection: { state: "ambiguous", evidence: "unknown-marker" }
+        injection: { state: "ambiguous", evidence: "inspect-failed" },
+        error: err instanceof Error ? err.message : String(err)
       };
     }
   },
@@ -18488,7 +18508,7 @@ async function applyPatchTransactionV2(input, runtime = defaultPatchRuntime) {
   const now = () => (/* @__PURE__ */ new Date()).toISOString();
   const live = await runtime.inspect(canonicalPath2, manifest?.patchedSha256);
   if (!live.readable || !live.sha256 || !live.version) {
-    return { ok: false, message: "Cannot inspect the live claude binary." };
+    return { ok: false, message: describeInspectFailure(live) };
   }
   if (live.version !== version) {
     return { ok: false, message: "The live claude version changed during inspection." };
@@ -18620,7 +18640,7 @@ async function restorePatchTransactionV2(input, runtime = defaultPatchRuntime) {
   const now = () => (/* @__PURE__ */ new Date()).toISOString();
   const live = await runtime.inspect(canonicalPath2, manifest?.patchedSha256);
   if (!live.readable || !live.sha256 || !live.version) {
-    return { ok: false, message: "Cannot inspect the live claude binary." };
+    return { ok: false, message: describeInspectFailure(live) };
   }
   if (live.version !== version) {
     return { ok: false, message: "The live claude version changed during inspection." };
@@ -19053,7 +19073,7 @@ function sha256File2(path) {
     return null;
   }
 }
-function nextActionFor(state, legacyRecovery) {
+function nextActionFor(state, legacyRecovery, inspectError) {
   switch (state) {
     case "not_resolved":
       return "Install Claude Code, or set TWEAKCC_CC_INSTALLATION_PATH / LEVERFRAME_CLAUDE_PATH, or pass --target.";
@@ -19080,10 +19100,12 @@ function nextActionFor(state, legacyRecovery) {
       return "The Leverframe patch sites still verify; no action required, though the exact bytes changed (e.g. re-signing).";
     case "partially_patched":
       return "The patch is damaged. Run `leverframe patch --restore` then `leverframe patch` to repair it.";
-    case "unsupported":
-      return "Could not confidently classify this target. Run `leverframe patch --diagnose --json` and inspect manually.";
+    case "unsupported": {
+      if (inspectError) return `The claude binary could not be inspected: ${inspectError}`;
+      return "Could not confidently classify this target. Inspect the drift and integration sections above.";
+    }
     default:
-      return "Run `leverframe patch --diagnose` again.";
+      return "Could not classify this target. Inspect the drift and integration sections above.";
   }
 }
 async function diagnosePatchV2(target, runtime = defaultPatchRuntime) {
@@ -19191,7 +19213,9 @@ async function diagnosePatchV2(target, runtime = defaultPatchRuntime) {
       observedSha256,
       expectedPatchedSha256: manifest?.patchedSha256 ?? null,
       hashesMatch: manifest ? observedSha256 === manifest.patchedSha256 : null,
-      injectionState: live.injection.state,
+      // An unreadable binary was never marker-scanned, so report the state as
+      // unknown rather than as an observed ambiguous marker.
+      injectionState: live.readable ? live.injection.state : null,
       semanticSitesComplete
     },
     transaction: journal ? {
@@ -19216,7 +19240,7 @@ async function diagnosePatchV2(target, runtime = defaultPatchRuntime) {
       capabilities: patchSites
     },
     state,
-    nextAction: nextActionFor(state, legacyRecovery)
+    nextAction: nextActionFor(state, legacyRecovery, live.error)
   };
 }
 function pad(label) {
