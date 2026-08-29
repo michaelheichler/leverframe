@@ -7,3 +7,4 @@ packages:
 # platform-specific binary via postinstall; no other build step needed.
 onlyBuiltDependencies:
   - esbuild
+  - node-lief
