@@ -167,15 +167,21 @@ function applyTemplateModelMetadata(
 }
 
 /**
- * Last resort after live, template, and supplier metadata have all had their
- * turn. Keeps the id-pattern heuristic out of the earlier layers so they can
- * distinguish "the provider said nothing" from "we guessed".
+ * Runs after live, template, and supplier metadata have all had their turn. A
+ * model none of them described keeps no window at all and is marked
+ * unconfirmed, rather than carrying a guess that reads as provider-confirmed.
+ *
+ * Downstream then fails soft in the way each consumer needs: the patcher
+ * withholds an unconfirmed window so Claude Code applies its own default, and
+ * the serving paths resolve one through `resolveContextWindow`, which takes the
+ * unconfirmed flag and answers from the id-pattern heuristic. Leverframe has to
+ * answer there because it is the server.
  */
-function applyHeuristicContextWindows(models: CachedModel[]): CachedModel[] {
+function markUnconfirmedContextWindows(models: CachedModel[]): CachedModel[] {
   return models.map(model => (
     typeof model.contextWindow === 'number' && model.contextWindow > 0
       ? model
-      : { ...model, contextWindow: resolveContextWindow(model.id) }
+      : { ...model, contextWindow: undefined, contextWindowUnconfirmed: true }
   ));
 }
 
@@ -346,7 +352,7 @@ export async function fetchTemplateModels(
 
     const listedModels = applyTemplateModelMetadata(parseModelList(json, template.npm), template);
     const supplied = await applyDynamicSupplierMetadata(listedModels, template);
-    const models = supplied ? applyHeuristicContextWindows(supplied) : null;
+    const models = supplied ? markUnconfirmedContextWindows(supplied) : null;
     if (!models) {
       return {
         models: [],
