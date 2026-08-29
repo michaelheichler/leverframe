@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process';
-import { copyFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { findBinaryOnPath } from '../src/binary-lookup.js';
+import { resolveClaudeInstallation } from '../src/claude-installation.js';
+import { readManifestV2 } from '../src/patch-state.js';
 import { getCredentialFallbackPath } from '../src/credential-fallback-store.js';
 import { isZeroCost } from '../src/free-models.js';
 import { httpProxyModelId } from '../src/http-proxy/routes.js';
@@ -15,6 +17,9 @@ import { isSdkMigratedNpm } from '../src/provider-factory.js';
 import { loadRegistry } from '../src/registry/io.js';
 import { providersForTarget } from '../src/target-compatibility.js';
 import type { FavoriteModel, LocalProvider, LocalProviderModel } from '../src/types.js';
+
+/** Disposable copy of the resolved claude binary, patched instead of the real one. */
+let stagedClaudeBinary: string | null = null;
 
 const PROMPT = 'Reply with exactly one word: OK';
 const LIVE_TIMEOUT_MS = 120_000;
@@ -257,6 +262,27 @@ async function buildLivePlan(): Promise<LivePlan> {
   return { runLive: true, cases };
 }
 
+/**
+ * The smoke run patches whatever binary it resolves. Isolating LEVERFRAME_HOME
+ * alone is not enough: state would land in the throwaway home while the real
+ * installation keeps the injected bytes, leaving it injected with no
+ * recoverable V2 state. Patch a disposable copy instead.
+ */
+function stageDisposableClaudeBinary(home: string): string | null {
+  const installation = resolveClaudeInstallation({});
+  if (!installation || installation.executableType !== 'binary') return null;
+  // Stage pristine bytes. Copying an already-patched live binary would hand the
+  // smoke run an injected target with no matching state in its throwaway home.
+  const manifest = readManifestV2(installation.identity);
+  const source = manifest?.baselinePath && existsSync(manifest.baselinePath)
+    ? manifest.baselinePath
+    : installation.canonicalPath;
+  const staged = join(home, 'claude-under-test');
+  copyFileSync(source, staged);
+  chmodSync(staged, 0o755);
+  return staged;
+}
+
 function writeSmokeHome(cases: SmokeCase[]): string {
   return withRuntimeHomeEnv(() => {
     const home = mkdtempSync(join(tmpdir(), 'leverframe-live-smoke-'));
@@ -333,6 +359,7 @@ function runLeverframeClaudePrint(modelRef: string, smokeHome: string): Promise<
         ...process.env,
         PATH: `${LOCAL_BIN}${delimiter}${process.env['PATH'] ?? ''}`,
         LEVERFRAME_HOME: smokeHome,
+        ...(stagedClaudeBinary ? { LEVERFRAME_CLAUDE_PATH: stagedClaudeBinary } : {}),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -476,9 +503,11 @@ describe.skipIf(!livePlan.runLive && !livePlan.forceFailReason).sequential(
     beforeAll(() => {
       if (!livePlan.runLive) return;
       smokeHome = writeSmokeHome(livePlan.cases);
+      stagedClaudeBinary = stageDisposableClaudeBinary(smokeHome);
     });
 
     afterAll(() => {
+      stagedClaudeBinary = null;
       if (smokeHome) rmSync(smokeHome, { recursive: true, force: true });
     });
 
