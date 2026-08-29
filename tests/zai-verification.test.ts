@@ -96,7 +96,7 @@ describe('z.ai Coding Plan live key verification', () => {
     ]);
   });
 
-  it('overlays the declared one-million-token context on conflicting live GLM-5.2 metadata', async () => {
+  it('keeps the live GLM-5.2 context window over the declared template constant', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -111,7 +111,26 @@ describe('z.ai Coding Plan live key verification', () => {
     expect(result.provider?.modelsCache?.models[0]).toMatchObject({
       id: 'glm-5.2',
       name: 'GLM-5.2 live',
-      contextWindow: 1_000_000,
+      contextWindow: 128_000,
+    });
+  });
+
+  it('falls back to the declared template context window when the listing omits one', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        data: [{ id: 'glm-5.2', name: 'GLM-5.2 live' }],
+      }),
+    } as Response));
+
+    const result = await addProviderFromTemplate(zai(), 'test-key');
+
+    const declared = zai().staticModels?.find(model => model.id === 'glm-5.2')?.contextWindow;
+    expect(result.keyVerified).toBe(true);
+    expect(result.provider?.modelsCache?.models[0]).toMatchObject({
+      id: 'glm-5.2',
+      contextWindow: declared,
     });
   });
 
@@ -146,7 +165,8 @@ describe('z.ai Coding Plan live key verification', () => {
       'glm-5-turbo',
       'glm-4.7',
     ]);
-    expect(result.provider?.modelsCache?.models[0]?.contextWindow).toBe(1_000_000);
+    expect(result.provider?.modelsCache?.models[0]?.contextWindow)
+      .toBe(zai().staticModels?.find(model => model.id === 'glm-5.2')?.contextWindow);
     expect(result.hint).toMatch(/listing.*unavailable|did not verify/i);
   });
 
