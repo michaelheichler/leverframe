@@ -85,6 +85,8 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
       list: parsed.favoritesList,
       alias: parsed.favoritesAlias,
       unalias: parsed.favoritesUnalias,
+      contextCeiling: parsed.favoritesContextCeiling,
+      noContextCeiling: parsed.favoritesNoContextCeiling,
     });
   }
 

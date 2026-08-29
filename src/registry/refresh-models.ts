@@ -137,6 +137,8 @@ interface OpenAiModelEntry {
   id: string;
   name: string;
   context_window?: unknown;
+  /** Provider-reported maximum, above the window it serves by default. */
+  max_context_window?: unknown;
   useResponsesLite?: boolean;
   preferWebSockets?: boolean;
 }
@@ -163,6 +165,7 @@ function parseOpenAiModelEntries(body: unknown): OpenAiModelEntry[] {
         id: (m.slug as string) ?? '',
         name: (m.title as string) ?? (m.name as string) ?? (m.slug as string) ?? '',
         context_window: m.context_window,
+        max_context_window: m.max_context_window,
         ...readCapabilityFlags(m),
       }))
       .filter(m => m.id.length > 0);
@@ -173,6 +176,7 @@ function parseOpenAiModelEntries(body: unknown): OpenAiModelEntry[] {
         id: (m.id as string) ?? '',
         name: (m.name as string) ?? (m.id as string) ?? '',
         context_window: m.context_window,
+        max_context_window: m.max_context_window,
         ...readCapabilityFlags(m),
       }))
       .filter(m => m.id.length > 0);
@@ -183,10 +187,12 @@ function parseOpenAiModelEntries(body: unknown): OpenAiModelEntry[] {
 function buildDynamicOAuthModel(entry: OpenAiModelEntry, seedById: Map<string, CachedModel>): CachedModel {
   const seed = seedById.get(entry.id);
   const contextWindow = confirmedContextWindow(entry.context_window);
+  const maxContextWindow = confirmedContextWindow(entry.max_context_window);
   if (seed) {
     return {
       ...seed,
       contextWindow,
+      maxContextWindow,
       contextWindowUnconfirmed: contextWindow === undefined ? true : undefined,
       useResponsesLite: entry.useResponsesLite ?? seed.useResponsesLite,
       preferWebSockets: entry.preferWebSockets ?? seed.preferWebSockets,
@@ -201,6 +207,7 @@ function buildDynamicOAuthModel(entry: OpenAiModelEntry, seedById: Map<string, C
     family: prefix,
     brand: deriveBrand(prefix),
     contextWindow,
+    maxContextWindow,
     contextWindowUnconfirmed: contextWindow === undefined ? true : undefined,
     modelFormat: 'openai' as const,
     npm: '@ai-sdk/openai',

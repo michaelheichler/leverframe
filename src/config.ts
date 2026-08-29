@@ -6,9 +6,28 @@ import { durableAtomicWrite } from './durable-io.js';
 import { CONFIG_DIR_MODE, acquireServerPasswordLock, withConfigWriteLock } from './config-lock.js';
 import { normalizeModelAliases } from './model-aliases.js';
 
+
 export { ConfigLockBusyError, _configLockInternals } from './config-lock.js';
 
 const CONFIG_FILE_MODE = 0o600;
+
+/**
+ * Keeps well-formed model ids only. Whether an id still has a ceiling is
+ * decided against live provider metadata at use time, not here, so an entry
+ * for a model that temporarily stops reporting a maximum simply goes inert
+ * instead of being silently dropped from the user's config.
+ */
+function validateContextCeilingOverrides(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    if (typeof entry !== 'string') continue;
+    const id = entry.trim().toLowerCase();
+    if (id.length === 0 || id.length > 200) continue;
+    seen.add(id);
+  }
+  return seen.size === 0 ? undefined : [...seen].sort();
+}
 
 /**
  * Defensively parse the `launch` config section: unknown/non-boolean values
@@ -108,12 +127,13 @@ export function loadPreferences(): UserPreferences {
     serverBridgeMode: config.serverBridgeMode,
     appPathOverrides: config.appPathOverrides,
     recentLaunchFolders: config.recentLaunchFolders,
+    contextCeilingOverrides: validateContextCeilingOverrides(config.contextCeilingOverrides),
     launch: validateLaunchConfig(config.launch),
     server: config.server,
   };
 }
 
-export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastModel' | 'lastProvider' | 'recentModelsByProvider' | 'favoriteModels' | 'modelAliases' | 'claudeBridgeMode' | 'serverBridgeMode' | 'appPathOverrides' | 'recentLaunchFolders'>>): void {
+export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastModel' | 'lastProvider' | 'recentModelsByProvider' | 'favoriteModels' | 'modelAliases' | 'claudeBridgeMode' | 'serverBridgeMode' | 'appPathOverrides' | 'recentLaunchFolders' | 'contextCeilingOverrides'>>): void {
   withConfigWriteLock(() => {
     const config = readConfig();
     if (prefs.lastModel !== undefined) config.lastModel = prefs.lastModel;
@@ -126,6 +146,9 @@ export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastModel'
     if (prefs.serverBridgeMode !== undefined) config.serverBridgeMode = prefs.serverBridgeMode;
     if (prefs.appPathOverrides !== undefined) config.appPathOverrides = prefs.appPathOverrides;
     if (prefs.recentLaunchFolders !== undefined) config.recentLaunchFolders = prefs.recentLaunchFolders;
+    if (prefs.contextCeilingOverrides !== undefined) {
+      config.contextCeilingOverrides = validateContextCeilingOverrides(prefs.contextCeilingOverrides);
+    }
     writeConfig(config);
   });
 }

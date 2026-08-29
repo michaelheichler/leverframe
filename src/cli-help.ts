@@ -196,6 +196,7 @@ ${pc.bold('Usage:')}
   leverframe models --list
   leverframe models --alias sol=leverframe:openai-oauth:gpt-5.6-sol
   leverframe models --unalias sol
+  leverframe models --context-ceiling gpt-5.6-sol
   leverframe models
   leverframe favorites --help
   leverframe favorites --version
@@ -209,6 +210,15 @@ ${pc.bold('Behavior:')}
   --alias <name=target> saves a short name for a proxy-mode favorite. The
   target is leverframe:<provider-id>:<model-id> (the leverframe: prefix is optional).
   --unalias <name> removes a saved short name.
+  --context-ceiling <model-id> opts a model in to the maximum context window its
+  provider reports, for providers that serve a smaller tuned default. The
+  maximum is read from live provider metadata (ChatGPT/Codex reports both
+  context_window and max_context_window), never from a bundled number, because
+  it varies by account. Run it with an unknown model to list the models that
+  currently offer one. Nothing is applied automatically, and an opted-in window
+  is recorded as an override rather than as provider-confirmed metadata. Run
+  leverframe patch afterwards to apply it.
+  --no-context-ceiling <model-id> returns a model to the window it is served.
 
 ${pc.bold('How it works:')}
   claude and server use the global favorites list.

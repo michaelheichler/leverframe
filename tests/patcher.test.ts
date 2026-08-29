@@ -758,3 +758,35 @@ describe('formatPatchSiteLine', () => {
       .toBe('  FAIL PATCH 3: example: could not be patched');
   });
 });
+
+describe('buildPatchModelConfig: opted-in context ceilings', () => {
+  it('bakes the ceiling and records override provenance', () => {
+    const { config, provenance } = buildPatchModelConfig(
+      [{ providerId: 'openai-oauth', modelId: 'gpt-5.6-sol' }],
+      [],
+      () => ({ contextWindow: 272_000, contextCeilingOverride: 872_000 }),
+    );
+    expect(config['leverframe:openai-oauth:gpt-5.6-sol']?.context).toBe(872_000);
+    expect(provenance['leverframe:openai-oauth:gpt-5.6-sol']).toBe('override');
+  });
+
+  it('keeps the served window and confirmed provenance without an opt-in', () => {
+    const { config, provenance } = buildPatchModelConfig(
+      [{ providerId: 'openai-oauth', modelId: 'gpt-5.6-terra' }],
+      [],
+      () => ({ contextWindow: 272_000 }),
+    );
+    expect(config['leverframe:openai-oauth:gpt-5.6-terra']?.context).toBe(272_000);
+    expect(provenance['leverframe:openai-oauth:gpt-5.6-terra']).toBe('confirmed');
+  });
+
+  it('falls back to the served window when a stale opt-in resolves to nothing', () => {
+    const { config, provenance } = buildPatchModelConfig(
+      [{ providerId: 'openai-oauth', modelId: 'gpt-5.6-sol' }],
+      [],
+      () => ({ contextWindow: 272_000, contextCeilingOverride: undefined }),
+    );
+    expect(config['leverframe:openai-oauth:gpt-5.6-sol']?.context).toBe(272_000);
+    expect(provenance['leverframe:openai-oauth:gpt-5.6-sol']).toBe('confirmed');
+  });
+});
