@@ -323,11 +323,6 @@ var package_default = {
     "@github/copilot-sdk": "1.0.9",
     "@napi-rs/keyring": "1.3.0"
   },
-  pnpm: {
-    onlyBuiltDependencies: [
-      "node-lief"
-    ]
-  },
   repository: {
     type: "git",
     url: "git+https://github.com/michaelheichler/leverframe.git"
@@ -1551,6 +1546,17 @@ function modelAliasTarget(alias) {
 
 // src/config.ts
 var CONFIG_FILE_MODE = 384;
+function validateContextCeilingOverrides(raw) {
+  if (!Array.isArray(raw)) return void 0;
+  const seen = /* @__PURE__ */ new Set();
+  for (const entry of raw) {
+    if (typeof entry !== "string") continue;
+    const id = entry.trim().toLowerCase();
+    if (id.length === 0 || id.length > 200) continue;
+    seen.add(id);
+  }
+  return seen.size === 0 ? void 0 : [...seen].sort();
+}
 function validateLaunchConfig(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return void 0;
   const candidate = raw;
@@ -1619,6 +1625,7 @@ function loadPreferences() {
     serverBridgeMode: config.serverBridgeMode,
     appPathOverrides: config.appPathOverrides,
     recentLaunchFolders: config.recentLaunchFolders,
+    contextCeilingOverrides: validateContextCeilingOverrides(config.contextCeilingOverrides),
     launch: validateLaunchConfig(config.launch),
     server: config.server
   };
@@ -1636,6 +1643,9 @@ function savePreferences(prefs) {
     if (prefs.serverBridgeMode !== void 0) config.serverBridgeMode = prefs.serverBridgeMode;
     if (prefs.appPathOverrides !== void 0) config.appPathOverrides = prefs.appPathOverrides;
     if (prefs.recentLaunchFolders !== void 0) config.recentLaunchFolders = prefs.recentLaunchFolders;
+    if (prefs.contextCeilingOverrides !== void 0) {
+      config.contextCeilingOverrides = validateContextCeilingOverrides(prefs.contextCeilingOverrides);
+    }
     writeConfig(config);
   });
 }
@@ -2473,4 +2483,4 @@ export {
   getInstalledClaudeVersion,
   launchClaude
 };
-//# sourceMappingURL=chunk-MLCPFBZ6.js.map
+//# sourceMappingURL=chunk-TKZ2CEPS.js.map
