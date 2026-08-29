@@ -18747,9 +18747,16 @@ async function restorePatchTransactionV2(input, runtime = defaultPatchRuntime) {
   }
   if (!manifest) return { ok: false, message: "Injected claude has no patch manifest for this target." };
   if (!existsSync11(manifest.baselinePath)) return { ok: false, message: "The saved baseline is missing." };
+  ensureBaselineExecutable(manifest.baselinePath);
   const backup = await runtime.inspect(manifest.baselinePath);
-  if (!backup.readable || backup.version !== version || backup.injection.state !== "absent") {
-    return { ok: false, message: "The saved baseline is unreadable, version-mismatched, or injected." };
+  if (!backup.readable) {
+    return { ok: false, message: `The saved baseline could not be read: ${backup.error ?? "unknown reason"}` };
+  }
+  if (backup.version !== version) {
+    return { ok: false, message: `The saved baseline is Claude Code ${backup.version ?? "unknown"}, not ${version}.` };
+  }
+  if (backup.injection.state !== "absent") {
+    return { ok: false, message: `The saved baseline is already injected (${backup.injection.evidence}).` };
   }
   if (backup.sha256 !== manifest.baselineSha256) {
     return { ok: false, message: "The saved baseline hash does not match the patch manifest." };
@@ -20343,6 +20350,18 @@ async function pickGlobalFavoriteModel(providers, favorites, opts) {
 // src/cli-command-models.ts
 function runContextCeilingChange(modelId, enable) {
   const id = modelId.trim().toLowerCase();
+  if (!enable) {
+    const current2 = loadPreferences().contextCeilingOverrides ?? [];
+    const without2 = current2.filter((entry) => entry.toLowerCase() !== id);
+    if (without2.length === current2.length) {
+      p13.log.error(`${id} is not opted in to a context ceiling.`);
+      return 1;
+    }
+    savePreferences({ contextCeilingOverrides: without2 });
+    p13.log.success(`${id} now uses the window its provider reports.`);
+    p13.log.info("Run `leverframe patch` to apply it to Claude Code.");
+    return 0;
+  }
   const candidate = findContextCeilingCandidate(id);
   if (candidate === void 0) {
     p13.log.error(`${modelId} reports no context window above the one its provider serves.`);
@@ -20362,22 +20381,12 @@ function runContextCeilingChange(modelId, enable) {
   const ceiling = candidate.maxContextWindow;
   const current = loadPreferences().contextCeilingOverrides ?? [];
   const without = current.filter((entry) => entry.toLowerCase() !== id);
-  if (enable) {
-    if (without.length !== current.length) {
-      p13.log.info(`${id} already uses its ${ceiling.toLocaleString("en-US")}-token ceiling.`);
-      return 0;
-    }
-    savePreferences({ contextCeilingOverrides: [...without, id] });
-    p13.log.success(`${id} now uses its ${ceiling.toLocaleString("en-US")}-token ceiling.`);
-    p13.log.info("Run `leverframe patch` to apply it to Claude Code.");
+  if (without.length !== current.length) {
+    p13.log.info(`${id} already uses its ${ceiling.toLocaleString("en-US")}-token ceiling.`);
     return 0;
   }
-  if (without.length === current.length) {
-    p13.log.error(`${id} is not opted in to a context ceiling.`);
-    return 1;
-  }
-  savePreferences({ contextCeilingOverrides: without });
-  p13.log.success(`${id} now uses the window its provider reports.`);
+  savePreferences({ contextCeilingOverrides: [...without, id] });
+  p13.log.success(`${id} now uses its ${ceiling.toLocaleString("en-US")}-token ceiling.`);
   p13.log.info("Run `leverframe patch` to apply it to Claude Code.");
   return 0;
 }
