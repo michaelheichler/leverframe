@@ -79,7 +79,7 @@ import {
   withProxyAnthropicOriginSettings,
   withRegistryWriteLock,
   withRegistryWriteLockSync
-} from "./chunk-AVWKCNOR.js";
+} from "./chunk-TKZ2CEPS.js";
 
 // src/cli.ts
 import pc18 from "picocolors";
@@ -15842,6 +15842,7 @@ function parseOpenAiModelEntries(body) {
       id: m.slug ?? "",
       name: m.title ?? m.name ?? m.slug ?? "",
       context_window: m.context_window,
+      max_context_window: m.max_context_window,
       ...readCapabilityFlags(m)
     })).filter((m) => m.id.length > 0);
   }
@@ -15850,6 +15851,7 @@ function parseOpenAiModelEntries(body) {
       id: m.id ?? "",
       name: m.name ?? m.id ?? "",
       context_window: m.context_window,
+      max_context_window: m.max_context_window,
       ...readCapabilityFlags(m)
     })).filter((m) => m.id.length > 0);
   }
@@ -15858,10 +15860,12 @@ function parseOpenAiModelEntries(body) {
 function buildDynamicOAuthModel(entry, seedById) {
   const seed = seedById.get(entry.id);
   const contextWindow = confirmedContextWindow(entry.context_window);
+  const maxContextWindow = confirmedContextWindow(entry.max_context_window);
   if (seed) {
     return {
       ...seed,
       contextWindow,
+      maxContextWindow,
       contextWindowUnconfirmed: contextWindow === void 0 ? true : void 0,
       useResponsesLite: entry.useResponsesLite ?? seed.useResponsesLite,
       preferWebSockets: entry.preferWebSockets ?? seed.preferWebSockets
@@ -15876,6 +15880,7 @@ function buildDynamicOAuthModel(entry, seedById) {
     family: prefix,
     brand: deriveBrand(prefix),
     contextWindow,
+    maxContextWindow,
     contextWindowUnconfirmed: contextWindow === void 0 ? true : void 0,
     modelFormat: "openai",
     npm: "@ai-sdk/openai",
@@ -17347,6 +17352,42 @@ import { createHash as createHash21 } from "crypto";
 import { readFileSync as readFileSync9 } from "fs";
 import { join as join10 } from "path";
 
+// src/context-ceilings.ts
+function modelContextCeiling(model) {
+  const max = model.maxContextWindow;
+  if (typeof max !== "number" || !Number.isFinite(max) || max <= 0) return void 0;
+  const current = model.contextWindow;
+  if (typeof current === "number" && current > 0 && max <= current) return void 0;
+  return max;
+}
+function contextCeilingCandidates() {
+  const candidates = [];
+  for (const provider of loadRegistry().providers) {
+    for (const model of provider.modelsCache?.models ?? []) {
+      const ceiling = modelContextCeiling(model);
+      if (ceiling === void 0) continue;
+      candidates.push({
+        modelId: model.id,
+        providerId: provider.id,
+        providerName: provider.name,
+        contextWindow: model.contextWindow ?? 0,
+        maxContextWindow: ceiling
+      });
+    }
+  }
+  return candidates;
+}
+function findContextCeilingCandidate(modelId) {
+  const wanted = modelId.trim().toLowerCase();
+  return contextCeilingCandidates().find((entry) => entry.modelId.toLowerCase() === wanted);
+}
+function resolveContextCeilingOverride(model, enabledIds) {
+  if (!enabledIds || enabledIds.length === 0) return void 0;
+  const wanted = model.id.toLowerCase();
+  if (!enabledIds.some((id) => id.toLowerCase() === wanted)) return void 0;
+  return modelContextCeiling(model);
+}
+
 // src/patch-transforms-routing-notice.ts
 var ROUTING_NOTICE_MARKER = "/*ccpatch:routing-notice*/";
 var ROUTING_NOTICE_HANDOFF_MARKER = "/*ccpatch:routing-notice-handoff*/";
@@ -18050,7 +18091,7 @@ function resolveClaudeInstallation(options = {}) {
 }
 
 // src/patch-state.ts
-import { existsSync as existsSync10, unlinkSync as unlinkSync3 } from "fs";
+import { existsSync as existsSync10, unlinkSync as unlinkSync3, chmodSync as chmodSync7 } from "fs";
 import { join as join9 } from "path";
 
 // src/atomic-file.ts
@@ -18260,10 +18301,20 @@ function removeManifestV2(identity) {
   } catch {
   }
 }
+var BASELINE_FILE_MODE = 448;
+function ensureBaselineExecutable(path) {
+  try {
+    chmodSync7(path, BASELINE_FILE_MODE);
+  } catch {
+  }
+}
 function ensureBaselineStored(input) {
   const dest = getBaselinePathV2(input.identity, input.version, input.baselineSha256);
-  if (existsSync10(dest)) return dest;
-  copyImmutableFileSync(input.sourcePath, dest, { mode: 384 });
+  if (existsSync10(dest)) {
+    ensureBaselineExecutable(dest);
+    return dest;
+  }
+  copyImmutableFileSync(input.sourcePath, dest, { mode: BASELINE_FILE_MODE });
   return dest;
 }
 function currentTransformVersion() {
@@ -18529,9 +18580,16 @@ function computeSemanticFingerprint(results) {
 async function validatePristineBaseline(input) {
   const { candidate, version, runtime } = input;
   if (!existsSync11(candidate.sourcePath)) return "The verified recovery baseline is missing.";
+  ensureBaselineExecutable(candidate.sourcePath);
   const inspected = await runtime.inspect(candidate.sourcePath);
-  if (!inspected.readable || inspected.version !== version || inspected.injection.state !== "absent") {
-    return "The recovery baseline is unreadable, version-mismatched, or injected.";
+  if (!inspected.readable) {
+    return `The recovery baseline could not be read: ${inspected.error ?? "unknown reason"}`;
+  }
+  if (inspected.version !== version) {
+    return `The recovery baseline is Claude Code ${inspected.version ?? "unknown"}, not ${version}.`;
+  }
+  if (inspected.injection.state !== "absent") {
+    return `The recovery baseline is already injected (${inspected.injection.evidence}).`;
   }
   if (inspected.sha256 !== candidate.sha256) {
     return "The recovery baseline hash changed after verification.";
@@ -19354,6 +19412,9 @@ function reasoningEffortForPatch(provider, model) {
   return { levels: [...caps.levels], defaultLevel: caps.defaultLevel };
 }
 function resolveContextForPatch(meta) {
+  if (meta?.contextCeilingOverride !== void 0 && meta.contextCeilingOverride > 0) {
+    return { context: meta.contextCeilingOverride, provenance: "override" };
+  }
   const context = meta?.contextWindow;
   if (context === void 0 || context <= 0) {
     return { provenance: meta?.contextWindowUnconfirmed ? "unconfirmed" : "missing" };
@@ -19411,6 +19472,7 @@ function buildDesiredPatchConfig() {
         // if provider-confirmed.
         contextWindow: !model.contextWindowUnconfirmed && model.contextWindow && model.contextWindow > 0 ? model.contextWindow : void 0,
         contextWindowUnconfirmed: model.contextWindowUnconfirmed,
+        contextCeilingOverride: resolveContextCeilingOverride(model, prefs.contextCeilingOverrides),
         displayName: httpProxyDisplayName(model, provider.name),
         effort: reasoningEffortForPatch(provider, model)
       });
@@ -19754,6 +19816,16 @@ function parseArgs(args) {
         if (!consumed) return parsed2;
         parsed2.favoritesUnalias = consumed.value;
         i = consumed.next;
+      } else if (arg === "--context-ceiling" || arg.startsWith("--context-ceiling=")) {
+        const consumed = consumeServerOptionValue(arg, rest, i, "--context-ceiling", parsed2);
+        if (!consumed) return parsed2;
+        parsed2.favoritesContextCeiling = consumed.value;
+        i = consumed.next;
+      } else if (arg === "--no-context-ceiling" || arg.startsWith("--no-context-ceiling=")) {
+        const consumed = consumeServerOptionValue(arg, rest, i, "--no-context-ceiling", parsed2);
+        if (!consumed) return parsed2;
+        parsed2.favoritesNoContextCeiling = consumed.value;
+        i = consumed.next;
       } else if (!parsed2.error) parsed2.error = `Unknown models option: ${arg}`;
     }
     return parsed2;
@@ -20052,6 +20124,7 @@ ${pc13.bold("Usage:")}
   leverframe models --list
   leverframe models --alias sol=leverframe:openai-oauth:gpt-5.6-sol
   leverframe models --unalias sol
+  leverframe models --context-ceiling gpt-5.6-sol
   leverframe models
   leverframe favorites --help
   leverframe favorites --version
@@ -20065,6 +20138,15 @@ ${pc13.bold("Behavior:")}
   --alias <name=target> saves a short name for a proxy-mode favorite. The
   target is leverframe:<provider-id>:<model-id> (the leverframe: prefix is optional).
   --unalias <name> removes a saved short name.
+  --context-ceiling <model-id> opts a model in to the maximum context window its
+  provider reports, for providers that serve a smaller tuned default. The
+  maximum is read from live provider metadata (ChatGPT/Codex reports both
+  context_window and max_context_window), never from a bundled number, because
+  it varies by account. Run it with an unknown model to list the models that
+  currently offer one. Nothing is applied automatically, and an opted-in window
+  is recorded as an override rather than as provider-confirmed metadata. Run
+  leverframe patch afterwards to apply it.
+  --no-context-ceiling <model-id> returns a model to the window it is served.
 
 ${pc13.bold("How it works:")}
   claude and server use the global favorites list.
@@ -20259,7 +20341,53 @@ async function pickGlobalFavoriteModel(providers, favorites, opts) {
 }
 
 // src/cli-command-models.ts
+function runContextCeilingChange(modelId, enable) {
+  const id = modelId.trim().toLowerCase();
+  const candidate = findContextCeilingCandidate(id);
+  if (candidate === void 0) {
+    p13.log.error(`${modelId} reports no context window above the one its provider serves.`);
+    const available = contextCeilingCandidates();
+    if (available.length === 0) {
+      p13.log.info("No configured model currently reports a higher maximum. Refresh provider models and retry.");
+    } else {
+      p13.log.info("Models that do:");
+      for (const entry of available) {
+        p13.log.info(
+          `  ${entry.modelId} (${entry.providerName}): ${entry.contextWindow.toLocaleString("en-US")} \u2192 ${entry.maxContextWindow.toLocaleString("en-US")}`
+        );
+      }
+    }
+    return 1;
+  }
+  const ceiling = candidate.maxContextWindow;
+  const current = loadPreferences().contextCeilingOverrides ?? [];
+  const without = current.filter((entry) => entry.toLowerCase() !== id);
+  if (enable) {
+    if (without.length !== current.length) {
+      p13.log.info(`${id} already uses its ${ceiling.toLocaleString("en-US")}-token ceiling.`);
+      return 0;
+    }
+    savePreferences({ contextCeilingOverrides: [...without, id] });
+    p13.log.success(`${id} now uses its ${ceiling.toLocaleString("en-US")}-token ceiling.`);
+    p13.log.info("Run `leverframe patch` to apply it to Claude Code.");
+    return 0;
+  }
+  if (without.length === current.length) {
+    p13.log.error(`${id} is not opted in to a context ceiling.`);
+    return 1;
+  }
+  savePreferences({ contextCeilingOverrides: without });
+  p13.log.success(`${id} now uses the window its provider reports.`);
+  p13.log.info("Run `leverframe patch` to apply it to Claude Code.");
+  return 0;
+}
 async function runModelsCommand(opts = {}) {
+  if (opts.contextCeiling !== void 0 && opts.noContextCeiling !== void 0) {
+    p13.log.error("--context-ceiling and --no-context-ceiling apply one at a time.");
+    return 1;
+  }
+  if (opts.contextCeiling !== void 0) return runContextCeilingChange(opts.contextCeiling, true);
+  if (opts.noContextCeiling !== void 0) return runContextCeilingChange(opts.noContextCeiling, false);
   const changesAlias = opts.alias !== void 0 || opts.unalias !== void 0;
   if (changesAlias && (opts.list || opts.alias !== void 0 && opts.unalias !== void 0)) {
     p13.log.error("--alias/--unalias apply one at a time to proxy-mode favorites.");
@@ -21165,7 +21293,9 @@ Error: ${parsed.error}
     return runModelsCommand({
       list: parsed.favoritesList,
       alias: parsed.favoritesAlias,
-      unalias: parsed.favoritesUnalias
+      unalias: parsed.favoritesUnalias,
+      contextCeiling: parsed.favoritesContextCeiling,
+      noContextCeiling: parsed.favoritesNoContextCeiling
     });
   }
   if (parsed.command === "providers") {
