@@ -394,3 +394,55 @@ describe('createCopilotEventStreamBridge: duplicate terminal event rejection', (
     );
   });
 });
+
+describe('createCopilotEventStreamBridge: failed model calls', () => {
+  const callFailure = (errorMessage: string, statusCode?: number) => ({
+    id: 'evt-fail',
+    parentId: null,
+    timestamp: '2026-01-01T00:00:00.000Z',
+    type: 'model.call_failure' as const,
+    ephemeral: true,
+    data: { model: 'mai-code-1.1-flash', errorMessage, statusCode },
+  });
+  const callStart = () => ({
+    id: 'evt-start',
+    parentId: null,
+    timestamp: '2026-01-01T00:00:00.000Z',
+    type: 'model.call_start' as const,
+    ephemeral: true,
+    data: { model: 'mai-code-1.1-flash' },
+  });
+
+  it('reports the upstream reason when the turn ends after a failed call', () => {
+    const bridge = createCopilotEventStreamBridge();
+    bridge.handle(callStart() as never);
+    expect(bridge.handle(callFailure('{"message":"You have exceeded your monthly quota"}', 402) as never)).toEqual([]);
+    expect(bridge.handle(turnEndEvent({ id: 'evt-end', turnId: '0' }))).toEqual([
+      {
+        type: 'error',
+        error: {
+          errorType: 'model_call_failure',
+          message: 'You have exceeded your monthly quota',
+          statusCode: 402,
+        },
+      },
+    ]);
+  });
+
+  it('uses a non-JSON error body verbatim', () => {
+    const bridge = createCopilotEventStreamBridge();
+    bridge.handle(callFailure('upstream exploded', 500) as never);
+    expect(bridge.handle(turnEndEvent({ id: 'evt-end', turnId: '0' }))).toEqual([
+      { type: 'error', error: { errorType: 'model_call_failure', message: 'upstream exploded', statusCode: 500 } },
+    ]);
+  });
+
+  it('does not inherit an earlier failure when a retried call starts', () => {
+    const bridge = createCopilotEventStreamBridge();
+    bridge.handle(callFailure('{"message":"transient"}', 500) as never);
+    bridge.handle(callStart() as never);
+    const parts = bridge.handle(turnEndEvent({ id: 'evt-end', turnId: '0' }));
+    expect(parts.some(part => part.type === 'error')).toBe(false);
+    expect(parts.at(-1)?.type).toBe('finish');
+  });
+});

@@ -37,7 +37,7 @@ const PREFERRED_CHEAPEST: Record<string, string> = {
   'github-copilot': 'mai-code-1.1-flash',
 };
 
-const QUOTA_PATTERN = /out of quota|weekly limit|usage limit|monthly usage limit|rate limit|overloaded|credit balance|billing|too many requests|\b429\b|hit your[\s\S]{0,40}limit/i;
+const QUOTA_PATTERN = /out of quota|weekly limit|usage limit|monthly usage limit|rate limit|overloaded|credit balance|billing|too many requests|\b429\b|\b402\b|exceeded your[\s\S]{0,40}quota|quota_exceeded|hit your[\s\S]{0,40}limit/i;
 const LEVERFRAME_FAULT_PATTERN = /failed to start proxy|could not load proxy models|provider\/model not found|claude binary not found|cannot be combined with --proxy|no routable favorite|could not resolve a proxy route|failed to start oauth proxy|failed to start sdk adapter proxy|injected claude has no v2 patch state|cannot be recovered safely|execution error leverframe/i;
 const PROXY_OAUTH_FAULT_PATTERN = /oauth refresh|invalid_grant|not logged in|please (run |use )?\/login|authentication required|missing credentials|\bunauthorized\b/i;
 
