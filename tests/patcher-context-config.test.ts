@@ -131,4 +131,14 @@ describe('buildPatchModelConfig context provenance', () => {
     expect(unknownWindows).toEqual(['leverframe:openai-oauth:gpt-5.6-sol']);
     expect(provenance['leverframe:openai-oauth:gpt-5.6-sol']).toBe('missing');
   });
+
+  it('omits context modes when the launch has no context selection endpoint', () => {
+    const { config } = buildPatchModelConfig(
+      [{ providerId: 'openai', modelId: 'endpointless' }],
+      [],
+      () => ({ contextWindow: 272_000, maxContextWindow: 872_000, modelFormat: 'openai' }),
+      { includeContextModes: false },
+    );
+    expect(config['leverframe:openai:endpointless']).toEqual({ context: 272_000 });
+  });
 });

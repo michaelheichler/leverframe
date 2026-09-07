@@ -106,6 +106,16 @@ describe('parseCopilotModelInfo', () => {
     expect(model.defaultReasoningEffort).toBeUndefined();
   });
 
+  it('keeps Copilot SDK effort levels separate from the registry-wide effort union', () => {
+    const model = parseCopilotModelInfo(modelInfo({
+      supportedReasoningEfforts: ['low', 'minimal', 'ultra', 'max'],
+      defaultReasoningEffort: 'ultra',
+    }));
+
+    expect(model.supportedReasoningEfforts).toEqual(['low', 'max']);
+    expect(model.defaultReasoningEffort).toBeUndefined();
+  });
+
   it.each([
     null,
     {},

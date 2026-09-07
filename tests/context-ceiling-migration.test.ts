@@ -2,6 +2,7 @@ import { describe, expect, it, afterEach, beforeEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { loadPreferences } from '../src/config.js';
 import { buildDesiredPatchConfig, buildPatchModelConfig } from '../src/patcher.js';
 import { contextModeModelId } from '../src/context-model-id.js';
 import { lookupRoute, type ProxyRoute } from '../src/proxy-request.js';
@@ -21,7 +22,7 @@ describe('context ceiling preference migration', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  it('keeps a saved maximum out of the first launch while an explicit switch uses fresh limits', () => {
+  it('ignores a saved global maximum at startup while an explicit switch uses fresh limits', () => {
     const model = {
       id: 'gpt-5.6-sol',
       upstreamModelId: 'gpt-5.6-sol',
@@ -54,6 +55,7 @@ describe('context ceiling preference migration', () => {
       }),
     );
 
+    expect(loadPreferences().contextCeilingOverrides).toEqual([model.id]);
     const desired = buildDesiredPatchConfig();
     const key = 'leverframe:openai-oauth:gpt-5.6-sol';
     expect(desired.config[key]).toMatchObject({

@@ -46,11 +46,20 @@ export interface ModelsDevModel {
   provider?: { npm?: string };
 }
 
+function safeReasoningOptions(
+  model: ModelsDevModel | null | undefined,
+): ModelsDevReasoningOption[] | undefined {
+  const raw = model?.reasoning_options;
+  if (raw === undefined || !Array.isArray(raw)) return undefined;
+  const options = raw.filter(option => option !== null && typeof option === 'object' && !Array.isArray(option));
+  return options.length === raw.length ? options : undefined;
+}
+
 export function modelsDevReasoningEfforts(
   model: ModelsDevModel | null | undefined,
 ): string[] | undefined {
-  const effortOption = model?.reasoning_options?.find(option => option.type === 'effort');
-  if (!effortOption?.values) return undefined;
+  const effortOption = safeReasoningOptions(model)?.find(option => option.type === 'effort');
+  if (!Array.isArray(effortOption?.values)) return undefined;
   const efforts = effortOption.values
     .filter(value => typeof value === 'string')
     .map(value => value.trim())
@@ -61,8 +70,9 @@ export function modelsDevReasoningEfforts(
 export function modelsDevSupportsReasoningToggle(
   model: ModelsDevModel | null | undefined,
 ): boolean | undefined {
-  if (!model?.reasoning_options) return undefined;
-  return model.reasoning_options.some(option => option.type === 'toggle');
+  const options = safeReasoningOptions(model);
+  if (!options) return undefined;
+  return options.some(option => option.type === 'toggle');
 }
 
 export interface ModelsDevProvider {

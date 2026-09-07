@@ -259,7 +259,12 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
 
   if (bridgeMode === 'proxy') {
     try {
-      await runLaunchPatchCheck({ agentStdout, dryRun, installation });
+      await runLaunchPatchCheck({
+        agentStdout,
+        dryRun,
+        installation,
+        contextSelectionAvailable: false,
+      });
     } catch {
       return 1;
     }

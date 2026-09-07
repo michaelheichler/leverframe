@@ -76,6 +76,24 @@ describe('fresh provider catalog', () => {
     },
   );
 
+  it('keeps the provider-specific refresh reason when live discovery fails', () => {
+    const result = filterFreshProviderCatalog(
+      [provider()],
+      {
+        refreshed: [{
+          id: 'openai-oauth',
+          name: 'OpenAI (ChatGPT)',
+          ok: false,
+          modelSource: 'live',
+          reason: 'Provider authentication expired',
+        }],
+      },
+      'generic refresh failure',
+    );
+
+    expect(result.unavailable[0]?.reason).toBe('Provider authentication expired');
+  });
+
   it('rejects external models whose context is marked unconfirmed', () => {
     const candidate = provider();
     candidate.models[0]!.contextWindowUnconfirmed = true;

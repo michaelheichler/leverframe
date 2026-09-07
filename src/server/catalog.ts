@@ -12,8 +12,13 @@ import {
 } from './models.js';
 import type { ServerProviderOption } from './provider-select.js';
 
+function displayValue(value: string, cap: number): string {
+  if (value.length <= cap) return value;
+  return `${value.slice(0, Math.max(0, cap - 1))}…`;
+}
+
 function cappedWidth(values: string[], label: string, cap: number): number {
-  return Math.max(label.length, ...values.map(value => Math.min(value.length, cap)));
+  return Math.max(label.length, ...values.map(value => displayValue(value, cap).length));
 }
 
 export function formatModelCatalogLines(models: ServerModelInfo[], gateway?: GatewayModelOptions): string[] {
@@ -44,7 +49,9 @@ export function formatModelCatalogLines(models: ServerModelInfo[], gateway?: Gat
     lines.push(`  ${'#'.padStart(indexWidth)}  ${'Model'.padEnd(nameWidth)}  ${'Anthropic ID'.padEnd(anthropicWidth)}  OpenAI ID`);
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]!;
-      lines.push(`  ${String(i + 1).padStart(indexWidth)}  ${row.name.padEnd(nameWidth)}  ${row.anthropicId.padEnd(anthropicWidth)}  ${row.openaiId}`);
+      const name = displayValue(row.name, 28);
+      const anthropicId = displayValue(row.anthropicId, 46);
+      lines.push(`  ${String(i + 1).padStart(indexWidth)}  ${name.padEnd(nameWidth)}  ${anthropicId.padEnd(anthropicWidth)}  ${row.openaiId}`);
     }
     lines.push('');
   }

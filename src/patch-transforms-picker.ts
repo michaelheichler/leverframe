@@ -98,37 +98,44 @@ function findPicker(source: string): PickerShape[] {
   return candidates;
 }
 
-function findBalancedBlockEnd(source: string, bodyStart: number): number | undefined {
-  let depth = 1;
+interface CodeCharacter {
+  char: string;
+  index: number;
+}
+
+function* scanCodeCharacters(source: string, start = 0): Generator<CodeCharacter> {
   let quote: 'single' | 'double' | 'template' | undefined;
-  for (let index = bodyStart; index < source.length; index++) {
+  for (let index = start; index < source.length; index++) {
     const char = source[index]!;
-    const next = source[index + 1];
     if (quote !== undefined) {
-      if (char === '\\') {
-        index++;
-      } else if (
+      if (char === '\\') index++;
+      else if (
         (quote === 'single' && char === "'")
         || (quote === 'double' && char === '"')
         || (quote === 'template' && char === '`')
-      ) {
-        quote = undefined;
-      }
+      ) quote = undefined;
       continue;
     }
     if (char === "'") { quote = 'single'; continue; }
     if (char === '"') { quote = 'double'; continue; }
     if (char === '`') { quote = 'template'; continue; }
-    if (char === '/' && next === '/') {
+    if (char === '/' && source[index + 1] === '/') {
       const newline = source.indexOf('\n', index + 2);
       index = newline === -1 ? source.length : newline;
       continue;
     }
-    if (char === '/' && next === '*') {
+    if (char === '/' && source[index + 1] === '*') {
       const close = source.indexOf('*/', index + 2);
       index = close === -1 ? source.length : close + 1;
       continue;
     }
+    yield { char, index };
+  }
+}
+
+function findBalancedBlockEnd(source: string, bodyStart: number): number | undefined {
+  let depth = 1;
+  for (const { char, index } of scanCodeCharacters(source, bodyStart)) {
     if (char === '{') depth++;
     else if (char === '}' && --depth === 0) return index;
   }
@@ -159,32 +166,7 @@ function hasTopLevelProperty(object: string, property: string): boolean {
   let curly = 0;
   let square = 0;
   let paren = 0;
-  let quote: 'single' | 'double' | 'template' | undefined;
-  for (let index = 0; index < object.length; index++) {
-    const char = object[index]!;
-    const next = object[index + 1];
-    if (quote !== undefined) {
-      if (char === '\\') index++;
-      else if (
-        (quote === 'single' && char === "'")
-        || (quote === 'double' && char === '"')
-        || (quote === 'template' && char === '`')
-      ) quote = undefined;
-      continue;
-    }
-    if (char === "'") { quote = 'single'; continue; }
-    if (char === '"') { quote = 'double'; continue; }
-    if (char === '`') { quote = 'template'; continue; }
-    if (char === '/' && next === '/') {
-      const newline = object.indexOf('\n', index + 2);
-      index = newline === -1 ? object.length : newline;
-      continue;
-    }
-    if (char === '/' && next === '*') {
-      const close = object.indexOf('*/', index + 2);
-      index = close === -1 ? object.length : close + 1;
-      continue;
-    }
+  for (const { char, index } of scanCodeCharacters(object)) {
     if (curly === 0 && square === 0 && paren === 0) {
       const propertyPattern = new RegExp('^' + escaped(property) + '\\s*:').exec(object.slice(index));
       if (propertyPattern) return true;

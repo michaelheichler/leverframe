@@ -27,7 +27,7 @@ import {
   writeWebSocketDiagnosticRequestLog,
 } from '../trace-log.js';
 import type { ServerOptions } from './router.js';
-import { isSdkMigratedNpm, maxToolsForNpm } from '../provider-factory.js';
+import { maxToolsForNpm } from '../provider-factory.js';
 import {
   anthropicErrorType,
   clientFacingAnthropicStatus,
@@ -59,7 +59,6 @@ import {
 import { createRequestExecutionContext } from '../request-execution-context.js';
 import { resolveExecutionSessionKey } from '../execution-session-key.js';
 import { attachRequestExecutionDisposal, wireClientDisconnectAbort } from '../request-pipeline.js';
-import { createSseHeartbeat, DELAY_FIRST_HEARTBEAT } from '../sse-heartbeat.js';
 import {
   applyExecutionHeaders,
   auditInference,
@@ -77,11 +76,12 @@ import {
   readJson,
   requestHeader,
   respondExecutionRecoveryBlocked,
-  revalidateEndpointUrl,
   toDigestableMessages,
   type PLog,
 } from './route-helpers.js';
 import { supportsDirectOpenAIChatCompletions, upstreamModelId } from './models.js';
+import { validateAnthropicMessagesRoute, validateOpenAiChatRoute } from './route-validation.js';
+import { createTrackedSseResponse } from './sse-response.js';
 
 export async function handleAnthropicMessages(
   req: IncomingMessage,
@@ -99,6 +99,11 @@ export async function handleAnthropicMessages(
   const model = lookupModel(res, options.catalog, body.model);
   if (!model) {
     plog(`model not found: ${body.model}`);
+    return;
+  }
+  const routeValidation = await validateAnthropicMessagesRoute(model);
+  if (routeValidation) {
+    sendJson(res, 400, { error: { message: routeValidation } });
     return;
   }
   const requestId = randomUUID();
@@ -157,23 +162,6 @@ export async function handleAnthropicMessages(
   plog(() => `anthropic-messages model=${body.model} format=${model.modelFormat} npm=${model.npm ?? 'none'} stream=${body.stream}`);
 
   if (model.modelFormat === 'anthropic') {
-    if (model.baseUrl && !/^https?:\/\//i.test(model.baseUrl)) {
-      sendJson(res, 400, { error: { message: `Invalid provider baseUrl: must be http:// or https://` } });
-      return;
-    }
-    if (!model.baseUrl) {
-      sendJson(res, 400, { error: { message: `Model ${model.id} has no Anthropic baseUrl configured` } });
-      return;
-    }
-    const revalidation = await revalidateEndpointUrl(model.baseUrl);
-    if (!revalidation.ok) {
-      sendJson(res, 400, {
-        error: {
-          message: `Custom endpoint URL failed security revalidation: ${revalidation.error ?? 'unspecified'}${revalidation.hint ? ` ${revalidation.hint}` : ''}`,
-        },
-      });
-      return;
-    }
     const messagesUrl = `${model.baseUrl}/v1/messages`;
     const credentialRouteKey = providerRuntimeRouteKey(model, '@native-anthropic', model.baseUrl);
     const credential = modelCache.snapshot(credentialRouteKey, model.apiKey ?? options.apiKey);
@@ -242,25 +230,6 @@ export async function handleAnthropicMessages(
   }
 
   if (model.modelFormat === 'openai') {
-    if (!isSdkMigratedNpm(model.npm)) {
-      sendJson(res, 400, { error: { message: `No SDK provider for model: ${model.id}` } });
-      return;
-    }
-    if (model.apiBaseUrl && !/^https?:\/\//i.test(model.apiBaseUrl)) {
-      sendJson(res, 400, { error: { message: `Invalid provider apiBaseUrl: must be http:// or https://` } });
-      return;
-    }
-    if (model.apiBaseUrl) {
-      const sdkRevalidation = await revalidateEndpointUrl(model.apiBaseUrl);
-      if (!sdkRevalidation.ok) {
-        sendJson(res, 400, {
-          error: {
-            message: `Custom endpoint URL failed security revalidation: ${sdkRevalidation.error ?? 'unspecified'}${sdkRevalidation.hint ? ` ${sdkRevalidation.hint}` : ''}`,
-          },
-        });
-        return;
-      }
-    }
     const apiKey = model.apiKey ?? options.apiKey;
     auditInference(options, {
       requestId,
@@ -331,37 +300,17 @@ export async function handleAnthropicMessages(
 
     try {
       if (clientWantsStream) {
-        const writeStreamChunk = (chunk: string) => {
-          if (!res.headersSent) {
-            applyExecutionHeaders(res, tracking);
-            res.writeHead(200, {
-              'Content-Type': 'text/event-stream',
-              'Cache-Control': 'no-cache',
-              'Connection': 'keep-alive',
-            });
-          }
-          tracking.observeAnthropicSseText(chunk);
-          res.write(chunk);
-          heartbeat.reset();
-        };
-        const heartbeat = createSseHeartbeat(() => {
-          if (!res.headersSent) {
-            applyExecutionHeaders(res, tracking);
-            res.writeHead(200, {
-              'Content-Type': 'text/event-stream',
-              'Cache-Control': 'no-cache',
-              'Connection': 'keep-alive',
-            });
-          }
-          res.write('event: ping\ndata: {"type":"ping"}\n\n');
-        }, () => !res.writableEnded && !res.destroyed, DELAY_FIRST_HEARTBEAT);
-        const clearHeartbeat = () => heartbeat.clear();
-        clientAbort.signal.addEventListener('abort', clearHeartbeat, { once: true });
-        heartbeat.arm();
+        const sse = createTrackedSseResponse({
+          res,
+          clientAbortSignal: clientAbort.signal,
+          applyHeaders: () => applyExecutionHeaders(res, tracking),
+          observeChunk: tracking.observeAnthropicSseText,
+        });
+        sse.start();
         try {
           await withResponsesWebSocketDiagnosticContext(
             { requestId, claudeSessionId },
-            () => streamAnthropicResponse(languageModel, params, responseModelId, writeStreamChunk, undefined, {
+            () => streamAnthropicResponse(languageModel, params, responseModelId, sse.writeChunk, undefined, {
               onUsage,
               initialInputTokens: estimateAnthropicInputTokens(body),
               abortSignal: clientAbort.signal,
@@ -372,11 +321,10 @@ export async function handleAnthropicMessages(
           );
           requestExecution.markStreamActivity();
           requestExecution.complete();
-          if (!res.headersSent) writeStreamChunk('');
+          if (!res.headersSent) sse.writeChunk('');
           res.end();
         } finally {
-          heartbeat.clear();
-          clientAbort.signal.removeEventListener('abort', clearHeartbeat);
+          sse.stop();
         }
       } else {
 
@@ -475,6 +423,11 @@ export async function handleOpenAIChatCompletions(
 
   const model = lookupModel(res, options.catalog, body.model);
   if (!model) return;
+  const routeValidation = await validateOpenAiChatRoute(model);
+  if (routeValidation) {
+    sendJson(res, 400, { error: { message: routeValidation } });
+    return;
+  }
 
   const openAiSessionKey = resolveExecutionSessionKey({
     claudeSessionId: typeof body.user === 'string' ? body.user : requestHeader(req, 'x-claude-code-session-id'),
@@ -527,24 +480,7 @@ export async function handleOpenAIChatCompletions(
   openAiExecution.startResolving();
 
   if (supportsDirectOpenAIChatCompletions(model)) {
-    if (model.completionsUrl && !/^https?:\/\//i.test(model.completionsUrl)) {
-      sendJson(res, 400, { error: { message: `Invalid provider completionsUrl: must be http:// or https://` } });
-      return;
-    }
-    if (!model.completionsUrl) {
-      sendJson(res, 400, { error: { message: `Model ${model.id} has no completionsUrl configured` } });
-      return;
-    }
-    const completionsRevalidation = await revalidateEndpointUrl(model.apiBaseUrl ?? model.completionsUrl);
-    if (!completionsRevalidation.ok) {
-      sendJson(res, 400, {
-        error: {
-          message: `Custom endpoint URL failed security revalidation: ${completionsRevalidation.error ?? 'unspecified'}${completionsRevalidation.hint ? ` ${completionsRevalidation.hint}` : ''}`,
-        },
-      });
-      return;
-    }
-    const completionsUrl = model.completionsUrl;
+    const completionsUrl = model.completionsUrl!;
     const apiKey = model.apiKey ?? options.apiKey;
     const forwardBody = body.model === upstreamModelId(model) ? body : { ...body, model: upstreamModelId(model) };
     auditInference(options, {
@@ -557,6 +493,7 @@ export async function handleOpenAIChatCompletions(
     applyExecutionHeaders(res, openAiTracking);
     const directStream = Boolean(body.stream);
     await relayAnthropicMessages(res, completionsUrl, forwardBody, apiKey, directStream, {
+      extraHeaders: model.headers,
       onObservedText: text => {
         if (directStream) {
           openAiTracking.observeOpenAiSseText(text);
@@ -597,21 +534,6 @@ export async function handleOpenAIChatCompletions(
     requestPreview: getLatestMessagePreview(body.messages, body.system),
   });
   const baseURL = model.modelFormat === 'anthropic' ? model.baseUrl : model.apiBaseUrl;
-  if (baseURL) {
-    if (!/^https?:\/\//i.test(baseURL)) {
-      sendJson(res, 400, { error: { message: `Invalid provider baseURL: must be http:// or https://` } });
-      return;
-    }
-    const sdkRevalidation = await revalidateEndpointUrl(baseURL);
-    if (!sdkRevalidation.ok) {
-      sendJson(res, 400, {
-        error: {
-          message: `Custom endpoint URL failed security revalidation: ${sdkRevalidation.error ?? 'unspecified'}${sdkRevalidation.hint ? ` ${sdkRevalidation.hint}` : ''}`,
-        },
-      });
-      return;
-    }
-  }
   const languageModel = await getOrInitLanguageModel(modelCache, model, npm, baseURL, apiKey);
   const openAiOAuth = npm === '@ai-sdk/openai' && model.authType === 'oauth';
   const params = translateOpenAiRequest(body as unknown as OpenAiRequest, { openAiOAuth });
@@ -622,45 +544,24 @@ export async function handleOpenAIChatCompletions(
 
   try {
     if (clientWantsStream) {
-      const writeStreamChunk = (chunk: string) => {
-        if (!res.headersSent) {
-          applyExecutionHeaders(res, openAiTracking);
-          res.writeHead(200, {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-          });
-        }
-        openAiTracking.observeOpenAiSseText(chunk);
-        res.write(chunk);
-        heartbeat.reset();
-      };
-      const heartbeat = createSseHeartbeat(() => {
-        if (!res.headersSent) {
-          applyExecutionHeaders(res, openAiTracking);
-          res.writeHead(200, {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-          });
-        }
-        res.write('event: ping\ndata: {"type":"ping"}\n\n');
-      }, () => !res.writableEnded && !res.destroyed, true);
-      const clearHeartbeat = () => heartbeat.clear();
-      openAiClientAbort.signal.addEventListener('abort', clearHeartbeat, { once: true });
-      heartbeat.arm();
+      const sse = createTrackedSseResponse({
+        res,
+        clientAbortSignal: openAiClientAbort.signal,
+        applyHeaders: () => applyExecutionHeaders(res, openAiTracking),
+        observeChunk: openAiTracking.observeOpenAiSseText,
+      });
+      sse.start();
       try {
-        await streamOpenAiResponse(languageModel, params, responseModelId, writeStreamChunk, {
+        await streamOpenAiResponse(languageModel, params, responseModelId, sse.writeChunk, {
           abortSignal: openAiClientAbort.signal,
           lifecycle: openAiExecution,
         });
         openAiExecution.markStreamActivity();
         openAiExecution.complete();
-        if (!res.headersSent) writeStreamChunk('');
+        if (!res.headersSent) sse.writeChunk('');
         res.end();
       } finally {
-        heartbeat.clear();
-        openAiClientAbort.signal.removeEventListener('abort', clearHeartbeat);
+        sse.stop();
       }
     } else {
 

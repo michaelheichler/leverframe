@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { contextSelectionOptions, type ContextSelectionOption } from './context-selection.js';
-import { parseContextModeModelId, stripContextModeSuffix, stripOneMContextSuffix } from './context-model-id.js';
+import { stripContextMarkers } from './context-model-id.js';
 import { fetchFreshProviderCatalog } from './provider-catalog.js';
 import { extractApiKey, sendJson } from './http-utils.js';
 import { anthropicError } from './proxy-response.js';
@@ -30,16 +30,12 @@ export interface ContextSelectionHandlerOptions {
   fetchFreshCatalog?: typeof fetchFreshProviderCatalog;
 }
 
-function normalizeModelId(id: string): string {
-  const bare = stripOneMContextSuffix(stripContextModeSuffix(id));
-  return bare.startsWith('models/') ? bare.slice('models/'.length) : bare;
-}
-
-function routeLookupCandidates(id: string): string[] {
-  const bare = stripOneMContextSuffix(stripContextModeSuffix(id));
-  const candidates = [bare];
-  if (bare.startsWith('leverframe:')) {
-    const target = bare.slice('leverframe:'.length);
+function contextModelIdCandidates(id: string): string[] {
+  const bare = stripContextMarkers(id);
+  const modelId = bare.startsWith('models/') ? bare.slice('models/'.length) : bare;
+  const candidates = [bare, modelId];
+  if (modelId.startsWith('leverframe:')) {
+    const target = modelId.slice('leverframe:'.length);
     const separator = target.indexOf(':');
     if (separator > 0 && separator < target.length - 1) {
       candidates.push(aliasModelId(target.slice(separator + 1), target.slice(0, separator)));
@@ -48,18 +44,17 @@ function routeLookupCandidates(id: string): string[] {
   return [...new Set(candidates)];
 }
 
+function routeLookupCandidates(id: string): string[] {
+  return contextModelIdCandidates(id);
+}
+
 function routeModelIds(route: ProxyRoute): string[] {
   const ids = [route.realModelId, route.aliasId];
-  const aliasSeparator = route.aliasId.indexOf('__');
-  if (aliasSeparator >= 0 && aliasSeparator < route.aliasId.length - 2) {
-    ids.push(route.aliasId.slice(aliasSeparator + 2));
-  }
-  if (route.aliasId.startsWith('leverframe:')) {
-    const target = route.aliasId.slice('leverframe:'.length);
-    const separator = target.indexOf(':');
-    if (separator > 0 && separator < target.length - 1) ids.push(target.slice(separator + 1));
-  }
-  return ids;
+  return [...new Set(ids.flatMap(contextModelIdCandidates))];
+}
+
+function matchesModelId(wantedIds: ReadonlySet<string>, id: string | undefined): boolean {
+  return id !== undefined && contextModelIdCandidates(id).some(candidate => wantedIds.has(candidate));
 }
 
 export async function handleContextSelectionRequest(
@@ -83,7 +78,7 @@ export async function handleContextSelectionRequest(
     return true;
   }
 
-  const bareModelId = parseContextModeModelId(requestedModel).modelId;
+  const bareModelId = stripContextMarkers(requestedModel);
   const route = routeLookupCandidates(bareModelId)
     .map(candidate => lookupRoute(options.byAlias, candidate))
     .find((candidate): candidate is ProxyRoute => candidate !== undefined);
@@ -104,14 +99,14 @@ export async function handleContextSelectionRequest(
     sendJson(res, 503, { error: { type: 'overloaded_error', message: 'Fresh model discovery failed.' } });
     return true;
   }
-  const wantedIds = new Set(routeModelIds(route).concat(bareModelId).flatMap(id => [id, normalizeModelId(id)]));
+  const wantedIds = new Set(routeModelIds(route).concat(contextModelIdCandidates(bareModelId)));
   const provider = freshCatalog.providers.find(candidate => candidate.id === providerId);
   const freshModel = provider?.models.find(candidate =>
-    [candidate.id, candidate.upstreamModelId].some(id => wantedIds.has(id) || wantedIds.has(normalizeModelId(id))),
+    [candidate.id, candidate.upstreamModelId].some(id => matchesModelId(wantedIds, id)),
   );
   const unavailable = freshCatalog.unavailable.some(item =>
     item.providerId === providerId
-    && (item.modelIds === undefined || item.modelIds.some(id => wantedIds.has(id) || wantedIds.has(normalizeModelId(id)))),
+    && (item.modelIds === undefined || item.modelIds.some(id => matchesModelId(wantedIds, id))),
   );
   if (!freshModel || unavailable) {
     sendJson(res, 503, { error: { type: 'overloaded_error', message: 'Fresh model discovery did not confirm this model.' } });

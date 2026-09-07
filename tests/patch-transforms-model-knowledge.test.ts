@@ -58,6 +58,15 @@ describe('native model knowledge transform', () => {
     expect(isKnown('provider:unconfirmed:model')).toBe(false);
   });
 
+  it('uses the normalized native identity for uppercase model requests', () => {
+    const result = applyNativeModelKnowledge(MODEL_KNOWLEDGE_SOURCE, {
+      'leverframe:provider:uppercase-model': { context: 272_000 },
+    });
+    expect(result.content).toContain('__lfcIsKnownModel(t)');
+    const isKnown = new Function(`${result.content}; return Wme;`)() as (model: string) => boolean;
+    expect(isKnown('LEVERFRAME:PROVIDER:UPPERCASE-MODEL')).toBe(true);
+  });
+
   it('refreshes the registered identities without retaining stale metadata', () => {
     const first = applyNativeModelKnowledge(MODEL_KNOWLEDGE_SOURCE, CONFIG);
     const second = applyNativeModelKnowledge(first.content, {
@@ -240,6 +249,6 @@ describe('native context lookup integration', () => {
   });
 
   it('keeps the transform version ahead of older static context patches', () => {
-    expect(PATCH_TRANSFORMS_VERSION).toBe(12);
+    expect(PATCH_TRANSFORMS_VERSION).toBe(13);
   });
 });

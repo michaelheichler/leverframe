@@ -67,6 +67,7 @@ interface UpstreamRequest {
   method: string;
   url: string;
   authorization: string | undefined;
+  headers: Record<string, string | string[] | undefined>;
   body: any;
 }
 
@@ -86,6 +87,7 @@ async function startUpstream(responseBody: any): Promise<{ baseUrl: string; requ
       authorization: Array.isArray(req.headers.authorization)
         ? req.headers.authorization[0]
         : req.headers.authorization,
+      headers: req.headers,
       body: await readRequestBody(req),
     });
 
@@ -110,7 +112,7 @@ function model(
   id: string,
   modelFormat: ServerModelInfo['modelFormat'],
   sourceBackend: ServerModelInfo['sourceBackend'],
-  urls: Partial<Pick<ServerModelInfo, 'baseUrl' | 'completionsUrl' | 'apiKey'>> = {},
+  urls: Partial<Pick<ServerModelInfo, 'baseUrl' | 'completionsUrl' | 'apiKey' | 'headers'>> = {},
 ): ServerModelInfo {
   return {
     id,
@@ -173,7 +175,10 @@ describe("server router OpenAI routes", () => {
     handles.push(upstream);
     const server = await startTestServer({
       catalog: createGatewayModelCatalog([
-        model('openai-format', 'openai', 'go', { completionsUrl: `${upstream.baseUrl}/v1/chat/completions` }),
+        model('openai-format', 'openai', 'go', {
+          completionsUrl: `${upstream.baseUrl}/v1/chat/completions`,
+          headers: { 'x-provider-plan': 'coding' },
+        }),
       ]),
     });
 
@@ -190,6 +195,7 @@ describe("server router OpenAI routes", () => {
       method: 'POST',
       url: '/v1/chat/completions',
       authorization: 'Bearer real-opencode-key',
+      headers: expect.objectContaining({ 'x-provider-plan': 'coding' }),
       body,
     });
   });

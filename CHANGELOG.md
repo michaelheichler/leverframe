@@ -4,6 +4,51 @@
 
 This changelog records notable changes to Leverframe.
 
+## [0.4.0] - 2026-09-07
+
+### Added
+
+- Claude Code shows one external model row followed by a choice between the default and maximum context limits that fresh provider metadata reports. Picker labels, native context calculations, and proxy enforcement use the same selected limit.
+
+- Supported Claude Code Agent launches show a colored routing confirmation with the resolved model and effective reasoning level through Claude Code's notification UI. The notice leaves process output untouched.
+- Context infrastructure for budgeting, compaction planning, summaries, trusted metadata, encrypted memory, local inference profiling, retention, vector memory, and worker supervision.
+- Read-only patch diagnostics with installation identity, version support, manifest, drift, transaction, lock, and legacy recovery details.
+- Quality, testing, and technical-debt documents for the context and compaction work.
+
+### Changed
+
+- Binary patch transform version 13 supports model and context selection in Claude Code 2.1.263. Launch reconciliation refreshes stale patch configuration after provider discovery. Launches without a context selection endpoint omit the secondary context choices.
+- External selection requires fresh discovery. Missing model capabilities and limits remain unknown, while Anthropic models retain native passthrough.
+- The context-ceiling CLI flags return migration guidance. Stored ceiling preferences remain available for diagnostics, and users choose context modes through Claude Code's model picker.
+- Claude Code binary patching now requires version 2.1.223 or newer. Older installations receive an upgrade instruction while proxy mode remains available.
+- ChatGPT/Codex OAuth context windows now use positive finite provider metadata. Missing or invalid values remain unconfirmed.
+- Context budgeting uses named token costs instead of positional array indexes.
+
+### Fixed
+
+#### Model routing
+
+- Astra requests use reported reasoning, transport, and minimum client requirements. External model discovery no longer infers capabilities from model names.
+- Invalid external context choices return an error instead of reaching Anthropic passthrough.
+- GitHub Copilot failures report the upstream reason. Copilot emits `assistant.turn_end` before `session.error`, which previously closed the turn before Leverframe read the cause. An exhausted quota now reports as HTTP 402 with its own message.
+- Provider metadata retains reported context windows, and bundled template constants no longer overwrite live values.
+- Model alias and context lookup tables use null-prototype objects to prevent prototype-key collisions.
+
+#### Native patching
+
+- Native patching separates wrapper and payload paths and passes the verified installation version into extraction fallback. Diagnostics distinguish cached configuration drift from binary incompatibility.
+- Patch verification grants the owner execute permission on stored baselines before running `<binary> --version`. The previous read-only mode caused "embedded version unavailable" errors and prevented repeated patching.
+- A missing `node-lief` no longer surfaces as an unreadable Claude Code binary. Inspection failures report their real cause instead of a fabricated ambiguous injection marker.
+- Claude Code 2.1.226 Agent model validation now supports the current function-style schema while retaining the legacy enum schema.
+- Patch publication records the staged binary identity before the atomic rename, closing a crash-recovery gap.
+- Repeated patching recognizes complete injected sites even when post-publication signing changes the exact binary hash.
+
+### Safety
+
+- Leverframe rejects unsupported versions before binary inspection or patch-state mutation. Restore remains available for valid existing state.
+- Patch transforms remain fail-closed when a required anchor is missing or ambiguous.
+- The new compaction infrastructure remains outside the production request path until its integration evidence is complete.
+
 ## [0.3.9] - 2026-08-16
 
 ### Fixed
@@ -41,48 +86,3 @@ This changelog records notable changes to Leverframe.
 - After a successful auto-repair that leaves the leverframe slot empty, legacy `clodex`/`relay-ai` secrets are not revived. Post-repair re-read failures still allow legacy migration.
 - Copilot rejects remote non-image file parts in serialized history (requires `image/*` media type).
 - CI secret scan allowlists the documented HTTP proxy placeholder key. Provenance test timeout adjusted for Ubuntu CI.
-
-## Unreleased
-
-### Added
-
-- Claude Code shows one external model row followed by a choice between the default and maximum context limits that fresh provider metadata reports. Picker labels, native context calculations, and proxy enforcement use the same selected limit.
-
-- Supported Claude Code Agent launches show a colored routing confirmation with the resolved model and effective reasoning level through Claude Code's notification UI. The notice leaves process output untouched.
-- Context infrastructure for budgeting, compaction planning, summaries, trusted metadata, encrypted memory, local inference profiling, retention, vector memory, and worker supervision.
-- Read-only patch diagnostics with installation identity, version support, manifest, drift, transaction, lock, and legacy recovery details.
-- Quality, testing, and technical-debt documents for the context and compaction work.
-
-### Changed
-
-- Binary patch transform version 12 supports model and context selection in Claude Code 2.1.263. Launch reconciliation refreshes stale patch configuration after provider discovery.
-- External selection requires fresh discovery. Missing model capabilities and limits remain unknown, while Anthropic models retain native passthrough.
-- The context-ceiling CLI flags return migration guidance. Stored ceiling preferences remain available for diagnostics, and users choose context modes through Claude Code's model picker.
-- Claude Code binary patching now requires version 2.1.223 or newer. Older installations receive an upgrade instruction while proxy mode remains available.
-- ChatGPT/Codex OAuth context windows now use positive finite provider metadata. Missing or invalid values remain unconfirmed.
-- Context budgeting uses named token costs instead of positional array indexes.
-
-### Fixed
-
-#### Model routing
-
-- Astra requests use reported reasoning, transport, and minimum client requirements. External model discovery no longer infers capabilities from model names.
-- Invalid external context choices return an error instead of reaching Anthropic passthrough.
-- GitHub Copilot failures report the upstream reason. Copilot emits `assistant.turn_end` before `session.error`, which previously closed the turn before Leverframe read the cause. An exhausted quota now reports as HTTP 402 with its own message.
-- Provider metadata retains reported context windows, and bundled template constants no longer overwrite live values.
-- Model alias and context lookup tables use null-prototype objects to prevent prototype-key collisions.
-
-#### Native patching
-
-- Native patching separates wrapper and payload paths and passes the verified installation version into extraction fallback. Diagnostics distinguish cached configuration drift from binary incompatibility.
-- Patch verification grants the owner execute permission on stored baselines before running `<binary> --version`. The previous read-only mode caused "embedded version unavailable" errors and prevented repeated patching.
-- A missing `node-lief` no longer surfaces as an unreadable Claude Code binary. Inspection failures report their real cause instead of a fabricated ambiguous injection marker.
-- Claude Code 2.1.226 Agent model validation now supports the current function-style schema while retaining the legacy enum schema.
-- Patch publication records the staged binary identity before the atomic rename, closing a crash-recovery gap.
-- Repeated patching recognizes complete injected sites even when post-publication signing changes the exact binary hash.
-
-### Safety
-
-- Leverframe rejects unsupported versions before binary inspection or patch-state mutation. Restore remains available for valid existing state.
-- Patch transforms remain fail-closed when a required anchor is missing or ambiguous.
-- The new compaction infrastructure remains outside the production request path until its integration evidence is complete.

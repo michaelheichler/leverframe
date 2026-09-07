@@ -24,6 +24,7 @@ import {
 } from './claude-bundle-repack.js';
 
 export { isChunkModule, isClaudeModule };
+export { resolveNixBinaryWrapper } from './claude-bundle-native-wrapper.js';
 export {
   bytecodeForReplacement,
   computeBunSectionPlacement,
@@ -31,99 +32,8 @@ export {
   type BunSectionPlacement,
 } from './claude-bundle-repack.js';
 
-const debug = (..._args: unknown[]): void => {};
-
-const NIX_WRAPPER_MAX_SIZE = 200_000;
-
-export function resolveNixBinaryWrapper(binaryPath: string): string | null {
-  try {
-
-    const stat = fs.statSync(binaryPath);
-    if (stat.size > NIX_WRAPPER_MAX_SIZE) {
-      return null;
-    }
-
-    LIEF.logging.disable();
-    const binary = LIEF.parse(binaryPath);
-
-    const symbols = binary.symbols();
-    const hasExecv = symbols.some(sym => {
-      const name = sym.name;
-      return name === 'execv' || name === '_execv';
-    });
-
-    if (!hasExecv) {
-      debug(
-        'resolveNixBinaryWrapper: no execv import found, not a Nix wrapper'
-      );
-      return null;
-    }
-
-    debug(
-      'resolveNixBinaryWrapper: execv import found, checking for Nix wrapper DOCSTRING'
-    );
-
-    let rawBytes: Buffer | null = null;
-
-    if (binary.format === 'ELF') {
-      const rodata = binary.sections().find(s => s.name === '.rodata');
-      if (rodata) {
-        rawBytes = rodata.content;
-      }
-    } else if (binary.format === 'MachO') {
-      const machoBinary = binary as LIEF.MachO.Binary;
-      const textSeg = machoBinary.getSegment('__TEXT');
-      if (textSeg) {
-        const cstring = textSeg.getSection('__cstring');
-        if (cstring) {
-          rawBytes = cstring.content;
-        }
-      }
-    }
-
-    if (!rawBytes || rawBytes.length === 0) {
-      debug('resolveNixBinaryWrapper: could not read string section');
-      return null;
-    }
-
-    const text = rawBytes.toString('utf-8');
-
-    const docstringMatch = text.match(/makeCWrapper\s+'(\/nix\/store\/[^']+)'/);
-    if (docstringMatch) {
-      const resolvedPath = docstringMatch[1];
-      debug(
-        `resolveNixBinaryWrapper: found wrapped executable via DOCSTRING: ${resolvedPath}`
-      );
-      return resolvedPath;
-    }
-
-    const unquotedMatch = text.match(/makeCWrapper\s+(\/nix\/store\/\S+)/);
-    if (unquotedMatch) {
-      const resolvedPath = unquotedMatch[1];
-      debug(
-        `resolveNixBinaryWrapper: found wrapped executable via unquoted DOCSTRING: ${resolvedPath}`
-      );
-      return resolvedPath;
-    }
-
-    const nixPaths = text.match(/\/nix\/store\/[^\s]+/g);
-    if (nixPaths) {
-      for (const p of nixPaths) {
-        if (p.includes('/bin/')) {
-          debug(
-            `resolveNixBinaryWrapper: found wrapped executable via /bin/ heuristic: ${p}`
-          );
-          return p;
-        }
-      }
-    }
-
-    debug('resolveNixBinaryWrapper: has execv but no Nix store paths found');
-    return null;
-  } catch (error) {
-    debug('resolveNixBinaryWrapper: error during detection:', error);
-    return null;
-  }
+export interface NativeExtractionOptions {
+  allowNetwork?: boolean;
 }
 
 const BUN_CJS_MARKER = '@bun-cjs';
@@ -175,17 +85,8 @@ function detectModuleStructSize(modulesListLength: number): number {
 
   if (fitsNew && !fitsOld) return SIZEOF_MODULE_NEW;
   if (fitsOld && !fitsNew) return SIZEOF_MODULE_OLD;
-  if (fitsNew && fitsOld) {
+  if (fitsNew && fitsOld) return SIZEOF_MODULE_NEW;
 
-    debug(
-      `detectModuleStructSize: Ambiguous module list length ${modulesListLength}, assuming new format`
-    );
-    return SIZEOF_MODULE_NEW;
-  }
-
-  debug(
-    `detectModuleStructSize: Module list length ${modulesListLength} doesn't cleanly divide by either struct size, assuming new format`
-  );
   return SIZEOF_MODULE_NEW;
 }
 
@@ -231,9 +132,6 @@ function parseBunDataBlob(bunDataContent: Buffer): {
   const trailerStart = bunDataContent.length - BUN_TRAILER.length;
   const trailerBytes = bunDataContent.subarray(trailerStart);
 
-  debug(`parseBunDataBlob: Expected trailer: ${BUN_TRAILER.toString('hex')}`);
-  debug(`parseBunDataBlob: Got trailer: ${trailerBytes.toString('hex')}`);
-
   if (!trailerBytes.equals(BUN_TRAILER)) {
 
     throw new Error('BUN trailer bytes do not match trailer');
@@ -260,21 +158,12 @@ function extractBunDataFromSection(sectionData: Buffer): BunData {
     throw new Error('Section data too small');
   }
 
-  debug(`extractBunDataFromSection: sectionData.length=${sectionData.length}`);
-
   const bunDataSizeU32 = sectionData.readUInt32LE(0);
   const expectedLengthU32 = 4 + bunDataSizeU32;
 
   const bunDataSizeU64 =
     sectionData.length >= 8 ? Number(sectionData.readBigUInt64LE(0)) : 0;
   const expectedLengthU64 = 8 + bunDataSizeU64;
-
-  debug(
-    `extractBunDataFromSection: u32 header would give size=${bunDataSizeU32}, expected total=${expectedLengthU32}`
-  );
-  debug(
-    `extractBunDataFromSection: u64 header would give size=${bunDataSizeU64}, expected total=${expectedLengthU64}`
-  );
 
   let headerSize: number;
   let bunDataSize: number;
@@ -287,9 +176,6 @@ function extractBunDataFromSection(sectionData: Buffer): BunData {
 
     headerSize = 8;
     bunDataSize = bunDataSizeU64;
-    debug(
-      `extractBunDataFromSection: detected u64 header format (Bun >= 1.3.4)`
-    );
   } else if (
     expectedLengthU32 <= sectionData.length &&
     expectedLengthU32 >= sectionData.length - 4096
@@ -297,9 +183,6 @@ function extractBunDataFromSection(sectionData: Buffer): BunData {
 
     headerSize = 4;
     bunDataSize = bunDataSizeU32;
-    debug(
-      `extractBunDataFromSection: detected u32 header format (Bun < 1.3.4)`
-    );
   } else {
     throw new Error(
       `Cannot determine section header format: sectionData.length=${sectionData.length}, ` +
@@ -307,15 +190,9 @@ function extractBunDataFromSection(sectionData: Buffer): BunData {
     );
   }
 
-  debug(`extractBunDataFromSection: bunDataSize from header=${bunDataSize}`);
-
   const bunDataContent = sectionData.subarray(
     headerSize,
     headerSize + bunDataSize
-  );
-
-  debug(
-    `extractBunDataFromSection: bunDataContent.length=${bunDataContent.length}`
   );
 
   const { bunOffsets, bunData, moduleStructSize } =
@@ -334,26 +211,14 @@ function extractBunDataFromELFSection(
 ): BunData | null {
   try {
     const bunSection = elfBinary.getSection('.bun');
-    if (!bunSection) {
-      debug('extractBunDataFromELFSection: .bun section not found');
-      return null;
-    }
+    if (!bunSection) return null;
 
     const sectionContent = bunSection.content;
-    if (sectionContent.length < 8) {
-      debug('extractBunDataFromELFSection: .bun section too small');
-      return null;
-    }
-
-    debug(
-      `extractBunDataFromELFSection: .bun section found, size=${sectionContent.length}`
-    );
+    if (sectionContent.length < 8) return null;
 
     const result = extractBunDataFromSection(sectionContent);
-    debug('extractBunDataFromELFSection: successfully extracted data');
     return result;
-  } catch (error) {
-    debug('extractBunDataFromELFSection: failed to extract:', error);
+  } catch {
     return null;
   }
 }
@@ -364,18 +229,12 @@ function extractBunDataFromELFOverlay(elfBinary: LIEF.ELF.Binary): BunData {
   }
 
   const overlayData = elfBinary.overlay;
-  debug(
-    `extractBunDataFromELFOverlay: Overlay size=${overlayData.length} bytes`
-  );
 
   if (overlayData.length < BUN_TRAILER.length + 8 + SIZEOF_OFFSETS) {
     throw new Error('ELF overlay data is too small');
   }
 
   const totalByteCount = overlayData.readBigUInt64LE(overlayData.length - 8);
-  debug(
-    `extractBunDataFromELFOverlay: Total byte count from tail=${totalByteCount}`
-  );
 
   if (totalByteCount < 4096n || totalByteCount > 2n ** 32n - 1n) {
     throw new Error(`ELF total byte count is out of range: ${totalByteCount}`);
@@ -385,13 +244,6 @@ function extractBunDataFromELFOverlay(elfBinary: LIEF.ELF.Binary): BunData {
   const trailerBytes = overlayData.subarray(
     trailerStart,
     overlayData.length - 8
-  );
-
-  debug(
-    `extractBunDataFromELFOverlay: Expected trailer: ${BUN_TRAILER.toString('hex')}`
-  );
-  debug(
-    `extractBunDataFromELFOverlay: Got trailer: ${trailerBytes.toString('hex')}`
   );
 
   if (!trailerBytes.equals(BUN_TRAILER)) {
@@ -405,10 +257,6 @@ function extractBunDataFromELFOverlay(elfBinary: LIEF.ELF.Binary): BunData {
     overlayData.length - 8 - BUN_TRAILER.length
   );
   const bunOffsets = parseOffsets(offsetsBytes);
-
-  debug(
-    `extractBunDataFromELFOverlay: Offsets.byteCount=${bunOffsets.byteCount}`
-  );
 
   const byteCount =
     typeof bunOffsets.byteCount === 'bigint'
@@ -424,10 +272,6 @@ function extractBunDataFromELFOverlay(elfBinary: LIEF.ELF.Binary): BunData {
   const dataRegion = overlayData.subarray(
     dataStart,
     overlayData.length - tailDataLen
-  );
-
-  debug(
-    `extractBunDataFromELFOverlay: Extracted ${dataRegion.length} bytes of data`
   );
 
   const bunDataBlob = Buffer.concat([dataRegion, offsetsBytes, trailerBytes]);
@@ -492,7 +336,6 @@ function locateBundle(
   binary: LIEF.ELF.Binary | LIEF.PE.Binary | LIEF.MachO.Binary,
   binPath: string
 ): LocatedBundle {
-  debug(`locateBundle: Binary format detected as ${binary.format}`);
   assertPlatformFormat(binary);
 
   switch (binary.format) {
@@ -542,7 +385,6 @@ function locateBundle(
       const elfBinary = binary as LIEF.ELF.Binary;
       const sectionResult = extractBunDataFromELFSection(elfBinary);
       if (sectionResult) {
-        debug('locateBundle: Using new ELF .bun section format');
         if (!sectionResult.sectionHeaderSize) {
           throw new Error('sectionHeaderSize is required for ELF .bun section');
         }
@@ -560,7 +402,6 @@ function locateBundle(
             ),
         };
       }
-      debug('locateBundle: Falling back to legacy ELF overlay format');
       const data = extractBunDataFromELFOverlay(elfBinary);
       const stat = fs.statSync(binPath);
       return {
@@ -583,7 +424,6 @@ function locateBundle(
 function fetchNpmSource(version: string): Buffer | null {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'leverframe-claude-'));
   try {
-    debug(`fetchNpmSource: Downloading @anthropic-ai/claude-code@${version}`);
     execFileSync(
       'npm',
       [
@@ -598,7 +438,6 @@ function fetchNpmSource(version: string): Buffer | null {
     const files = fs.readdirSync(tmpDir);
     const tgz = files.find(f => f.endsWith('.tgz'));
     if (!tgz) {
-      debug('fetchNpmSource: No .tgz file found after npm pack');
       return null;
     }
 
@@ -610,15 +449,12 @@ function fetchNpmSource(version: string): Buffer | null {
 
     const cliJsPath = path.join(tmpDir, 'package', 'cli.js');
     if (!fs.existsSync(cliJsPath)) {
-      debug('fetchNpmSource: cli.js not found in extracted package');
       return null;
     }
 
     const content = fs.readFileSync(cliJsPath);
-    debug(`fetchNpmSource: Got cli.js, ${content.length} bytes`);
     return content;
-  } catch (error) {
-    debug('fetchNpmSource: Failed to fetch npm source:', error);
+  } catch {
     return null;
   } finally {
     try {
@@ -631,7 +467,8 @@ function fetchNpmSource(version: string): Buffer | null {
 
 export function extractClaudeJsFromNativeInstallation(
   nativeInstallationPath: string,
-  version?: string
+  version?: string,
+  options: NativeExtractionOptions = {},
 ): { data: Buffer | null; clearBytecode: boolean; error?: string } {
   try {
     LIEF.logging.disable();
@@ -639,10 +476,6 @@ export function extractClaudeJsFromNativeInstallation(
     const { bunOffsets, bunData, moduleStructSize } = locateBundle(
       binary,
       nativeInstallationPath
-    );
-
-    debug(
-      `extractClaudeJsFromNativeInstallation: Got bunData, size=${bunData.length} bytes, moduleStructSize=${moduleStructSize}`
     );
 
     const jsModules = collectClaudeJavaScriptModules(
@@ -671,34 +504,16 @@ export function extractClaudeJsFromNativeInstallation(
         head.startsWith(BUN_BYTECODE_PREFIX) &&
         !head.includes(BUN_CJS_MARKER)
       ) {
-        debug(
-          'extractClaudeJsFromNativeInstallation: Extracted content is Bun bytecode — falling back to npm source'
-        );
-
-        if (version) {
+        if (version && options.allowNetwork !== false) {
           const npmSource = fetchNpmSource(version);
           if (npmSource) {
-            debug(
-              `extractClaudeJsFromNativeInstallation: Using npm source (${npmSource.length} bytes) instead of bytecode`
-            );
             return { data: npmSource, clearBytecode: true };
           }
-          debug(
-            'extractClaudeJsFromNativeInstallation: npm source fetch failed, returning bytecode content as-is'
-          );
-        } else {
-          debug(
-            'extractClaudeJsFromNativeInstallation: No version provided, cannot fetch npm source'
-          );
         }
       }
 
       return { data: result, clearBytecode: false };
     }
-
-    debug(
-      'extractClaudeJsFromNativeInstallation: claude module not found in any module'
-    );
 
     return {
       data: null,
@@ -706,11 +521,6 @@ export function extractClaudeJsFromNativeInstallation(
       error: 'claude module not found in any of the binary modules',
     };
   } catch (error) {
-    debug(
-      'extractClaudeJsFromNativeInstallation: Error during extraction:',
-      error
-    );
-
     return {
       data: null,
       clearBytecode: false,

@@ -10,6 +10,12 @@ export interface ParsedContextModeModelId {
   mode?: ContextMode;
 }
 
+const CONTEXT_MARKER_SUFFIX = /(?:\[(?:default|maximum|1m)\])+$/i;
+
+export function stripContextMarkers(modelId: string): string {
+  return modelId.replace(CONTEXT_MARKER_SUFFIX, '');
+}
+
 export function stripOneMContextSuffix(modelId: string): string {
   return modelId.replace(/\[1m\]$/i, '');
 }

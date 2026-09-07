@@ -72,7 +72,7 @@ ${pc.bold('Options:')}
 
 ${pc.bold('Providers:')}
   openai         OpenAI API key (platform.openai.com)
-  openai-oauth   ChatGPT/Codex plan OAuth — sign in with leverframe providers auth openai
+  openai-oauth   ChatGPT/Codex plan OAuth, sign in with leverframe providers auth openai
   kimi           Kimi Coding Plan membership key
   moonshot       Moonshot pay-as-you-go API key
   zai            z.ai Coding Plan API key
@@ -93,7 +93,7 @@ ${pc.bold('Proxy mode:')}
 
 ${pc.bold('Note:')}
   Claude Code may save the launched model to ~/.claude/settings.json.
-  Bare claude later can still show that model — reset with claude --model sonnet.
+  Bare claude later can still show that model. Reset with claude --model sonnet.
 
 ${pc.bold('Examples:')}
   leverframe claude
@@ -148,12 +148,12 @@ ${pc.bold('Endpoint mode only')} ${pc.dim('(error if combined with --proxy)')}:
                                interactively to enter one hidden
 
 ${pc.bold('Proxy mode only:')}
-  (no extra options — proxy mode takes only the common options above)
+  (no extra options. Proxy mode takes only the common options above.)
 
 ${pc.bold('Bare leverframe server:')}
   Uses the saved default mode (proxy if none saved). Proxy mode starts
   immediately. Endpoint mode on a TTY opens a short wizard: start from saved
-  settings, or configure — favorites-only catalog?, which providers to expose,
+  settings, or configure. Favorites-only catalog? Which providers to expose,
   discovery-id masking, listen local/network (network asks for a password).
   Without a TTY (or with --quick / any endpoint-mode option) it skips all
   prompts and starts from saved settings; network mode then needs a saved
@@ -196,7 +196,6 @@ ${pc.bold('Usage:')}
   leverframe models --list
   leverframe models --alias sol=leverframe:openai-oauth:gpt-5.6-sol
   leverframe models --unalias sol
-  leverframe models --context-ceiling gpt-5.6-sol
   leverframe models
   leverframe favorites --help
   leverframe favorites --version
@@ -257,7 +256,7 @@ ${pc.bold('Behavior:')}
   is per installation, keyed by its canonical path, under
   ~/.leverframe/state/patches/<identity>/. A content-addressed, immutable
   pristine baseline is kept per Claude Code version; re-runs are no-ops until
-  your config or Claude Code version changes — then the binary is restored
+  your config or Claude Code version changes. Then the binary is restored
   first and re-patched fresh. Every patch and restore is journaled so an
   interrupted run is reconciled automatically on the next leverframe patch run.
   Run leverframe patch again after every claude update.`;

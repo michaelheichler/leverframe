@@ -114,8 +114,11 @@ export async function checkResolvedPatchState(
   runtime: PatchRuntime = defaultPatchRuntime,
   freshProviders?: LocalProvider[],
   selectedModel?: FavoriteModel,
+  contextSelectionAvailable = true,
 ): Promise<CheckResult> {
-  const desired = buildDesiredPatchConfig(freshProviders, selectedModel);
+  const desired = buildDesiredPatchConfig(freshProviders, selectedModel, {
+    includeContextModes: contextSelectionAvailable,
+  });
   const configHash = computePatchConfigHash(desired.config);
 
   await reconcilePatchTransaction(installation, runtime);
@@ -188,6 +191,7 @@ export interface RunPatchCommandV2Options {
   runtime?: PatchRuntime;
   freshProviders?: LocalProvider[];
   selectedModel?: FavoriteModel;
+  contextSelectionAvailable?: boolean;
 }
 
 export async function runPatchCommandV2(
@@ -209,6 +213,7 @@ export async function runPatchCommandV2(
     runtime,
     opts.freshProviders,
     opts.selectedModel,
+    opts.contextSelectionAvailable !== false,
   );
 
   return withPatchTargetLock(installation.identity, async () => {
@@ -294,6 +299,7 @@ export async function runLaunchPatchCheckV2(
     runtime?: PatchRuntime;
     freshProviders?: LocalProvider[];
     selectedModel?: FavoriteModel;
+    contextSelectionAvailable?: boolean;
   } = {},
   presenter: PatchPresenter = clackPatchPresenter,
 ): Promise<void> {
@@ -305,13 +311,30 @@ export async function runLaunchPatchCheckV2(
       presenter.notice(unsupportedClaudeCodeBinaryPatchingMessage(installation.version));
       return;
     }
-    const { state, desired, legacyRecovery } = await checkResolvedPatchState(
+    const { manifest, state, desired, legacyRecovery } = await checkResolvedPatchState(
       installation,
       runtime,
       opts.freshProviders,
       opts.selectedModel,
+      opts.contextSelectionAvailable !== false,
     );
-    if (Object.keys(desired.config).length === 0) return;
+    if (Object.keys(desired.config).length === 0) {
+      if (
+        opts.freshProviders !== undefined
+        && !opts.dryRun
+        && manifest
+        && (state === 'patched' || state === 'config_stale')
+      ) {
+        const outcome = await withPatchTargetLock(
+          installation.identity,
+          () => restorePatchTransactionV2({ installation, manifest }, runtime),
+          { waitMs: 500 },
+        );
+        if (!outcome.ok) throw new Error(outcome.message);
+        if (!opts.agentStdout) presenter.notice('Fresh model discovery returned no configured models; restored the stale Claude integration.');
+      }
+      return;
+    }
     if (isCurrentPatchState(state)) return;
 
     if (opts.dryRun) {
@@ -351,6 +374,7 @@ export async function runLaunchPatchCheckV2(
           runtime,
           freshProviders: opts.freshProviders,
           selectedModel: opts.selectedModel,
+          contextSelectionAvailable: opts.contextSelectionAvailable,
         },
         presenter,
       );
@@ -364,6 +388,7 @@ export async function runLaunchPatchCheckV2(
         runtime,
         freshProviders: opts.freshProviders,
         selectedModel: opts.selectedModel,
+        contextSelectionAvailable: opts.contextSelectionAvailable,
       },
       opts.agentStdout ? silentPatchPresenter : presenter,
     );

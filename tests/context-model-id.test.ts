@@ -4,6 +4,7 @@ import {
   contextModeModelId,
   parseContextModeModelId,
   routeLookupIds,
+  stripContextMarkers,
 } from '../src/context-model-id.js';
 
 describe('claudeCodeClientModelId', () => {
@@ -30,5 +31,9 @@ describe('claudeCodeClientModelId', () => {
       'gpt-6-astra',
       'gpt-6-astra[default]',
     ]));
+  });
+
+  it('strips every trailing context marker from a catalog identity', () => {
+    expect(stripContextMarkers('gpt-6-astra[maximum][default][1m]')).toBe('gpt-6-astra');
   });
 });

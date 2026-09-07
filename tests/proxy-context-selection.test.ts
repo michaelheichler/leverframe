@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyFreshContextSelection } from '../src/proxy-context-selection.js';
-import { lookupRoute, type ProxyRoute } from '../src/proxy-request.js';
+import { lookupRoute, proxyRuntimeRouteKey, type ProxyRoute } from '../src/proxy-request.js';
 
 function route(): ProxyRoute {
   return {
@@ -49,5 +49,23 @@ describe('fresh proxy context selection', () => {
     })).toEqual([]);
     expect(active.contextWindow).toBe(272_000);
     expect(active.maxContextWindow).toBe(872_000);
+  });
+
+  it('shares credential runtime state across default and maximum aliases', () => {
+    const active = route();
+    expect(proxyRuntimeRouteKey(active)).toBe(proxyRuntimeRouteKey({
+      ...active,
+      aliasId: `${active.aliasId}[maximum]`,
+      contextWindow: 872_000,
+    }));
+    expect(proxyRuntimeRouteKey(active)).toBe(proxyRuntimeRouteKey({
+      ...active,
+      aliasId: `${active.aliasId}[default]`,
+    }));
+    const withoutProvider = { ...active, providerId: undefined };
+    expect(proxyRuntimeRouteKey(withoutProvider)).toBe(proxyRuntimeRouteKey({
+      ...withoutProvider,
+      aliasId: `${withoutProvider.aliasId}[maximum]`,
+    }));
   });
 });

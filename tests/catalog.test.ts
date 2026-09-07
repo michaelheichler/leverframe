@@ -44,6 +44,17 @@ describe('canonicalCatalogModelId', () => {
       providerId: 'openai',
     })).toBe('leverframe:openai:gpt-5.5');
   });
+
+  it('removes default and maximum markers before constructing the identity', () => {
+    expect(canonicalCatalogModelId({
+      aliasId: 'anthropic-openai-oauth__gpt-5.6-luna[maximum][default]',
+      providerId: 'openai-oauth',
+    })).toBe('leverframe:openai-oauth:gpt-5.6-luna');
+    expect(canonicalCatalogModelId({
+      aliasId: 'leverframe:openai:gpt-5.5[maximum]',
+      providerId: 'openai',
+    })).toBe('leverframe:openai:gpt-5.5');
+  });
 });
 
 

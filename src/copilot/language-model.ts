@@ -7,7 +7,6 @@ import type {
   LanguageModelV3StreamPart,
   LanguageModelV3StreamResult,
 } from '@ai-sdk/provider';
-import type { ReasoningEffort } from '../registry/types.js';
 import { collectCopilotGenerateResult } from './generate-result.js';
 import { createSessionEventSource } from './session-events.js';
 import { renderCopilotHistory } from './serialized-history.js';
@@ -94,6 +93,8 @@ export interface CopilotLanguageModelConfig {
   providerId?: string;
 }
 
+type CopilotReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 interface SessionState {
   key: string;
   session: CopilotLanguageSession;
@@ -127,11 +128,11 @@ function providerOption(
 }
 
 const CLAUDE_SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const REASONING_EFFORTS = new Set<ReasoningEffort>(['low', 'medium', 'high', 'xhigh', 'max']);
+const REASONING_EFFORTS = new Set<CopilotReasoningEffort>(['low', 'medium', 'high', 'xhigh', 'max']);
 
 function requestIdentity(options: LanguageModelV3CallOptions): {
   claudeSessionId: string;
-  reasoningEffort: ReasoningEffort | null;
+  reasoningEffort: CopilotReasoningEffort | null;
 } {
   const claudeSessionId = providerOption(options, 'claudeSessionId');
   const effort = providerOption(options, 'reasoningEffort');
@@ -139,11 +140,11 @@ function requestIdentity(options: LanguageModelV3CallOptions): {
     throw new TypeError('GitHub Copilot requires a validated Claude session ID');
   }
   if (effort !== undefined && (
-    typeof effort !== 'string' || !REASONING_EFFORTS.has(effort as ReasoningEffort)
+    typeof effort !== 'string' || !REASONING_EFFORTS.has(effort as CopilotReasoningEffort)
   )) {
     throw new TypeError('GitHub Copilot reasoning effort must be low, medium, high, xhigh, or max');
   }
-  return { claudeSessionId, reasoningEffort: effort as ReasoningEffort | undefined ?? null };
+  return { claudeSessionId, reasoningEffort: effort as CopilotReasoningEffort | undefined ?? null };
 }
 
 function functionTools(options: LanguageModelV3CallOptions): LanguageModelV3FunctionTool[] {

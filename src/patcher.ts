@@ -68,10 +68,40 @@ export interface PatchModelMeta {
   effort?: PatchScriptEffort;
 }
 
-function patchModelFormat(model: CachedModel): PatchModelMeta['modelFormat'] {
+export interface PatchModelConfigOptions {
+  includeContextModes?: boolean;
+}
+
+interface PatchMetadataModel {
+  id: string;
+  name: string;
+  modelFormat: CachedModel['modelFormat'];
+  contextWindow?: number;
+  maxContextWindow?: number;
+  contextWindowUnconfirmed?: boolean;
+}
+
+function patchModelFormat(model: Pick<PatchMetadataModel, 'modelFormat'>): PatchModelMeta['modelFormat'] {
   return model.modelFormat === 'anthropic' || model.modelFormat === 'openai'
     ? model.modelFormat
     : undefined;
+}
+
+function buildPatchModelMeta(
+  providerName: string,
+  model: PatchMetadataModel,
+  effort?: PatchScriptEffort,
+): PatchModelMeta {
+  return {
+    contextWindow: !model.contextWindowUnconfirmed && model.contextWindow && model.contextWindow > 0
+      ? model.contextWindow
+      : undefined,
+    maxContextWindow: model.maxContextWindow,
+    contextWindowUnconfirmed: model.contextWindowUnconfirmed,
+    modelFormat: patchModelFormat(model),
+    displayName: httpProxyDisplayName(model, providerName),
+    effort,
+  };
 }
 
 export function reasoningEffortForPatch(provider: RegistryProvider, model: CachedModel): PatchScriptEffort | undefined {
@@ -110,6 +140,7 @@ export function buildPatchModelConfig(
   favorites: Array<{ providerId: string; modelId: string }>,
   aliases: Array<{ name: string; providerId: string; modelId: string }>,
   modelMetaFor: (providerId: string, modelId: string) => PatchModelMeta | undefined,
+  options: PatchModelConfigOptions = {},
 ): DesiredPatchConfig {
   const config: PatchScriptModelConfig = {};
   const unknownWindows: string[] = [];
@@ -126,7 +157,8 @@ export function buildPatchModelConfig(
     const { context, provenance: contextProvenance } = resolveContextForPatch(meta);
     if (context !== undefined) entry.context = context;
     if (
-      meta?.modelFormat !== undefined
+      options.includeContextModes !== false
+      && meta?.modelFormat !== undefined
       && meta.modelFormat !== 'anthropic'
       && meta?.contextWindow !== undefined
       && meta.contextWindow > 0
@@ -175,6 +207,7 @@ export function computePatchConfigHash(
 export function buildDesiredPatchConfig(
   freshProviders?: LocalProvider[],
   selectedModel?: FavoriteModel,
+  options: PatchModelConfigOptions = {},
 ): DesiredPatchConfig {
   const prefs = loadPreferences();
   const favorites = prefs.favoriteModels ?? [];
@@ -187,33 +220,25 @@ export function buildDesiredPatchConfig(
       const registryProvider = registry.providers.find(candidate => candidate.id === provider.id);
       for (const model of provider.models) {
         const cachedModel = registryProvider?.modelsCache?.models.find(candidate => candidate.id === model.id);
-        meta.set(`${provider.id}:${model.id}`, {
-          contextWindow: !model.contextWindowUnconfirmed && model.contextWindow && model.contextWindow > 0
-            ? model.contextWindow
-            : undefined,
-          maxContextWindow: model.maxContextWindow,
-          contextWindowUnconfirmed: model.contextWindowUnconfirmed,
-          modelFormat: patchModelFormat(model),
-          displayName: httpProxyDisplayName(model, provider.name),
-          effort: registryProvider && cachedModel
-            ? reasoningEffortForPatch(registryProvider, cachedModel)
-            : undefined,
-        });
+        meta.set(
+          `${provider.id}:${model.id}`,
+          buildPatchModelMeta(
+            provider.name,
+            model,
+            registryProvider && cachedModel
+              ? reasoningEffortForPatch(registryProvider, cachedModel)
+              : undefined,
+          ),
+        );
       }
     }
   } else {
     for (const provider of registry.providers) {
       for (const model of provider.modelsCache?.models ?? []) {
-        meta.set(`${provider.id}:${model.id}`, {
-          contextWindow: !model.contextWindowUnconfirmed && model.contextWindow && model.contextWindow > 0
-            ? model.contextWindow
-            : undefined,
-          maxContextWindow: model.maxContextWindow,
-          contextWindowUnconfirmed: model.contextWindowUnconfirmed,
-          modelFormat: patchModelFormat(model),
-          displayName: httpProxyDisplayName(model, provider.name),
-          effort: reasoningEffortForPatch(provider, model),
-        });
+        meta.set(
+          `${provider.id}:${model.id}`,
+          buildPatchModelMeta(provider.name, model, reasoningEffortForPatch(provider, model)),
+        );
       }
     }
   }
@@ -232,6 +257,7 @@ export function buildDesiredPatchConfig(
     freshSelections,
     aliases,
     (providerId, modelId) => meta.get(`${providerId}:${modelId}`),
+    options,
   );
 }
 
@@ -265,6 +291,7 @@ export async function runLaunchPatchCheck(
     installation?: ClaudeInstallation;
     freshProviders?: LocalProvider[];
     selectedModel?: FavoriteModel;
+    contextSelectionAvailable?: boolean;
   } = {},
 ): Promise<void> {
   return runLaunchPatchCheckV2(opts);

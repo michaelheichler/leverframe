@@ -4,6 +4,7 @@ import {
   hasOneMContextSuffix,
   parseContextModeModelId,
   routeLookupIds,
+  stripContextMarkers,
 } from './context-model-id.js';
 import { revalidateCustomEndpointUrl } from './registry/url-security.js';
 import type { AnthropicRequest } from './sdk-adapter.js';
@@ -180,10 +181,11 @@ export interface ProxyModelAlias {
 }
 
 export function proxyRuntimeRouteKey(route: ProxyRoute): string {
+  const aliasId = stripContextMarkers(route.aliasId);
   return [
-    route.providerId ?? route.aliasId,
+    route.providerId ?? aliasId,
     route.oauthAccountId ?? '',
-    route.aliasId,
+    aliasId,
     route.realModelId,
     route.npm ?? '@native-anthropic',
     route.baseURL ?? route.upstreamUrl,

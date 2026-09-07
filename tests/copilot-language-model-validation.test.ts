@@ -19,14 +19,14 @@ describe('createCopilotLanguageModel request validation', () => {
     expect(getRuntimeSpy).not.toHaveBeenCalled();
   });
 
-  it('rejects an unsupported reasoning effort before loading the runtime', async () => {
+  it.each(['none', 'minimal', 'ultra', 'extreme'])('rejects an unsupported Copilot reasoning effort %s before loading the runtime', async effort => {
     const { createCopilotLanguageModel } = await loadCopilotLanguageModelModule();
     const { deps, getRuntimeSpy } = buildDeps();
     const model = createCopilotLanguageModel({ modelId: 'claude-sonnet-4-6' }, deps);
 
     await expect(model.doStream(callOptions({
       claudeSessionId: SESSION_ID,
-      reasoningEffort: 'extreme',
+      reasoningEffort: effort,
     }))).rejects.toThrow(/reasoning effort/i);
     expect(getRuntimeSpy).not.toHaveBeenCalled();
   });

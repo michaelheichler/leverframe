@@ -27,7 +27,7 @@ interface FavoritesCommandOptions {
   noContextCeiling?: string;
 }
 
-function runContextCeilingChange(modelId: string): number {
+function reportContextCeilingRetired(modelId: string): number {
   p.log.error(`Context ceiling selection for ${modelId.trim()} is retired.`);
   p.log.info('Run `leverframe claude`, choose the model, then select a provider-reported context mode in `/model`.');
   p.log.info('Fresh discovery is required each time. No saved context preference was changed.');
@@ -39,8 +39,8 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
     p.log.error('--context-ceiling and --no-context-ceiling apply one at a time.');
     return 1;
   }
-  if (opts.contextCeiling !== undefined) return runContextCeilingChange(opts.contextCeiling);
-  if (opts.noContextCeiling !== undefined) return runContextCeilingChange(opts.noContextCeiling);
+  if (opts.contextCeiling !== undefined) return reportContextCeilingRetired(opts.contextCeiling);
+  if (opts.noContextCeiling !== undefined) return reportContextCeilingRetired(opts.noContextCeiling);
   const changesAlias = opts.alias !== undefined || opts.unalias !== undefined;
   if (changesAlias && (opts.list || (opts.alias !== undefined && opts.unalias !== undefined))) {
     p.log.error('--alias/--unalias apply one at a time to proxy-mode favorites.');

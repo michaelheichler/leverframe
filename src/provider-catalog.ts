@@ -61,9 +61,11 @@ export function filterFreshProviderCatalog(
     if (!result || !result.ok || result.skipped || result.modelSource !== 'live') {
       const reason = !result
         ? (refreshError ?? 'Fresh model discovery did not complete.')
-        : result.modelSource !== 'live'
-          ? 'Fresh model discovery did not return a live provider model list.'
-          : result.reason ?? refreshError ?? 'Fresh model discovery did not complete.';
+        : result.reason
+          ?? refreshError
+          ?? (result.modelSource !== 'live'
+            ? 'Fresh model discovery did not return a live provider model list.'
+            : 'Fresh model discovery did not complete.');
       if (nativeModels.length > 0) {
         if (externalModels.length > 0) recordUnavailable(provider, reason, externalModels.map(model => model.id));
         return [{ ...provider, models: nativeModels }];

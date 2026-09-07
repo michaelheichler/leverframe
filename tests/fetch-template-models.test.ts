@@ -325,4 +325,25 @@ describe('fetchTemplateModels', () => {
       supportsTemperature: false,
     });
   });
+
+  it('ignores malformed supplier reasoning options without failing discovery', async () => {
+    stubSupplierFetch(
+      { data: [{ id: 'supplier-model', name: 'Supplier Model' }] },
+      {
+        'supplier-backed': {
+          models: {
+            'supplier-model': {
+              reasoning_options: [null, { type: 'effort', values: 'high' }],
+            },
+          },
+        },
+      },
+    );
+
+    const result = await fetchTemplateModels(supplierBackedTemplate, 'sk-test');
+
+    expect(result.error).toBeUndefined();
+    expect(result.models[0]?.supportedReasoningEfforts).toBeUndefined();
+    expect(result.models[0]?.supportsReasoningToggle).toBeUndefined();
+  });
 });

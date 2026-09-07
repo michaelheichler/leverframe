@@ -7,6 +7,10 @@ interface NativeBundlePaths {
   payloadPath: string;
 }
 
+export interface ClaudeContentReadOptions {
+  allowNetwork?: boolean;
+}
+
 export function classifyClaudeExecutable(head: Buffer): ClaudeExecutableFormat {
   if (head.length >= 4) {
     const u32le = head.readUInt32LE(0);
@@ -46,7 +50,11 @@ async function loadNativeBundleSupport(): Promise<typeof import('./claude-bundle
   }
 }
 
-export async function readClaudeContent(launcherPath: string, version?: string): Promise<string> {
+export async function readClaudeContent(
+  launcherPath: string,
+  version?: string,
+  options: ClaudeContentReadOptions = {},
+): Promise<string> {
   const bytes = await readFile(launcherPath);
   if (classifyClaudeExecutable(bytes.subarray(0, 4)) === 'script') return bytes.toString('utf8');
   const { extractClaudeJsFromNativeInstallation, resolveNixBinaryWrapper } = await loadNativeBundleSupport();
@@ -54,7 +62,9 @@ export async function readClaudeContent(launcherPath: string, version?: string):
     launcherPath,
     payloadPath: resolveNixBinaryWrapper(launcherPath) ?? launcherPath,
   };
-  const extracted = extractClaudeJsFromNativeInstallation(paths.payloadPath, version);
+  const extracted = options.allowNetwork === undefined
+    ? extractClaudeJsFromNativeInstallation(paths.payloadPath, version)
+    : extractClaudeJsFromNativeInstallation(paths.payloadPath, version, options);
   if (!extracted.data) {
     throw new Error(`Failed to extract Claude JavaScript module graph: ${extracted.error ?? 'unknown format'}`);
   }

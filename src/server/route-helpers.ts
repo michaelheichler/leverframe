@@ -85,12 +85,14 @@ export function auditSdkError(
 
 export function digestableMessageFrom(message: unknown): DigestableMessage | undefined {
   if (!message || typeof message !== 'object' || typeof (message as JsonBody).role !== 'string') return undefined;
-  return { role: (message as JsonBody).role, content: (message as JsonBody).content };
+  return { role: (message as JsonBody).role, content: (message as JsonBody).content ?? null };
 }
 
 export function toDigestableMessages(body: JsonBody): DigestableMessage[] {
   const messages: DigestableMessage[] = [];
-  if (typeof body.system === 'string' && body.system) messages.push({ role: 'system', content: body.system });
+  if (body.system !== undefined && body.system !== null) {
+    messages.push({ role: 'system', content: body.system });
+  }
   if (Array.isArray(body.messages)) {
     for (const message of body.messages) {
       const digestable = digestableMessageFrom(message);

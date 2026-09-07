@@ -1,4 +1,5 @@
 import type { IncomingMessage } from 'node:http';
+import type { Transform } from 'node:stream';
 import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib';
 
 const MAX_USAGE_SSE_BLOCK_BYTES = 64 * 1024;
@@ -89,10 +90,12 @@ export function observeResponseUsage(
   contentEncoding: string | string[] | undefined,
   callbacks: { onUsage: (usage: ResponseUsage) => void; onComplete: () => void },
 ): void {
-  const encoding = (Array.isArray(contentEncoding) ? contentEncoding[0] : contentEncoding)
-    ?.trim()
-    .toLowerCase();
-  if (!encoding || encoding === 'identity') {
+  const encodings = (Array.isArray(contentEncoding) ? contentEncoding : [contentEncoding])
+    .filter((value): value is string => typeof value === 'string')
+    .flatMap(value => value.split(','))
+    .map(value => value.trim().toLowerCase())
+    .filter(value => value.length > 0 && value !== 'identity');
+  if (encodings.length === 0) {
     const capture = createResponseUsageCapture(callbacks.onUsage);
     upstream.on('data', capture.capture);
     upstream.once('end', () => {
@@ -103,39 +106,56 @@ export function observeResponseUsage(
     return;
   }
 
-  const decoder = encoding === 'gzip'
-    ? createGunzip()
-    : encoding === 'br'
-      ? createBrotliDecompress()
-      : encoding === 'deflate'
-        ? createInflate()
-        : undefined;
-  if (!decoder) {
+  const decoders = [...encodings].reverse().map((encoding: string): Transform | undefined => (
+    encoding === 'gzip'
+      ? createGunzip()
+      : encoding === 'br'
+        ? createBrotliDecompress()
+        : encoding === 'deflate'
+          ? createInflate()
+          : undefined
+  ));
+  if (decoders.some(decoder => decoder === undefined)) {
     callbacks.onComplete();
     return;
   }
+  const decoderChain = decoders.filter((decoder): decoder is Transform => decoder !== undefined);
+  for (let i = 0; i < decoderChain.length - 1; i++) {
+    decoderChain[i]!.pipe(decoderChain[i + 1]!);
+  }
 
   const onCompressedData = (chunk: Buffer) => {
-    if (!decoder.destroyed) decoder.write(chunk);
+    if (!decoderChain[0]!.destroyed) decoderChain[0]!.write(chunk);
   };
   const onCompressedEnd = () => {
-    if (!decoder.destroyed) decoder.end();
+    if (!decoderChain[0]!.destroyed) decoderChain[0]!.end();
+  };
+  let completed = false;
+  const complete = () => {
+    if (completed) return;
+    completed = true;
+    callbacks.onComplete();
+  };
+  const onDecoderError = () => {
+    cleanup();
+    complete();
   };
   const cleanup = () => {
     upstream.off('data', onCompressedData);
     upstream.off('end', onCompressedEnd);
-    decoder.destroy();
+    for (const decoder of decoderChain) {
+      decoder.removeListener('error', onDecoderError);
+      decoder.destroy();
+    }
   };
   const capture = createResponseUsageCapture(callbacks.onUsage);
+  const decoder = decoderChain.at(-1)!;
   decoder.on('data', capture.capture);
-  decoder.once('error', () => {
-    cleanup();
-    callbacks.onComplete();
-  });
+  for (const current of decoderChain) current.once('error', onDecoderError);
   decoder.once('end', () => {
     capture.flush();
     cleanup();
-    callbacks.onComplete();
+    complete();
   });
   upstream.on('data', onCompressedData);
   upstream.once('end', onCompressedEnd);

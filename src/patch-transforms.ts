@@ -5,7 +5,7 @@ import { applyNativeModelKnowledge } from './patch-transforms-model-knowledge.js
 import { applyNativeContextWindow } from './patch-transforms-context-window.js';
 import { ONE_M_CONTEXT_WINDOW } from './context-model-id.js';
 
-export const PATCH_TRANSFORMS_VERSION = 12;
+export const PATCH_TRANSFORMS_VERSION = 13;
 
 export interface PatchScriptModelEntry {
   alias?: string;

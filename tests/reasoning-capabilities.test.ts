@@ -68,6 +68,27 @@ describe('resolveReasoningCapabilities', () => {
     expect(caps.levels).toEqual([]);
     expect(caps.defaultLevel).toBe('');
   });
+
+  it('does not expose effort controls for an SDK without a known serializer', () => {
+    const caps = resolveReasoningCapabilities({
+      providerId: 'custom',
+      npm: '@vendor/custom-sdk',
+      modelId: 'custom-reasoning-model',
+      reasoning: true,
+      supportedReasoningEfforts: ['ultra'],
+      defaultReasoningEffort: 'ultra',
+    });
+
+    expect(caps.mode).toBe('internal-only');
+    expect(caps.levels).toEqual([]);
+    expect(caps.defaultLevel).toBe('');
+    expect(caps.wireFormat).toBeUndefined();
+    expect(effortProviderOptions('@vendor/custom-sdk', 'ultra', 'custom-reasoning-model', {
+      providerId: 'custom',
+      reasoning: true,
+      supportedReasoningEfforts: ['ultra'],
+    })).toBeUndefined();
+  });
 });
 
 describe('effortProviderOptions', () => {

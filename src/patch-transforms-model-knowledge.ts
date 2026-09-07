@@ -1,5 +1,5 @@
 import type { PatchScriptModelConfig, PatchSiteResult } from './patch-transforms.js';
-import { ONE_M_CONTEXT_WINDOW } from './context-model-id.js';
+import { ONE_M_CONTEXT_WINDOW, stripContextMarkers } from './context-model-id.js';
 
 export interface NativeModelKnowledgeOutcome {
   content: string;
@@ -41,7 +41,7 @@ function configuredModelKeys(config: PatchScriptModelConfig): string[] {
       if (rawKey === undefined) continue;
       const key = String(rawKey).trim().toLowerCase();
       if (key === '') continue;
-      const bare = key.replace(/\[1m\]$/i, '');
+      const bare = stripContextMarkers(key);
       for (const suffix of ['', ...(hasReportedOneMContext ? ['[1m]'] : []), '[default]']) {
         keys.add(bare + suffix);
       }
@@ -135,11 +135,11 @@ export function applyNativeModelKnowledge(
     };
   }
 
-  const identity = match[1]!;
+  const normalizedIdentity = match[1]!;
   const replacement = match[0]
     .replace(
-      `||${match[4]!}.has(${identity})||${identity}===${match[5]!}`,
-      `||${match[4]!}.has(${identity})||${identity}===${match[5]!}||__lfcIsKnownModel(${identity})`,
+      `||${match[4]!}.has(${normalizedIdentity})||${normalizedIdentity}===${match[5]!}`,
+      `||${match[4]!}.has(${normalizedIdentity})||${normalizedIdentity}===${match[5]!}||__lfcIsKnownModel(${normalizedIdentity})`,
     );
   const content = source.replace(anchor, declaration(keys) + replacement);
   return content === source

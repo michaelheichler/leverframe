@@ -3,12 +3,12 @@
 import type {
   CachedModel,
   ModelDiscoveryFailureKind,
-  ReasoningEffort,
 } from '../registry/types.js';
 
 type JsonRecord = Record<string, unknown>;
 
 export type CopilotModelFailureKind = ModelDiscoveryFailureKind;
+type CopilotReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 class CopilotModelValidationError extends TypeError {
   constructor(message: string) {
@@ -27,7 +27,7 @@ class CopilotModelDiscoveryError extends Error {
   }
 }
 
-const REASONING_EFFORTS = new Set<ReasoningEffort>([
+const REASONING_EFFORTS = new Set<CopilotReasoningEffort>([
   'low',
   'medium',
   'high',
@@ -82,15 +82,15 @@ function parseContextWindow(limits: JsonRecord): number | undefined {
   return value;
 }
 
-function parseReasoningEffort(value: unknown, field: string): ReasoningEffort | undefined {
+function parseReasoningEffort(value: unknown, field: string): CopilotReasoningEffort | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'string') {
     throw new CopilotModelValidationError(`Copilot model ${field} must be a string`);
   }
-  return REASONING_EFFORTS.has(value as ReasoningEffort) ? value as ReasoningEffort : undefined;
+  return REASONING_EFFORTS.has(value as CopilotReasoningEffort) ? value as CopilotReasoningEffort : undefined;
 }
 
-function parseReasoningEfforts(value: unknown): ReasoningEffort[] | undefined {
+function parseReasoningEfforts(value: unknown): CopilotReasoningEffort[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) {
     throw new CopilotModelValidationError('Copilot model supportedReasoningEfforts must be an array');

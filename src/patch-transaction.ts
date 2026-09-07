@@ -109,6 +109,10 @@ export interface PatchRuntimeInspection {
   error?: string;
 }
 
+export interface PatchReadContentOptions {
+  allowNetwork?: boolean;
+}
+
 export function describeInspectFailure(live: PatchRuntimeInspection): string {
   return live.error
     ? `Cannot inspect the live claude binary: ${live.error}`
@@ -118,7 +122,7 @@ export function describeInspectFailure(live: PatchRuntimeInspection): string {
 export interface PatchRuntime {
   inspect(path: string, knownPatchedSha256?: string): Promise<PatchRuntimeInspection>;
   patch(path: string, config: PatchScriptModelConfig, verifiedVersion?: string): Promise<PatchSiteResult[]>;
-  readContent(path: string, verifiedVersion?: string): Promise<string>;
+  readContent(path: string, verifiedVersion?: string, options?: PatchReadContentOptions): Promise<string>;
 }
 
 export const defaultPatchRuntime: PatchRuntime = {
@@ -129,7 +133,7 @@ export const defaultPatchRuntime: PatchRuntime = {
       const installation = resolveClaudeInstallation({ target: path });
       const version = installation?.version ?? null;
       if (!version || !/^\d+\.\d+\.\d+$/.test(version)) throw new Error('embedded version unavailable');
-      const content = await readClaudeContent(path, version ?? undefined);
+      const content = await readClaudeContent(path, version, { allowNetwork: false });
       return {
         path,
         readable: true,
@@ -154,8 +158,8 @@ export const defaultPatchRuntime: PatchRuntime = {
     await writeClaudeContent(path, addLeverframeInjectionMarker(patched.content));
     return patched.results;
   },
-  async readContent(path, verifiedVersion) {
-    return readClaudeContent(path, verifiedVersion);
+  async readContent(path, verifiedVersion, options) {
+    return readClaudeContent(path, verifiedVersion, options);
   },
 };
 

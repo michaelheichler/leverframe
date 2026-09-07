@@ -84,7 +84,8 @@ function hasSupportedParameter(metadata: ReasoningMetadata | undefined, param: s
 
 function reportedReasoningLevels(metadata: ReasoningMetadata | undefined): string[] | undefined {
   if (!metadata?.supportedReasoningEfforts) return undefined;
-  const levels = metadata.supportedReasoningEfforts.filter(level => level.trim().length > 0);
+  const levels = metadata.supportedReasoningEfforts
+    .filter((level): level is string => typeof level === 'string' && level.trim().length > 0);
   return levels.length > 0 ? [...new Set(levels)] : [];
 }
 
@@ -167,10 +168,13 @@ function reportedEffort(metadata: ReasoningMetadata | undefined, effort: string)
   return levels?.includes(effort) ? effort : undefined;
 }
 
-function metadataWireFormat(metadata: ReasoningMetadata | undefined): ReasoningWireFormat {
+function openAiCompatibleReasoningWireFormat(
+  metadata: ReasoningMetadata | undefined,
+): ReasoningWireFormat | undefined {
   if (metadata?.supportsReasoningToggle === true) return { kind: 'deepseek-thinking' };
+  if (hasSupportedParameter(metadata, 'reasoning_effort')) return { kind: 'openai-reasoning-effort' };
   if (hasSupportedParameter(metadata, 'reasoning')) return { kind: 'openrouter-reasoning' };
-  return { kind: 'openai-reasoning-effort' };
+  return undefined;
 }
 
 function mapCodexEffortToAnthropic(effort: string): string | undefined {
@@ -256,7 +260,29 @@ export function getReasoningCapabilities(
     return metadataReasoningCapabilities(metadata, { kind: 'openai-reasoning-effort' });
   }
 
-  return metadataReasoningCapabilities(metadata, metadataWireFormat(metadata));
+  if (npm === '@ai-sdk/openai-compatible') {
+    const wireFormat = openAiCompatibleReasoningWireFormat(metadata);
+    if (wireFormat) return metadataReasoningCapabilities(metadata, wireFormat);
+    if (metadata?.reasoning === true) {
+      return {
+        ...EMPTY_REASONING,
+        mode: 'internal-only',
+        source: 'model-metadata',
+        confidence: 'documented',
+      };
+    }
+    return EMPTY_REASONING;
+  }
+
+  if (metadata?.reasoning === true) {
+    return {
+      ...EMPTY_REASONING,
+      mode: 'internal-only',
+      source: 'model-metadata',
+      confidence: 'documented',
+    };
+  }
+  return EMPTY_REASONING;
 }
 
 export function buildCodexReasoningLevels(

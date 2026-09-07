@@ -189,7 +189,11 @@ export async function diagnosePatchV2(
 
   if (live.readable) {
     try {
-      const content = await runtime.readContent(installation.canonicalPath, installation.version);
+      const content = await runtime.readContent(
+        installation.canonicalPath,
+        installation.version,
+        { allowNetwork: false },
+      );
       const verification = verifyPatchSites(content, desired.config);
       patchSites = verification.results;
       if (wantsSemanticVerdict) semanticSitesComplete = verification.complete;

@@ -550,6 +550,23 @@ describe('non-interactive launch auto-patch', () => {
     expect(notices).toHaveLength(1);
     expect((await checkResolvedPatchState(f.installation, runtime)).state).toBe('unpatched');
   });
+
+  it('restores an injected patch when fresh discovery removes every external favorite', async () => {
+    const { f, runtime, patchCalls } = unpatchedFixture('fresh-empty-restores');
+    const output = recordingPresenter();
+
+    expect(await runPatchCommandV2({ installation: f.installation, runtime }, output.presenter)).toBe(0);
+    expect(readManifestV2(f.installation.identity)).not.toBeNull();
+
+    await runLaunchPatchCheckV2(
+      { installation: f.installation, runtime, freshProviders: [], agentStdout: true },
+      output.presenter,
+    );
+
+    expect(patchCalls).toHaveLength(1);
+    expect(readManifestV2(f.installation.identity)).toBeNull();
+    expect((await runtime.inspect(f.installation.canonicalPath)).injection.state).toBe('absent');
+  });
 });
 
 describe('default-home V2 ownership across LEVERFRAME_HOME', () => {
@@ -630,4 +647,3 @@ describe('default-home V2 ownership across LEVERFRAME_HOME', () => {
     }
   });
 });
-

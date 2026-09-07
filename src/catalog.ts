@@ -1,6 +1,6 @@
 
 import { MAX_MODEL_CATALOG } from './constants.js';
-import { claudeCodeClientModelId } from './context-model-id.js';
+import { claudeCodeClientModelId, stripContextMarkers } from './context-model-id.js';
 import { isSdkMigratedNpm } from './provider-factory.js';
 import { aliasModelId } from './proxy.js';
 import type { ProxyRoute } from './proxy.js';
@@ -10,7 +10,7 @@ export function canonicalCatalogModelId(
   route: Pick<ProxyRoute, 'aliasId' | 'providerId'>,
 ): string | undefined {
   if (!route.providerId) return undefined;
-  const alias = route.aliasId.replace(/\[1m\]$/i, '');
+  const alias = stripContextMarkers(route.aliasId);
   if (alias.startsWith('leverframe:')) return alias;
   const separator = alias.indexOf('__');
   const modelId = separator >= 0 ? alias.slice(separator + 2) : alias;
