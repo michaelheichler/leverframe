@@ -106,20 +106,20 @@ export function observeResponseUsage(
     return;
   }
 
-  const decoders = [...encodings].reverse().map((encoding: string): Transform | undefined => (
+  const unsupportedEncoding = encodings.find(
+    encoding => encoding !== 'gzip' && encoding !== 'br' && encoding !== 'deflate',
+  );
+  if (unsupportedEncoding !== undefined) {
+    callbacks.onComplete();
+    return;
+  }
+  const decoderChain: Transform[] = [...encodings].reverse().map((encoding: string): Transform => (
     encoding === 'gzip'
       ? createGunzip()
       : encoding === 'br'
         ? createBrotliDecompress()
-        : encoding === 'deflate'
-          ? createInflate()
-          : undefined
+        : createInflate()
   ));
-  if (decoders.some(decoder => decoder === undefined)) {
-    callbacks.onComplete();
-    return;
-  }
-  const decoderChain = decoders.filter((decoder): decoder is Transform => decoder !== undefined);
   for (let i = 0; i < decoderChain.length - 1; i++) {
     decoderChain[i]!.pipe(decoderChain[i + 1]!);
   }

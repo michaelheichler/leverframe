@@ -109,6 +109,33 @@ export interface PatchRuntimeInspection {
   error?: string;
 }
 
+function classifyRawInjection(
+  path: string,
+  sha256: string,
+  knownPatchedSha256?: string,
+): InjectionClassification {
+  try {
+    return classifyLeverframeInjectionByHash(
+      readFileSync(path).toString('utf8'),
+      sha256,
+      knownPatchedSha256,
+    );
+  } catch {
+    return { state: 'ambiguous', evidence: 'inspect-failed' };
+  }
+}
+
+export function isVerifiedPristineBaselineInspection(
+  inspection: PatchRuntimeInspection,
+  version: string,
+  sha256: string,
+): boolean {
+  return inspection.version === version
+    && inspection.sha256 === sha256
+    && inspection.injection.state === 'absent'
+    && (inspection.readable || inspection.injection.evidence === 'none');
+}
+
 export interface PatchReadContentOptions {
   allowNetwork?: boolean;
 }
@@ -127,11 +154,13 @@ export interface PatchRuntime {
 
 export const defaultPatchRuntime: PatchRuntime = {
   async inspect(path, knownPatchedSha256) {
+    let sha256: string | null = null;
+    let version: string | null = null;
     try {
       if (!statSync(path).isFile()) throw new Error('not a file');
-      const sha256 = sha256File(path);
+      sha256 = sha256File(path);
       const installation = resolveClaudeInstallation({ target: path });
-      const version = installation?.version ?? null;
+      version = installation?.version ?? null;
       if (!version || !/^\d+\.\d+\.\d+$/.test(version)) throw new Error('embedded version unavailable');
       const content = await readClaudeContent(path, version, { allowNetwork: false });
       return {
@@ -142,12 +171,15 @@ export const defaultPatchRuntime: PatchRuntime = {
         injection: classifyLeverframeInjectionByHash(content, sha256, knownPatchedSha256),
       };
     } catch (err) {
+      const injection = sha256 === null
+        ? { state: 'ambiguous' as const, evidence: 'inspect-failed' as const }
+        : classifyRawInjection(path, sha256, knownPatchedSha256);
       return {
         path,
         readable: false,
-        version: null,
-        sha256: null,
-        injection: { state: 'ambiguous', evidence: 'inspect-failed' },
+        version,
+        sha256,
+        injection,
         error: err instanceof Error ? err.message : String(err),
       };
     }
@@ -223,7 +255,7 @@ async function validatePristineBaseline(input: {
   if (!existsSync(candidate.sourcePath)) return 'The verified recovery baseline is missing.';
   ensureBaselineExecutable(candidate.sourcePath);
   const inspected = await runtime.inspect(candidate.sourcePath);
-  if (!inspected.readable) {
+  if (!isVerifiedPristineBaselineInspection(inspected, version, candidate.sha256) && !inspected.readable) {
     return `The recovery baseline could not be read: ${inspected.error ?? 'unknown reason'}`;
   }
   if (inspected.version !== version) {
@@ -424,7 +456,7 @@ export async function restorePatchTransactionV2(
 
   ensureBaselineExecutable(manifest.baselinePath);
   const backup = await runtime.inspect(manifest.baselinePath);
-  if (!backup.readable) {
+  if (!isVerifiedPristineBaselineInspection(backup, version, manifest.baselineSha256) && !backup.readable) {
     return { ok: false, message: `The saved baseline could not be read: ${backup.error ?? 'unknown reason'}` };
   }
   if (backup.version !== version) {
@@ -460,10 +492,7 @@ export async function restorePatchTransactionV2(
     copyImmutableFileSync(manifest.baselinePath, stage, { mode: statSync(canonicalPath).mode & 0o777 });
     const candidate = await runtime.inspect(stage);
     if (
-      !candidate.readable
-      || candidate.version !== version
-      || candidate.injection.state !== 'absent'
-      || candidate.sha256 !== backup.sha256
+      !isVerifiedPristineBaselineInspection(candidate, version, backup.sha256 ?? '')
     ) {
       return { ok: false, message: 'Restore candidate failed staged validation.' };
     }

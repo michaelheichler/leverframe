@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -10,7 +11,10 @@ vi.mock('../src/claude-bundle.js', async importOriginal => {
   return { ...actual, readClaudeContent };
 });
 
-import { defaultPatchRuntime } from '../src/patch-transaction.js';
+import {
+  defaultPatchRuntime,
+  isVerifiedPristineBaselineInspection,
+} from '../src/patch-transaction.js';
 
 const roots: string[] = [];
 
@@ -57,5 +61,23 @@ describe('patch diagnostic network policy', () => {
       '2.1.263',
       { allowNetwork: false },
     );
+  });
+
+  it('retains authenticated raw metadata when source extraction fails', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'leverframe-native-baseline-metadata-'));
+    roots.push(root);
+    const path = writeVersionedScript(root);
+    const sha256 = createHash('sha256').update(readFileSync(path)).digest('hex');
+    readClaudeContent.mockRejectedValueOnce(new Error('Bun bytecode source unavailable'));
+
+    const inspection = await defaultPatchRuntime.inspect(path);
+
+    expect(inspection).toMatchObject({
+      readable: false,
+      version: '2.1.263',
+      sha256,
+      injection: { state: 'absent', evidence: 'none' },
+    });
+    expect(isVerifiedPristineBaselineInspection(inspection, '2.1.263', sha256)).toBe(true);
   });
 });

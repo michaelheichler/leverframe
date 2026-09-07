@@ -140,4 +140,36 @@ describe('patch diagnostics integration status', () => {
       extra: 'anchor not found',
     });
   });
+
+  it('reports unavailable integration when raw metadata is authenticated but source inspection fails', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'leverframe-diagnostics-unreadable-'));
+    roots.push(root);
+    const home = join(root, 'home');
+    homes.push(home);
+    process.env['LEVERFRAME_HOME'] = home;
+    const path = join(root, 'claude');
+    writeFileSync(path, BASELINE, { mode: 0o755 });
+    chmodSync(path, 0o755);
+    const hash = sha256(BASELINE);
+    const unreadableRuntime: PatchRuntime = {
+      ...runtime(),
+      async inspect(target) {
+        return {
+          path: target,
+          readable: false,
+          version: VERSION,
+          sha256: hash,
+          injection: { state: 'absent', evidence: 'none' },
+          error: 'Bun bytecode source unavailable',
+        };
+      },
+    };
+
+    const report = await diagnosePatchV2(path, unreadableRuntime);
+
+    expect(report.state).toBe('unsupported');
+    expect(report.integration.status).toBe('unavailable');
+    expect(report.drift.injectionState).toBeNull();
+    expect(report.nextAction).toMatch(/could not be inspected/i);
+  });
 });

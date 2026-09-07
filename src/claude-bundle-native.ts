@@ -36,8 +36,6 @@ export interface NativeExtractionOptions {
   allowNetwork?: boolean;
 }
 
-const BUN_CJS_MARKER = '@bun-cjs';
-
 interface LocatedBundle extends BunData {
   offset: number;
   length: number;
@@ -465,6 +463,43 @@ function fetchNpmSource(version: string): Buffer | null {
   }
 }
 
+function isUndecodableBunBytecode(content: Buffer): boolean {
+  if (!content.subarray(0, BUN_BYTECODE_PREFIX.length).equals(Buffer.from(BUN_BYTECODE_PREFIX))) {
+    return false;
+  }
+
+  const newline = content.indexOf(0x0a, BUN_BYTECODE_PREFIX.length);
+  if (newline === -1) return true;
+
+  const source = content.subarray(newline + 1);
+  if (source.every(byte => byte === 0x09 || byte === 0x0a || byte === 0x0d || byte === 0x20)) {
+    return true;
+  }
+  if (source.some(byte => byte < 0x09 || (byte > 0x0d && byte < 0x20) || byte === 0x7f)) {
+    return true;
+  }
+
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(source);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function bunBytecodeExtractionError(
+  options: NativeExtractionOptions,
+): { data: null; clearBytecode: false; error: string } {
+  const reason = options.allowNetwork === false
+    ? 'network access is disabled'
+    : 'no source bundle was available';
+  return {
+    data: null,
+    clearBytecode: false,
+    error: `Claude module contains Bun bytecode and cannot be safely decoded as UTF-8; ${reason}.`,
+  };
+}
+
 export function extractClaudeJsFromNativeInstallation(
   nativeInstallationPath: string,
   version?: string,
@@ -483,6 +518,16 @@ export function extractClaudeJsFromNativeInstallation(
       bunOffsets,
       moduleStructSize,
     );
+    if (jsModules.some(([, content]) => isUndecodableBunBytecode(content))) {
+      if (version && options.allowNetwork !== false) {
+        const npmSource = fetchNpmSource(version);
+        if (npmSource) {
+          return { data: npmSource, clearBytecode: true };
+        }
+      }
+      return bunBytecodeExtractionError(options);
+    }
+
     let result: Buffer | undefined;
     if (jsModules.length === 1) {
       result = jsModules[0]![1];
@@ -497,23 +542,7 @@ export function extractClaudeJsFromNativeInstallation(
       ).join(''));
     }
 
-    if (result) {
-      const head = result.subarray(0, 64).toString('utf8');
-
-      if (
-        head.startsWith(BUN_BYTECODE_PREFIX) &&
-        !head.includes(BUN_CJS_MARKER)
-      ) {
-        if (version && options.allowNetwork !== false) {
-          const npmSource = fetchNpmSource(version);
-          if (npmSource) {
-            return { data: npmSource, clearBytecode: true };
-          }
-        }
-      }
-
-      return { data: result, clearBytecode: false };
-    }
+    if (result) return { data: result, clearBytecode: false };
 
     return {
       data: null,

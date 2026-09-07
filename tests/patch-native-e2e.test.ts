@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { resolveClaudeInstallation } from '../src/claude-installation.js';
-import { defaultPatchRuntime } from '../src/patch-transaction.js';
+import {
+  defaultPatchRuntime,
+  isVerifiedPristineBaselineInspection,
+} from '../src/patch-transaction.js';
 import { buildDesiredPatchConfig } from '../src/patcher.js';
 import { readManifestV2 } from '../src/patch-state.js';
 
@@ -31,12 +34,7 @@ async function selectPristinePatchSource(
   }
 
   const baseline = await defaultPatchRuntime.inspect(manifest.baselinePath);
-  if (
-    !baseline.readable
-    || baseline.version !== resolved.version
-    || baseline.injection.state !== 'absent'
-    || baseline.sha256 !== manifest.baselineSha256
-  ) {
+  if (!isVerifiedPristineBaselineInspection(baseline, resolved.version, manifest.baselineSha256)) {
     throw new Error('The installed Claude patch manifest does not identify a verified pristine baseline.');
   }
   return manifest.baselinePath;

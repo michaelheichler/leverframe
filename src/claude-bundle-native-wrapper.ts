@@ -30,15 +30,19 @@ export function resolveNixBinaryWrapper(binaryPath: string): string | null {
     }
     if (!rawBytes || rawBytes.length === 0) return null;
 
-    const text = rawBytes.toString('utf-8');
-    const docstringMatch = text.match(/makeCWrapper\s+'(\/nix\/store\/[^']+)'/);
-    if (docstringMatch) return docstringMatch[1];
+    const cStrings = rawBytes.toString('utf-8').split('\0');
+    for (const text of cStrings) {
+      const docstringMatch = text.match(/makeCWrapper\s+'(\/nix\/store\/[^']+)'/);
+      if (docstringMatch) return docstringMatch[1];
 
-    const unquotedMatch = text.match(/makeCWrapper\s+(\/nix\/store\/\S+)/);
-    if (unquotedMatch) return unquotedMatch[1];
+      const unquotedMatch = text.match(/makeCWrapper\s+(\/nix\/store\/\S+)/);
+      if (unquotedMatch) return unquotedMatch[1];
 
-    const nixPaths = text.match(/\/nix\/store\/[^\s]+/g);
-    return nixPaths?.find(candidate => candidate.includes('/bin/')) ?? null;
+      const nixPaths = text.match(/\/nix\/store\/[^\s]+/g);
+      const candidate = nixPaths?.find(value => value.includes('/bin/'));
+      if (candidate) return candidate;
+    }
+    return null;
   } catch {
     return null;
   }

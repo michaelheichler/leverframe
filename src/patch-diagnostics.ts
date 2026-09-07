@@ -263,11 +263,13 @@ export async function diagnosePatchV2(
           mode: legacyRecovery.kind,
         },
     integration: {
-      status: semanticSitesComplete === false && wantsSemanticVerdict
-        ? 'incompatible'
-        : live.injection.state === 'present' && semanticSitesComplete !== false
-          ? 'integrated'
-          : 'compatible',
+      status: !live.readable
+        ? 'unavailable'
+        : semanticSitesComplete === false && wantsSemanticVerdict
+          ? 'incompatible'
+          : live.injection.state === 'present' && semanticSitesComplete !== false
+            ? 'integrated'
+            : 'compatible',
       capabilities: patchSites,
     },
     state,

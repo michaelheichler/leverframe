@@ -36,7 +36,7 @@ export async function validateOpenAiChatRoute(model: ServerModelInfo): Promise<s
     if (!/^https?:\/\//i.test(model.completionsUrl)) {
       return 'Invalid provider completionsUrl: must be http:// or https://';
     }
-    const revalidation = await revalidateEndpointUrl(model.apiBaseUrl ?? model.completionsUrl);
+    const revalidation = await revalidateEndpointUrl(model.completionsUrl);
     if (!revalidation.ok) {
       return `Custom endpoint URL failed security revalidation: ${revalidation.error ?? 'unspecified'}${revalidation.hint ? ` ${revalidation.hint}` : ''}`;
     }

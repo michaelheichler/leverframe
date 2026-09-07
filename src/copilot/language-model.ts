@@ -25,6 +25,10 @@ import {
   recordCopilotResponse,
   replayCopilotResponse,
 } from './response-replay.js';
+import {
+  COPILOT_REASONING_EFFORT_SET,
+  type CopilotReasoningEffort,
+} from './reasoning-effort.js';
 
 export interface CopilotSessionConfig {
   model: string;
@@ -93,8 +97,6 @@ export interface CopilotLanguageModelConfig {
   providerId?: string;
 }
 
-type CopilotReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-
 interface SessionState {
   key: string;
   session: CopilotLanguageSession;
@@ -128,7 +130,6 @@ function providerOption(
 }
 
 const CLAUDE_SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const REASONING_EFFORTS = new Set<CopilotReasoningEffort>(['low', 'medium', 'high', 'xhigh', 'max']);
 
 function requestIdentity(options: LanguageModelV3CallOptions): {
   claudeSessionId: string;
@@ -140,7 +141,7 @@ function requestIdentity(options: LanguageModelV3CallOptions): {
     throw new TypeError('GitHub Copilot requires a validated Claude session ID');
   }
   if (effort !== undefined && (
-    typeof effort !== 'string' || !REASONING_EFFORTS.has(effort as CopilotReasoningEffort)
+    typeof effort !== 'string' || !COPILOT_REASONING_EFFORT_SET.has(effort as CopilotReasoningEffort)
   )) {
     throw new TypeError('GitHub Copilot reasoning effort must be low, medium, high, xhigh, or max');
   }

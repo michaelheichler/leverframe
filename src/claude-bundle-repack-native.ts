@@ -59,6 +59,55 @@ function buildSectionData(bunBuffer: Buffer, headerSize: number = 8): Buffer {
   return sectionData;
 }
 
+interface PeSecurityDirectory {
+  offset: bigint;
+  size: bigint;
+}
+
+function readPeSecurityDirectory(binPath: string): PeSecurityDirectory | undefined {
+  const file = fs.readFileSync(binPath);
+  if (file.length < 0x40 || file.readUInt16LE(0) !== 0x5a4d) return undefined;
+
+  const peHeaderOffset = file.readUInt32LE(0x3c);
+  if (peHeaderOffset + 24 > file.length || file.readUInt32LE(peHeaderOffset) !== 0x4550) {
+    return undefined;
+  }
+
+  const optionalHeaderOffset = peHeaderOffset + 24;
+  if (optionalHeaderOffset + 2 > file.length) return undefined;
+  const magic = file.readUInt16LE(optionalHeaderOffset);
+  const dataDirectoryBase = magic === 0x10b ? 96 : magic === 0x20b ? 112 : undefined;
+  if (dataDirectoryBase === undefined) return undefined;
+
+  const optionalHeaderSize = file.readUInt16LE(peHeaderOffset + 20);
+  const securityDirectoryOffset = optionalHeaderOffset + dataDirectoryBase + 4 * 8;
+  if (
+    securityDirectoryOffset + 8 > optionalHeaderOffset + optionalHeaderSize ||
+    securityDirectoryOffset + 8 > file.length
+  ) {
+    return undefined;
+  }
+  const numberOfRvaAndSizesOffset = optionalHeaderOffset + (magic === 0x10b ? 92 : 108);
+  if (file.readUInt32LE(numberOfRvaAndSizesOffset) < 5) return undefined;
+
+  const offset = BigInt(file.readUInt32LE(securityDirectoryOffset));
+  const size = BigInt(file.readUInt32LE(securityDirectoryOffset + 4));
+  if (offset === 0n || size === 0n) return undefined;
+  if (offset + size > BigInt(file.length)) {
+    throw new Error('PE security directory extends beyond file contents');
+  }
+  return { offset, size };
+}
+
+function rangesOverlap(
+  firstStart: bigint,
+  firstEnd: bigint,
+  secondStart: bigint,
+  secondEnd: bigint,
+): boolean {
+  return firstStart < secondEnd && secondStart < firstEnd;
+}
+
 export function repackMachO(
   machoBinary: LIEF.MachO.Binary,
   binPath: string,
@@ -118,15 +167,56 @@ export function repackPE(
   sectionHeaderSize: number
 ): void {
   try {
-    const bunSection = peBinary.sections().find(s => s.name === '.bun');
+    const sections = peBinary.sections();
+    const bunSection = sections.find(s => s.name === '.bun');
     if (!bunSection) {
       throw new Error('.bun section not found');
     }
 
     const newSectionData = buildSectionData(newBunBuffer, sectionHeaderSize);
+    const sectionFileOffset = BigInt(bunSection.fileOffset);
+    const nextSectionFileOffset = sections.reduce<bigint | undefined>(
+      (next, section) => {
+        const fileOffset = BigInt(section.fileOffset);
+        if (fileOffset <= sectionFileOffset) return next;
+        return next === undefined || fileOffset < next ? fileOffset : next;
+      },
+      undefined,
+    );
+    const fileAlignment = peBinary.optionalHeader.fileAlignment;
+    if (!Number.isSafeInteger(fileAlignment) || fileAlignment <= 0) {
+      throw new Error('PE binary has an invalid file alignment');
+    }
+    const placement = computePeSectionPlacement({
+      sectionFileOffset,
+      currentRawSize: BigInt(bunSection.size),
+      nextSectionFileOffset,
+      newContentSize: BigInt(newSectionData.length),
+      fileAlignment: BigInt(fileAlignment),
+    });
+
+    if (placement.extensionSize > 0n) {
+      const securityDirectory = readPeSecurityDirectory(binPath);
+      if (
+        securityDirectory &&
+        (rangesOverlap(
+          sectionFileOffset,
+          sectionFileOffset + placement.rawSize,
+          securityDirectory.offset,
+          securityDirectory.offset + securityDirectory.size,
+        ) ||
+          (nextSectionFileOffset === undefined &&
+            securityDirectory.offset >= sectionFileOffset + BigInt(bunSection.size)))
+      ) {
+        throw new Error(
+          'Cannot safely grow PE .bun section with an existing security directory',
+        );
+      }
+    }
+
     bunSection.content = newSectionData;
-    bunSection.virtualSize = BigInt(newSectionData.length);
-    bunSection.size = BigInt(newSectionData.length);
+    bunSection.virtualSize = placement.virtualSize;
+    bunSection.size = placement.rawSize;
     atomicWriteBinary(peBinary, outputPath, binPath, false);
   } catch (error) {
     console.error('repackPE failed:', error);
@@ -136,6 +226,54 @@ export function repackPE(
 
 function alignBigInt(value: bigint, alignment: bigint): bigint {
   return ((value + alignment - 1n) / alignment) * alignment;
+}
+
+export interface PeSectionPlacement {
+  virtualSize: bigint;
+  rawSize: bigint;
+  extensionSize: bigint;
+}
+
+export function computePeSectionPlacement(params: {
+  sectionFileOffset: bigint;
+  currentRawSize: bigint;
+  nextSectionFileOffset?: bigint;
+  newContentSize: bigint;
+  fileAlignment: bigint;
+}): PeSectionPlacement {
+  const {
+    sectionFileOffset,
+    currentRawSize,
+    nextSectionFileOffset,
+    newContentSize,
+    fileAlignment,
+  } = params;
+
+  if (sectionFileOffset < 0n || currentRawSize < 0n || newContentSize < 0n) {
+    throw new Error('PE section layout values must be non-negative');
+  }
+  if (fileAlignment <= 0n) {
+    throw new Error('PE binary has an invalid file alignment');
+  }
+  const rawSize = alignBigInt(
+    currentRawSize > newContentSize ? currentRawSize : newContentSize,
+    fileAlignment,
+  );
+  const newRawEnd = sectionFileOffset + rawSize;
+  if (nextSectionFileOffset !== undefined && nextSectionFileOffset < sectionFileOffset) {
+    throw new Error('PE section layout has an out-of-order next section');
+  }
+  if (nextSectionFileOffset !== undefined && newRawEnd > nextSectionFileOffset) {
+    throw new Error(
+      'Cannot safely grow PE .bun section: aligned raw data would overlap the next section',
+    );
+  }
+
+  return {
+    virtualSize: newContentSize,
+    rawSize,
+    extensionSize: rawSize > currentRawSize ? rawSize - currentRawSize : 0n,
+  };
 }
 
 export interface BunSectionPlacement {
