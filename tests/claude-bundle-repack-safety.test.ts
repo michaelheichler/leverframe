@@ -8,6 +8,7 @@ vi.mock('node:child_process', () => ({ execFileSync: vi.fn() }));
 import { execFileSync } from 'node:child_process';
 import {
   computeBunSectionPlacement,
+  findUniqueBunCompiledPointer,
   repackMachO,
 } from '../src/claude-bundle-repack-native.js';
 
@@ -70,6 +71,45 @@ describe('native binary repacking safety', () => {
       extensionSize: 0x2000n,
       compact: true,
     });
+  });
+
+  it('finds an unaligned BUN_COMPILED pointer in a recent Linux Claude layout', () => {
+    const segmentVirtualAddress = 0x5360550n;
+    const bunSectionVirtualAddress = 0x556e000n;
+    const pointerVirtualAddress = 0x53836d8n;
+    const segment = Buffer.alloc(Number(pointerVirtualAddress - segmentVirtualAddress) + 8);
+    segment.writeBigUInt64LE(
+      bunSectionVirtualAddress,
+      Number(pointerVirtualAddress - segmentVirtualAddress),
+    );
+
+    expect(findUniqueBunCompiledPointer(
+      segment,
+      segmentVirtualAddress,
+      bunSectionVirtualAddress,
+    )).toBe(pointerVirtualAddress);
+  });
+
+  it('rejects missing and ambiguous BUN_COMPILED pointers', () => {
+    const segmentVirtualAddress = 0x1000n;
+    const bunSectionVirtualAddress = 0x556e000n;
+    const target = Buffer.alloc(8);
+    target.writeBigUInt64LE(bunSectionVirtualAddress);
+
+    expect(() => findUniqueBunCompiledPointer(
+      Buffer.alloc(64),
+      segmentVirtualAddress,
+      bunSectionVirtualAddress,
+    )).toThrow(/Could not find original BUN_COMPILED/);
+
+    const ambiguous = Buffer.alloc(64);
+    target.copy(ambiguous, 8);
+    target.copy(ambiguous, 32);
+    expect(() => findUniqueBunCompiledPointer(
+      ambiguous,
+      segmentVirtualAddress,
+      bunSectionVirtualAddress,
+    )).toThrow(/multiple BUN_COMPILED locations/);
   });
 
   it('passes the codesign path as an argument and commits only after signing', () => {
