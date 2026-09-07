@@ -2,8 +2,6 @@ import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import LIEF from 'node-lief';
 
-const BLOB_HEADER_ALIGNMENT = 16384;
-
 function atomicWriteBinary(
   binary: LIEF.ELF.Binary | LIEF.PE.Binary | LIEF.MachO.Binary,
   outputPath: string,
@@ -321,6 +319,34 @@ export function computeBunSectionPlacement(params: {
   return { newVaddr, newFileOffset, alignedNewSize, extensionSize, compact };
 }
 
+export function findUniqueBunCompiledPointer(
+  segmentContent: Buffer,
+  segmentVirtualAddress: bigint,
+  oldBunSectionVaddr: bigint,
+): bigint {
+  const target = Buffer.alloc(8);
+  target.writeBigUInt64LE(oldBunSectionVaddr);
+
+  const firstOffset = segmentContent.indexOf(target);
+  if (firstOffset === -1) {
+    throw new Error(
+      `Could not find original BUN_COMPILED location in binary (searched for 0x${oldBunSectionVaddr.toString(16)})`,
+    );
+  }
+
+  const secondOffset = segmentContent.indexOf(target, firstOffset + 1);
+  if (secondOffset !== -1) {
+    const firstAddress = segmentVirtualAddress + BigInt(firstOffset);
+    const secondAddress = segmentVirtualAddress + BigInt(secondOffset);
+    throw new Error(
+      `Found multiple BUN_COMPILED locations in writable ELF segment `
+      + `(0x${firstAddress.toString(16)} and 0x${secondAddress.toString(16)})`,
+    );
+  }
+
+  return segmentVirtualAddress + BigInt(firstOffset);
+}
+
 export function repackELFSection(
   elfBinary: LIEF.ELF.Binary,
   binPath: string,
@@ -343,35 +369,14 @@ export function repackELFSection(
 
     const newSectionData = buildSectionData(newBunBuffer, sectionHeaderSize);
     const oldBunSectionVaddr = bunSection.virtualAddress;
-    const vaddrBytes = Buffer.alloc(8);
-    vaddrBytes.writeBigUInt64LE(oldBunSectionVaddr);
 
-    let bunCompiledVaddr: bigint | null = null;
     const rwContent = rwSegment.content;
     const rwVaddrStart = rwSegment.virtualAddress;
-    const firstAligned = alignBigInt(
+    const bunCompiledVaddr = findUniqueBunCompiledPointer(
+      rwContent,
       rwVaddrStart,
-      BigInt(BLOB_HEADER_ALIGNMENT)
+      oldBunSectionVaddr,
     );
-    const lastCandidate = rwVaddrStart + BigInt(rwContent.length) - 8n;
-
-    for (
-      let va = firstAligned;
-      va <= lastCandidate;
-      va += BigInt(BLOB_HEADER_ALIGNMENT)
-    ) {
-      const off = Number(va - rwVaddrStart);
-      if (rwContent.subarray(off, off + 8).equals(vaddrBytes)) {
-        bunCompiledVaddr = va;
-        break;
-      }
-    }
-
-    if (bunCompiledVaddr === null) {
-      throw new Error(
-        `Could not find original BUN_COMPILED location in binary (searched for 0x${oldBunSectionVaddr.toString(16)})`
-      );
-    }
 
     const pageSize = elfBinary.pageSize();
     const newContentSize = BigInt(newSectionData.length);
