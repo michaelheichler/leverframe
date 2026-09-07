@@ -128,8 +128,6 @@ describe('checkpoint-store', () => {
     });
     saveCheckpointCAS({ scopeHash, expectedCurrentGeneration: 0, next: checkpoint });
 
-    // Simulate a racing writer that read generation 1 and tries to publish
-    // generation 2 while a third writer already advanced to generation 2.
     const loaded = loadCheckpoint(scopeHash, 'exec-2');
     expect(loaded.state).toBe('ok');
     const advanced = advanceCheckpoint({ checkpoint: loaded.value!, patch: { retryCount: 1 } });
@@ -385,8 +383,6 @@ describe('execution-recovery', () => {
     const reloaded = loadLedger(scopeHash, 'exec-reconcile');
     expect(findEntry(reloaded.value!, 'call_6')?.status).toBe('confirmed_not_executed');
 
-    // A second reconciliation attempt against the stale generation must fail
-    // (CAS conflict), rather than silently overwriting the decision.
     const stale = reconcileExecution({ scopeHash, executionId: 'exec-reconcile', toolCallId: 'call_6', outcome: 'executed', expectedGeneration: 1 });
     expect(stale.ok).toBe(false);
   });

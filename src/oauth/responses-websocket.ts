@@ -1,15 +1,4 @@
-// responses-websocket.ts, persistent outbound WebSocket transport for OpenAI's
-// ChatGPT/Codex Responses backend.
-// The Vercel AI SDK still sees a fetch-like SSE response per model call. Behind
-// that interface, leverframe retains one sequential WebSocket chain per opaque
-// Claude session/model/effort/account partition and uses previous_response_id
-// only after proving the next translated conversation appends to the chain head.
-// The transport is split across responses-websocket-*.ts modules by
-// responsibility (connection pool, request-context lifecycle, diagnostics,
-// reasoning-protocol tracking, retry/backoff, continuation matching, payload
-// shaping, response-output accumulation). This file is the orchestration
-// entry point: it wires those modules together into the actual socket
-// lifecycle and exposes the public fetch-transport API.
+
 
 import { createHash } from 'node:crypto';
 import type { Agent as HttpAgent } from 'node:http';
@@ -121,7 +110,6 @@ export const RESPONSES_WS_NURSERY_IDLE_TTL_MS = 5 * 60_000;
 export const RESPONSES_WS_MAX_CONNECTIONS = 32;
 export const RESPONSES_WS_MAX_NURSERY_CONNECTIONS = 8;
 
-/** Test-only cleanup, also useful for preventing leaked fake sockets. */
 export function resetResponsesWebSocketConnectionsForTests(): void {
   for (const ctx of activeContextsSnapshot()) {
     cancelContext(ctx, new DOMException('Transport reset', 'AbortError'));
@@ -133,7 +121,6 @@ export function resetResponsesWebSocketConnectionsForTests(): void {
   resetConnectionPoolState();
 }
 
-/** Close every pooled socket that was authenticated with a superseded token. */
 export function evictResponsesWebSocketConnectionsForAccessToken(accessToken: string): number {
   const fingerprint = authorizationFingerprint({ authorization: `Bearer ${accessToken}` });
   if (!fingerprint) return 0;
@@ -151,13 +138,6 @@ export function evictResponsesWebSocketConnectionsForAccessToken(accessToken: st
   return evicted;
 }
 
-/**
- * Evict the connection that served a specific proxy request, called when a
- * downstream SDK translation error (e.g. a reasoning-part-not-found throw) shows
- * the stream was corrupted in a way the WS layer's own anomaly detector did not
- * flag. No-ops if the entry has since been reused by a later request or was
- * already evicted, so it never tears down a connection serving other traffic.
- */
 export function evictResponsesWebSocketConnectionForRequest(requestId: string): boolean {
   const entry = releaseEntryForRequestId(requestId);
   if (!entry) return false;
@@ -372,7 +352,7 @@ function createConnection(
   credentialFingerprint: string,
   options: ConnectionEntry['options'],
   debug: ConnectionEntry['debug'],
-  /** Optional HTTP(S)_PROXY CONNECT-tunnel agent (see src/outbound-proxy.ts). */
+
   agent?: HttpAgent,
 ): ConnectionEntry {
   const now = options.now();
@@ -432,14 +412,13 @@ function createConnection(
       return;
     }
 
-    // Body observation runs before the tick-deferred failure below. suppress socket-level errors meanwhile so the failure is handled once.
     entry.upgradeResponsePending = true;
     const retryableUpgradeStatus = RETRYABLE_UPGRADE_STATUSES.has(statusCode) || statusCode === 403;
     const error = new ProviderTransportError({
       provider: ctx.provider,
       model: ctx.model,
       phase: 'websocket_upgrade',
-      // 403 defaults to the terminal 'permission' category, which would force retryable back to false. reclassify so the edge throttle stays retryable.
+
       category: statusCode === 403 ? 'rate_limit' : undefined,
       httpStatus: mappedStatusCode,
       providerRequestId: requestId,
@@ -517,10 +496,6 @@ function createConnection(
   return entry;
 }
 
-/**
- * Build a fetch transport backed by persistent, session-aware Responses sockets.
- * Each returned Response still represents exactly one AI SDK request.
- */
 export function createResponsesWebSocketFetch(
   wsUrl: string,
   log?: (message: string) => void,
@@ -545,7 +520,7 @@ export function createResponsesWebSocketFetch(
 
   return async (_input, init): Promise<Response> => {
     const { WebSocket } = await import('ws');
-    // ws ignores HTTP(S)_PROXY env vars. tunnel through the configured outbound proxy when one applies to this wss URL.
+
     const proxyAgent = await outboundWsProxyAgent(wsUrl);
     const headers = toHeaderRecord(init?.headers);
     headers['OpenAI-Beta'] = CODEX_RESPONSES_WEBSOCKETS_BETA;
@@ -581,7 +556,7 @@ export function createResponsesWebSocketFetch(
     const matches = idleCandidates
       .map(entry => ({ entry, match: continuationMatch(entry, payload) }))
       .filter((candidate): candidate is { entry: ConnectionEntry; match: NonNullable<typeof candidate.match> } => candidate.match !== undefined)
-      // Prefer the longest matching history, which produces the smallest delta.
+
       .sort((left, right) => left.match.delta.length - right.match.delta.length
         || (left.match.mode === right.match.mode ? 0 : left.match.mode === 'exact' ? -1 : 1));
     let selected: ConnectionEntry | undefined = matches[0]?.entry;
@@ -623,13 +598,13 @@ export function createResponsesWebSocketFetch(
         + (selectedMatch.mode === 'omitted_reasoning' ? ' after accepting omitted reasoning' : ''),
       );
     } else if (candidates.some(entry => entry.inFlight)) {
-      // Claude auxiliary requests can share a session id. never multiplex or queue a request whose lineage cannot yet include the active response.
+
       selected = undefined;
       persistent = false;
       decision = 'parallel_isolated';
       debug('parallel request using an isolated socket');
     } else if (diagnosticEntry) {
-      // A rewind, branch, or hidden auxiliary inference gets its own full-context head. existing heads remain eligible for later exact-prefix matches.
+
       debug(
         `history mismatch starting an additional chain; retained ${candidates.length} existing head(s) `
         + `(${continuationMismatchSummary(diagnosticEntry, payload)})`,

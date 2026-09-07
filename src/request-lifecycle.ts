@@ -1,12 +1,4 @@
-// Provider-neutral request lifecycle (stabilization plan §7.2).
-//
-// Owns the legal state transitions for a single proxied request, the four
-// deadline classes (connect/header/idle/total), cancellation linking, and
-// timestamped terminal outcomes. This module knows nothing about providers,
-// HTTP status codes, or transport errors — it only tracks *when* things
-// happened and *why* a request stopped in provider-neutral terms. Turning a
-// terminal outcome into a `ProviderTransportError` is the job of the
-// adapter/infrastructure layer (see `request-lifecycle-error-mapping.ts`).
+
 
 import { type Clock, DeadlineManager, type DeadlineKind, systemClock } from './deadline-manager.js';
 
@@ -24,11 +16,7 @@ export type LifecycleState =
 export type { DeadlineKind } from './deadline-manager.js';
 
 const TERMINAL_STATES = new Set<LifecycleState>(['completed', 'failed', 'cancelled']);
-/**
- * Legal forward transitions. A request may always fail or be cancelled from
- * any non-terminal state; those two edges are enforced separately rather
- * than repeated in every row below.
- */
+
 const LEGAL_TRANSITIONS: Record<LifecycleState, ReadonlySet<LifecycleState>> = {
   accepted: new Set(['resolving']),
   resolving: new Set(['connecting']),
@@ -54,24 +42,23 @@ export interface LifecycleTransitionRecord {
 }
 
 export interface LifecycleDeadlines {
-  /** Deadline for establishing the transport connection (TCP/TLS/WebSocket handshake start). */
+
   connectMs?: number;
-  /** Deadline for receiving response headers after the connection is established. */
+
   headerMs?: number;
-  /** Maximum gap allowed between stream events once streaming has started. */
+
   idleMs?: number;
-  /** Overall wall-clock budget for the request from acceptance to completion. */
+
   totalMs?: number;
 }
 
-/** @why Malformed durations must retain the configured fallback. */
 function deadlineFromEnv(name: string, fallback: number): number {
   const raw = process.env[name]?.trim() ?? '';
   if (!/^\d+$/.test(raw)) return fallback;
   const value = Number(raw);
   return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
-/** Production defaults shared by every HTTP and WebSocket inference path. */
+
 export const DEFAULT_LIFECYCLE_DEADLINES: Readonly<Required<LifecycleDeadlines>> = {
   connectMs: deadlineFromEnv('LEVERFRAME_CONNECT_TIMEOUT_MS', 30_000),
   headerMs: deadlineFromEnv('LEVERFRAME_HEADER_TIMEOUT_MS', 60_000),
@@ -82,7 +69,7 @@ export const DEFAULT_LIFECYCLE_DEADLINES: Readonly<Required<LifecycleDeadlines>>
 export const AUTO_REPLAY_MAX_RETRIES_ENV = 'LEVERFRAME_AUTO_REPLAY_MAX_RETRIES';
 export const DEFAULT_AUTO_REPLAY_MAX_RETRIES = 2;
 const MAX_AUTO_REPLAY_MAX_RETRIES = 10;
-/** Invalid values use the safe default. Excessive values are bounded to ten retries. */
+
 export function autoReplayMaxRetries(
   env: Record<string, string | undefined> = process.env,
 ): number {
@@ -94,10 +81,10 @@ export function autoReplayMaxRetries(
 export interface RetryAttemptRecord {
   attempt: number;
   atMs: number;
-  /** Caller-defined label (e.g. a provider-error category); this module does not interpret it. */
+
   reason?: string;
 }
-/** Why a lifecycle stopped, in terms this module can express without knowing about providers. */
+
 export type LifecycleFailureReason =
   | { kind: 'deadline'; deadline: DeadlineKind }
   | { kind: 'cancelled'; origin: 'local' | 'provider' }
@@ -108,7 +95,7 @@ export interface LifecycleOutcome {
   atMs: number;
   outputEmitted: boolean;
   toolCallEmitted: boolean;
-  /** The last non-terminal state the request was in before it stopped. Useful for phase attribution. */
+
   priorState: LifecycleState;
   reason?: LifecycleFailureReason;
 }
@@ -117,15 +104,11 @@ export interface RequestLifecycleOptions {
   requestId: string;
   correlationId?: string;
   deadlines?: LifecycleDeadlines;
-  /** External signal (e.g. client disconnect) that cancels the lifecycle. */
+
   signal?: AbortSignal;
   clock?: Clock;
 }
-/**
- * Tracks one request end-to-end. Deadlines are exposed as an
- * {@link AbortSignal} so callers can pass them straight to `fetch` or timer
- * APIs; firing any of them cancels the whole lifecycle.
- */
+
 export class RequestLifecycle {
   readonly requestId: string;
   readonly correlationId?: string;
@@ -180,7 +163,7 @@ export class RequestLifecycle {
   get attempts(): readonly RetryAttemptRecord[] {
     return this.retryAttempts;
   }
-  /** Deadline-linked abort signal; also fires on explicit cancel() or an external signal. */
+
   get abortSignal(): AbortSignal {
     return this.controller.signal;
   }
@@ -192,7 +175,7 @@ export class RequestLifecycle {
   get hasEmittedToolCall(): boolean {
     return this.toolCallEmitted;
   }
-  /** Automatic replay is only safe while nothing visible has reached the client. */
+
   get canAutoReplay(): boolean {
     return !this.outputEmitted && !this.toolCallEmitted && !this.isTerminal;
   }
@@ -205,7 +188,7 @@ export class RequestLifecycle {
     if (this.isTerminal) return;
     this.finish('failed', { kind: 'deadline', deadline: kind });
   }
-  /** Transition to `to`. Throws {@link IllegalLifecycleTransitionError} on an illegal edge. */
+
   transition(to: LifecycleState): void {
     if (this.isTerminal) {
       throw new IllegalLifecycleTransitionError(this.state, to);
@@ -234,22 +217,22 @@ export class RequestLifecycle {
       this.settle(to as 'completed' | 'failed' | 'cancelled', from);
     }
   }
-  /** Mark request validation/routing as started. Safe to call once at an operation boundary. */
+
   startResolving(): void {
     if (this.state === 'accepted') this.transition('resolving');
   }
-  /** Mark an upstream operation as dispatched. */
+
   startConnecting(): void {
     this.startResolving();
     if (this.state === 'resolving') this.transition('connecting');
   }
-  /** Mark that the upstream accepted the operation and response headers are available. */
+
   markHeadersReceived(): void {
     if (this.isTerminal) return;
     this.startConnecting();
     if (this.state === 'connecting') this.transition('headers');
   }
-  /** Mark one provider stream event and re-arm the idle deadline. */
+
   markStreamActivity(): void {
     if (this.isTerminal) return;
     this.markHeadersReceived();
@@ -259,18 +242,18 @@ export class RequestLifecycle {
       this.resetIdleDeadline();
     }
   }
-  /** Mark that a tool call became externally visible; this permanently closes the replay barrier. */
+
   markToolCallEmitted(): void {
     if (this.isTerminal) return;
     this.markStreamActivity();
     this.toolCallEmitted = true;
     if (this.state === 'streaming') this.transition('tool-call-emitted');
   }
-  /** Reset the idle deadline; call once per received stream chunk while streaming. */
+
   resetIdleDeadline(): void {
     this.deadlineManager.reset('idle', this.deadlines.idleMs);
   }
-  /** Mark that visible output (text/content) has reached the client. */
+
   markOutputEmitted(): void {
     if (this.isTerminal) return;
     this.outputEmitted = true;
@@ -284,20 +267,12 @@ export class RequestLifecycle {
     if (this.isTerminal) return;
     this.finish('failed', { kind: 'error', error });
   }
-  /** Cancel due to a local shutdown/client-disconnect (`local`) or an upstream cancel (`provider`). */
+
   cancel(origin: 'local' | 'provider' = 'local'): void {
     if (this.isTerminal) return;
     this.finish('cancelled', { kind: 'cancelled', origin });
   }
-  /**
-   * Marks the request as having completed successfully. Legal from any
-   * non-terminal state: a clean completion cascades through whichever
-   * intermediate phase transitions were not explicitly observed (e.g. a
-   * provider/test double that never calls `markHeadersReceived`/
-   * `markStreamActivity` before resolving) so callers never need to know
-   * exactly which phase hooks an adapter happened to fire before declaring
-   * success.
-   */
+
   complete(): void {
     if (this.isTerminal) return;
     this.markHeadersReceived();
@@ -326,7 +301,7 @@ export class RequestLifecycle {
     };
     if (to !== 'completed') this.controller.abort();
   }
-  /** Release timers/listeners without changing state — used on process shutdown for already-terminal requests. */
+
   dispose(): void {
     this.deadlineManager.clearAll();
   }

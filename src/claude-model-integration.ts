@@ -35,6 +35,7 @@ const CAPABILITY_NAMES: Record<string, string> = {
   '10c': 'routing-notice',
   '10d': 'agent-row-display',
   '11': 'session-restore',
+  '12': 'context-mode-picker',
 };
 
 export class ClaudeIntegrationCompatibilityError extends Error {

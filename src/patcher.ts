@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { getAppHome } from './paths.js';
 import { loadPreferences } from './config.js';
 import { loadRegistry } from './registry/io.js';
-import { resolveContextCeilingOverride } from './context-ceilings.js';
 import { httpProxyDisplayName, httpProxyModelId } from './http-proxy/routes.js';
 import { stripOneMContextSuffix } from './context-model-id.js';
 import {
@@ -14,21 +13,12 @@ import {
   type PatchScriptModelConfig,
 } from './patch-transforms.js';
 import { getReasoningCapabilities, type ReasoningMetadata } from './provider-factory.js';
+import type { FavoriteModel, LocalProvider } from './types.js';
 import type { CachedModel, RegistryProvider } from './registry/types.js';
 import { runPatchCommandV2, runLaunchPatchCheckV2 } from './patch-reconcile.js';
 import { diagnosePatchV2, formatPatchDiagnosticsText, type PatchDiagnosticsReport } from './patch-diagnostics.js';
 import type { ClaudeInstallation } from './claude-installation.js';
 
-
-/**
- * Shape of the pre-V2 single global patch-state manifest. Retained only for
- * conservative one-way migration: `readPatchManifest` lets
- * `migrateLegacyStateIfVerified` (src/patch-legacy-recovery.ts) and
- * `diagnosePatchV2` (src/patch-diagnostics.ts) recognize and verify an
- * existing legacy manifest before adopting it into the per-target V2 state
- * (src/patch-state.ts, src/patch-transaction.ts). Nothing writes this shape
- * anymore.
- */
 export interface PatchManifest {
   binaryPath: string;
   claudeVersion: string;
@@ -55,15 +45,7 @@ export function readPatchManifest(path = getPatchManifestPath()): PatchManifest 
   return null;
 }
 
-
-/**
- * Per-favorite context-window provenance, surfaced for `--trace` and used
- * internally to decide whether a missing context belongs in `unknownWindows`
- * (truly missing metadata) versus a deliberate provider-unconfirmed value
- * (materialize.ts:83's rule: unconfirmed is withheld from the patch, not
- * reported as "missing").
- */
-export type PatchContextProvenance = 'confirmed' | 'unconfirmed' | 'missing' | 'override';
+export type PatchContextProvenance = 'confirmed' | 'unconfirmed' | 'missing';
 
 export interface DesiredPatchConfig {
   config: PatchScriptModelConfig;
@@ -73,43 +55,55 @@ export interface DesiredPatchConfig {
 
 export interface PatchModelMeta {
   contextWindow?: number;
-  /**
-   * True when the cached model's context window is a heuristic guess rather
-   * than provider-confirmed (mirrors `CachedModel.contextWindowUnconfirmed`,
-   * src/registry/types.ts). When set, `contextWindow` here is expected to
-   * already read `undefined` (see materialize.ts:83's rule) — this flag is
-   * what lets `buildPatchModelConfig` tell "deliberately unconfirmed" apart
-   * from "genuinely missing" so only the latter lands in `unknownWindows`.
-   */
+
+  maxContextWindow?: number;
+
   contextWindowUnconfirmed?: boolean;
-  /**
-   * Documented ceiling the user opted this model into, when its provider
-   * reports a lower tuned default (src/context-ceilings.ts). Outranks
-   * `contextWindow` and is recorded with `override` provenance.
-   */
+
+  modelFormat?: 'anthropic' | 'openai';
+
   contextCeilingOverride?: number;
   displayName?: string;
-  /**
-   * Raw supplier reasoning-capability ladder (pre-projection), e.g. straight
-   * from `getReasoningCapabilities`. `buildPatchModelConfig` runs this
-   * through `projectNativeEffort` before baking it into the patch config, so
-   * a ladder that cannot be represented on Claude Code's native picker is
-   * silently omitted here rather than rejected — only a directly-constructed
-   * `PatchScriptModelConfig` (bypassing this builder) hits the hard
-   * `applyLeverframePatches` validation error for a malformed ladder.
-   */
+
   effort?: PatchScriptEffort;
 }
 
-/**
- * Derive the same supplier-authoritative reasoning ladder used for proxy-side
- * effort wiring (`server/index.ts`'s `enrichServerModelReasoning`) so the
- * binary-side PATCH 8/9 capability gates and the request path agree about
- * which levels a model supports. Gated identically: only OpenAI-format
- * models routed through an OpenCode `npm` package carry reasoning metadata.
- * A model-level override wins over the provider-level `api.npm`/`api.url`,
- * matching every other registry consumer (e.g. `refresh-models.ts`).
- */
+export interface PatchModelConfigOptions {
+  includeContextModes?: boolean;
+}
+
+interface PatchMetadataModel {
+  id: string;
+  name: string;
+  modelFormat: CachedModel['modelFormat'];
+  contextWindow?: number;
+  maxContextWindow?: number;
+  contextWindowUnconfirmed?: boolean;
+}
+
+function patchModelFormat(model: Pick<PatchMetadataModel, 'modelFormat'>): PatchModelMeta['modelFormat'] {
+  return model.modelFormat === 'anthropic' || model.modelFormat === 'openai'
+    ? model.modelFormat
+    : undefined;
+}
+
+function buildPatchModelMeta(
+  providerName: string,
+  model: PatchMetadataModel,
+  effort?: PatchScriptEffort,
+): PatchModelMeta {
+  return {
+    contextWindow: !model.contextWindowUnconfirmed && model.contextWindow && model.contextWindow > 0
+      ? model.contextWindow
+      : undefined,
+    maxContextWindow: model.maxContextWindow,
+    contextWindowUnconfirmed: model.contextWindowUnconfirmed,
+    modelFormat: patchModelFormat(model),
+    displayName: httpProxyDisplayName(model, providerName),
+    effort,
+  };
+}
+
 export function reasoningEffortForPatch(provider: RegistryProvider, model: CachedModel): PatchScriptEffort | undefined {
   const npm = model.npm ?? provider.api.npm;
   if (!npm || model.modelFormat !== 'openai') return undefined;
@@ -118,6 +112,11 @@ export function reasoningEffortForPatch(provider: RegistryProvider, model: Cache
     apiBaseUrl: model.apiUrl ?? provider.api.url,
     supportedParameters: model.supportedParameters,
     reasoning: model.reasoning,
+    supportsTemperature: model.supportsTemperature,
+    supportedReasoningEfforts: model.supportedReasoningEfforts,
+    defaultReasoningEffort: model.defaultReasoningEffort,
+    supportsReasoningToggle: model.supportsReasoningToggle,
+    supportsPromptCacheBreakpoints: model.supportsPromptCacheBreakpoints,
     interleavedReasoningField: model.interleavedReasoningField,
   };
   const upstreamId = (model.upstreamModelId ?? model.id).replace(/\[1m\]$/i, '');
@@ -126,31 +125,22 @@ export function reasoningEffortForPatch(provider: RegistryProvider, model: Cache
   return { levels: [...caps.levels], defaultLevel: caps.defaultLevel };
 }
 
-/**
- * Decide the context value (if any) to bake for one favorite and its
- * provenance, keeping `buildPatchModelConfig`'s loop guard-clause-flat.
- * `missing` (no known window, not deliberately unconfirmed) is the only
- * provenance that should land in `unknownWindows` — see materialize.ts:83.
- */
 function resolveContextForPatch(
   meta: PatchModelMeta | undefined,
 ): { context?: number; provenance: PatchContextProvenance } {
-  // An opted-in ceiling wins over the reported window and keeps its own
-  // provenance, so diagnostics never present it as provider-confirmed.
-  if (meta?.contextCeilingOverride !== undefined && meta.contextCeilingOverride > 0) {
-    return { context: meta.contextCeilingOverride, provenance: 'override' };
-  }
+
   const context = meta?.contextWindow;
   if (context === undefined || context <= 0) {
     return { provenance: meta?.contextWindowUnconfirmed ? 'unconfirmed' : 'missing' };
   }
-  return { context: context === 200_000 ? undefined : context, provenance: 'confirmed' };
+  return { context, provenance: 'confirmed' };
 }
 
 export function buildPatchModelConfig(
   favorites: Array<{ providerId: string; modelId: string }>,
   aliases: Array<{ name: string; providerId: string; modelId: string }>,
   modelMetaFor: (providerId: string, modelId: string) => PatchModelMeta | undefined,
+  options: PatchModelConfigOptions = {},
 ): DesiredPatchConfig {
   const config: PatchScriptModelConfig = {};
   const unknownWindows: string[] = [];
@@ -166,6 +156,21 @@ export function buildPatchModelConfig(
     if (alias) entry.alias = alias;
     const { context, provenance: contextProvenance } = resolveContextForPatch(meta);
     if (context !== undefined) entry.context = context;
+    if (
+      options.includeContextModes !== false
+      && meta?.modelFormat !== undefined
+      && meta.modelFormat !== 'anthropic'
+      && meta?.contextWindow !== undefined
+      && meta.contextWindow > 0
+      && meta.contextWindowUnconfirmed !== true
+    ) {
+      const maximum = meta.maxContextWindow;
+      entry.contextModes = maximum !== undefined
+        && Number.isSafeInteger(maximum)
+        && maximum > meta.contextWindow
+        ? { default: meta.contextWindow, maximum }
+        : { default: meta.contextWindow };
+    }
     provenance[id] = contextProvenance;
     if (contextProvenance === 'missing') unknownWindows.push(id);
     const display = meta?.displayName?.trim();
@@ -187,6 +192,9 @@ export function computePatchConfigHash(
       key,
       entry.alias ?? null,
       entry.context ?? null,
+      entry.contextModes
+        ? [entry.contextModes.default, entry.contextModes.maximum ?? null]
+        : null,
       entry.display ?? null,
       entry.effort ? [entry.effort.levels, entry.effort.defaultLevel] : null,
     ];
@@ -196,54 +204,69 @@ export function computePatchConfigHash(
     .digest('hex');
 }
 
-export function buildDesiredPatchConfig(): DesiredPatchConfig {
+export function buildDesiredPatchConfig(
+  freshProviders?: LocalProvider[],
+  selectedModel?: FavoriteModel,
+  options: PatchModelConfigOptions = {},
+): DesiredPatchConfig {
   const prefs = loadPreferences();
   const favorites = prefs.favoriteModels ?? [];
   const aliases = prefs.modelAliases ?? [];
   const registry = loadRegistry();
 
   const meta = new Map<string, PatchModelMeta>();
-  for (const provider of registry.providers) {
-    for (const model of provider.modelsCache?.models ?? []) {
-      meta.set(`${provider.id}:${model.id}`, {
-        // Mirror materialize.ts:83's provenance rule: an unconfirmed window
-        // is withheld here too, so it never gets baked into the binary as
-        // if provider-confirmed.
-        contextWindow: !model.contextWindowUnconfirmed && model.contextWindow && model.contextWindow > 0
-          ? model.contextWindow
-          : undefined,
-        contextWindowUnconfirmed: model.contextWindowUnconfirmed,
-        contextCeilingOverride: resolveContextCeilingOverride(model, prefs.contextCeilingOverrides),
-        displayName: httpProxyDisplayName(model, provider.name),
-        effort: reasoningEffortForPatch(provider, model),
-      });
+  if (freshProviders !== undefined) {
+    for (const provider of freshProviders) {
+      const registryProvider = registry.providers.find(candidate => candidate.id === provider.id);
+      for (const model of provider.models) {
+        const cachedModel = registryProvider?.modelsCache?.models.find(candidate => candidate.id === model.id);
+        meta.set(
+          `${provider.id}:${model.id}`,
+          buildPatchModelMeta(
+            provider.name,
+            model,
+            registryProvider && cachedModel
+              ? reasoningEffortForPatch(registryProvider, cachedModel)
+              : undefined,
+          ),
+        );
+      }
+    }
+  } else {
+    for (const provider of registry.providers) {
+      for (const model of provider.modelsCache?.models ?? []) {
+        meta.set(
+          `${provider.id}:${model.id}`,
+          buildPatchModelMeta(provider.name, model, reasoningEffortForPatch(provider, model)),
+        );
+      }
     }
   }
 
+  const requestedModels = selectedModel === undefined
+    ? favorites
+    : [selectedModel, ...favorites];
+  const freshSelections = freshProviders === undefined
+    ? requestedModels
+    : requestedModels.filter(favorite => freshProviders.some(provider =>
+      provider.id === favorite.providerId
+      && provider.models.some(model => model.id === favorite.modelId),
+    ));
+
   return buildPatchModelConfig(
-    favorites,
+    freshSelections,
     aliases,
     (providerId, modelId) => meta.get(`${providerId}:${modelId}`),
+    options,
   );
 }
-
-
-// --- V2 patch lifecycle -----------------------------------------------------
-//
-// `leverframe patch` and the launch-time patch check run against the
-// per-target, journaled, crash-safe V2 state machine (src/patch-state.ts,
-// src/patch-transaction.ts, src/patch-reconcile.ts). Only the legacy manifest
-// shape and reader above remain here, kept solely so
-// `migrateLegacyStateIfVerified` can conservatively adopt a pre-V2 global
-// manifest into V2 exactly once; nothing else in this module writes or acts
-// on that legacy state anymore.
 
 export interface RunPatchCommandOptions {
   restore?: boolean;
   trace?: boolean;
-  /** `leverframe patch --target <path>` — pin an explicit installation. */
+
   target?: string;
-  /** `leverframe patch --diagnose[, --json]` — read-only report, no mutation. */
+
   diagnose?: boolean;
   json?: boolean;
 }
@@ -262,7 +285,14 @@ export async function runPatchCommand(opts: RunPatchCommandOptions = {}): Promis
 }
 
 export async function runLaunchPatchCheck(
-  opts: { agentStdout?: boolean; dryRun?: boolean; installation?: ClaudeInstallation } = {},
+  opts: {
+    agentStdout?: boolean;
+    dryRun?: boolean;
+    installation?: ClaudeInstallation;
+    freshProviders?: LocalProvider[];
+    selectedModel?: FavoriteModel;
+    contextSelectionAvailable?: boolean;
+  } = {},
 ): Promise<void> {
   return runLaunchPatchCheckV2(opts);
 }

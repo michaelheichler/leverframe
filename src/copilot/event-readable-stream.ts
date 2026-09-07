@@ -1,7 +1,4 @@
-/**
- * Owns the cancellable ReadableStream adapter for callback-backed Copilot events.
- * Closing a V3 response returns the source iterator and releases its session listener.
- */
+
 
 import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
 import {
@@ -31,7 +28,6 @@ async function pumpEvents(input: {
   }
 }
 
-/** Streams mapped events and returns the source iterator at every terminal boundary. */
 export function bridgeCopilotSessionEvents(
   events: AsyncIterable<CopilotSessionEvent>,
 ): ReadableStream<LanguageModelV3StreamPart> {

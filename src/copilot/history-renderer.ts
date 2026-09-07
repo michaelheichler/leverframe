@@ -1,7 +1,4 @@
-/**
- * Renders a complete V3 prompt for a newly created Copilot session after resync.
- * Canonical JSON keeps transcript data separate from the synchronization instruction.
- */
+
 
 import type {
   LanguageModelV3Message,
@@ -103,7 +100,6 @@ function renderMessage(message: LanguageModelV3Message): Record<string, unknown>
     : { role: message.role, content: message.content.map(renderPart) };
 }
 
-/** Renders every prompt message with an explicit format version. */
 export function renderCopilotHistory(prompt: LanguageModelV3Prompt, version: number): string {
   const transcript = canonicalJson({
     format: `leverframe-copilot-history-v${version}`,

@@ -1,21 +1,4 @@
-// src/outbound-proxy.ts — make leverframe's OWN outbound network calls honor
-// HTTP_PROXY / HTTPS_PROXY / NO_PROXY.
-//
-// Node's fetch (undici) ignores proxy env vars by default, so OAuth device
-// flow/token refresh, model-list refresh, models.dev fetches, and upstream
-// OpenAI calls made through the AI SDK would all bypass a corporate proxy.
-// installOutboundProxyDispatcher() installs undici's EnvHttpProxyAgent as the
-// global fetch dispatcher — but only when a proxy env var is actually set, so
-// proxy-less environments are completely unaffected.
-//
-// The OAuth Responses WebSocket transport (`ws` in oauth/responses-websocket.ts)
-// does not go through the undici dispatcher; outboundWsProxyAgent() builds an
-// https-proxy-agent CONNECT-tunnel agent for it from the same env vars.
-//
-// Self-loop guard: leverframe never sets proxy vars in its OWN process.env — proxy
-// bridge mode sets HTTPS_PROXY only in the CHILD's env (buildHttpProxyChildEnv
-// works on a copy of process.env). The dispatcher therefore only ever points at
-// a proxy the user configured for leverframe, never at leverframe's own MITM listener.
+
 
 import type { Agent as HttpAgent } from 'node:http';
 
@@ -28,7 +11,6 @@ export function hasOutboundProxyEnv(env: NodeJS.ProcessEnv = process.env): boole
   );
 }
 
-/** NO_PROXY matcher — comma-separated hosts; `*` disables proxying; `.foo` / `*.foo` are suffix matches. */
 export function noProxyBypasses(hostname: string, env: NodeJS.ProcessEnv = process.env): boolean {
   const noProxy = env['NO_PROXY'] ?? env['no_proxy'];
   if (!noProxy) return false;
@@ -47,7 +29,6 @@ export function noProxyBypasses(hostname: string, env: NodeJS.ProcessEnv = proce
   return false;
 }
 
-/** Proxy URL that applies to a target URL per the env vars, or undefined (none set / NO_PROXY match). */
 export function outboundProxyUrlForTarget(
   targetUrl: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -69,16 +50,10 @@ export function outboundProxyUrlForTarget(
 
 let dispatcherInstalled = false;
 
-/** Reset the install-once latch (tests only). */
 export function resetOutboundProxyDispatcherForTests(): void {
   dispatcherInstalled = false;
 }
 
-/**
- * Install undici's EnvHttpProxyAgent as the global fetch dispatcher when any
- * proxy env var is set. Idempotent. A failure warns and falls back to direct
- * connections — it must never break the CLI.
- */
 export async function installOutboundProxyDispatcher(): Promise<boolean> {
   if (dispatcherInstalled) return true;
   if (!hasOutboundProxyEnv()) return false;
@@ -96,7 +71,6 @@ export async function installOutboundProxyDispatcher(): Promise<boolean> {
   }
 }
 
-/** CONNECT-tunnel agent for the `ws` OAuth WebSocket transport, or undefined when no proxy applies. */
 export async function outboundWsProxyAgent(wsUrl: string): Promise<HttpAgent | undefined> {
   const proxyUrl = outboundProxyUrlForTarget(wsUrl);
   if (!proxyUrl) return undefined;

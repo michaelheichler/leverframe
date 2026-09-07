@@ -171,7 +171,6 @@ describe('execution-tracking', () => {
     const own = report.find(r => r.executionId === handle.executionId);
     expect(own?.ambiguousToolCallIds).toEqual(['call_10']);
 
-    // Still ambiguous after startup scan — no auto-resolution happened.
     const ledger = loadLedger(handle.scopeHash, handle.executionId);
     expect(ledger.value?.entries[0]?.status).toBe('emitted');
   });

@@ -22,8 +22,7 @@ function fixture(): string {
 function handoff(content: string): string {
   return content.slice(content.indexOf(ROUTING_NOTICE_HANDOFF_MARKER));
 }
-// Extracts the generated PATCH 10d block (marker through the closing
-// `if(...)...}}` pair) for structural inspection of the guard logic.
+
 function descriptionBlock(content: string): string {
   const match = content.match(/\/\*ccpatch:agent-description\*\/\{[\s\S]*?\+\(_ccae\?" \\u00b7 "\+_ccae:""\);\}\}/);
   if (!match) throw new Error('description block not found');
@@ -163,16 +162,11 @@ function defineAgentDescriptionTests(): void {
       const result = applyRoutingNoticeTransform(fixture(), CONFIG);
       const block = descriptionBlock(result.content);
 
-      // The guard tests for the freshly-computed `_ccad` value as an exact
-      // suffix candidate (`" · "+_ccad`), not a bare `/ · /` probe against the
-      // description — so "check A · B" (which contains " · " but not the
-      // computed display text) does not false-suppress the append.
       expect(block).toMatch(/if\(r\.indexOf\(" \\u00b7 "\+_ccad\)===-1\)\{/);
       expect(block).not.toMatch(/if\(!\/ [^"]*\/\.test\(r\)\)/);
-      // _ccad/_ccae are computed unconditionally, before the guard.
+
       expect(block.indexOf('_ccad=_ccat!==void 0')).toBeLessThan(block.indexOf('if(r.indexOf('));
-      // Both declarations stay scoped inside the wrapping block so nothing
-      // leaks into the rest of call() when the guard is false.
+
       expect(block.startsWith(`${AGENT_DESCRIPTION_MARKER}{let _ccat=`)).toBe(true);
       expect(block.endsWith('}}')).toBe(true);
     });
@@ -221,9 +215,6 @@ function defineAnchorTests(): void {
       const orphaned = fixture().replace('}})},tt=', '}}),/*ccpatch:routing-notice*/onRoutingNotice:drifted},tt=');
       const result = applyRoutingNoticeTransform(orphaned, CONFIG);
 
-      // PATCH 10a-10c stay blocked by the orphaned marker, but the
-      // independent, optional description site is unaffected and still
-      // applies — it must never be blocked by the other sites' partial state.
       expect(result.results).toEqual([
         { status: 'SKIP', name: 'PATCH 10: routing notice', extra: 'partial or ambiguous patch markers found' },
         { status: 'OK', name: 'PATCH 10d: agent description indicator' },

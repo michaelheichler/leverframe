@@ -1,12 +1,4 @@
-// src/execution-tracking.ts — request-scoped integration surface over
-// checkpoint-store.ts, execution-checkpoint.ts, tool-call-ledger.ts and
-// execution-recovery.ts (stabilization plan §8, phase E).
-//
-// This is what the proxy/server entry points call. It never inspects raw
-// credentials or bodies itself — the router feeds it only allowlisted
-// routing metadata plus a *copy* of already-outbound bytes for observation
-// (see src/tool-call-tap.ts), so the byte-for-byte native-Anthropic
-// passthrough path is untouched.
+
 
 import { randomUUID } from 'node:crypto';
 import { isExpired, listExecutions, workspaceOrSessionHash } from './checkpoint-store.js';
@@ -43,26 +35,26 @@ export const EXECUTION_GENERATION_HEADER = 'x-leverframe-generation';
 export interface ExecutionTrackingHandle {
   scopeHash: string;
   executionId: string;
-  /** Response headers to set before any visible bytes reach the client. */
+
   headers: Record<string, string>;
-  /** Feed a copy of already-outbound Anthropic-format SSE text, in wire order. */
+
   observeAnthropicSseText: (chunk: string) => void;
-  /** Feed a copy of already-outbound OpenAI-format SSE text, in wire order. */
+
   observeOpenAiSseText: (chunk: string) => void;
-  /** Feed the full parsed body of a non-streamed Anthropic response. */
+
   observeNonStreamAnthropic: (parsed: unknown) => void;
-  /** Feed the full parsed body of a non-streamed OpenAI response. */
+
   observeNonStreamOpenAi: (parsed: unknown) => void;
-  /** Throws on CAS failure so replay never proceeds without durable accounting. */
+
   recordRetryAttempt: () => void;
-  /** Record that the request ended in failure without a clean message_stop. */
+
   fail: (category: string | undefined) => void;
 }
 
 export interface BeginExecutionTrackingInput {
-  /** Stable per-session/workspace identifier; hashed before it ever touches disk. */
+
   sessionKey: string;
-  /** Client-supplied id means resume/replay; omission creates a fresh execution. */
+
   executionId?: string;
   requestId: string;
   correlationId?: string;
@@ -131,10 +123,7 @@ function makeTapCallbacks(checkpoints: CheckpointPublisher, ledger: LedgerPublis
     onToolUse: (toolCallId: string, toolName: string) => {
       if (emitting.has(toolCallId)) return;
       emitting.add(toolCallId);
-      // Callers feed the tap before forwarding the corresponding bytes. Keep
-      // each crash boundary durable: planned -> emitting -> emitted. If the
-      // process stops at any point, recovery conservatively requires explicit
-      // confirmation rather than replaying a possibly state-changing call.
+
       const planned = planToolCall({ toolCallId, toolName });
       ledger.upsert(planned);
       const emittingEntry = beginEmitting(planned);
@@ -249,12 +238,6 @@ export interface ReconcileIncomingResultsInput {
   toolResults: ToolResultObservation[];
 }
 
-/**
- * A client resending a tool result is the only evidence Leverframe ever has
- * that a state-changing call actually ran. This scans every execution in the
- * caller's scope (tool-call ids are not otherwise addressable by the client)
- * and reconciles any `emitted` entry whose id matches to `confirmed_executed`.
- */
 export function reconcileIncomingToolResults(input: ReconcileIncomingResultsInput): void {
   if (input.toolResults.length === 0) return;
   const scopeHash = workspaceOrSessionHash(input.sessionKey);
@@ -282,7 +265,6 @@ export interface StartupReconciliationReport {
   expired: boolean;
 }
 
-/** Reconcile-at-startup entry point: reports (never auto-resolves) ambiguous/expired executions found on disk. */
 export function reconcileExecutionsAtStartup(now: () => number = Date.now): StartupReconciliationReport[] {
   const reports: StartupReconciliationReport[] = [];
   for (const { scopeHash, executionId } of listExecutions()) {

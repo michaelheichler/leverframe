@@ -1,8 +1,4 @@
-// Provider-neutral timer port used by RequestLifecycle (and anything else
-// that needs cancellable deadlines) without depending on Node's timer API
-// directly. Keeping this as a separate port makes deadline behavior
-// deterministically testable and keeps `request-lifecycle.ts` free of any
-// transport/provider-specific knowledge.
+
 
 export interface TimerHandle {
   unref?: () => void;
@@ -14,7 +10,6 @@ export interface Clock {
   clearTimeout(handle: TimerHandle): void;
 }
 
-/** Real wall-clock time, backed by Node's global timers. Unrefs so armed deadlines never keep the process alive. */
 export const systemClock: Clock = {
   now: () => Date.now(),
   setTimeout: (fn, ms) => {
@@ -32,7 +27,6 @@ export interface DeadlineManagerOptions {
   onDeadline: (kind: DeadlineKind) => void;
 }
 
-/** Owns zero or more named, independently re-armable deadlines and fires a callback when one elapses. */
 export class DeadlineManager {
   private readonly clock: Clock;
   private readonly onDeadline: (kind: DeadlineKind) => void;
@@ -43,7 +37,6 @@ export class DeadlineManager {
     this.onDeadline = options.onDeadline;
   }
 
-  /** Arm (or re-arm) `kind` to fire after `ms`. A no-op when `ms` is undefined/invalid. */
   arm(kind: DeadlineKind, ms: number | undefined): void {
     this.clear(kind);
     if (ms === undefined || !Number.isFinite(ms) || ms < 0) return;
@@ -54,7 +47,6 @@ export class DeadlineManager {
     this.timers.set(kind, handle);
   }
 
-  /** Re-arm an already-armed deadline (e.g. the idle deadline, once per received chunk). */
   reset(kind: DeadlineKind, ms: number | undefined): void {
     this.arm(kind, ms);
   }

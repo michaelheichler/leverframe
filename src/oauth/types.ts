@@ -1,18 +1,17 @@
-// oauth/types.ts — stored OAuth credential shape (keychain JSON)
+
 
 export interface StoredOAuthCredential {
   type: 'oauth';
   access: string;
   refresh: string;
-  /** Epoch millis when the access token expires. */
+
   expires: number;
   accountId?: string;
   providerData?: Record<string, unknown>;
-  /** Persisted when a forced refresh returned the same rejected access token. */
+
   accessRejected?: true;
 }
 
-/** Serialize a stored OAuth credential for the keychain. */
 export function oauthCredentialToKeychainJson(cred: StoredOAuthCredential): string {
   return JSON.stringify(cred);
 }
@@ -52,7 +51,7 @@ export function parseStoredOAuthCredential(raw: string | null): StoredOAuthCrede
       return parsed;
     }
   } catch {
-    // ignore
+
   }
   return null;
 }
@@ -63,7 +62,6 @@ export function oauthCredentialNeedsRefresh(cred: StoredOAuthCredential, skewMs 
   return cred.expires <= Date.now() + Math.max(0, skewMs);
 }
 
-/** JWT exp claim — best-effort; opaque tokens return false (no proactive refresh). */
 export function accessTokenIsExpiring(token: string | undefined, skewMs = OAUTH_REFRESH_SKEW_MS): boolean {
   if (!token) return false;
   const parts = token.split('.');
@@ -82,7 +80,6 @@ export function accessTokenIsExpiring(token: string | undefined, skewMs = OAUTH_
 export const NATIVE_OAUTH_PROVIDER_IDS = ['openai', 'openai-oauth', 'github-copilot'] as const;
 export type NativeOAuthProviderId = typeof NATIVE_OAUTH_PROVIDER_IDS[number];
 
-/** Narrows providers that support Leverframe-owned native OAuth flows. */
 export function supportsNativeOAuth(providerId: string): providerId is NativeOAuthProviderId {
   return (NATIVE_OAUTH_PROVIDER_IDS as readonly string[]).includes(providerId);
 }

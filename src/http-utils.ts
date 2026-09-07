@@ -1,12 +1,7 @@
-// Shared HTTP helpers for local proxy servers.
+
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as zlib from 'node:zlib';
 
-/**
- * Decode a request body honoring Content-Encoding. Codex Desktop's built-in
- * `openai` provider zstd-compresses request bodies; without this they reach the
- * proxy as binary and JSON.parse fails with "Invalid JSON body".
- */
 function decodeRequestBody(raw: Buffer, encoding?: string | string[]): string {
   const enc = (Array.isArray(encoding) ? encoding.join(',') : encoding ?? '').toLowerCase().trim();
   if (!enc || enc === 'identity') return raw.toString();
@@ -24,7 +19,7 @@ function decodeRequestBody(raw: Buffer, encoding?: string | string[]): string {
       }
       return zlib.zstdDecompressSync(raw).toString();
     default:
-      // Unknown/unsupported encoding — best-effort raw decode.
+
       return raw.toString();
   }
 }

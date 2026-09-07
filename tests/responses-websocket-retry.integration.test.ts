@@ -37,8 +37,7 @@ async function startScriptedServer(rejectedStatuses: RejectedStatus[]): Promise<
     if (rejected !== undefined) {
       const status = typeof rejected === 'number' ? rejected : rejected.status;
       const body = typeof rejected === 'number' ? '' : rejected.body;
-      // Keep integration retries immediate; unit coverage separately asserts
-      // the synthesized 5s default and 60s clamp for headerless/oversized 403s.
+
       const retryAfter = status === 429 || status === 403 ? 'Retry-After: 0\r\n' : '';
       socket.end(
         `HTTP/1.1 ${status} Rejected\r\n`
@@ -130,10 +129,6 @@ describe('Responses WebSocket pre-frame retry', () => {
     expect(server.payloads[0]).not.toHaveProperty('previous_response_id');
   });
 
-  // Every upgrade 403 is an edge/WAF throttle signal (or, rarely, a geo
-  // restriction) — never the terminal permission failure a bare status code
-  // would suggest — so it recovers exactly like 429/503, body or not
-  // (stabilization plan §9.2, upstream 303db6e/32c1f7b).
   it.each([
     ['bodyless', 403],
     ['with an explanatory body', { status: 403, body: JSON.stringify({ error: 'permission denied' }) }],

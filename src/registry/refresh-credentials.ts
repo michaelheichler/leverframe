@@ -1,8 +1,7 @@
-// src/registry/refresh-credentials.ts — keys for refresh-models (OpenCode placeholders, env fallbacks)
+
 
 import type { RegistryProvider } from './types.js';
 
-/** OpenCode uses these when OAuth/env supplies the real credential at runtime. */
 const PLACEHOLDER_KEYS = new Set([
   'anything',
   'local',
@@ -55,10 +54,7 @@ export async function resolveRefreshCredential(
   provider: RegistryProvider,
   resolveKey: (provider: RegistryProvider) => Promise<string | null>,
 ): Promise<string | null> {
-  // OAuth token refresh (e.g. an expired/revoked refresh token returning 401) throws
-  // rather than resolving to null. Treat that the same as "no key" so callers fall
-  // through to refreshProviderModels' existing friendly "sign in again" messaging
-  // instead of crashing the whole refresh with an unhandled exception.
+
   let key: string | null;
   try {
     key = await resolveKey(provider);

@@ -36,15 +36,10 @@ import {
   type LegacyPatchRecoveryInspection,
 } from './patch-legacy-recovery.js';
 import { buildDesiredPatchConfig, computePatchConfigHash, type DesiredPatchConfig } from './patcher.js';
+import type { FavoriteModel, LocalProvider } from './types.js';
 
 export { migrateLegacyStateIfVerified } from './patch-legacy-recovery.js';
 
-/**
- * Inspect a possibly-interrupted transaction journal against the live
- * binary's current hash and either complete it, discard it as safely
- * abandoned, or leave it in place with a report when neither hash matches
- * (a case requiring a human to look, not autonomous action).
- */
 export async function reconcilePatchTransaction(
   installation: ClaudeInstallation,
   runtime: PatchRuntime = defaultPatchRuntime,
@@ -117,8 +112,13 @@ export interface CheckResult {
 export async function checkResolvedPatchState(
   installation: ClaudeInstallation,
   runtime: PatchRuntime = defaultPatchRuntime,
+  freshProviders?: LocalProvider[],
+  selectedModel?: FavoriteModel,
+  contextSelectionAvailable = true,
 ): Promise<CheckResult> {
-  const desired = buildDesiredPatchConfig();
+  const desired = buildDesiredPatchConfig(freshProviders, selectedModel, {
+    includeContextModes: contextSelectionAvailable,
+  });
   const configHash = computePatchConfigHash(desired.config);
 
   await reconcilePatchTransaction(installation, runtime);
@@ -141,7 +141,7 @@ export async function checkResolvedPatchState(
     && (!manifest || live.sha256 !== manifest.patchedSha256)
   ) {
     try {
-      const content = await runtime.readContent(installation.canonicalPath);
+      const content = await runtime.readContent(installation.canonicalPath, installation.version);
       semanticSitesComplete = verifyPatchSites(content, desired.config).complete;
     } catch {
       semanticSitesComplete = false;
@@ -189,6 +189,9 @@ export interface RunPatchCommandV2Options {
   target?: string;
   installation?: ClaudeInstallation;
   runtime?: PatchRuntime;
+  freshProviders?: LocalProvider[];
+  selectedModel?: FavoriteModel;
+  contextSelectionAvailable?: boolean;
 }
 
 export async function runPatchCommandV2(
@@ -205,7 +208,13 @@ export async function runPatchCommandV2(
     presenter.error(unsupportedClaudeCodeBinaryPatchingMessage(installation.version));
     return 1;
   }
-  const { manifest, state, desired, legacyRecovery } = await checkResolvedPatchState(installation, runtime);
+  const { manifest, state, desired, legacyRecovery } = await checkResolvedPatchState(
+    installation,
+    runtime,
+    opts.freshProviders,
+    opts.selectedModel,
+    opts.contextSelectionAvailable !== false,
+  );
 
   return withPatchTargetLock(installation.identity, async () => {
     if (opts.restore) {
@@ -218,11 +227,11 @@ export async function runPatchCommandV2(
       return 1;
     }
     for (const id of desired.unknownWindows) {
-      presenter.warn(`No context window metadata for ${id}. Claude Code will assume the 200k default.`);
+      presenter.warn(`No confirmed context window metadata for ${id}; context selection remains unavailable.`);
     }
     for (const [id, prov] of Object.entries(desired.provenance)) {
       if (prov !== 'unconfirmed') continue;
-      presenter.warn(`Context window for ${id} is provider-unconfirmed; Claude Code will assume the 200k default.`);
+      presenter.warn(`Context window for ${id} is provider-unconfirmed; context selection remains unavailable.`);
     }
     if (opts.trace) {
       for (const id of Object.keys(desired.config)) {
@@ -282,23 +291,15 @@ const silentPatchPresenter: PatchPresenter = {
   async confirm() { return false; },
 };
 
-/**
- * Detect a Claude Code binary that leverframe has never patched, or that has
- * drifted (config or claude version changed) since it was last patched, and
- * bring it current without asking. At a real terminal this still confirms
- * first, since a human is watching. Every other launch path (agent or
- * background spawn, no TTY) has nobody to prompt, so leaving it merely
- * noticed left favorites silently missing from `/model` until someone
- * remembered to run `leverframe patch` by hand. `isCurrentPatchState` above
- * already makes this a no-op on every launch after the first, so re-running
- * the check on every launch is safe.
- */
 export async function runLaunchPatchCheckV2(
   opts: {
     agentStdout?: boolean;
     dryRun?: boolean;
     installation?: ClaudeInstallation;
     runtime?: PatchRuntime;
+    freshProviders?: LocalProvider[];
+    selectedModel?: FavoriteModel;
+    contextSelectionAvailable?: boolean;
   } = {},
   presenter: PatchPresenter = clackPatchPresenter,
 ): Promise<void> {
@@ -310,8 +311,30 @@ export async function runLaunchPatchCheckV2(
       presenter.notice(unsupportedClaudeCodeBinaryPatchingMessage(installation.version));
       return;
     }
-    const { state, desired, legacyRecovery } = await checkResolvedPatchState(installation, runtime);
-    if (Object.keys(desired.config).length === 0) return;
+    const { manifest, state, desired, legacyRecovery } = await checkResolvedPatchState(
+      installation,
+      runtime,
+      opts.freshProviders,
+      opts.selectedModel,
+      opts.contextSelectionAvailable !== false,
+    );
+    if (Object.keys(desired.config).length === 0) {
+      if (
+        opts.freshProviders !== undefined
+        && !opts.dryRun
+        && manifest
+        && (state === 'patched' || state === 'config_stale')
+      ) {
+        const outcome = await withPatchTargetLock(
+          installation.identity,
+          () => restorePatchTransactionV2({ installation, manifest }, runtime),
+          { waitMs: 500 },
+        );
+        if (!outcome.ok) throw new Error(outcome.message);
+        if (!opts.agentStdout) presenter.notice('Fresh model discovery returned no configured models; restored the stale Claude integration.');
+      }
+      return;
+    }
     if (isCurrentPatchState(state)) return;
 
     if (opts.dryRun) {
@@ -345,18 +368,30 @@ export async function runLaunchPatchCheckV2(
           ? 'Claude Code is not patched for your leverframe favorites. Patch now?'
           : 'The Claude Code patch is stale (config or claude version changed). Re-patch now?';
       if (!await presenter.confirm(message)) throw new Error('Claude integration is required before launch');
-      const exitCode = await runPatchCommandV2({ installation, runtime }, presenter);
+      const exitCode = await runPatchCommandV2(
+        {
+          installation,
+          runtime,
+          freshProviders: opts.freshProviders,
+          selectedModel: opts.selectedModel,
+          contextSelectionAvailable: opts.contextSelectionAvailable,
+        },
+        presenter,
+      );
       if (exitCode !== 0) throw new Error('Claude integration failed; launch blocked');
       return;
     }
 
-    // Nobody is watching (agent or background spawn, or no TTY at all), and
-    // there is no confirmation step left to skip. Apply the patch now: an
-    // agent-spawned Claude Code process launched against an unpatched binary
-    // would reject every favorite/alias id as an unknown model. Stay silent
-    // in agent stdout mode, since the child owns stdout/stderr there.
-    // Otherwise report through the normal presenter.
-    const exitCode = await runPatchCommandV2({ installation, runtime }, opts.agentStdout ? silentPatchPresenter : presenter);
+    const exitCode = await runPatchCommandV2(
+      {
+        installation,
+        runtime,
+        freshProviders: opts.freshProviders,
+        selectedModel: opts.selectedModel,
+        contextSelectionAvailable: opts.contextSelectionAvailable,
+      },
+      opts.agentStdout ? silentPatchPresenter : presenter,
+    );
     if (exitCode !== 0) throw new Error('Claude integration failed; launch blocked');
   } catch (err) {
     presenter.error(`leverframe: Claude integration unavailable (${err instanceof Error ? err.message : String(err)})`);

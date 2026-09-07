@@ -27,7 +27,6 @@ export function normalizeToolCallJson(value: unknown): unknown {
   const out: JsonObject = {};
   for (const [key, child] of Object.entries(record)) out[key] = normalizeToolCallJson(child);
 
-  // Claude re-serializes tool_use input, so whitespace/key order can drift from the original argument string.
   const jsonField = record.type === 'function_call'
     ? 'arguments'
     : record.type === 'custom_tool_call' ? 'input' : undefined;
@@ -35,7 +34,7 @@ export function normalizeToolCallJson(value: unknown): unknown {
     try {
       out[jsonField] = canonicalJson(JSON.parse(record[jsonField] as string));
     } catch {
-      // A malformed/non-JSON custom-tool input must still match byte-for-byte.
+
     }
   }
   return out;
@@ -95,7 +94,6 @@ export function continuationMatch(entry: ConnectionEntry, payload: JsonObject): 
     return { delta: full.slice(exactPrefix.length), mode: 'exact' };
   }
 
-  // Claude sometimes omits echoing an OpenAI reasoning item. that item still belongs to previous_response_id.
   const echoedAssistant = entry.expectedAssistant.filter(item => conversationItemKind(item) !== 'reasoning');
   if (echoedAssistant.length === entry.expectedAssistant.length) return undefined;
   const echoablePrefix = [...entry.requestInput, ...echoedAssistant];

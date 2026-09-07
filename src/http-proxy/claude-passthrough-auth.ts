@@ -1,5 +1,4 @@
-// Why: placeholder --bare requests must carry Claude's real auth upstream
-// without leaking tokens into argv, logs, or test fixtures.
+
 
 import type { ClaudeCodeAuthMaterial } from '../claude-code-credentials.js';
 import { CLAUDE_CODE_USER_AGENT } from '../oauth/claude-identity.js';
@@ -17,7 +16,6 @@ function ensureOauthBeta(existing: string | undefined): string {
   return [OAUTH_BETA, ...parts].join(',');
 }
 
-/** Rewrite Claude --bare placeholder auth into real Claude OAuth or API-key headers. */
 export function rewriteUpstreamAuthHeaders(
   rawHeaders: string[],
   auth: ClaudeCodeAuthMaterial,

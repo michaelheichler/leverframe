@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import type { ProxyRoute } from '../proxy.js';
 import { anthropicMessagesEndpoint, type AnthropicMessagesEndpoint } from '../anthropic-endpoints.js';
 import { anthropicEffortFromRequest, extractClaudeSessionId, type AnthropicRequest } from '../sdk-adapter.js';
+import { HTTP_PROXY_MODEL_PREFIX } from './routes.js';
+import { routeLookupIds } from '../context-model-id.js';
 import { INFERENCE_PROGRESS_INTERVAL_MS } from '../log-paths.js';
 import { lookupRoute } from '../proxy-request.js';
 import {
@@ -11,7 +13,6 @@ import {
   writeWebSocketDiagnosticRequestLog,
 } from '../trace-log.js';
 
-/** Lifecycle-log wiring shared by both dispatch actions. */
 export interface HttpProxyRouteLifecycle {
   logPath: string;
   requestId: string;
@@ -20,11 +21,6 @@ export interface HttpProxyRouteLifecycle {
   progressIntervalMs: number;
 }
 
-/**
- * Exhaustive dispatch decision for one `mitmServer` request. The HTTP handler
- * switches on `action` and never re-derives routing or logging on its own —
- * every branch it can take is represented here.
- */
 export type HttpProxyRouteDecision =
   | {
       action: 'translated';
@@ -38,7 +34,14 @@ export type HttpProxyRouteDecision =
       lifecycle?: HttpProxyRouteLifecycle;
     }
   | {
-      /** Non-`/v1/messages` Anthropic traffic (e.g. `count_tokens`, non-POST): raw passthrough, no logging. */
+      action: 'rejected';
+      requestId: string;
+      modelId: string;
+      message: string;
+      lifecycle?: HttpProxyRouteLifecycle;
+    }
+  | {
+
       action: 'raw';
     };
 
@@ -47,9 +50,9 @@ export interface HttpProxyRouteInput {
   url: string | undefined;
   headers: http.IncomingHttpHeaders;
   rawBody: Buffer;
-  /** Positive allowlist of relay routes, keyed by every id the client may send. */
+
   routesById: Map<string, ProxyRoute>;
-  /** Whether a relay adapter is running, a route with no adapter still fails closed to passthrough. */
+
   hasAdapter: boolean;
   inferenceLogPath?: string;
   webSocketDiagnosticsLogPath?: string;
@@ -67,7 +70,17 @@ function providerLabel(route: ProxyRoute): string {
   return route.providerId ?? route.aliasId.split(':')[1] ?? 'unknown';
 }
 
-/** Parse the body and resolve its route. Fails safe: a parse issue leaves `route` unset. */
+function routeIdentityForModel(
+  routesById: Map<string, ProxyRoute>,
+  modelId: string,
+): ProxyRoute | undefined {
+  for (const candidate of routeLookupIds(modelId)) {
+    const route = routesById.get(candidate);
+    if (route) return route;
+  }
+  return undefined;
+}
+
 function parseMessagesRequest(input: HttpProxyRouteInput): ParsedMessagesRequest {
   let parsed: AnthropicRequest | null = null;
   let route: ProxyRoute | undefined;
@@ -75,7 +88,7 @@ function parseMessagesRequest(input: HttpProxyRouteInput): ParsedMessagesRequest
     parsed = JSON.parse(input.rawBody.toString('utf8')) as AnthropicRequest;
     if (typeof parsed.model === 'string') route = lookupRoute(input.routesById, parsed.model);
   } catch {
-    // Unreadable body stays passthrough and never becomes a relay route.
+
   }
   const modelId = typeof parsed?.model === 'string' ? parsed.model : 'unknown';
   const headerValue = input.headers['x-claude-code-session-id'];
@@ -134,16 +147,6 @@ function buildLifecycle(ctx: DecisionContext): HttpProxyRouteLifecycle | undefin
   };
 }
 
-/**
- * Application service: decides adapter-vs-native-Anthropic routing for one
- * request and performs the request-side inference/diagnostic log writes that
- * decision depends on. The HTTP handler stays limited to auth, body parsing,
- * transport dispatch on the returned `action`, and response writing.
- *
- * Fail-closed by construction: a parse failure or unresolved route id leaves
- * `route` unset, so the request always falls back to raw Anthropic
- * passthrough — never to the adapter.
- */
 export function decideHttpProxyRoute(input: HttpProxyRouteInput): HttpProxyRouteDecision {
   const messagesEndpoint = anthropicMessagesEndpoint(input.url);
   if (input.method !== 'POST' || !messagesEndpoint) {
@@ -153,7 +156,17 @@ export function decideHttpProxyRoute(input: HttpProxyRouteInput): HttpProxyRoute
   const requestId = randomUUID();
   const request = parseMessagesRequest(input);
   const { route, modelId } = request;
-  const provider = route ? providerLabel(route) : 'anthropic';
+  const requestedModelId = typeof request.parsed?.model === 'string' ? request.parsed.model : undefined;
+  const routeIdentity = route ?? (requestedModelId === undefined
+    ? undefined
+    : routeIdentityForModel(input.routesById, requestedModelId));
+  const isNativeAnthropicModel = routeIdentity?.providerId === 'anthropic'
+    && routeIdentity.modelFormat === 'anthropic';
+  const isExternalModel = !isNativeAnthropicModel && (
+    modelId.toLowerCase().startsWith(HTTP_PROXY_MODEL_PREFIX)
+    || routeIdentity !== undefined
+  );
+  const provider = route ? providerLabel(route) : isExternalModel ? 'leverframe' : 'anthropic';
   const dispatchToAdapter = Boolean(route && input.hasAdapter);
   const ctx: DecisionContext = {
     input,
@@ -166,6 +179,15 @@ export function decideHttpProxyRoute(input: HttpProxyRouteInput): HttpProxyRoute
   writeRequestLogs(ctx);
   const lifecycle = buildLifecycle(ctx);
 
+  if (!route && isExternalModel) {
+    return {
+      action: 'rejected',
+      requestId,
+      modelId,
+      message: `Unknown model: ${modelId}`,
+      lifecycle,
+    };
+  }
   if (route && dispatchToAdapter) {
     return { action: 'translated', route, lifecycle };
   }

@@ -6,17 +6,10 @@ import { durableAtomicWrite } from './durable-io.js';
 import { CONFIG_DIR_MODE, acquireServerPasswordLock, withConfigWriteLock } from './config-lock.js';
 import { normalizeModelAliases } from './model-aliases.js';
 
-
 export { ConfigLockBusyError, _configLockInternals } from './config-lock.js';
 
 const CONFIG_FILE_MODE = 0o600;
 
-/**
- * Keeps well-formed model ids only. Whether an id still has a ceiling is
- * decided against live provider metadata at use time, not here, so an entry
- * for a model that temporarily stops reporting a maximum simply goes inert
- * instead of being silently dropped from the user's config.
- */
 function validateContextCeilingOverrides(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw)) return undefined;
   const seen = new Set<string>();
@@ -29,11 +22,6 @@ function validateContextCeilingOverrides(raw: unknown): string[] | undefined {
   return seen.size === 0 ? undefined : [...seen].sort();
 }
 
-/**
- * Defensively parse the `launch` config section: unknown/non-boolean values
- * are ignored rather than propagated, so a hand-edited config.json can never
- * crash preference loading.
- */
 function validateLaunchConfig(raw: unknown): UserPreferences['launch'] {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const candidate = raw as { bypassPermissions?: unknown };
@@ -41,12 +29,6 @@ function validateLaunchConfig(raw: unknown): UserPreferences['launch'] {
   return { bypassPermissions: candidate.bypassPermissions };
 }
 
-/**
- * Raised when config.json exists but cannot be read or parsed. Treated as a
- * hard failure on the WRITE path so a corrupt read never silently becomes {}
- * and wipes saved preferences on the next save. Read-only callers
- * (loadPreferences) downgrade this to a warning plus defaults.
- */
 export class CorruptConfigError extends Error {
   readonly configPath: string;
   constructor(configPath: string, options?: { cause?: unknown }) {
@@ -61,12 +43,6 @@ export class CorruptConfigError extends Error {
   }
 }
 
-/**
- * Read and parse config.json. Returns {} when the file is missing (fresh
- * install). Throws CorruptConfigError when the file exists but cannot be read
- * or parsed. Callers on the write path MUST let this propagate so a corrupt
- * read never silently wipes saved preferences.
- */
 function readConfig(): UserPreferences {
   ensureLegacyAppHomeMigrated();
   const configPath = getConfigPath();
@@ -89,12 +65,6 @@ function readConfig(): UserPreferences {
   return parsed as UserPreferences;
 }
 
-/**
- * Atomic config write: temp file in the same directory (so rename is atomic on
- * the same filesystem), then rename over the target. Mode 0600 is enforced on
- * both the temp and the final path so a crash mid-write never leaves a
- * world-readable or torn config.json.
- */
 function writeConfig(config: UserPreferences): void {
   durableAtomicWrite(
     getConfigPath(),
@@ -172,12 +142,6 @@ export function setAppPathOverride(appId: string, path: string | null): Record<s
   });
 }
 
-/**
- * Resolve the bridge mode for a command. An explicit flag applies to that run
- * only; it is persisted as the command's default ONLY when the caller opts in
- * (--save-mode). With no flag, the saved per-command default applies; with no
- * saved default, proxy.
- */
 export function resolveBridgeMode(
   command: 'claude' | 'server',
   explicit: import('./types.js').BridgeMode | undefined,
@@ -225,31 +189,6 @@ export function recordLaunchSelection(
 const SERVER_PASSWORD_SERVICE = 'leverframe-server-password';
 const SERVER_PASSWORD_ACCOUNT = 'server-password';
 
-/**
- * Read, migrate, set, and clear all serialize under a dedicated cross-process
- * lock so the full keyring+config transition runs atomically per call. This
- * prevents the three races the T7 audit flagged:
- *
- *  - get-vs-clear: a clear that races a get no longer resurrects an old
- *    password, because the get re-reads config under the lock before
- *    returning and the clear holds the lock through the keyring delete.
- *  - get-vs-set: a migration that races a set can no longer overwrite the
- *    new password, because the migration revalidates the config value
- *    before deleting it.
- *  - set-vs-clear: the keyring write and the config fallback are observed
- *    in the same order by every observer.
- *
- * The lock is the SAME robust primitive as the sync config lock (nonce
- * ownership, O_NOFOLLOW, live pid never evicted for age, ConfigLockBusyError
- * on bounded timeout) but acquired through async polling so the event loop
- * is not blocked while a sibling keyring call finishes. The bounded wait
- * comfortably exceeds the 3s isolated keyring deadline so a server startup
- * that races a concurrent migration does not trip a busy failure.
- *
- * The inner config write still takes the config lock briefly. The lock
- * order is always password-lock-then-config-lock, never the reverse, so no
- * nested-lock deadlock is possible.
- */
 export type ServerPasswordLookup =
   | { status: 'ok'; password: string }
   | { status: 'absent' }
@@ -277,7 +216,7 @@ export async function getSavedServerPassword(): Promise<ServerPasswordLookup> {
             writeConfig(config);
           });
         } catch {
-          // corrupt config: leave the in-memory password usable, skip migration cleanup
+
         }
         return { status: 'ok', password: pwd };
       }

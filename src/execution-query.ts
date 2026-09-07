@@ -1,8 +1,4 @@
-// src/execution-query.ts — read-only application-level query use case over
-// checkpoint-store.ts / execution-checkpoint.ts / tool-call-ledger.ts.
-// Returns already-derived view models so presentation layers (the CLI today,
-// any future UI) stay limited to argument parsing and rendering rather than
-// deriving status/ambiguity themselves.
+
 
 import { listExecutions } from './checkpoint-store.js';
 import { loadCheckpoint, type ExecutionCheckpoint } from './execution-checkpoint.js';
@@ -40,7 +36,6 @@ function summarizeExecution(scopeHash: string, executionId: string): ExecutionSu
   };
 }
 
-/** Every execution currently on disk, newest storage state included, for `leverframe executions list`. */
 export function listExecutionSummaries(): ExecutionSummaryView[] {
   return listExecutions().map(({ scopeHash, executionId }) => summarizeExecution(scopeHash, executionId));
 }
@@ -53,11 +48,10 @@ export interface ExecutionDetailView {
   checkpoint: ExecutionCheckpoint | null;
   ledgerState: StoreReadState;
   ledger: ToolCallLedger | null;
-  /** 0 when the ledger is missing/unreadable; otherwise its current on-disk generation, for CAS-guarded reconciliation. */
+
   ledgerGeneration: number;
 }
 
-/** Full checkpoint + ledger detail for one execution, for `leverframe executions show` and CAS-guarded reconciliation. */
 export function getExecutionDetail(scopeHash: string, executionId: string): ExecutionDetailView {
   const checkpoint = loadCheckpoint(scopeHash, executionId);
   const ledger = loadLedger(scopeHash, executionId);

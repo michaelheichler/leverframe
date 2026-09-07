@@ -1,10 +1,4 @@
-// src/patch-state.ts — per-target Claude Code patch state (V2).
-//
-// Replaces the single global `patch-state.json` with state keyed by canonical
-// target identity (docs/stabilization-and-upstream-plan.md section 5.2), so
-// two same-version installations on one machine can never share ownership of
-// each other's manifest or pristine baseline. Baselines are stored
-// content-addressed and immutable: `claude-<version>-<baselineSha256>.orig`.
+
 
 import { existsSync, unlinkSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,7 +14,7 @@ export type BaselineProvenance = 'live' | 'backup' | 'legacy-migrated';
 export interface PatchManifestV2 {
   schemaVersion: typeof PATCH_STATE_SCHEMA_VERSION;
   transformVersion: number;
-  /** Monotonic per-target counter; incremented on every completed transaction. */
+
   generation: number;
   logicalPath: string;
   canonicalPath: string;
@@ -30,7 +24,7 @@ export interface PatchManifestV2 {
   baselinePath: string;
   patchedSha256: string;
   patchedSize: number;
-  /** Hash of the ordered required-patch-site names that verified OK. */
+
   semanticFingerprint: string;
   configHash: string;
   provenance: BaselineProvenance;
@@ -92,7 +86,6 @@ function parseManifestV2(raw: unknown): PatchManifestV2 | null {
   return m as unknown as PatchManifestV2;
 }
 
-/** Read a target's V2 manifest. Returns null (never throws) if missing, corrupt, or unsupported. */
 export function readManifestV2(identity: string): PatchManifestV2 | null {
   const path = getPatchManifestPathV2(identity);
   if (!existsSync(path)) return null;
@@ -114,16 +107,10 @@ function readManifestV2File(path: string): PatchManifestV2 | null {
   }
 }
 
-/** Read a V2 manifest from an explicit Leverframe home (not the current LEVERFRAME_HOME). */
 export function readManifestV2FromHome(home: string, identity: string): PatchManifestV2 | null {
   return readManifestV2File(join(home, 'state', 'patches', identity, 'manifest.json'));
 }
 
-/**
- * True when LEVERFRAME_HOME is an override that has no V2 state, but the
- * default ~/.leverframe already recorded this live binary as a completed V2
- * patch. Launch must not report "injected claude has no V2 patch state".
- */
 export function defaultHomeOwnsPatchedBinary(
   identity: string,
   liveSha256: string | null | undefined,
@@ -137,7 +124,6 @@ export function defaultHomeOwnsPatchedBinary(
   return readManifestV2FromHome(defaultHome, identity)?.patchedSha256 === liveSha256;
 }
 
-/** Publish a target's V2 manifest atomically and durably. */
 export function writeManifestV2(identity: string, manifest: PatchManifestV2): void {
   ensurePrivateDirectory(getPatchTargetDir(identity));
   atomicWriteJsonSync(getPatchManifestPathV2(identity), manifest);
@@ -157,34 +143,16 @@ export interface StoreBaselineInput {
   sourcePath: string;
 }
 
-/**
- * Owner-executable, because a stored baseline is verified by running it:
- * `readExactClaudeVersion` (src/claude-installation.ts) shells out to
- * `<binary> --version`. A non-executable copy fails that probe, surfaces as
- * "embedded version unavailable", and rejects every re-patch of an
- * already-injected target.
- */
 const BASELINE_FILE_MODE = 0o700;
 
-/**
- * Restore the executable bit on a stored baseline. Baselines written before
- * this mode was corrected are owner-read-only, so verification of them fails
- * until the bit is back. Safe to call on every verification attempt.
- */
 export function ensureBaselineExecutable(path: string): void {
   try {
     chmodSync(path, BASELINE_FILE_MODE);
   } catch {
-    // Verification reports the real problem if the file is unusable.
+
   }
 }
 
-/**
- * Publish `sourcePath` into the target's content-addressed, immutable baseline
- * store. A no-op if a baseline already exists at that content-addressed path
- * (the name is derived from its own hash, so an existing file is guaranteed
- * identical content). Returns the stored baseline's absolute path.
- */
 export function ensureBaselineStored(input: StoreBaselineInput): string {
   const dest = getBaselinePathV2(input.identity, input.version, input.baselineSha256);
   if (existsSync(dest)) {

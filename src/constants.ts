@@ -1,22 +1,15 @@
-// src/constants.ts
+
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import pkg from '../package.json' with { type: 'json' };
 import type { ModelFormat } from './types.js';
 
-// ChatGPT Codex WebSocket Responses transport. Models flagged prefer_websockets
-// require it; leverframe also uses it for other OAuth Responses models so
-// connection-local previous_response_id continuation remains available.
 export const CODEX_RESPONSES_LITE_WS_URL = 'wss://chatgpt.com/backend-api/codex/responses';
-// `version` header the Codex backend expects on Responses-Lite requests. The
-// official Codex CLI sends its own version here; OpenAI may require this to be
-// bumped over time — confirm via --trace if Luna requests start failing.
+
 export const CODEX_RESPONSES_LITE_VERSION = '0.144.1';
-// OpenAI-Beta opt-in for the WebSocket Responses transport.
+
 export const CODEX_RESPONSES_WEBSOCKETS_BETA = 'responses_websockets=2026-02-06';
 
-// These must be removed from the child process environment to avoid conflicts
-// with Vertex AI, Bedrock, AWS, Foundry, and any stale Anthropic config.
 export const CONFLICTING_ENV_VARS = [
   'CLAUDE_CODE_USE_VERTEX',
   'ANTHROPIC_VERTEX_PROJECT_ID',
@@ -39,20 +32,14 @@ export const CONFLICTING_ENV_VARS = [
 
 export type ConflictingEnvVar = (typeof CONFLICTING_ENV_VARS)[number];
 
-// Optional enrichment from OpenCode CLI (~/.cache/opencode/models.json) — not a runtime dependency.
 export const OPENCODE_CACHE_PATH = join(homedir(), '.cache', 'opencode', 'models.json');
 
-/** Max models in favorites list and mid-session /model switch catalog. */
 export const MAX_MODEL_CATALOG = 20;
 
-/** Default TCP port for `leverframe server` (endpoint and proxy modes). Override with --port. */
 export const DEFAULT_SERVER_PORT = 17645;
 
-/** Vercel AI SDK package for Anthropic Claude models on Google Vertex AI (ADC auth). */
 export const VERTEX_ANTHROPIC_NPM = '@ai-sdk/google-vertex/anthropic';
 
-// Classify a model's API format based on cache provider data or ID heuristics.
-// Used to decide whether to route directly or through the translation proxy.
 export function classifyModelFormat(
   modelId: string,
   providerNpm: string | undefined,
@@ -61,7 +48,6 @@ export function classifyModelFormat(
   if (providerNpm === '@ai-sdk/openai') return 'unsupported';
   if (providerNpm === '@ai-sdk/google') return 'unsupported';
 
-  // Fallback: ID-prefix heuristics for models not in cache
   const lower = modelId.toLowerCase();
   if (lower.startsWith('claude-')) return 'anthropic';
   if (lower.startsWith('gpt-')) return 'unsupported';

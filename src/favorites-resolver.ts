@@ -1,4 +1,4 @@
-// src/favorites-resolver.ts
+
 import type { FavoriteModel, LocalProvider, LocalProviderModel } from './types.js';
 import type { ServerModelInfo } from './server/models.js';
 import { shouldHideModel, type CompatibilityAgent } from './model-compatibility.js';
@@ -14,19 +14,14 @@ export interface ResolvedFavorite {
   providerData?: Record<string, unknown>;
 }
 
-/**
- * Per-surface resolution context. Each surface (Claude, Codex, Server) builds
- * its own context and passes it to resolveFavorite / buildFavoritesList.
- * The resolver is route-shape-agnostic — each caller builds its own route type.
- */
 export interface ResolveContext {
-  /** When set, call shouldHideModel with this agent to filter blacklisted favorites. */
+
   agent?: CompatibilityAgent;
-  /** Claude: registry providers. */
+
   localProviders?: LocalProvider[];
-  /** Server: pre-loaded server model list. */
+
   serverModels?: ServerModelInfo[];
-  /** Lookup function for a registry model. Returns the model + its parent provider. */
+
   findLocalModel?: LocalModelLookup;
 }
 

@@ -1,4 +1,4 @@
-// Fixture-only contract for the not-yet-implemented src/copilot/language-model.ts (Task 7).
+
 import type {
   LanguageModelV3,
   LanguageModelV3CallOptions,
@@ -125,7 +125,6 @@ export interface CopilotLanguageModelModule {
   CopilotUnsupportedToolChoiceError: new (message: string) => Error;
 }
 
-// Computed (non-literal) specifier so TS cannot resolve it and fail typecheck on a missing module.
 const CONNECTOR_MODULE_PATH = ['..', '..', 'src', 'copilot', 'language-model.js'].join('/');
 
 export async function loadCopilotLanguageModelModule(): Promise<CopilotLanguageModelModule> {

@@ -68,7 +68,6 @@ function outputAccumulator(ctx: RequestContext, index: number): OutputAccumulato
   return accumulator;
 }
 
-/** Accumulate streamed Responses events into per-output-index text/reasoning state. */
 export function captureOutput(ctx: RequestContext, event: unknown): void {
   if (!event || typeof event !== 'object') return;
   const record = event as JsonObject;
@@ -134,7 +133,6 @@ function withoutEphemeralFields(item: JsonObject): JsonObject {
   return out;
 }
 
-/** Reconstruct the assistant-turn items expected to be echoed back on the next request. */
 export function expectedAssistantItems(ctx: RequestContext): unknown[] {
   const output: unknown[] = [];
   for (const [, accumulator] of [...ctx.outputByIndex.entries()].sort(([left], [right]) => left - right)) {

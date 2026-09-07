@@ -1,7 +1,6 @@
-// src/registry/fetch-template-models.ts: test connection and list models for template providers
+
 
 import { deriveBrand } from '../models.js';
-import { resolveContextWindow } from '../context-window.js';
 import type { ProviderTemplate } from '../provider-templates.js';
 import { normalizeGoogleDisplayName, normalizeGoogleModelId } from './google-model-id.js';
 import type { CachedModel } from './types.js';
@@ -12,6 +11,8 @@ import { revalidateCustomEndpointUrl } from './url-security.js';
 import {
   fetchModelsDevCatalog,
   findModelsDevModelAnywhere,
+  modelsDevReasoningEfforts,
+  modelsDevSupportsReasoningToggle,
   stripModelsDevCacheMeta,
 } from './models-dev.js';
 import { fetchOpenCodeGoMetadata } from './supplier-metadata.js';
@@ -116,9 +117,7 @@ function parseModelList(body: OpenAiModelListResponse, npm: string): CachedModel
     const freeStatus = classifyFreeStatus({
       model: { cost, isFree: row.isFree },
     });
-    // Live listing metadata only. Template, supplier, and heuristic fallbacks
-    // are layered on afterwards so each source can tell whether the provider
-    // actually reported a window for this model.
+
     const contextWindow =
       row.context_length ??
       row.contextWindow ??
@@ -144,39 +143,6 @@ function parseModelList(body: OpenAiModelListResponse, npm: string): CachedModel
   return models;
 }
 
-function applyTemplateModelMetadata(
-  models: CachedModel[],
-  template: ProviderTemplate,
-): CachedModel[] {
-  const declaredContextById = new Map(
-    template.staticModels
-      ?.filter(model => typeof model.contextWindow === 'number' && model.contextWindow > 0)
-      .map(model => [model.id, model.contextWindow] as const) ?? [],
-  );
-  if (declaredContextById.size === 0) return models;
-
-  return models.map(model => {
-    // A window the provider actually reported always wins. The template's
-    // declared value is a fallback for models the listing did not describe,
-    // never an override of live data, so a stale constant cannot outrank the
-    // provider's own catalog.
-    if (typeof model.contextWindow === 'number' && model.contextWindow > 0) return model;
-    const contextWindow = declaredContextById.get(model.id);
-    return contextWindow === undefined ? model : { ...model, contextWindow };
-  });
-}
-
-/**
- * Runs after live, template, and supplier metadata have all had their turn. A
- * model none of them described keeps no window at all and is marked
- * unconfirmed, rather than carrying a guess that reads as provider-confirmed.
- *
- * Downstream then fails soft in the way each consumer needs: the patcher
- * withholds an unconfirmed window so Claude Code applies its own default, and
- * the serving paths resolve one through `resolveContextWindow`, which takes the
- * unconfirmed flag and answers from the id-pattern heuristic. Leverframe has to
- * answer there because it is the server.
- */
 function markUnconfirmedContextWindows(models: CachedModel[]): CachedModel[] {
   return models.map(model => (
     typeof model.contextWindow === 'number' && model.contextWindow > 0
@@ -204,23 +170,27 @@ async function applyDynamicSupplierMetadata(
     const capabilities = providerModel ?? findModelsDevModelAnywhere(model.id, catalog);
     const supplied = supplier?.get(model.id);
     const npm = supplied?.npm ?? providerModel?.provider?.npm ?? provider.npm ?? model.npm;
-    // Supplier metadata fills gaps, it does not overwrite what the provider's
-    // own listing reported. Discarding a live value for a model the supplier
-    // catalog happens not to cover would be a downgrade, not an enrichment.
+
     const contextWindow = model.contextWindow ?? capabilities?.limit?.context;
+    const supportedReasoningEfforts = modelsDevReasoningEfforts(capabilities);
     return {
       ...model,
       name: capabilities?.name ?? model.name,
       family: capabilities?.family ?? model.family,
       contextWindow,
-      contextWindowUnconfirmed: contextWindow === undefined,
+      contextWindowUnconfirmed: model.contextWindowUnconfirmed === true || contextWindow === undefined,
       npm,
       modelFormat: modelFormatForNpm(npm ?? template.npm),
       cost: supplied?.cost ?? providerModel?.cost ?? model.cost,
       usageMultiplier: supplied?.usageMultiplier,
       usageMultiplierApplies: true,
       reasoning: capabilities?.reasoning ?? model.reasoning,
-      interleavedReasoningField: capabilities?.interleaved?.field,
+      supportsTemperature: capabilities?.temperature ?? model.supportsTemperature,
+      inputTokenLimit: capabilities?.limit?.input ?? model.inputTokenLimit,
+      outputTokenLimit: capabilities?.limit?.output ?? model.outputTokenLimit,
+      supportedReasoningEfforts: supportedReasoningEfforts ?? model.supportedReasoningEfforts,
+      supportsReasoningToggle: modelsDevSupportsReasoningToggle(capabilities) ?? model.supportsReasoningToggle,
+      interleavedReasoningField: capabilities?.interleaved?.field ?? model.interleavedReasoningField,
       deprecated: providerModel?.status === 'deprecated' ? true : undefined,
     };
   });
@@ -231,11 +201,10 @@ export interface FetchTemplateModelsResult {
   baseUrl: string;
   error?: string;
   hint?: string;
-  /** Set when an api-list template fell back to staticModels after a listing outage. */
-  usedStaticFallback?: boolean;
+
+  usedStaticFallback?: false;
 }
 
-/** Probe provider API with API key. Returns models on success. */
 export async function fetchTemplateModels(
   template: ProviderTemplate,
   apiKey: string,
@@ -264,10 +233,6 @@ export async function fetchTemplateModels(
         hint: revalidation.hint,
       };
     }
-  }
-
-  if (template.modelSource === 'static-seed') {
-    return { models: materializeStaticSeedModels(template), baseUrl };
   }
 
   const url = modelsUrl(baseUrl, template);
@@ -324,9 +289,6 @@ export async function fetchTemplateModels(
             : 'Double-check the key you pasted.',
         };
       }
-      if (response.status >= 500 && hasStaticFallback(template)) {
-        return staticFallback(template, baseUrl);
-      }
       return {
         models: [],
         baseUrl,
@@ -347,10 +309,10 @@ export async function fetchTemplateModels(
         json = JSON.parse(rawBodyText) as OpenAiModelListResponse;
       }
     } catch {
-      // Failed to parse, use empty object
+
     }
 
-    const listedModels = applyTemplateModelMetadata(parseModelList(json, template.npm), template);
+    const listedModels = parseModelList(json, template.npm);
     const supplied = await applyDynamicSupplierMetadata(listedModels, template);
     const models = supplied ? markUnconfirmedContextWindows(supplied) : null;
     if (!models) {
@@ -362,9 +324,6 @@ export async function fetchTemplateModels(
       };
     }
     if (models.length === 0) {
-      if (hasStaticFallback(template)) {
-        return staticFallback(template, baseUrl);
-      }
       return {
         models: [],
         baseUrl,
@@ -375,9 +334,6 @@ export async function fetchTemplateModels(
 
     return { models, baseUrl };
   } catch (err) {
-    if (hasStaticFallback(template)) {
-      return staticFallback(template, baseUrl);
-    }
     const message = err instanceof Error ? err.message : String(err);
     const timedOut = message.includes('abort') || message.includes('Abort');
     return {
@@ -391,32 +347,4 @@ export async function fetchTemplateModels(
   } finally {
     clearTimeout(timer);
   }
-}
-
-function hasStaticFallback(template: ProviderTemplate): boolean {
-  return template.modelSource === 'api-list' && (template.staticModels?.length ?? 0) > 0;
-}
-
-function materializeStaticSeedModels(template: ProviderTemplate): CachedModel[] {
-  return (template.staticModels || []).map(sm => {
-    const family = sm.id.split(/[-/:]/)[0] ?? sm.id;
-    return {
-      id: sm.id,
-      name: sm.name,
-      upstreamModelId: sm.id,
-      family,
-      brand: deriveBrand(family),
-      contextWindow: resolveContextWindow(sm.id, sm.contextWindow),
-      modelFormat: modelFormatForNpm(template.npm),
-      npm: template.npm,
-    };
-  });
-}
-
-function staticFallback(template: ProviderTemplate, baseUrl: string): FetchTemplateModelsResult {
-  return {
-    models: materializeStaticSeedModels(template),
-    baseUrl,
-    usedStaticFallback: true,
-  };
 }

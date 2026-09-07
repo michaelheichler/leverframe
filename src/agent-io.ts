@@ -1,4 +1,4 @@
-/** When true, leverframe must not write UI to stdout (child owns NDJSON/JSONL). */
+
 
 let agentStdoutMode = false;
 

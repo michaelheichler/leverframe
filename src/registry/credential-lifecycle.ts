@@ -34,7 +34,6 @@ export function credentialIsReferenced(registry: ProviderRegistry, authRef: stri
   return registry.providers.some(provider => provider.authRef === authRef);
 }
 
-/** Persist cleanup intent before a registry mutation can orphan this reference. */
 export async function journalCredentialWrite(authRef: string): Promise<void> {
   if (!await queueCredentialDelete(authRef)) {
     throw new Error('Credential reference is not managed by Leverframe.');
@@ -47,7 +46,6 @@ interface SingleCleanupResult {
   error?: string;
 }
 
-/** Reconcile outside the registry lock, under a lock scoped to this reference. */
 async function reconcileOne(authRef: string): Promise<SingleCleanupResult> {
   if (!isStoredCredentialRef(authRef)) {
     try {
@@ -60,7 +58,7 @@ async function reconcileOne(authRef: string): Promise<SingleCleanupResult> {
 
   try {
     return await withCredentialMutationLock(authRef, async () => {
-      // Strictly re-read under the registry lock immediately before deletion.
+
       try {
         const activeAgain = await withRegistryWriteLock(async () => {
           const active = credentialIsReferenced(loadRegistryStrict(), authRef);
@@ -100,7 +98,6 @@ async function reconcileOne(authRef: string): Promise<SingleCleanupResult> {
   }
 }
 
-/** Restart-safe, sequential and idempotent cleanup reconciliation. */
 export async function reconcilePendingCredentialDeletes(
   diag?: (message: string) => void,
 ): Promise<CredentialCleanupResult> {

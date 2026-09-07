@@ -11,7 +11,6 @@ function isSelected(list: string[], id: string): boolean {
   return list.includes(id);
 }
 
-/** Saved provider ids still available; empty when nothing saved yet (add-to-expose flow). */
 export function resolveInitialServerProviders(
   initial: string[] | undefined,
   available: ServerProviderOption[],

@@ -1,4 +1,4 @@
-// src/proxy-retry.ts, transient-failure classification for the SDK auto-replay loop
+
 import { sdkTranslationErrorSignature } from './sdk-adapter.js';
 import { sdkUpstreamErrorDetails } from './upstream-error.js';
 
@@ -12,7 +12,6 @@ const TRANSIENT_CONNECTION_CODES = new Set([
   'UND_ERR_SOCKET',
 ]);
 
-/** Nested SDK wrappers must not hide a transient transport cause or upstream 5xx. */
 export function isTransientSdkStreamFailure(error: unknown): boolean {
   if (sdkTranslationErrorSignature(error) === 'reasoning_part_not_found') return true;
 

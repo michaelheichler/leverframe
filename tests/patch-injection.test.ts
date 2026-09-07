@@ -1,7 +1,5 @@
-// tests/patch-injection.test.ts — marker classification used directly by the
-// V2 patch transaction (src/patch-transaction.ts's defaultPatchRuntime.inspect
-// and its fixture-runtime equivalents in tests/patch-v2.test.ts and
-// tests/patch-lifecycle-fixture.test.ts).
+
+
 import { describe, it, expect } from 'vitest';
 import {
   addLeverframeInjectionMarker,

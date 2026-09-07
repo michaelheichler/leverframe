@@ -1,4 +1,4 @@
-// Why: Keep routing notice formatting independent from terminal styling.
+
 
 export type RoutingNoticeSegment = {
   text: string;
@@ -12,7 +12,6 @@ function normalize(value: string | number): string {
   return String(value).trim().replace(/\s+/g, ' ');
 }
 
-/** Because downstream presenters require a canonical representation. */
 export function formatRoutingNotice(input: {
   modelDisplay: string;
   effort: string | number;

@@ -1,15 +1,4 @@
-// src/tool-call-ledger.ts — persistent tool-call ledger with ambiguity
-// recovery (stabilization plan §6.4, §8).
-//
-// Leverframe never executes tools; a client (Claude Code or another caller)
-// does, and reports results back in a later request. The ledger is the
-// durable record of what Leverframe itself did — planned a call, started
-// emitting it, finished emitting it, received a matching result — and
-// nothing more. A crash between "emitting" and "result received" leaves the
-// client's actual execution status unknown, which this module treats as
-// ambiguous rather than guessing: automatic replay/switch is blocked until
-// an explicit reconciliation (a matching later result, or an operator
-// decision) resolves it.
+
 
 import {
   ensureExecutionDir,
@@ -31,12 +20,6 @@ export type ToolCallLedgerStatus =
   | 'confirmed_executed'
   | 'confirmed_not_executed';
 
-/**
- * Legal forward transitions. `result_received` is evidence (a resend that
- * matches); `confirmed_*` is a decision, reached either automatically once a
- * result is verified or via explicit CLI reconciliation for an ambiguous
- * entry that never produced a result.
- */
 const LEGAL_LEDGER_TRANSITIONS: Record<ToolCallLedgerStatus, ReadonlySet<ToolCallLedgerStatus>> = {
   planned: new Set(['emitting', 'confirmed_not_executed']),
   emitting: new Set(['emitted', 'confirmed_not_executed']),
@@ -46,7 +29,6 @@ const LEGAL_LEDGER_TRANSITIONS: Record<ToolCallLedgerStatus, ReadonlySet<ToolCal
   confirmed_not_executed: new Set([]),
 };
 
-/** Statuses where a state-changing call may have already reached the client with unknown execution outcome. */
 const AMBIGUOUS_STATUSES: ReadonlySet<ToolCallLedgerStatus> = new Set(['emitting', 'emitted']);
 
 export class IllegalLedgerTransitionError extends Error {
@@ -137,7 +119,6 @@ export function saveLedgerCAS(input: SaveLedgerCASInput): CasWriteResult {
   );
 }
 
-/** Whether this entry may currently hide a state-changing call the client has not confirmed either way. */
 export function isAmbiguousEntry(entry: ToolCallLedgerEntry): boolean {
   return AMBIGUOUS_STATUSES.has(entry.status);
 }
@@ -163,7 +144,6 @@ function transition(entry: ToolCallLedgerEntry, to: ToolCallLedgerStatus, now: (
   return { ...entry, ...timestampField, status: to };
 }
 
-/** Return a copy of `ledger` with `entry` upserted, advanced to the next generation. */
 export function withEntry(ledger: ToolCallLedger, entry: ToolCallLedgerEntry, now: () => number = Date.now): ToolCallLedger {
   const entries = ledger.entries.some(e => e.toolCallId === entry.toolCallId)
     ? ledger.entries.map(e => (e.toolCallId === entry.toolCallId ? entry : e))
@@ -204,12 +184,6 @@ export function markEmitted(entry: ToolCallLedgerEntry, now: () => number = Date
   return transition(entry, 'emitted', now);
 }
 
-/**
- * Record a result the client sent back for `toolCallId`. This is *evidence*
- * only — it does not by itself resolve ambiguity about whether execution
- * happened as reported, so callers still route through {@link confirmExecuted}
- * once the result is accepted as a match (see execution-recovery.ts).
- */
 export function recordResult(entry: ToolCallLedgerEntry, resultContent: string, now: () => number = Date.now): ToolCallLedgerEntry {
   return { ...transition(entry, 'result_received', now), resultDigest: boundedDigest(resultContent) };
 }
@@ -218,7 +192,6 @@ export function confirmExecuted(entry: ToolCallLedgerEntry, now: () => number = 
   return transition(entry, 'confirmed_executed', now);
 }
 
-/** Reconcile an ambiguous or never-emitted entry as not having executed. Permits a new attempt, never a blind replay of the same call. */
 export function confirmNotExecuted(entry: ToolCallLedgerEntry, now: () => number = Date.now): ToolCallLedgerEntry {
   return transition(entry, 'confirmed_not_executed', now);
 }

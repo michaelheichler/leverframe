@@ -1,4 +1,4 @@
-// src/log-paths.ts, debug log path constants and resolvers under ~/.leverframe/logs/
+
 
 import {
   chmodSync,
@@ -28,7 +28,7 @@ export function ensureLogsDir(): string {
   try {
     chmodSync(dir, DIR_MODE);
   } catch {
-    // best-effort
+
   }
   return dir;
 }
@@ -72,14 +72,13 @@ export function getInferenceRequestLogPath(): string {
   return join(ensureLogsDir(), INFERENCE_REQUEST_LOG);
 }
 
-/** Create a collision-resistant log path for one short-lived process. */
 export function getSessionLogPath(label = 'session', extension = 'log'): string {
   const dir = join(ensureLogsDir(), INFERENCE_SESSION_DIR);
   mkdirSync(dir, { recursive: true, mode: DIR_MODE });
   try {
     chmodSync(dir, DIR_MODE);
   } catch {
-    // best-effort
+
   }
   const safeLabel = label.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'proxy';
   const safeExtension = extension.toLowerCase().replace(/[^a-z0-9]+/g, '') || 'log';
@@ -88,19 +87,17 @@ export function getSessionLogPath(label = 'session', extension = 'log'): string 
   return join(dir, `${timestamp}-${safeLabel}-pid${process.pid}-${sequence}.${safeExtension}`);
 }
 
-/** Create a collision-resistant JSONL path for one short-lived proxy process. */
 export function getInferenceSessionLogPath(label = 'proxy'): string {
   return getSessionLogPath(label, 'jsonl');
 }
 
-/** Remove the prior session log so the trace flag shows only the latest run. */
 export function resetTraceLog(path: string): void {
   ensureLogsDir();
   if (existsSync(path)) {
     try {
       unlinkSync(path);
     } catch {
-      // ignore
+
     }
   }
 }

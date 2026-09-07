@@ -40,7 +40,6 @@ export function providerRequestId(headers: IncomingHttpHeaders): string | undefi
   return undefined;
 }
 
-/** Drain a rejected WebSocket-upgrade response body for diagnostics without buffering it whole. */
 export function observeRejectedResponseBody(
   response: IncomingMessage,
   emit: (summary: Record<string, unknown>) => void,

@@ -10,7 +10,6 @@ function connectHost(address: string): string {
   return address;
 }
 
-/** Return a reachable host formatted for use in an HTTP URL. */
 export function tcpListenerUrlHost(address: string): string {
   const host = connectHost(address);
   return host.includes(':') ? `[${host}]` : host;
@@ -37,7 +36,6 @@ async function closeAfterReadinessFailure(server: Server): Promise<void> {
   await new Promise<void>(resolve => server.close(() => resolve()));
 }
 
-/** Bind a TCP server and wait until the bound socket accepts connections. */
 export async function listenTcpServer(
   server: Server,
   port: number,

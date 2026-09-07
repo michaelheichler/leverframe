@@ -1,5 +1,5 @@
-// src/cli-args.ts
-// CLI argument parsing: flag/option helpers and the main parseArgs entry point.
+
+
 import type { ParsedArgs } from './types.js';
 
 const STARTER_CLAUDE_FLAGS = new Set(['--dry-run', '--trace', '--endpoint', '--proxy', '--save-mode', '--help', '-h', '--version', '-v']);
@@ -110,7 +110,6 @@ function consumeBridgeModeFlag(arg: string, parsed: ParsedArgs): boolean {
   return false;
 }
 
-/** --save-mode is only meaningful together with an explicit, endpoint/--proxy. */
 function validateSaveModeFlag(parsed: ParsedArgs): void {
   if (parsed.saveBridgeMode && !parsed.bridgeMode && !parsed.error) {
     parsed.error = '--save-mode saves a bridge mode as this command\'s default — combine it with --endpoint or --proxy (e.g. `leverframe claude --proxy --save-mode`)';

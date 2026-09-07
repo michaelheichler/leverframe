@@ -68,7 +68,7 @@ export function getInstalledClaudeVersion(claudePathOverride?: string): string {
 }
 
 export interface BuildClaudeArgsOptions {
-  /** Append --dangerously-skip-permissions unless the user already passed a permission flag. */
+
   bypassPermissions?: boolean;
 }
 

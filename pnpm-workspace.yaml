@@ -1,10 +1,6 @@
-# pnpm settings (single-package repo, this file is pnpm 10's config location).
 packages:
   - '.'
 
-# Packages allowed to run install/postinstall scripts (pnpm blocks all
-# others by default as a supply-chain guard). esbuild only downloads its
-# platform-specific binary via postinstall; no other build step needed.
 onlyBuiltDependencies:
   - esbuild
   - node-lief

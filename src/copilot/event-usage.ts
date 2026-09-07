@@ -1,7 +1,4 @@
-/**
- * Aggregates per-model-call Copilot usage into one AI SDK turn result.
- * Token categories stay disjoint so Anthropic usage translation remains accurate.
- */
+
 
 import type {
   LanguageModelV3FinishReason,
@@ -23,7 +20,6 @@ function sum(left: number | undefined, right: number | undefined): number | unde
   return left + right;
 }
 
-/** Adds one model-call usage record while retaining the latest finish reason. */
 export function addCopilotUsage(
   current: CopilotUsageState,
   next: CopilotUsageState,
@@ -38,7 +34,6 @@ export function addCopilotUsage(
   };
 }
 
-/** Maps accumulated counters without merging cached or reasoning categories. */
 export function languageModelUsage(state: CopilotUsageState): LanguageModelV3Usage {
   return {
     inputTokens: {
@@ -59,7 +54,6 @@ export function languageModelUsage(state: CopilotUsageState): LanguageModelV3Usa
   };
 }
 
-/** Normalizes the latest provider finish reason, with tool calls as a structural fallback. */
 export function languageModelFinishReason(
   state: CopilotUsageState,
   sawToolCalls: boolean,

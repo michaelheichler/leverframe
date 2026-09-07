@@ -1,14 +1,4 @@
-// src/execution-checkpoint.ts — provider-neutral execution checkpoint schema
-// and persistence (stabilization plan §8.2).
-//
-// A checkpoint is the *only* on-disk record of an in-flight or interrupted
-// request. Its field list is a strict allowlist: routing/lifecycle/provider/
-// model/request/session identity, bounded/keyed digests and byte counts, a
-// provider continuation id only when the provider's capability matrix says
-// that is safe to keep, and timestamps. It never contains API keys,
-// authorization headers, proxy credentials, hidden reasoning, provider
-// signatures, raw error bodies, or complete prompts/tool arguments/results —
-// those are represented only as digests (see {@link boundedDigest}).
+
 
 import { createHash } from 'node:crypto';
 import {
@@ -24,19 +14,18 @@ import type { RecoveryDecisionKind } from './execution-recovery.js';
 
 export const CHECKPOINT_SCHEMA_VERSION = 1;
 
-/** How long an untouched checkpoint remains eligible for recovery before it is treated as expired. */
 export const DEFAULT_CHECKPOINT_TTL_MS = 24 * 60 * 60 * 1000;
 
 export type ExecutionRoute = 'passthrough' | 'translated';
 
 export interface BoundedDigest {
-  /** sha256 of the original content, hex-encoded — never the content itself. */
+
   digest: string;
   byteCount: number;
 }
 
 export interface CheckpointMessageDigest extends BoundedDigest {
-  /** Anthropic/OpenAI role only ("user" | "assistant" | "system" | "tool"), never message content. */
+
   role: string;
   index: number;
 }
@@ -61,28 +50,23 @@ export interface ExecutionCheckpoint {
   schemaVersion: typeof CHECKPOINT_SCHEMA_VERSION;
   generation: number;
   executionId: string;
-  /** Leverframe session id (Claude Code session, when present) — never a provider secret. */
+
   leverframeSessionId?: string;
   requestId: string;
   correlationId?: string;
   provider: string;
   model: string;
   route: ExecutionRoute;
-  /** Digest of the full client-managed message history at request time; used to verify a client resend. */
+
   conversationFingerprint: string;
-  /**
-   * Provider-issued conversation/response id, persisted only when the
-   * provider's capability matrix allows native resume or explicitly declares
-   * a safe continuation id. Never persisted for providers without that
-   * capability, and never a bearer token or signature.
-   */
+
   providerConversationId?: string;
   providerResponseId?: string;
   messageDigests: CheckpointMessageDigest[];
-  /** Total bytes of assistant text that has already reached the client — the safe-replay boundary. */
+
   visibleTextByteCount: number;
   toolCalls: ToolCallCheckpointEntry[];
-  /** Last provider stream/event kind Leverframe durably confirmed (e.g. "content_block_stop"), not raw payloads. */
+
   lastConfirmedEvent?: string;
   retryCount: number;
   failureCategory?: ProviderErrorCategory;
@@ -119,7 +103,6 @@ function isToolCallEntry(value: unknown): value is ToolCallCheckpointEntry {
   return true;
 }
 
-/** Forbidden field names — a defense-in-depth check even though the allowlist above already excludes them. */
 const FORBIDDEN_FIELD_NAMES = new Set([
   'apiKey', 'api_key', 'authorization', 'auth', 'bearer', 'token', 'accessToken', 'access_token',
   'refreshToken', 'refresh_token', 'credential', 'credentials', 'signature', 'reasoning', 'thinking',
@@ -144,7 +127,6 @@ export function isSupportedCheckpoint(value: Record<string, unknown>): boolean {
 
 const DIGEST_TRUNCATE_BYTES = 64 * 1024;
 
-/** sha256 digest + byte count of `content`, bounded so pathological inputs cannot blow up disk usage. */
 export function boundedDigest(content: string): BoundedDigest {
   const buffer = Buffer.from(content, 'utf8');
   const truncated = buffer.subarray(0, DIGEST_TRUNCATE_BYTES);
@@ -193,7 +175,7 @@ export interface CreateCheckpointInput {
   model: string;
   route: ExecutionRoute;
   messages: DigestableMessage[];
-  /** Only pass through when the provider capability matrix permits keeping a continuation id. */
+
   providerConversationId?: string;
   providerResponseId?: string;
   ttlMs?: number;
@@ -237,7 +219,6 @@ export interface SaveCheckpointCASInput {
   next: ExecutionCheckpoint;
 }
 
-/** Publish a checkpoint via CAS. `next.generation` must be `expectedCurrentGeneration + 1`. */
 export function saveCheckpointCAS(input: SaveCheckpointCASInput): CasWriteResult {
   ensureExecutionDir(input.scopeHash, input.next.executionId);
   return writeDocumentCAS(
@@ -256,7 +237,6 @@ export interface AdvanceCheckpointInput {
   now?: () => number;
 }
 
-/** Return a copy of `checkpoint` advanced to the next generation with `updatedAt` refreshed. */
 export function advanceCheckpoint(input: AdvanceCheckpointInput): ExecutionCheckpoint {
   const now = input.now ?? Date.now;
   return {
@@ -268,7 +248,6 @@ export function advanceCheckpoint(input: AdvanceCheckpointInput): ExecutionCheck
   };
 }
 
-/** Verify a client-resent conversation against the checkpoint's stored fingerprint. */
 export function verifyConversationResend(checkpoint: ExecutionCheckpoint, resentMessages: DigestableMessage[]): boolean {
   return conversationFingerprint(resentMessages) === checkpoint.conversationFingerprint;
 }

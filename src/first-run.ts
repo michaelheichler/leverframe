@@ -1,4 +1,4 @@
-// src/first-run.ts — inline first-run setup for leverframe claude (never dead-end)
+
 
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
@@ -8,13 +8,11 @@ import { runProvidersAdd, runProvidersAuth } from './providers-command.js';
 
 export type FirstRunResult = 'continue' | 'cancel';
 
-/** True when the user has no registry entries configured. */
 export async function needsFirstRunSetup(): Promise<boolean> {
   const registry = loadRegistry();
   return registry.providers.length === 0;
 }
 
-/** Inline welcome wizard — every path should end with continue (launch) or explicit cancel. */
 export async function runFirstRunWizard(_trace = false): Promise<FirstRunResult> {
   printWelcomePanel();
 

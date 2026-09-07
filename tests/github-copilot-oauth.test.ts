@@ -1,7 +1,4 @@
-/**
- * Specifies GitHub device OAuth behavior without contacting GitHub.
- * All external responses and time are controlled by test doubles.
- */
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   githubCopilotDeviceCodeUrl,
@@ -348,7 +345,6 @@ describe('pollGitHubCopilotDeviceCodeToken secret redaction', () => {
       .rejects.not.toThrow(/DEVICE/);
   });
 
-
   it('redacts a percent-encoded user code from an upstream error', async () => {
     const data = deviceCodeData({ user_code: 'FAKE-1234' });
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
@@ -404,7 +400,6 @@ describe('pollGitHubCopilotDeviceCodeToken timing and cancellation', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
-
 
 describe('pollGitHubCopilotDeviceCodeToken active cancellation', () => {
   afterEach(() => {

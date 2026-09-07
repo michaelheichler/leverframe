@@ -115,7 +115,7 @@ describe('z.ai Coding Plan live key verification', () => {
     });
   });
 
-  it('falls back to the declared template context window when the listing omits one', async () => {
+  it('keeps an omitted context window unconfirmed instead of using a template constant', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -126,11 +126,11 @@ describe('z.ai Coding Plan live key verification', () => {
 
     const result = await addProviderFromTemplate(zai(), 'test-key');
 
-    const declared = zai().staticModels?.find(model => model.id === 'glm-5.2')?.contextWindow;
     expect(result.keyVerified).toBe(true);
     expect(result.provider?.modelsCache?.models[0]).toMatchObject({
       id: 'glm-5.2',
-      contextWindow: declared,
+      contextWindow: undefined,
+      contextWindowUnconfirmed: true,
     });
   });
 
@@ -149,7 +149,7 @@ describe('z.ai Coding Plan live key verification', () => {
     expect(io.saveRegistry).not.toHaveBeenCalled();
   });
 
-  it('uses the documented static models after a 5xx response and stores the key unverified', async () => {
+  it('rejects an unavailable model listing without storing a guessed model list', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false,
       status: 503,
@@ -158,16 +158,10 @@ describe('z.ai Coding Plan live key verification', () => {
 
     const result = await addProviderFromTemplate(zai(), 'test-key');
 
-    expect(result.added).toBe(true);
-    expect(result.keyVerified).toBe(false);
-    expect(result.provider?.modelsCache?.models.map(model => model.id)).toEqual([
-      'glm-5.2',
-      'glm-5-turbo',
-      'glm-4.7',
-    ]);
-    expect(result.provider?.modelsCache?.models[0]?.contextWindow)
-      .toBe(zai().staticModels?.find(model => model.id === 'glm-5.2')?.contextWindow);
-    expect(result.hint).toMatch(/listing.*unavailable|did not verify/i);
+    expect(result.added).toBe(false);
+    expect(result.error).toMatch(/HTTP 503|unavailable/i);
+    expect(env.saveProviderCredential).not.toHaveBeenCalled();
+    expect(io.saveRegistry).not.toHaveBeenCalled();
   });
 
   it('holds the credential lock through template registry publication', async () => {

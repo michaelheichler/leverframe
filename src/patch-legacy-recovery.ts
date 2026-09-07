@@ -1,10 +1,4 @@
-// src/patch-legacy-recovery.ts — read-only verification and conservative
-// recovery planning for pre-V2 global patch manifests.
-//
-// This module owns the boundary between untrusted legacy state and V2 patch
-// transactions. It never rewrites the live binary. Exact legacy/live matches
-// may be adopted as V2 metadata; divergent injected binaries expose only a
-// verified pristine baseline that the V2 transaction must revalidate and patch.
+
 
 import { existsSync, statSync } from 'node:fs';
 import type { ClaudeInstallation } from './claude-installation.js';
@@ -47,7 +41,7 @@ export type LegacyPatchRecoveryInspection =
 export interface LegacyPatchRecoveryInput {
   installation: ClaudeInstallation;
   runtime?: PatchRuntime;
-  /** Omit to read global legacy state; pass null to test/declare its absence. */
+
   legacy?: LegacyPatchManifest | null;
 }
 
@@ -68,11 +62,6 @@ function validateLegacyPaths(
   return null;
 }
 
-/**
- * Verify legacy target ownership plus its pristine backup without writing any
- * V2 state. A divergent live hash is recoverable only when the live target is
- * still injected and the legacy backup independently verifies as pristine.
- */
 export async function inspectLegacyPatchRecovery(
   input: LegacyPatchRecoveryInput,
 ): Promise<LegacyPatchRecoveryInspection> {
@@ -121,16 +110,10 @@ export interface LegacyMigrationResult {
 }
 
 export interface LegacyMigrationInput extends LegacyPatchRecoveryInput {
-  /** Reuse a read-only inspection to avoid hashing a large Claude binary twice. */
+
   inspection?: LegacyPatchRecoveryInspection;
 }
 
-/**
- * Adopt an exact legacy/live match into V2 without rewriting the target.
- * When current transforms are not byte-idempotent, the adopted manifest is
- * deliberately marked transform-stale so the next explicit patch rebuilds it
- * from the verified baseline rather than claiming the old injection is current.
- */
 export async function migrateLegacyStateIfVerified(
   input: LegacyMigrationInput,
 ): Promise<LegacyMigrationResult> {
@@ -151,7 +134,7 @@ export async function migrateLegacyStateIfVerified(
     sourcePath: inspection.baseline.sourcePath,
   });
   const desired = buildDesiredPatchConfig();
-  const content = await runtime.readContent(installation.canonicalPath);
+  const content = await runtime.readContent(installation.canonicalPath, installation.version);
   const semantic = verifyPatchSites(content, desired.config);
   const desiredConfigHash = computePatchConfigHash(desired.config);
 

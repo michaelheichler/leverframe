@@ -1,4 +1,4 @@
-// src/env.ts
+
 import { CONFLICTING_ENV_VARS } from './constants.js';
 import { claudeCodeClientModelId } from './context-model-id.js';
 import {
@@ -19,21 +19,10 @@ export { classifyKeyringError } from './credential-store.js';
 
 const HTTP_PROXY_AUTH_USER = 'leverframe';
 
-/** Placeholder so Claude Code --bare (no keychain/OAuth) still authenticates
- *  locally and sends /v1/messages the HTTP MITM can route. Not an Anthropic
- *  credential; translated favorites use Leverframe provider OAuth, and
- *  Anthropic passthrough still uses a real ANTHROPIC_API_KEY when the parent
- *  provided one. */
 export const HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY = 'sk-ant-api03-leverframe-http-proxy';
 
-/** Official Anthropic origin. Pinning this in proxy-mode child env overrides
- *  Claude settings.json ANTHROPIC_BASE_URL (e.g. a local Headroom gateway)
- *  so --bare API-key traffic still CONNECTs to api.anthropic.com through the MITM. */
 export const ANTHROPIC_API_ORIGIN = 'https://api.anthropic.com';
 
-/** Claude --bare reads only ANTHROPIC_API_KEY / apiKeyHelper. Inject a
- *  placeholder when the child has neither an API key nor an auth token so
- *  proxy mode does not die at "Not logged in · Please run /login". */
 export function ensureAnthropicProxyChildAuth(env: NodeJS.ProcessEnv): void {
   const apiKey = env['ANTHROPIC_API_KEY']?.trim();
   const authToken = env['ANTHROPIC_AUTH_TOKEN']?.trim();
@@ -41,9 +30,6 @@ export function ensureAnthropicProxyChildAuth(env: NodeJS.ProcessEnv): void {
   env['ANTHROPIC_API_KEY'] = HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY;
 }
 
-/** Claude user settings.env.ANTHROPIC_BASE_URL overlays process env (Headroom
- *  etc.). Pass additional --settings so MITM still sees CONNECT api.anthropic.com.
- *  Leaves the user's --settings flag untouched. */
 export function withProxyAnthropicOriginSettings(claudeArgs: string[]): string[] {
   const hasSettings = claudeArgs.some(arg => arg === '--settings' || arg.startsWith('--settings='));
   if (hasSettings) return [...claudeArgs];
@@ -60,14 +46,10 @@ export function detectConflicts(): ConflictInfo[] {
     .map(name => ({ name, value: process.env[name]! }));
 }
 
-/** Restore first-party-like Claude Code behavior when routing through a proxy or gateway. */
 export function applyClaudeCodeThirdPartyCompat(env: NodeJS.ProcessEnv): void {
-  // Custom ANTHROPIC_BASE_URL disables MCP tool search by default, loading every
-  // MCP tool (100+) on every turn. Requires defer_loading on tools — do not set
-  // CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS when using the local translation proxy.
+
   env['ENABLE_TOOL_SEARCH'] = 'true';
-  // Third-party routes may enable a shorter system prompt that drops conversational
-  // guardrails while hooks/plugins still inject agentic instructions.
+
   env['CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT'] = '0';
 }
 
@@ -89,12 +71,7 @@ export function buildChildEnv(
   env['ANTHROPIC_API_KEY'] = apiKey;
   env['ANTHROPIC_MODEL'] = claudeCodeClientModelId(model, contextWindow);
   delete env['CLAUDE_CODE_MAX_CONTEXT_TOKENS'];
-  // Claude Code defaults to 200K for non-api.anthropic.com base URLs; override with
-  // the launch model's real window. NOTE: in switch-menu mode this is fixed at launch
-  // and does NOT update on live /model switch — Claude Code's gateway model discovery
-  // only carries id + display_name (no context_window), so this env var is the only
-  // lever and it reflects the model you started with.
-  // Third-party routes also require a `[1m]` model-id suffix for 1M+ windows in the UI.
+
   if (typeof contextWindow === 'number' && Number.isFinite(contextWindow) && contextWindow > 0) {
     env['CLAUDE_CODE_MAX_CONTEXT_TOKENS'] = String(contextWindow);
   }
@@ -105,13 +82,6 @@ export function buildChildEnv(
   return env;
 }
 
-/**
- * Normalize env vars for Anthropic MITM/proxy mode: drop conflicting Vertex,
- * Bedrock, Foundry, and stale Anthropic base URLs (preserving the child's own
- * ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_MODEL) and strip
- * NO_PROXY entries that would bypass api.anthropic.com. Shared by
- * buildHttpProxyChildEnv and computeWrapperEnv so the two paths share one policy.
- */
 export function applyAnthropicProxyEnvNormalization(env: NodeJS.ProcessEnv): void {
   for (const name of CONFLICTING_ENV_VARS) {
     if (name === 'ANTHROPIC_API_KEY' || name === 'ANTHROPIC_AUTH_TOKEN' || name === 'ANTHROPIC_MODEL') continue;
@@ -160,7 +130,7 @@ export function buildHttpProxyChildEnv(
   env['https_proxy'] = proxyUrl;
   env['http_proxy'] = proxyUrl;
   env['NODE_EXTRA_CA_CERTS'] = caCertPath;
-  // Leverframe maps provider context errors, but Claude cannot compact one oversized tool result.
+
   env['CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT'] = '1';
   ensureAnthropicProxyChildAuth(env);
   return env;
@@ -186,7 +156,6 @@ export type ParsedAuthRef =
   | { kind: 'env'; varName: string }
   | { kind: 'none' };
 
-/** Parse registry authRef strings like `keyring:provider:openai` or `env:OPENAI_API_KEY`. */
 export function parseAuthRef(authRef: string): ParsedAuthRef | null {
   if (authRef === 'none:anonymous') return { kind: 'none' };
   if (authRef.startsWith('keyring:')) {
@@ -200,7 +169,6 @@ export function parseAuthRef(authRef: string): ParsedAuthRef | null {
   return null;
 }
 
-/** Env var name for leverframe namespaced per-provider keys. */
 export function leverframeKeyEnvVar(providerId: string): string {
   return `LEVERFRAME_KEY_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
 }
@@ -228,11 +196,10 @@ async function deleteKeyringAccount(account: string, diag?: (msg: string) => voi
 }
 
 export interface ResolveCredentialOptions {
-  /** Access token rejected by an upstream 401; it must never be returned again. */
+
   rejectedAccessToken?: string;
 }
 
-/** Resolve a provider secret from authRef (env → keyring). */
 export async function resolveProviderCredential(
   providerId: string,
   authRef: string,
@@ -253,7 +220,6 @@ export async function resolveProviderCredential(
   return readProviderSecret(parsed.account, diag, options.rejectedAccessToken);
 }
 
-/** Read OAuth metadata retained alongside the access token. */
 export async function resolveProviderOAuthAccountId(
   authRef: string,
   diag?: (msg: string) => void,
@@ -285,7 +251,7 @@ function decodeProviderSecret(raw: string | null): string | null {
     if (parsed.type === 'oauth' && typeof parsed.access === 'string') return parsed.access;
     if (parsed.type === 'wellknown' && typeof parsed.token === 'string') return parsed.token;
   } catch {
-    // fall through
+
   }
   return trimmed;
 }
@@ -324,7 +290,6 @@ async function refreshOAuthKeyringAccount(
         throw error;
       }
 
-      // Compare-and-swap: never overwrite another process's newer credential.
       if (await readKeyringAccount(account, diag) !== raw) continue;
       const accessRejected = refreshed.access === rejectedAccessToken
         || (credential.accessRejected === true && refreshed.access === credential.access);
@@ -376,7 +341,6 @@ export async function saveProviderCredential(
   return writeKeyringAccount(parsed.account, key, diag);
 }
 
-/** Delete a provider secret from keyring (no-op for env: refs). */
 export async function deleteProviderCredential(
   authRef: string,
   diag?: (msg: string) => void,

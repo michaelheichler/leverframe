@@ -114,9 +114,6 @@ describe('RequestExecutionContext local-shutdown registry', () => {
     context.complete();
     expect(activeRequestExecutionCountForTests()).toBe(countBefore);
 
-    // A shutdown sweep after completion must not throw or alter the already
-    // clean terminal outcome (RequestLifecycle's terminal states never
-    // transition again).
     cancelAllActiveRequestExecutions();
     expect(context.finish()).toBeUndefined();
   });

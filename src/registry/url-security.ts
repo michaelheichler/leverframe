@@ -1,10 +1,10 @@
-// SSRF guard for custom provider URLs (src/registry/url-security.ts)
+
 
 import { lookup } from 'node:dns/promises';
 import ipaddr from 'ipaddr.js';
 
 export interface UrlSecurityOptions {
-  /** Allow http:// endpoints for user-approved local/LAN servers (Ollama, LM Studio, vLLM). */
+
   allowInsecureLocal?: boolean;
 }
 
@@ -48,7 +48,7 @@ async function resolveHostAddresses(hostname: string): Promise<string[]> {
     ipaddr.parse(hostname);
     return [hostname];
   } catch {
-    // Not an IP, proceed to DNS lookup
+
   }
 
   try {
@@ -59,7 +59,6 @@ async function resolveHostAddresses(hostname: string): Promise<string[]> {
   }
 }
 
-/** Validate a custom provider base URL before test or save. */
 export async function validateCustomEndpointUrl(
   rawUrl: string,
   opts: UrlSecurityOptions = {},
@@ -88,7 +87,6 @@ export async function validateCustomEndpointUrl(
     return { ok: false, error: 'URL must use https:// or user-approved http:// for local/LAN servers.' };
   }
 
-  // URL parses IPv6 hosts with brackets (e.g., "[::1]"). Strip them for DNS/IP checks.
   const rawHostname = parsed.hostname.toLowerCase();
   const hostname = rawHostname.replace(/^\[(.*)\]$/, '$1');
 

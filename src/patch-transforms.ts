@@ -1,11 +1,20 @@
 
 import { applyRoutingNoticeTransform } from './patch-transforms-routing-notice.js';
+import { applyNativeContextPicker } from './patch-transforms-picker.js';
+import { applyNativeModelKnowledge } from './patch-transforms-model-knowledge.js';
+import { applyNativeContextWindow } from './patch-transforms-context-window.js';
+import { ONE_M_CONTEXT_WINDOW } from './context-model-id.js';
 
-export const PATCH_TRANSFORMS_VERSION = 8;
+export const PATCH_TRANSFORMS_VERSION = 13;
 
 export interface PatchScriptModelEntry {
   alias?: string;
   context?: number;
+
+  contextModes?: {
+    default: number;
+    maximum?: number;
+  };
 
   display?: string;
 
@@ -24,6 +33,9 @@ const RESERVED_MODEL_ALIASES = new Set(['sonnet', 'opus', 'haiku', 'fable', 'opu
 const NATIVE_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
 const BASE_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
+
+const PATCH_COMMENT_START = '/' + '*';
+const PATCH_COMMENT_END = '*' + '/';
 
 export function projectNativeEffort(effort: PatchScriptEffort | undefined): PatchScriptEffort | undefined {
   if (!effort || !Array.isArray(effort.levels) || typeof effort.defaultLevel !== 'string') return undefined;
@@ -74,6 +86,14 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
   const DISPLAY_BY_IDENTITY: Record<string, string> = Object.create(null) as Record<string, string>;
 
   const CONTEXT_BY_KEY: Record<string, number> = Object.create(null) as Record<string, number>;
+
+  const CONTEXT_MODES_BY_KEY: Record<string, { default: number; maximum?: number }> = Object.create(null) as Record<string, { default: number; maximum?: number }>;
+
+  const addContextWindowKeys = (key: string, contextWindow: number): void => {
+    CONTEXT_BY_KEY[key] = contextWindow;
+    CONTEXT_BY_KEY[key + '[default]'] = contextWindow;
+    if (contextWindow >= ONE_M_CONTEXT_WINDOW) CONTEXT_BY_KEY[key + '[1m]'] = contextWindow;
+  };
 
   const CONFIGURED_CAPABILITY_KEYS = new Set<string>();
 
@@ -131,8 +151,43 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
           'leverframe patch: "' + id + '" sets context but keeps the [1m] suffix: drop the suffix from both the id and the alias'
         );
       }
-      if (spec.alias !== undefined) CONTEXT_BY_KEY[String(spec.alias).trim().toLowerCase()] = n;
-      CONTEXT_BY_KEY[String(id).trim().toLowerCase()] = n;
+      if (spec.alias !== undefined) addContextWindowKeys(String(spec.alias).trim().toLowerCase(), n);
+      addContextWindowKeys(String(id).trim().toLowerCase(), n);
+    }
+
+    if (spec.contextModes !== undefined) {
+      const defaultContext = Number(spec.contextModes.default);
+      const maximumContext = spec.contextModes.maximum === undefined
+        ? undefined
+        : Number(spec.contextModes.maximum);
+      if (!Number.isSafeInteger(defaultContext) || defaultContext <= 0) {
+        fail('leverframe patch: default context mode for "' + id + '" must be a positive integer, got ' + spec.contextModes.default);
+      }
+      if (
+        maximumContext !== undefined
+        && (!Number.isSafeInteger(maximumContext) || maximumContext <= defaultContext)
+      ) {
+        fail('leverframe patch: maximum context mode for "' + id + '" must be greater than the default context');
+      }
+      const modes = maximumContext === undefined
+        ? { default: defaultContext }
+        : { default: defaultContext, maximum: maximumContext };
+      const modeKeys = [
+        String(id).trim().toLowerCase(),
+        ...(spec.alias === undefined ? [] : [String(spec.alias).trim().toLowerCase()]),
+      ];
+      for (const key of modeKeys) {
+        CONTEXT_MODES_BY_KEY[key] = modes;
+        addContextWindowKeys(key, defaultContext);
+        if (
+          maximumContext !== undefined
+          && maximumContext >= ONE_M_CONTEXT_WINDOW
+          && defaultContext < ONE_M_CONTEXT_WINDOW
+        ) {
+          CONTEXT_BY_KEY[key + '[1m]'] = maximumContext;
+        }
+        if (maximumContext !== undefined) CONTEXT_BY_KEY[key + '[maximum]'] = maximumContext;
+      }
     }
 
     if (spec.effort !== undefined) {
@@ -294,54 +349,63 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     );
   }
 
-  if (Object.keys(CONTEXT_BY_KEY).length) {
-    const MARKER = '/*ccpatch:ctx*/';
-    const contextTable = JSON.stringify(CONTEXT_BY_KEY);
-    const contextLookup = 'Object.assign(Object.create(null),JSON.parse(' + JSON.stringify(contextTable) + '))';
-    const SNIPPET =
-      MARKER + 'var _ccw=' + contextLookup + '[String(e||"").trim().toLowerCase()];if(_ccw!==void 0)return _ccw;';
-
-    if (js.includes(MARKER)) {
-
-      applyOnce(
-        'PATCH 7: per-model context window (refresh)',
-          /\/\*ccpatch:ctx\*\/var _ccw=(?:\(\{[^{}]*\}\)|Object\.assign\(Object\.create\(null\),JSON\.parse\("(?:[^"\\]|\\.)*"\)\))\[[^\]]*\];if\(_ccw!==void 0\)return _ccw;/,
-        () => SNIPPET,
-        { required: true, noopIsSkip: true }
-      );
-    } else {
-      applyOnce(
-        'PATCH 7: per-model context window',
-        /(function [\w$]+\(e,t\)\{)(let [\w$]+=[\w$]+\(\);if\([\w$]+!==void 0\)return [\w$]+;if\([\w$]+\(e,t\)\)return [\w$]+;return [\w$]+\(e,t\)\})/,
-        (_m, head, body) => head! + SNIPPET + body!,
-        { required: true }
+  const CONTEXT_MARKER = PATCH_COMMENT_START + 'ccpatch:ctx' + PATCH_COMMENT_END;
+  if (Object.keys(CONTEXT_BY_KEY).length || js.includes(CONTEXT_MARKER)) {
+    const contextWindow = applyNativeContextWindow(js, CONTEXT_BY_KEY);
+    js = contextWindow.content;
+    report.push(contextWindow.result);
+    if (contextWindow.result.status === 'FAIL') {
+      fail(
+        'leverframe patch: required patch failed: '
+        + contextWindow.result.name
+        + ': '
+        + (contextWindow.result.extra ?? 'unknown error'),
       );
     }
+  }
+
+  if (
+    Object.keys(CONTEXT_MODES_BY_KEY).length > 0
+    || js.includes(PATCH_COMMENT_START + 'ccpatch:context-mode-picker' + PATCH_COMMENT_END)
+  ) {
+    const picker = applyNativeContextPicker(js, CONTEXT_MODES_BY_KEY);
+    js = picker.content;
+    report.push(picker.result);
+    if (picker.result.status === 'FAIL') {
+      fail('leverframe patch: required patch failed: ' + picker.result.name + ': ' + (picker.result.extra ?? 'unknown error'));
+    }
+  }
+
+  const modelKnowledge = applyNativeModelKnowledge(js, MODEL_CONFIG);
+  js = modelKnowledge.content;
+  if (modelKnowledge.result.status !== 'SKIP') report.push(modelKnowledge.result);
+  if (modelKnowledge.result.status === 'FAIL') {
+    fail('leverframe patch: required patch failed: ' + modelKnowledge.result.name + ': ' + (modelKnowledge.result.extra ?? 'unknown error'));
   }
 
   if (Object.keys(EFFORT_BY_KEY).length) {
     patchEffortCapabilitySite(
       'effort',
-      '/*ccpatch:effort*/',
+      PATCH_COMMENT_START + 'ccpatch:effort' + PATCH_COMMENT_END,
       'PATCH 8a: effort capability',
       /(function [\w$]+\(([\w$]+)\)\{if\([\w$]+\(\2\)\)return!1;)(let [\w$]+=[\w$]+\(\2,"effort"\);)/,
     );
     patchEffortCapabilitySite(
       'xhigh_effort',
-      '/*ccpatch:xhigh-effort*/',
+      PATCH_COMMENT_START + 'ccpatch:xhigh-effort' + PATCH_COMMENT_END,
       'PATCH 8b: xhigh effort capability',
       /(function [\w$]+\(([\w$]+)\)\{if\([\w$]+\(\2\)\)return!1;)(let [\w$]+=[\w$]+\(\2,"xhigh_effort"\);)/,
     );
     patchEffortCapabilitySite(
       'max_effort',
-      '/*ccpatch:max-effort*/',
+      PATCH_COMMENT_START + 'ccpatch:max-effort' + PATCH_COMMENT_END,
       'PATCH 8c: max effort capability',
       /(function [\w$]+\(([\w$]+)\)\{if\([\w$]+\(\2\)\)return!1;)(let [\w$]+=[\w$]+\(\2,"max_effort"\);)/,
     );
   }
 
   if (Object.keys(EFFORT_BY_KEY).length) {
-    const DEFAULT_EFFORT_MARKER = '/*ccpatch:default-effort*/';
+    const DEFAULT_EFFORT_MARKER = PATCH_COMMENT_START + 'ccpatch:default-effort' + PATCH_COMMENT_END;
     const defaults = Object.fromEntries(
       Object.entries(EFFORT_BY_KEY).map(([key, effort]) => [key, effort.defaultLevel]),
     );
@@ -417,4 +481,5 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
       { required: true },
     );
   }
+
 }

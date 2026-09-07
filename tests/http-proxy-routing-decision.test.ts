@@ -107,6 +107,7 @@ describe('decideHttpProxyRoute', () => {
         break;
       case 'translated':
       case 'passthrough-messages':
+      case 'rejected':
         throw new Error('unreachable for this input');
       default: {
         const exhaustive: never = decision;
@@ -176,7 +177,12 @@ describe('decideHttpProxyRoute logging and privacy', () => {
 
 describe('decideHttpProxyRoute lookupRoute parity', () => {
   it('resolves [1m] context suffix variants to the canonical route', () => {
-    const matched = route({ aliasId: 'leverframe:openai-oauth:gpt-5.6-luna', realModelId: 'gpt-5.6-luna' });
+    const matched = route({
+      aliasId: 'leverframe:openai-oauth:gpt-5.6-luna',
+      realModelId: 'gpt-5.6-luna',
+      contextWindow: 272_000,
+      maxContextWindow: 1_101_000,
+    });
     const routesById = buildProxyRoutesById([matched]);
     const decision = decideHttpProxyRoute(baseInput({
       routesById,
@@ -184,7 +190,55 @@ describe('decideHttpProxyRoute lookupRoute parity', () => {
       rawBody: Buffer.from(JSON.stringify({ model: 'gpt-5.6-luna[1m]' })),
     }));
     expect(decision.action).toBe('translated');
-    if (decision.action === 'translated') expect(decision.route).toBe(matched);
+    if (decision.action === 'translated') {
+      expect(decision.route).toMatchObject({
+        aliasId: 'gpt-5.6-luna[1m]',
+        contextWindow: 1_101_000,
+        realModelId: matched.realModelId,
+      });
+    }
+  });
+
+  it('rejects an invalid external [1m] choice instead of native Anthropic passthrough', () => {
+    const matched = route({
+      aliasId: 'leverframe:openai-oauth:gpt-5.6-luna',
+      contextWindow: 272_000,
+      maxContextWindow: 872_000,
+    });
+    const routesById = buildProxyRoutesById([matched]);
+    const decision = decideHttpProxyRoute(baseInput({
+      routesById,
+      hasAdapter: true,
+      rawBody: Buffer.from(JSON.stringify({ model: `${matched.aliasId}[1m]` })),
+    }));
+
+    expect(decision).toMatchObject({
+      action: 'rejected',
+      modelId: `${matched.aliasId}[1m]`,
+      message: `Unknown model: ${matched.aliasId}[1m]`,
+    });
+  });
+
+  it('rejects an invalid bare external [1m] choice instead of native Anthropic passthrough', () => {
+    const matched = route({
+      aliasId: 'leverframe:openai-oauth:gpt-5.6-luna',
+      realModelId: 'gpt-5.6-luna',
+      contextWindow: 272_000,
+      maxContextWindow: 872_000,
+    });
+    const routesById = buildProxyRoutesById([matched]);
+    const modelId = `${matched.realModelId}[1m]`;
+    const decision = decideHttpProxyRoute(baseInput({
+      routesById,
+      hasAdapter: true,
+      rawBody: Buffer.from(JSON.stringify({ model: modelId })),
+    }));
+
+    expect(decision).toMatchObject({
+      action: 'rejected',
+      modelId,
+      message: `Unknown model: ${modelId}`,
+    });
   });
 
   it('resolves models/ prefix variants to the canonical route', () => {

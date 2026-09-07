@@ -1,11 +1,9 @@
-// src/registry/materialize.ts — registry entries → LocalProvider runtime shape
+
 
 import { shouldHideModel, type CompatibilityAgent } from '../model-compatibility.js';
 import { deriveBrand } from '../models.js';
-import { resolveContextWindow } from '../context-window.js';
 import type { LocalProvider, LocalProviderModel } from '../types.js';
 import { normalizeGoogleDisplayName, normalizeGoogleModelId } from './google-model-id.js';
-import { findModelsDevModel } from './models-dev.js';
 import type { CachedModel, ProviderRegistry, RegistryProvider } from './types.js';
 import { isValidProviderId } from './validate.js';
 import { getTemplateById } from '../provider-templates.js';
@@ -14,7 +12,6 @@ import { effectiveProviderBaseUrl, resolveProviderTemplate } from './resolve-tem
 
 export type CredentialResolver = (provider: RegistryProvider) => string | null;
 
-/** Map an AI SDK npm package + API URL to the endpoint shape leverframe should use. */
 export function resolveEndpoint(
   npm: string,
   apiUrl: string,
@@ -33,7 +30,7 @@ export function resolveEndpoint(
       completionsUrl: apiUrl.replace(/\/$/, '') + '/chat/completions',
     };
   }
-  // Any other npm — SDK adapter owns endpoints.
+
   return { format: 'openai' };
 }
 
@@ -58,7 +55,6 @@ export function cachedModelToLocal(
   const endpoint = resolveEndpoint(npm, apiUrl);
   if (endpoint === null) return null;
 
-  const modelsDev = findModelsDevModel(provider.id, cached.id);
   const { id, upstreamModelId: _upstreamModelId } = normalizeGoogleModelId(cached.id, npm);
   const normalizedUpstream = normalizeGoogleModelId(cached.upstreamModelId ?? cached.id, npm).upstreamModelId;
   const family = npm === '@ai-sdk/google' ? (id.split(/[-/:]/)[0] ?? id) : (cached.family ?? '');
@@ -80,11 +76,23 @@ export function cachedModelToLocal(
     deprecated: cached.deprecated,
     isFree: isFreeStatus(freeStatus),
     freeStatus,
-    contextWindow: cached.contextWindowUnconfirmed ? undefined : cached.contextWindow ?? resolveContextWindow(id),
+    contextWindow: cached.contextWindowUnconfirmed ? undefined : cached.contextWindow,
+    maxContextWindow: cached.maxContextWindow,
+    inputTokenLimit: cached.inputTokenLimit,
+    outputTokenLimit: cached.outputTokenLimit,
+    minimalClientVersion: cached.minimalClientVersion,
     contextWindowUnconfirmed: cached.contextWindowUnconfirmed,
     supportedParameters: cached.supportedParameters,
-    reasoning: cached.reasoning ?? modelsDev?.reasoning,
-    interleavedReasoningField: cached.interleavedReasoningField ?? modelsDev?.interleaved?.field,
+    reasoning: cached.reasoning,
+    supportsTemperature: cached.supportsTemperature,
+    supportedReasoningEfforts: cached.supportedReasoningEfforts,
+    defaultReasoningEffort: cached.defaultReasoningEffort,
+    supportsReasoningSummaries: cached.supportsReasoningSummaries,
+    supportsReasoningSummaryParameter: cached.supportsReasoningSummaryParameter,
+    supportsParallelToolCalls: cached.supportsParallelToolCalls,
+    supportsReasoningToggle: cached.supportsReasoningToggle,
+    supportsPromptCacheBreakpoints: cached.supportsPromptCacheBreakpoints,
+    interleavedReasoningField: cached.interleavedReasoningField,
     useResponsesLite: cached.useResponsesLite,
     preferWebSockets: cached.preferWebSockets,
   };
@@ -133,7 +141,6 @@ function materializeOne(
   };
 }
 
-/** Convert enabled registry providers with credentials into launch-time LocalProvider[]. */
 export function materializeRegistry(
   registry: ProviderRegistry,
   resolveCredential: CredentialResolver,

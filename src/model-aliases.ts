@@ -71,7 +71,6 @@ export function normalizeModelAliases(aliases: unknown): ModelAlias[] {
   });
 }
 
-/** Parse `luna=leverframe:openai-oauth:gpt-5.6-luna` (the `leverframe:` prefix is optional). */
 export function parseModelAliasAssignment(value: string): ModelAlias | { error: string } {
   const separator = value.indexOf('=');
   if (separator < 1 || separator === value.length - 1) {
@@ -93,8 +92,7 @@ export function parseModelAliasAssignment(value: string): ModelAlias | { error: 
   return {
     name,
     providerId: target.slice(0, targetSeparator),
-    // `models --list` prints Claude's synthetic context suffix. It is a client
-    // routing hint, not part of the provider catalog id stored in favorites.
+
     modelId: stripOneMContextSuffix(target.slice(targetSeparator + 1)),
   };
 }

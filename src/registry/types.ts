@@ -1,4 +1,4 @@
-// src/registry/types.ts — native provider registry schema (no secrets)
+
 
 import type { FreeStatus } from '../free-models.js';
 
@@ -6,7 +6,7 @@ export const REGISTRY_SCHEMA_VERSION = 1;
 
 export type RegistrySubscriptionFilter = 'free';
 
-export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type ModelDiscoveryFailureKind =
   | 'authentication'
   | 'empty'
@@ -27,35 +27,46 @@ export interface CachedModel {
   usageMultiplierApplies?: boolean;
   deprecated?: boolean;
   contextWindowUnconfirmed?: boolean;
-  /**
-   * Maximum window the provider reports for this model, when it differs from
-   * the window it serves by default (ChatGPT/Codex `max_context_window`).
-   * Applied only when the user opts in, see src/context-ceilings.ts.
-   */
+
   maxContextWindow?: number;
+  inputTokenLimit?: number;
+  outputTokenLimit?: number;
+  minimalClientVersion?: string;
   isFree?: boolean;
   freeStatus?: FreeStatus;
   modelFormat: 'anthropic' | 'openai' | 'cloud-code';
-  /** Per-model override — wins over provider-level api.npm */
+
   npm?: string;
-  /** Per-model override — wins over provider-level api.url */
+
   apiUrl?: string;
   sourceBackend?: string;
-  /** Provider-reported request parameters, e.g. OpenRouter supported_parameters. */
+
   supportedParameters?: string[];
-  /** Broad model metadata: model can produce reasoning/thinking output. */
+
   reasoning?: boolean;
-  /** Provider-confirmed support for image input. */
+
+  supportsTemperature?: boolean;
+
   vision?: boolean;
-  /** Provider-confirmed reasoning effort values. */
-  supportedReasoningEfforts?: ReasoningEffort[];
-  /** Provider-confirmed default reasoning effort. */
-  defaultReasoningEffort?: ReasoningEffort;
-  /** Streaming/interleaved reasoning field name from metadata, e.g. reasoning_content. */
+
+  supportedReasoningEfforts?: string[];
+
+  defaultReasoningEffort?: string;
+
+  supportsReasoningSummaries?: boolean;
+
+  supportsReasoningSummaryParameter?: boolean;
+
+  supportsParallelToolCalls?: boolean;
+
+  supportsReasoningToggle?: boolean;
+
+  supportsPromptCacheBreakpoints?: boolean;
+
   interleavedReasoningField?: string;
-  /** Backend capability: model requires the Responses-Lite request shape (x-openai-internal-codex-responses-lite). */
+
   useResponsesLite?: boolean;
-  /** Backend capability: model must use the WebSocket Responses transport instead of HTTP. */
+
   preferWebSockets?: boolean;
 }
 
@@ -71,7 +82,7 @@ export interface RegistryProvider {
     npm?: string;
     url?: string;
     id?: string;
-    /** Static headers sent on every upstream request (e.g. a plan/auth-tracking header a custom endpoint requires). */
+
     headers?: Record<string, string>;
   };
   modelsCache?: {

@@ -71,8 +71,7 @@ function spawnCaWorker(home: string, syncDir: string, capability: string, worker
 
 async function waitForFile(path: string): Promise<void> {
   const deadline = Date.now() + 15_000;
-  // Invariant: the marker is still absent and the fixed deadline has not passed.
-  // Variant: max(0, deadline - Date.now()) decreases after each sleep.
+
   while (!existsSync(path)) {
     if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${path}`);
     await new Promise(resolve => setTimeout(resolve, 25));
@@ -131,7 +130,6 @@ describe('MITM CA rotation policy', () => {
     expect(firstCa.validity.notAfter.getTime() - firstCa.validity.notBefore.getTime())
       .toBeLessThanOrEqual(366 * 24 * 60 * 60 * 1000);
 
-    // Simulate a legacy v1 10-year CA on disk: version=1 + 10-year cert.
     const dir = certDir();
     const caKey = forge.pki.rsa.generateKeyPair(2048);
     const legacyCa = forge.pki.createCertificate();

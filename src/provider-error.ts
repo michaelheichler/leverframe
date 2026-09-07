@@ -13,12 +13,6 @@ const PROVIDER_FAILURE_PHASES = new Set<ProviderFailurePhase>([
   'completion',
 ]);
 
-/**
- * Provider-neutral error taxonomy (stabilization plan §7.1). Every category a
- * caller can classify a failure into, independent of which SDK/transport
- * produced it. `unknown` is the only category a caller should ever need to
- * fall back to.
- */
 export type ProviderErrorCategory =
   | 'auth'
   | 'permission'
@@ -80,7 +74,6 @@ const PROVIDER_ERROR_CATEGORIES = new Set<ProviderErrorCategory>([
   'unknown',
 ]);
 
-/** Categories that are never safe to retry automatically, regardless of `retryable`. */
 const TERMINAL_CATEGORIES = new Set<ProviderErrorCategory>([
   'invalid_request',
   'unsupported_capability',
@@ -95,7 +88,6 @@ export function isProviderErrorCategory(value: unknown): value is ProviderErrorC
   return typeof value === 'string' && PROVIDER_ERROR_CATEGORIES.has(value as ProviderErrorCategory);
 }
 
-/** OS-level connect-failure error codes that map to a connection-establishment category. */
 const CONNECTION_ERROR_CODES = new Set([
   'ECONNREFUSED',
   'ECONNRESET',
@@ -136,11 +128,6 @@ function isTlsCause(cause: unknown): boolean {
   return /certificate|tls|ssl handshake/i.test(message);
 }
 
-/**
- * Best-effort classifier used when a caller does not already know the exact
- * category. Explicit categories passed to {@link ProviderTransportError}
- * always win over this inference.
- */
 export function classifyProviderErrorCategory(input: ClassifyProviderErrorInput): ProviderErrorCategory {
   if (input.cancelled === 'local') return 'local_shutdown';
   if (input.cancelled === 'provider') return 'cancellation';
@@ -175,7 +162,7 @@ export interface ProviderTransportErrorOptions {
   provider: string;
   model?: string;
   phase: ProviderFailurePhase;
-  /** Provider-neutral taxonomy category. Inferred from phase/status/cause when omitted. */
+
   category?: ProviderErrorCategory;
   httpStatus?: number;
   providerRequestId?: string;
@@ -186,7 +173,7 @@ export interface ProviderTransportErrorOptions {
   outputEmitted: boolean;
   cause?: unknown;
   safeMessage: string;
-  /** Redacted diagnostic detail safe to log but not necessarily safe to show a user. */
+
   diagnosticDetail?: string;
   responseHeaders?: Readonly<Record<string, string>>;
   attemptCount?: number;
@@ -229,8 +216,7 @@ export class ProviderTransportError extends Error {
       && options.retryAfterMs >= 0
       ? options.retryAfterMs
       : undefined;
-    // A category that is intrinsically terminal (e.g. invalid_request) can never be retryable,
-    // even if a caller mistakenly passes retryable: true.
+
     this.retryable = options.retryable && !TERMINAL_CATEGORIES.has(this.category);
     this.retriesExhausted = options.retriesExhausted ?? false;
     this.outputEmitted = options.outputEmitted;
@@ -292,12 +278,6 @@ export interface LocalFailureErrorOptions {
   diagnosticDetail?: string;
 }
 
-/**
- * Failures with no upstream transport component: local shutdown, ambiguous
- * client-side tool execution, a corrupt on-disk checkpoint, or a local
- * credential problem. Kept distinct from {@link ProviderTransportError},
- * which always carries a provider/phase pair.
- */
 export class LocalFailureError extends Error {
   readonly code = 'local_failure_error';
   readonly category: ProviderErrorCategory;

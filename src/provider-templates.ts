@@ -1,14 +1,7 @@
-// src/provider-templates.ts: builtin provider templates for leverframe providers add
+
 
 export type ProviderAuthType = 'api' | 'oauth' | 'none';
 export type ProviderModelSource = 'api-list' | 'static-seed' | 'manual-only';
-
-export interface ProviderTemplateStaticModel {
-  id: string;
-  name: string;
-  /** Explicit documented context window. Wins over heuristic lookup. */
-  contextWindow?: number;
-}
 
 export interface ProviderTemplate {
   id: string;
@@ -22,18 +15,11 @@ export interface ProviderTemplate {
   urlPrompt?: string;
   apiKeyOptional?: boolean;
   anonymousFreeModels?: boolean;
-  /**
-   * Set when the API key is stored without first hitting the provider's
-   * model-listing endpoint. Used when a template relies on a static seed
-   * (so listing succeeds without ever validating the key) or when the
-   * provider's documented test endpoint is unreliable. leverframe surfaces this
-   * in the setup copy so the user knows the key was stored, not verified.
-   */
+
   skipKeyVerification?: boolean;
-  /** Static headers this provider requires on every request (model listing and runtime). */
+
   headers?: Record<string, string>;
   modelSource: ProviderModelSource;
-  staticModels?: ProviderTemplateStaticModel[];
   modelsDevProviderId?: string;
   supplierMetadataUrl?: string;
   supported: boolean;
@@ -91,11 +77,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     defaultBaseUrl: 'https://api.kimi.com/coding/v1',
     signupUrl: 'https://kimi.com',
     modelSource: 'api-list',
-    staticModels: [
-      { id: 'k3', name: 'Kimi 3', contextWindow: 1_048_576 },
-      { id: 'kimi-for-coding', name: 'Kimi for Coding' },
-      { id: 'kimi-for-coding-highspeed', name: 'Kimi for Coding Highspeed' },
-    ],
     supported: true,
   },
   {
@@ -106,12 +87,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     defaultBaseUrl: 'https://api.moonshot.ai/v1',
     signupUrl: 'https://platform.moonshot.ai/console/api-keys',
     modelSource: 'api-list',
-    staticModels: [
-      { id: 'kimi-k3', name: 'Kimi K3', contextWindow: 1_048_576 },
-      { id: 'kimi-k2.7-code', name: 'Kimi K2.7 Code', contextWindow: 262_144 },
-      { id: 'kimi-k2.7-code-highspeed', name: 'Kimi K2.7 Code Highspeed', contextWindow: 262_144 },
-      { id: 'kimi-k2.6', name: 'Kimi K2.6', contextWindow: 262_144 },
-    ],
     supported: true,
   },
   {
@@ -122,11 +97,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     defaultBaseUrl: 'https://api.z.ai/api/coding/paas/v4',
     signupUrl: 'https://z.ai/manage-apikey/apikey-management',
     modelSource: 'api-list',
-    staticModels: [
-      { id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 1_000_000 },
-      { id: 'glm-5-turbo', name: 'GLM-5 Turbo', contextWindow: 128_000 },
-      { id: 'glm-4.7', name: 'GLM-4.7', contextWindow: 128_000 },
-    ],
     supported: true,
   },
 ];
@@ -137,7 +107,6 @@ export function listSupportedTemplates(): ProviderTemplate[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Supported templates not yet present in the user's registry. */
 export function listAddableTemplates(configuredIds: Iterable<string> = []): ProviderTemplate[] {
   const configured = new Set(configuredIds);
   return listSupportedTemplates().filter(t => !configured.has(t.id));

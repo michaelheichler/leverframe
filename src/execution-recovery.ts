@@ -1,12 +1,4 @@
-// src/execution-recovery.ts — recovery decision policy and CAS reconciliation
-// (stabilization plan §8.3).
-//
-// Classifies an interrupted execution into exactly one of six outcomes and
-// exposes the reconciliation entry point used by both the CLI and the
-// authenticated CAS endpoint. A reconstructed continuation is always
-// reported as reconstruction — this module never returns `native_resume`
-// for anything Leverframe itself stitched back together from preserved
-// partial state.
+
 
 import type { ProviderCapabilityMatrix } from './provider-capabilities.js';
 import {
@@ -30,12 +22,6 @@ import {
 } from './tool-call-ledger.js';
 import { isExpired, type StoreReadState } from './checkpoint-store.js';
 
-/**
- * Application-level persistence outcome exposed to recovery callers (CLI,
- * CAS endpoint). This is a deliberate boundary: {@link StoreReadState} is an
- * infrastructure concept (checkpoint-store.ts's on-disk read classification)
- * and must not leak past this module's public surface.
- */
 export type PersistenceState = 'ok' | 'not-found' | 'corrupt' | 'unsupported-version' | 'storage-error';
 
 function toPersistenceState(state: StoreReadState): PersistenceState {
@@ -58,10 +44,10 @@ export type RecoveryDecisionKind =
 
 export interface RecoveryDecision {
   kind: RecoveryDecisionKind;
-  /** Human-readable, secret-free explanation — always precise for `unrecoverable`. */
+
   reason: string;
   ambiguousToolCallIds: string[];
-  /** True only for `continuation_from_partial_text` — callers must label this reconstruction, never transport resume. */
+
   isReconstruction: boolean;
 }
 
@@ -69,19 +55,11 @@ export interface ClassifyRecoveryInput {
   checkpoint: ExecutionCheckpoint;
   ledger: ToolCallLedger;
   capabilities: ProviderCapabilityMatrix;
-  /** True when the caller is about to retry against a different provider/model than the checkpoint recorded. */
+
   providerSwitched: boolean;
   now?: () => number;
 }
 
-/**
- * Provider switching always discards any preserved continuation id and
- * signatures (plan §8.3 / §7.4): the caller is responsible for stripping
- * `providerConversationId`/`providerResponseId` before persisting a
- * checkpoint against the new provider. This function additionally refuses
- * to recommend `native_resume` whenever `providerSwitched` is true, even if
- * a stale continuation id is still present on the checkpoint.
- */
 function checkpointHasVisibleOutput(checkpoint: ExecutionCheckpoint, ledger: ToolCallLedger): boolean {
   return checkpoint.visibleTextByteCount > 0
     || ledger.entries.some(e => e.status !== 'planned' && e.status !== 'confirmed_not_executed');
@@ -136,12 +114,6 @@ function classifyNonAmbiguousRecovery(input: ClassifyRecoveryInput): RecoveryDec
   };
 }
 
-/**
- * An execution past its checkpoint's `expiresAt` is unrecoverable — except
- * that a still-ambiguous tool call never expires into safety. Confirmation
- * is required first regardless of age; only once every entry is resolved
- * does expiry get to veto replay/reconstruction.
- */
 export function classifyRecovery(input: ClassifyRecoveryInput): RecoveryDecision {
   const ambiguous = ambiguousEntries(input.ledger);
   if (ambiguous.length > 0) {
@@ -170,17 +142,11 @@ export interface RestartReconstructionInput {
 
 export interface RestartReconstructionResult {
   ok: boolean;
-  /** Always 'reconstructed' on success — restart recovery is never reported as native resume. */
+
   label: 'reconstructed';
   reason?: string;
 }
 
-/**
- * Restart reconstruction (after a Leverframe process restart, with no
- * in-memory state) requires the client to resend its conversation and the
- * resend's digest must match the checkpoint's stored fingerprint before
- * Leverframe will treat the preserved partial state as trustworthy.
- */
 export function verifyRestartReconstruction(input: RestartReconstructionInput): RestartReconstructionResult {
   if (!verifyConversationResend(input.checkpoint, input.resentMessages)) {
     return { ok: false, label: 'reconstructed', reason: 'Resent conversation does not match the preserved checkpoint fingerprint; refusing to reconstruct.' };
@@ -203,18 +169,11 @@ export interface ReconcileExecutionInput {
   executionId: string;
   toolCallId: string;
   outcome: ReconcileOutcome;
-  /** CAS guard: reject if the ledger has moved past this generation. Omit to reconcile against whatever is current. */
+
   expectedGeneration?: number;
   now?: () => number;
 }
 
-/**
- * The authenticated reconciliation entry point shared by the CLI and the CAS
- * endpoint. `not-executed` clears the ambiguity and permits a new attempt —
- * it never triggers a blind replay of the original call. `executed` records
- * that the client already ran it; any recovery must then wait for (or
- * already have) the matching result rather than emit the call again.
- */
 export function reconcileExecution(input: ReconcileExecutionInput): ReconcileResult {
   const now = input.now ?? Date.now;
   const loaded = loadLedger(input.scopeHash, input.executionId);
@@ -245,7 +204,6 @@ export interface ReconcileAllAmbiguousInput {
   now?: () => number;
 }
 
-/** Reconcile every currently-ambiguous entry in one execution's ledger to the same outcome. */
 export function reconcileAllAmbiguous(input: ReconcileAllAmbiguousInput): ReconcileResult[] {
   const loaded = loadLedger(input.scopeHash, input.executionId);
   if (loaded.state !== 'ok' || !loaded.value) {
@@ -268,7 +226,6 @@ export interface RecordRecoveryDecisionInput {
   now?: () => number;
 }
 
-/** Persist the classified decision onto the checkpoint so `leverframe executions show` can report it without re-deriving. */
 export function recordRecoveryDecision(input: RecordRecoveryDecisionInput): ReconcileResult {
   const loaded = loadCheckpoint(input.scopeHash, input.executionId);
   if (loaded.state !== 'ok' || !loaded.value) {

@@ -6,21 +6,13 @@ import {
   ROUTING_NOTICE_MARKER,
 } from '../src/patch-transforms-routing-notice.js';
 
-// Fixture strings are verbatim excerpts grepped from the installed
-// /Users/michael/.local/share/claude/versions/2.1.227 binary (see the
-// per-release verification step documented in the file header of
-// src/patch-transforms-routing-notice.ts). Note the ne/se role swap versus
-// 2.1.226: here the call-site model variable is `se` and the runner-context
-// agentId variable is `ne` (2.1.226 fixture has it the other way around).
 const CONFIG = {
   'leverframe:openai-oauth:gpt-5.6-sol': {
     alias: 'sol',
     display: 'GPT-5.6 Sol',
   },
 };
-// The Agent tool's `call()` method signature, verbatim from the 2.1.227
-// binary. Same property-key literals as 2.1.226 (schema-derived, not
-// minifier-renamed); the description local is `r` here too.
+
 const AGENT_CALL_SIGNATURE =
   'async call({prompt:e,subagent_type:t,description:r,model:n,run_in_background:o,name:i,isolation:s,cwd:a},l,c,u,d){';
 const AGENT_CALL =
@@ -51,19 +43,13 @@ describe('Claude Code 2.1.227 routing notice compatibility', () => {
     expect(result.content.split(AGENT_DESCRIPTION_MARKER)).toHaveLength(2);
     expect(result.content).toContain('/*ccpatch:routing-notice*/onRoutingNotice:d,ccRoutingModelId:se');
     expect(result.content).toContain('requiresStructuredOutput:V,onRoutingNotice:ccRoutingNotice,ccRoutingModelId})');
-    // Model id threads from the call site (se) across the function boundary;
-    // the notification key uses the runner's own agentId variable (ne).
+
     expect(result.content).toContain('key:`leverframe-routing-success-${ne}`');
     expect(result.content).not.toContain('nS(');
     expect(result.content).not.toContain('sJe(');
     expect(result.content).not.toContain('qce(');
     expect(result.content).not.toContain('e.effort');
-    // PATCH 10d: the description indicator lives in the same call() scope
-    // and uses the call-site model id (se), independent of the runner's own
-    // agentId (ne) used by the toast handoff above. The append is guarded
-    // by an exact-suffix check against the freshly-computed display
-    // (`_ccad`), not a bare middle-dot probe, so it never false-suppresses
-    // on a user-written description that happens to contain " · " already.
+
     expect(result.content).toContain('String(se||"").trim().toLowerCase()');
     expect(result.content).toContain('if(r.indexOf(" \\u00b7 "+_ccad)===-1){r=r+" \\u00b7 "+_ccad+(_ccae?" \\u00b7 "+_ccae:"");}}');
     expect(result.content).not.toMatch(/if\(!\/ [^"]*\/\.test\(r\)\)/);
@@ -102,8 +88,6 @@ describe('Claude Code 2.1.227 routing notice compatibility', () => {
     const drifted = agentLaunchFixture().replace(CHILD_CONTEXT, '');
     const result = applyRoutingNoticeTransform(drifted, CONFIG);
 
-    // Main product SKIPs as a unit; PATCH 10d is independent of the
-    // runner-context anchor and still applies.
     expect(result.results).toEqual([
       { status: 'SKIP', name: 'PATCH 10: routing notice', extra: 'runner anchor not recognized' },
       { status: 'OK', name: 'PATCH 10d: agent description indicator' },

@@ -1,6 +1,4 @@
-/**
- * Verifies durable GitHub OAuth credential storage and existing OpenAI refresh behavior.
- */
+
 
 import { describe, expect, it } from 'vitest';
 import { githubCopilotTokensToStoredCredential } from '../src/oauth/github-copilot.js';

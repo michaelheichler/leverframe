@@ -108,13 +108,12 @@ describe('cross-process config lock (production config entry points, real child 
     const homeDir = process.env['LEVERFRAME_HOME']!;
     mkdirSync(homeDir, { recursive: true });
 
-    // Fresh per-run capability. The worker matches it against a marker in LEVERFRAME_HOME.
     const capability = randomUUID();
     writeFileSync(join(homeDir, CAPABILITY_MARKER_NAME), capability, { mode: 0o600 });
 
     const syncDir = mkdtempSync(join(tmpdir(), 'leverframe-contention-sync-'));
     try {
-      // Acquire the production lock BEFORE spawning so children hit a held lock.
+
       const lockPath = _configLockInternals.lockPath();
       mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 });
       const releaseLock = _configLockInternals.tryAcquire(lockPath);
@@ -135,10 +134,8 @@ describe('cross-process config lock (production config entry points, real child 
           await waitForMarker(join(syncDir, `${i}.ready`), MARKER_WAIT_MS);
         }
 
-        // START is written WHILE the lock is held, so every child piles up on it.
         writeFileSync(join(syncDir, 'start.marker'), '', { mode: 0o600 });
 
-        // Attempt markers prove each child was live and contending before release.
         for (let i = 0; i < workerCount; i++) {
           await waitForMarker(join(syncDir, `${i}.attempt`), MARKER_WAIT_MS);
         }

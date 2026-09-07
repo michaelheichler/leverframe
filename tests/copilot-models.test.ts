@@ -1,7 +1,4 @@
-/**
- * Specifies model metadata accepted from the public Copilot SDK.
- * Fixtures contain only the documented `ModelInfo` shape.
- */
+
 
 import { describe, expect, it } from 'vitest';
 import { mapCopilotModels, parseCopilotModelInfo } from '../src/copilot/models.js';
@@ -109,6 +106,16 @@ describe('parseCopilotModelInfo', () => {
     expect(model.defaultReasoningEffort).toBeUndefined();
   });
 
+  it('keeps Copilot SDK effort levels separate from the registry-wide effort union', () => {
+    const model = parseCopilotModelInfo(modelInfo({
+      supportedReasoningEfforts: ['low', 'minimal', 'ultra', 'max'],
+      defaultReasoningEffort: 'ultra',
+    }));
+
+    expect(model.supportedReasoningEfforts).toEqual(['low', 'max']);
+    expect(model.defaultReasoningEffort).toBeUndefined();
+  });
+
   it.each([
     null,
     {},
@@ -147,7 +154,6 @@ describe('mapCopilotModels', () => {
     expect(models.map(model => model.id)).toEqual(['sparse', 'complete']);
     expect(models[0]).toEqual(expect.objectContaining({ contextWindowUnconfirmed: true }));
   });
-
 
   it('excludes models whose SDK policy is not enabled', () => {
     const models = mapCopilotModels([

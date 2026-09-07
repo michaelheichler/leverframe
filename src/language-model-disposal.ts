@@ -1,7 +1,4 @@
-/**
- * Narrows optional provider cleanup without changing the shared AI SDK model type.
- * Providers without owned resources remain no-op disposal targets.
- */
+
 
 import type { LanguageModel } from 'ai';
 
@@ -16,7 +13,6 @@ function isDisposableLanguageModel(model: LanguageModel): model is LanguageModel
     && typeof model.dispose === 'function';
 }
 
-/** Disposes provider-owned resources when a model exposes an explicit disposer. */
 export async function disposeLanguageModel(model: LanguageModel): Promise<void> {
   if (isDisposableLanguageModel(model)) await model.dispose();
 }

@@ -1,19 +1,18 @@
-/**
- * Validates public Copilot SDK model records and materializes registry metadata.
- * It never infers capabilities or limits that `listModels()` did not confirm.
- */
+
 
 import type {
   CachedModel,
   ModelDiscoveryFailureKind,
-  ReasoningEffort,
 } from '../registry/types.js';
+import {
+  COPILOT_REASONING_EFFORT_SET,
+  type CopilotReasoningEffort,
+} from './reasoning-effort.js';
 
 type JsonRecord = Record<string, unknown>;
 
 export type CopilotModelFailureKind = ModelDiscoveryFailureKind;
 
-/** Distinguishes SDK schema drift from runtime transport failures. */
 class CopilotModelValidationError extends TypeError {
   constructor(message: string) {
     super(message);
@@ -30,14 +29,6 @@ class CopilotModelDiscoveryError extends Error {
     this.kind = kind;
   }
 }
-
-const REASONING_EFFORTS = new Set<ReasoningEffort>([
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max',
-]);
 
 function requireRecord(value: unknown, field: string): JsonRecord {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -67,7 +58,6 @@ function optionalRecord(value: unknown, field: string): JsonRecord {
   return value === undefined ? {} : requireRecord(value, field);
 }
 
-/** Validates SDK policy and excludes models unavailable to the authenticated account. */
 function policyAllowsModel(value: unknown): boolean {
   if (value === undefined) return true;
   const policy = requireRecord(value, 'policy');
@@ -87,15 +77,15 @@ function parseContextWindow(limits: JsonRecord): number | undefined {
   return value;
 }
 
-function parseReasoningEffort(value: unknown, field: string): ReasoningEffort | undefined {
+function parseReasoningEffort(value: unknown, field: string): CopilotReasoningEffort | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'string') {
     throw new CopilotModelValidationError(`Copilot model ${field} must be a string`);
   }
-  return REASONING_EFFORTS.has(value as ReasoningEffort) ? value as ReasoningEffort : undefined;
+  return COPILOT_REASONING_EFFORT_SET.has(value as CopilotReasoningEffort) ? value as CopilotReasoningEffort : undefined;
 }
 
-function parseReasoningEfforts(value: unknown): ReasoningEffort[] | undefined {
+function parseReasoningEfforts(value: unknown): CopilotReasoningEffort[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) {
     throw new CopilotModelValidationError('Copilot model supportedReasoningEfforts must be an array');
@@ -106,7 +96,6 @@ function parseReasoningEfforts(value: unknown): ReasoningEffort[] | undefined {
   });
 }
 
-/** Converts one runtime-validated `ModelInfo` record into registry metadata. */
 export function parseCopilotModelInfo(record: unknown): CachedModel {
   const model = requireRecord(record, 'record');
   const id = requireNonEmptyString(model, 'id');
@@ -139,7 +128,6 @@ export function parseCopilotModelInfo(record: unknown): CachedModel {
   };
 }
 
-/** Validates and maps the complete `CopilotClient.listModels()` result. */
 export function mapCopilotModels(records: unknown): CachedModel[] {
   if (!Array.isArray(records)) {
     throw new CopilotModelValidationError('CopilotClient.listModels() must return an array');
@@ -185,7 +173,6 @@ export type CopilotModelRefreshResult =
   | { models: CachedModel[]; source: 'live' }
   | { models: CachedModel[]; source: 'cache'; failureReason: string; failureKind: CopilotModelFailureKind };
 
-/** Discovers models while preserving a valid cache on runtime failure. */
 export async function refreshCopilotModels(input: {
   listModels: () => Promise<unknown>;
   cachedModels: CachedModel[];

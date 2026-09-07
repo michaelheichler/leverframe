@@ -10,7 +10,6 @@ import type {
 
 const diagnosticContext = new AsyncLocalStorage<ResponsesWebSocketDiagnosticContext>();
 
-/** Correlate a gateway/proxy request with the lower-level SDK WebSocket fetch. */
 export function withResponsesWebSocketDiagnosticContext<T>(
   context: ResponsesWebSocketDiagnosticContext,
   fn: () => T,
@@ -35,7 +34,7 @@ export function emitDiagnostic(
       ...(correlation?.claudeSessionId ? { claudeSessionId: correlation.claudeSessionId } : {}),
     });
   } catch {
-    // Diagnostics must never alter inference behavior.
+
   }
 }
 

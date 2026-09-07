@@ -18,7 +18,6 @@ import { loadRegistry } from '../src/registry/io.js';
 import { providersForTarget } from '../src/target-compatibility.js';
 import type { FavoriteModel, LocalProvider, LocalProviderModel } from '../src/types.js';
 
-/** Disposable copy of the resolved claude binary, patched instead of the real one. */
 let stagedClaudeBinary: string | null = null;
 
 const PROMPT = 'Reply with exactly one word: OK';
@@ -262,17 +261,10 @@ async function buildLivePlan(): Promise<LivePlan> {
   return { runLive: true, cases };
 }
 
-/**
- * The smoke run patches whatever binary it resolves. Isolating LEVERFRAME_HOME
- * alone is not enough: state would land in the throwaway home while the real
- * installation keeps the injected bytes, leaving it injected with no
- * recoverable V2 state. Patch a disposable copy instead.
- */
 function stageDisposableClaudeBinary(home: string): string | null {
   const installation = resolveClaudeInstallation({});
   if (!installation || installation.executableType !== 'binary') return null;
-  // Stage pristine bytes. Copying an already-patched live binary would hand the
-  // smoke run an injected target with no matching state in its throwaway home.
+
   const manifest = readManifestV2(installation.identity);
   const source = manifest?.baselinePath && existsSync(manifest.baselinePath)
     ? manifest.baselinePath

@@ -55,13 +55,6 @@ function sha256(content: string): string {
 
 const PAYLOAD_HEREDOC_TAG = 'LEVERFRAME_PAYLOAD';
 
-/**
- * A real, executable "claude" script: `--version` prints VERSION and exits
- * before the interpreter ever reaches the payload, so the patchable content
- * lives in the *same* file the version probe executes, while the payload
- * itself stays inert shell text (a quoted no-op heredoc the shell never
- * reaches on any code path this fixture exercises).
- */
 function wholeFileContent(payload: string, version = VERSION): string {
   return [
     '#!/bin/sh',
@@ -612,7 +605,6 @@ describe('legacy migration', () => {
     expect(existsSync(backupPath)).toBe(true);
     expect(readFileSync(backupPath, 'utf8')).toBe(baselineContent);
 
-    // A second call is a no-op because V2 state already exists.
     const second = await migrateLegacyStateIfVerified({ installation, runtime: fixtureRuntime, legacy });
     expect(second.migrated).toBe(false);
     expect(second.reason).toMatch(/already exists/);
@@ -627,7 +619,7 @@ describe('legacy migration', () => {
     writeFileSync(claudePath, patchedContent, 'utf8');
 
     const backupPath = join(workDir, 'legacy-backup-bad.orig');
-    // Contaminated backup: it itself carries the marker.
+
     writeFileSync(backupPath, patchedContent, 'utf8');
 
     const legacy: LegacyPatchManifest = {
@@ -695,7 +687,6 @@ describe('read-only diagnostics', () => {
     expect(report.state).toBe('patched');
     expect(report.nextAction).toBe('Nothing to do.');
 
-    // ANSI-free JSON: no CSI escape sequences anywhere in the serialized report.
     const json = JSON.stringify(report, null, 2);
     expect(/\[/.test(json)).toBe(false);
   });

@@ -95,14 +95,6 @@ function computeIdentity(canonicalPath: string): string {
   return createHash('sha256').update(canonicalPath).digest('hex');
 }
 
-/**
- * Locate the candidate logical path plus how it was found, honoring explicit
- * overrides before native and package-manager fallbacks. This is the one
- * discovery order every patch-lifecycle caller (check/patch/restore/diagnose)
- * shares; launch discovery (`findClaudeBinary`) is folded in as the final,
- * lowest-priority fallback so a plain install without any override resolves
- * identically for launch and for patch.
- */
 function discoverLogicalPath(
   explicitTarget?: string,
 ): { path: string; source: InstallationDiscoverySource } | null {
@@ -138,11 +130,6 @@ export interface ResolveInstallationOptions {
   target?: string;
 }
 
-/**
- * Resolve the one Claude Code installation identity used across startup
- * verification, patching, restore, and launch. Returns null if no candidate
- * resolves to a readable, versioned executable.
- */
 export function resolveClaudeInstallation(options: ResolveInstallationOptions = {}): ClaudeInstallation | null {
   const discovered = discoverLogicalPath(options.target);
   if (!discovered) return null;

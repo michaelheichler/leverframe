@@ -61,7 +61,7 @@ describe('parseArgs', () => {
   });
 
   it('rejects the removed --http-proxy alias', () => {
-    // claude passes unknown flags through to Claude Code rather than erroring
+
     expect(parseArgs(['claude', '--http-proxy'])).toMatchObject({
       command: 'claude',
       claudeArgs: ['--http-proxy'],

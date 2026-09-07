@@ -1,6 +1,4 @@
-/**
- * Verifies Copilot model discovery preserves valid cached data on runtime failures.
- */
+
 
 import { describe, expect, it, vi } from 'vitest';
 import { refreshCopilotModels } from '../src/copilot/models.js';
@@ -45,7 +43,6 @@ describe('refreshCopilotModels', () => {
     expect(result.failureReason).toBe('runtime unavailable');
     expect(result.failureKind).toBe('runtime');
   });
-
 
   it('classifies malformed model data as schema drift', async () => {
     const cachedModels = [cachedModel()];

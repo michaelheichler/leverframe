@@ -1,7 +1,4 @@
-/**
- * Converts AI SDK prompts into versioned, privacy-safe transcript fingerprints.
- * Tool arguments and result bodies are intentionally excluded from serialized history.
- */
+
 
 import { createHash } from 'node:crypto';
 import type { LanguageModelV3Prompt } from '@ai-sdk/provider';
@@ -80,8 +77,6 @@ function payloadHash(value: unknown, messageIndex: number, partType: string): st
     throw new UnsupportedContentError(messageIndex, partType);
   }
 }
-
-/** Stores only non-secret HTTP location identity, never URL credentials or signed queries. */
 
 function urlReference(value: unknown): string | undefined {
   const candidate = value instanceof URL
@@ -189,7 +184,6 @@ function messageParts(message: ModelMessage, messageIndex: number): SerializedHi
   return message.content.map(part => serializePart(part as PromptPart, messageIndex));
 }
 
-/** Serializes supported prompt structure without retaining tool payloads. */
 export function serializeHistory(messages: readonly ModelMessage[]): SerializedHistory {
   return {
     version: SERIALIZED_HISTORY_VERSION,
@@ -204,12 +198,10 @@ function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-/** Renders full prior history when a new isolated session must be synchronized. */
 export function renderCopilotHistory(prompt: LanguageModelV3Prompt): string {
   return renderHistory(prompt, SERIALIZED_HISTORY_VERSION);
 }
 
-/** Builds a stable rolling hash for every transcript prefix. */
 export function historyPrefixHashes(history: SerializedHistory): readonly string[] {
   const hashes: string[] = [sha256(`history-v${history.version}`)];
   for (const entry of history.entries) {

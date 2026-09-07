@@ -1,5 +1,4 @@
-// Why: --bare skips Claude keychain, so MITM passthrough must load Claude's
-// stored OAuth/API material itself without putting tokens in argv or logs.
+
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -25,7 +24,6 @@ function claudeConfigHomeDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(homedir(), '.claude');
 }
 
-/** Why: Claude Code hashes non-default CLAUDE_CONFIG_DIR into the keychain service name. */
 export function claudeCodeCredentialsServiceName(env: NodeJS.ProcessEnv = process.env): string {
   const configDir = claudeConfigHomeDir(env);
   const isDefaultDir = !env['CLAUDE_CONFIG_DIR']?.trim();
@@ -35,7 +33,6 @@ export function claudeCodeCredentialsServiceName(env: NodeJS.ProcessEnv = proces
   return `Claude Code${CREDENTIALS_SERVICE_SUFFIX}${dirHash}`;
 }
 
-/** Why: managed API keys live on the unsuffixed Claude Code keychain service. */
 export function claudeCodeApiKeyServiceName(env: NodeJS.ProcessEnv = process.env): string {
   const configDir = claudeConfigHomeDir(env);
   const isDefaultDir = !env['CLAUDE_CONFIG_DIR']?.trim();
@@ -55,7 +52,6 @@ function keychainAccount(env: NodeJS.ProcessEnv = process.env): string {
   }
 }
 
-/** Why: callers must never log the returned token. */
 export function parseClaudeSecureStorageJson(raw: string): ClaudeCodeAuthMaterial | null {
   let data: unknown;
   try {
@@ -74,10 +70,6 @@ export function parseClaudeSecureStorageJson(raw: string): ClaudeCodeAuthMateria
   return null;
 }
 
-/**
- * Why: Claude Code ACL-binds keychain items to its binary / `security` CLI;
- * napi-rs often cannot read them even when the same service exists.
- */
 export function readMacSecurityPassword(
   service: string,
   account: string,
@@ -101,7 +93,7 @@ export function readMacSecurityPassword(
     }
     const chunks: Buffer[] = [];
     child.stdout?.on('data', (chunk: Buffer) => { chunks.push(chunk); });
-    // Discard stderr so ACL / not-found noise never reaches logs.
+
     child.stderr?.resume();
     child.on('error', () => resolve(null));
     child.on('close', code => {
@@ -142,10 +134,6 @@ function readPlaintextCredentialsFile(env: NodeJS.ProcessEnv = process.env): str
   }
 }
 
-/**
- * Why: mirror Claude's non-bare lookup so placeholder MITM requests can still
- * authenticate as the logged-in Claude subscription or managed API key.
- */
 export async function readClaudeCodeAuthMaterial(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<ClaudeCodeAuthMaterial | null> {

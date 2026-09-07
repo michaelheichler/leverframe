@@ -1,4 +1,4 @@
-// src/providers-command-auth.ts, sign-in and model-refresh command implementations for the providers command
+
 import * as p from '@clack/prompts';
 import { resolveProviderCredential } from './env.js';
 import { loadRegistry } from './registry/io.js';

@@ -1,12 +1,5 @@
 import type { ConnectionEntry } from './responses-websocket-types.js';
 
-// A Claude session partition can have multiple valid conversation heads at
-// once: rewinds/branches, hidden title-generation requests, and stop hooks can
-// all share its model/effort/cache key. Retain each head and select by exact
-// conversation prefix instead of letting the newest branch replace the rest.
-// New heads live in a separately capped nursery LRU until their first reuse.
-// established heads therefore never consume nursery capacity, and one-shot
-// nursery traffic never consumes the established LRU's 32 reserved slots.
 const connections = new Map<string, Set<ConnectionEntry>>();
 
 const REQUEST_ENTRY_TRACKING_CAP = 256;
@@ -18,7 +11,6 @@ export function allocateConnectionDebugId(): number {
   return nextConnectionDebugId++;
 }
 
-/** Read the id the next connection will receive, without allocating it. */
 export function peekNextConnectionDebugId(): number {
   return nextConnectionDebugId;
 }
@@ -33,7 +25,6 @@ export function trackEntryForRequest(requestId: string, entry: ConnectionEntry):
   }
 }
 
-/** Look up and detach the entry tracked for a request id, if it still owns it. */
 export function releaseEntryForRequestId(requestId: string): ConnectionEntry | undefined {
   const entry = entryByRequestId.get(requestId);
   entryByRequestId.delete(requestId);
@@ -162,7 +153,6 @@ export function evictOldestIdleGeneration(
   return evictions;
 }
 
-/** Test-only: drop all pool state without touching sockets or active requests. */
 export function resetConnectionPoolState(): void {
   connections.clear();
   entryByRequestId.clear();

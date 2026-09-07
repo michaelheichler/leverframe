@@ -1,8 +1,5 @@
 import type { ProviderRegistry } from './types.js';
 
-// Rename {id:'openai', authType:'oauth'} → {id:'openai-oauth'} so it can coexist
-// with the API-key 'openai' provider. Preserves the original authRef so the
-// keyring credential isn't orphaned.
 export function migrateOAuthOpenAiProvider(registry: ProviderRegistry): boolean {
   if (registry.providers.some(p => p.id === 'openai-oauth')) return false;
 

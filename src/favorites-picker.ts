@@ -1,4 +1,4 @@
-// Global cross-provider search for leverframe models (favorites manager).
+
 import * as p from '@clack/prompts';
 import pc from 'picocolors';
 import type { FavoriteModel, LocalProvider, LocalProviderModel } from './types.js';
@@ -96,7 +96,6 @@ function parseGlobalFavoritePickKey(
   return index.find(e => globalFavoritePickKey(e) === key);
 }
 
-/** Search all providers; returns null if user cancels or chooses browse-by-provider. */
 export async function pickGlobalFavoriteModel(
   providers: LocalProvider[],
   favorites: FavoriteModel[],

@@ -1,4 +1,4 @@
-// Deterministic Copilot session key and transcript classification tests.
+
 
 import type { ModelMessage } from 'ai';
 import { describe, expect, it } from 'vitest';
@@ -96,7 +96,6 @@ describe('classifyTranscript: extension and retry', () => {
     const current = baseState([userText('turn 1'), assistantText('reply 1')]);
     expect(classifyTranscript(prior, current)).toEqual({ kind: 'exact-retry' });
   });
-
 
   it('resyncs when a tool call keeps its ID but changes input', () => {
     const prior = baseState([

@@ -1,4 +1,4 @@
-// src/model-compatibility.ts — curated blacklist + models.dev capability filtering
+
 
 import blacklistData from './data/model-incompatible.json';
 import {

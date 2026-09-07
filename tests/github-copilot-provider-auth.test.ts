@@ -1,7 +1,4 @@
-/**
- * Verifies GitHub Copilot provider publication around the real registry boundary.
- * GitHub and the OS credential store are replaced with deterministic boundary doubles.
- */
+
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -191,7 +188,6 @@ describe('authenticateProvider github-copilot failure safety', () => {
     expect(loadRegistry().providers).toHaveLength(0);
   });
 
-
   it('forwards a caller cancellation signal to the device flow', async () => {
     const controller = new AbortController();
 
@@ -202,7 +198,6 @@ describe('authenticateProvider github-copilot failure safety', () => {
       expect.objectContaining({ signal: controller.signal }),
     );
   });
-
 
   it('warns instead of failing when the credential is saved but model discovery reports failure', async () => {
     boundary.refreshProviderModels.mockResolvedValue({

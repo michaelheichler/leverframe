@@ -1,8 +1,4 @@
-// src/patch-injection.ts — Leverframe patch-marker recognition.
-//
-// Shared marker-classification logic used by the V2 per-target patch
-// transaction (src/patch-transaction.ts) so every caller agrees about what
-// counts as "this binary carries our patch."
+
 
 export const LEVERFRAME_INJECTION_MARKER = '/*leverframe:patch:v1*/';
 
@@ -10,11 +6,7 @@ export type InjectionState = 'present' | 'absent' | 'ambiguous';
 
 export interface InjectionClassification {
   state: InjectionState;
-  /**
-   * `inspect-failed` records that no marker scan ever ran because the binary
-   * could not be read. It is not evidence of a conflicting marker, and callers
-   * must not report it as one.
-   */
+
   evidence: 'marker-v1' | 'manifest-hash' | 'ccpatch' | 'none' | 'unknown-marker' | 'inspect-failed';
 }
 
@@ -32,12 +24,6 @@ export function classifyVersionedMarker(content: string): InjectionClassificatio
     : { state: 'ambiguous', evidence: 'unknown-marker' };
 }
 
-/**
- * Classify injection from content plus an already-known patched hash for this
- * exact path (or undefined if none is known). Used directly by the V2
- * transaction, which tracks patched hashes per canonical path rather than in a
- * single global manifest.
- */
 export function classifyLeverframeInjectionByHash(
   content: string,
   sha256: string,

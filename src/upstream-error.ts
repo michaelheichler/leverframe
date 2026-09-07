@@ -1,4 +1,4 @@
-// Short user-facing messages from SDK/upstream failures — no stack traces in Codex TUI.
+
 
 import { APICallError, RetryError } from 'ai';
 import {
@@ -27,7 +27,6 @@ export interface SdkUpstreamErrorDetails {
   failurePhase?: ProviderFailurePhase;
 }
 
-/** Extract the real HTTP failure from an AI SDK retry wrapper without relying on instanceof. */
 export function sdkUpstreamErrorDetails(err: unknown): SdkUpstreamErrorDetails | undefined {
   const retry = RetryError.isInstance(err) ? err : undefined;
   const inner = retry?.lastError ?? err;
@@ -58,7 +57,7 @@ export function sdkUpstreamErrorDetails(err: unknown): SdkUpstreamErrorDetails |
     try {
       errorContent = JSON.stringify(inner.data);
     } catch {
-      // Fall through to the SDK's safe message.
+
     }
   }
 
@@ -83,7 +82,6 @@ export function sdkUpstreamResponseHeaders(
   return headers;
 }
 
-/** True when an upstream SDK/provider error says the model context was exceeded. */
 export function isContextLengthExceededError(err: unknown, formattedMessage = ''): boolean {
   const details = sdkUpstreamErrorDetails(err);
   const rec = err && typeof err === 'object' ? err as ApiCallLike : undefined;
@@ -98,10 +96,7 @@ export function isContextLengthExceededError(err: unknown, formattedMessage = ''
     rec?.lastError?.message,
     ...(rec?.errors?.map(error => error.message) ?? []),
   ].filter((value): value is string => typeof value === 'string');
-  // "context window" and "prompt is too long" are common phrases outside of
-  // context-length errors (marketing copy, 503 overload bodies, leverframe's own
-  // wording used elsewhere). Only classify them when the same candidate string
-  // also carries token-count language, matching the shape real context errors use.
+
   const hasTokenCount = (value: string) => /\d+\s*tokens?/i.test(value);
   return candidates.some(value => (
     /context_length_exceeded/i.test(value)
@@ -130,14 +125,12 @@ export function messageFromErrorPayload(payload: string | undefined): string | u
   return undefined;
 }
 
-/** Why: Claude --print retries HTTP 429 until timeout, so terminal ceilings must not stay 429. */
 export function isTerminalUsageLimitText(...parts: Array<string | undefined>): boolean {
   const text = parts.filter((part): part is string => typeof part === 'string').join('\n');
   if (!text) return false;
   return /GoUsageLimitError|monthly usage limit|weekly limit|out of quota|credit balance is too low|insufficient credits?|usage limit reached|hit your[\s\S]{0,40}limit/i.test(text);
 }
 
-/** Why: remap quota ceilings to 400 so Claude exits with the limit message instead of hanging. */
 export function clientFacingAnthropicStatus(
   upstreamStatus: number,
   message: string,
@@ -157,7 +150,6 @@ export function formatUpstreamError(err: unknown): string {
       : details.errorContent;
   }
 
-  // Why: outer RetryError often drops responseBody, hiding OpenCode GoUsageLimitError text.
   const fromDetails = messageFromErrorPayload(details?.errorContent);
   if (fromDetails) {
     const short = sanitizeMessage(fromDetails);
@@ -202,7 +194,6 @@ export function formatUpstreamError(err: unknown): string {
   return 'Upstream model request failed.';
 }
 
-/** Real upstream HTTP status from an SDK error, falling back to sniffing the formatted message. */
 export function upstreamHttpStatus(err: unknown, message: string): number {
   const details = sdkUpstreamErrorDetails(err);
   if (details?.statusCode !== undefined) return details.statusCode;
@@ -215,7 +206,6 @@ export function upstreamHttpStatus(err: unknown, message: string): number {
   return 500;
 }
 
-/** Anthropic SSE error `type` for a status code — lets clients tell retryable from terminal failures. */
 export function anthropicErrorType(status: number): string {
   switch (status) {
     case 400: return 'invalid_request_error';

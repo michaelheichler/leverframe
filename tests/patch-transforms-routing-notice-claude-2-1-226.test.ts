@@ -12,9 +12,7 @@ const CONFIG = {
     display: 'GPT-5.6 Sol',
   },
 };
-// Verbatim excerpt of the Agent tool's `call()` method signature (2.1.226).
-// Property-key literals come straight from the tool's zod schema, so they
-// are stable across minifier renames of the local identifiers.
+
 const AGENT_CALL_SIGNATURE =
   'async call({prompt:e,subagent_type:t,description:r,model:n,run_in_background:o,name:i,isolation:s,cwd:a},l,c,u,d){';
 const AGENT_CALL =
@@ -54,12 +52,7 @@ describe('Claude Code 2.1.226 routing notice compatibility', () => {
     expect(result.content).toContain('{text:_ccr,color:"success",bold:!0}');
     expect(result.content).toContain('d?.replHydration?.kind!=="resume"');
     expect(result.content).toContain('Object.assign(Object.create(null),{"leverframe:openai-oauth:gpt-5.6-sol":"GPT-5.6 Sol","leverframe:openai-oauth:gpt-5.6-sol[1m]":"GPT-5.6 Sol","sol":"GPT-5.6 Sol","sol[1m]":"GPT-5.6 Sol"})');
-    // PATCH 10d: appends " · <display> · <effort>" to the description local
-    // (`r`) captured from the call() signature, keyed off the call-site
-    // model id (`ne`) captured from AGENT_CALL. The append is guarded by an
-    // exact-suffix check against the freshly-computed display (`_ccad`),
-    // not a bare middle-dot probe, so it never false-suppresses on a
-    // user-written description that happens to contain " · " already.
+
     expect(result.content).toContain('String(ne||"").trim().toLowerCase()');
     expect(result.content).toContain('if(r.indexOf(" \\u00b7 "+_ccad)===-1){r=r+" \\u00b7 "+_ccad+(_ccae?" \\u00b7 "+_ccae:"");}}');
     expect(result.content).not.toMatch(/if\(!\/ [^"]*\/\.test\(r\)\)/);
@@ -76,10 +69,6 @@ describe('Claude Code 2.1.226 routing notice compatibility', () => {
     const drifted = agentLaunchFixture().replace(CHILD_CONTEXT, '');
     const result = applyRoutingNoticeTransform(drifted, CONFIG);
 
-    // The main routing-notice product SKIPs as a unit, but the independent
-    // PATCH 10d description site is unaffected by the runner-context drift
-    // (it only depends on the call-site and call-signature anchors) and
-    // still applies.
     expect(result.results).toEqual([
       { status: 'SKIP', name: 'PATCH 10: routing notice', extra: 'runner anchor not recognized' },
       { status: 'OK', name: 'PATCH 10d: agent description indicator' },

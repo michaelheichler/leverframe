@@ -1,15 +1,10 @@
-/**
- * Owns the optional Copilot SDK process boundary.
- * Construction is inert so non-Copilot providers never load the SDK or its platform runtime.
- */
+
 
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { getAppHome } from '../paths.js';
 
 export const COPILOT_SDK_PACKAGE = '@github/copilot-sdk';
-
-/** Gives one install command only when the optional package cannot be resolved. */
 
 export class CopilotSdkNotInstalledError extends Error {
   constructor(cause: unknown) {
@@ -20,7 +15,6 @@ export class CopilotSdkNotInstalledError extends Error {
   }
 }
 
-/** Reports optional SDK versions that lack the required public surface. */
 export class CopilotSdkIncompatibleError extends Error {
   constructor() {
     super(`Installed ${COPILOT_SDK_PACKAGE} is incompatible. Install ${COPILOT_SDK_PACKAGE}@1.0.9`);
@@ -70,7 +64,6 @@ export interface CopilotSdkModule {
   };
 }
 
-/** Validates the small SDK surface used before constructing a runtime client. */
 export function validateCopilotSdkModule(value: unknown): CopilotSdkModule {
   if (value === null || typeof value !== 'object') {
     throw new CopilotSdkIncompatibleError();
@@ -124,7 +117,6 @@ function parseNodeVersion(version: string): { major: number; minor: number; patc
   };
 }
 
-/** Checks the exact Node.js range declared by the pinned Copilot SDK. */
 export function isCopilotSupportedNodeVersion(version: string): boolean {
   const parsed = parseNodeVersion(version);
   if (parsed.major === 20) return parsed.minor >= 19;
@@ -132,7 +124,6 @@ export function isCopilotSupportedNodeVersion(version: string): boolean {
   return parsed.major > 22;
 }
 
-/** Resolves runtime data under Leverframe's configurable application home. */
 export function resolveCopilotDirectories(env: NodeJS.ProcessEnv): {
   baseDirectory: string;
   workingDirectory: string;
@@ -158,7 +149,6 @@ const GITHUB_CREDENTIAL_ENV_NAMES = new Set([
   'GITHUB_ENTERPRISE_TOKEN',
 ]);
 
-/** Removes ambient auth and Copilot controls before the SDK injects owned settings. */
 function runtimeEnvironment(environment: NodeJS.ProcessEnv): Record<string, string | undefined> {
   return Object.fromEntries(
     Object.entries(environment).filter(([name]) => (
@@ -229,7 +219,7 @@ export function createCopilotRuntime(config: CopilotRuntimeConfig): CopilotRunti
         try {
           await startPromise;
         } catch {
-          // Startup failure is returned to its caller. Cleanup still owns any created client.
+
         }
       }
       return client === undefined ? [] : client.stop();
@@ -283,7 +273,6 @@ export async function loadCopilotSdkModule(): Promise<unknown> {
   return import('@github/copilot-sdk');
 }
 
-/** Constructs the public SDK client without exposing its class to callers. */
 export function createCopilotSdkClient(
   sdk: CopilotSdkModule,
   options: CopilotClientConstructOptions,
@@ -291,7 +280,6 @@ export function createCopilotSdkClient(
   return new sdk.CopilotClient(options);
 }
 
-/** Creates the production runtime handle without loading the optional SDK. */
 export function createDefaultCopilotRuntime(input: {
   gitHubToken: string;
   nodeVersion: string;

@@ -1,4 +1,4 @@
-// SDK fullStream → Anthropic SSE: streaming response emission and block tracking.
+
 import { streamText } from 'ai';
 import type { LanguageModel } from 'ai';
 import {
@@ -22,7 +22,7 @@ import {
 export type SdkTranslationErrorSignature =
   | 'reasoning_part_not_found'
   | 'text_part_not_found';
-/** Classify privacy-safe AI SDK stream-state errors without logging dynamic part ids. */
+
 export function sdkTranslationErrorSignature(error: unknown): SdkTranslationErrorSignature | undefined {
   const message = error instanceof Error
     ? error.message
@@ -38,36 +38,24 @@ type WriteFn = (chunk: string) => void;
 type LogFn = (msg: () => string) => void;
 
 export interface AnthropicStreamObserver {
-  /** Called for every AI SDK fullStream part before Relay translates it. */
+
   onPart?: (partType: string) => void;
-  /** Local fallback used when the provider omits usage at stream completion. */
+
   initialInputTokens?: number;
   inputTokensIncludeCache?: boolean;
   onUsage?: (usage: AnthropicUsageTrace) => void;
   promptCacheKeyHash?: string;
   abortSignal?: AbortSignal;
-  /** Abort if the provider produces no stream event for this long. */
+
   idleTimeoutMs?: number;
-  /**
-   * Request execution context/observer: driven for phase (stream
-   * activity/first-output/tool-call) transitions on every SDK part. Its
-   * `abortSignal` (already composed from the caller's cancellation signal
-   * plus the connect/header/idle/total deadline classes) takes priority
-   * over `abortSignal` above when present. Terminal transitions
-   * (`complete`/`fail`) stay owned by the caller, not this module.
-   */
+
   lifecycle?: RequestExecutionObserver;
-  /** @why Deadline aborts must remain distinct from downstream disconnects. */
+
   clientAbortSignal?: AbortSignal;
   contextWindow?: number;
-  /**
-   * Fired for every client-visible byte written downstream (text-delta,
-   * reasoning-delta, non-empty tool-JSON flush). Drives the output-idle
-   * watchdog in {@link streamAnthropicResponse}, which is reset only by
-   * output, unlike `idleTimeoutMs`, which resets on any SDK part.
-   */
+
   onOutputByte?: () => void;
-  /** Overrides `LEVERFRAME_OUTPUT_IDLE_TIMEOUT_MS`, mirroring `idleTimeoutMs`. */
+
   outputIdleTimeoutMs?: number;
 }
 
@@ -101,7 +89,6 @@ function emptyCompletionError(
   });
 }
 
-/** @why A runaway tool-input-delta stream is a protocol violation, not a content problem. */
 function toolJsonRunawayError(options: {
   modelId: string;
   toolName: string;
@@ -120,7 +107,6 @@ function toolJsonRunawayError(options: {
   });
 }
 
-/** @why An output-idle abort must carry a distinct, retryable category from the SDK-part idle timeout. */
 function outputStallTimeoutError(options: {
   modelId: string;
   timeoutMs: number;
@@ -138,42 +124,39 @@ function outputStallTimeoutError(options: {
   });
 }
 
-/** @why Output-stall aborts must reject immediately, not degrade into a truncated completion. */
 function isOutputStallAbort(signal?: AbortSignal): boolean {
   const reason: unknown = signal?.reason;
   return ProviderTransportError.isInstance(reason)
     && (reason as ProviderTransportError).category === 'output_stall_timeout';
 }
 
-/** @why Malformed durations must retain the configured fallback. */
 export function positiveEnvMs(name: string, fallback: number): number {
   const raw = process.env[name]?.trim() ?? '';
   if (!/^\d+$/.test(raw)) return fallback;
   const value = Number(raw);
   return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
-/** @why Idle detection must remain bounded without imposing a wall-clock cap. */
+
 function sdkStreamIdleTimeoutMs(): number {
   return positiveEnvMs('LEVERFRAME_SDK_IDLE_TIMEOUT_MS', 10 * 60_000);
 }
 
-/** @why Non-stream requests need a backstop while streams rely on idle activity. */
 function nonStreamRequestTimeoutMs(): number {
   return positiveEnvMs('LEVERFRAME_SDK_REQUEST_TIMEOUT_MS', 60 * 60_000);
 }
-/** @why Tool JSON that never reaches the progressive-flush byte threshold still needs a size trigger. */
+
 function toolEarlyFlushByteThreshold(): number {
   return positiveEnvMs('LEVERFRAME_TOOL_EARLY_FLUSH_BYTES', 8_000);
 }
-/** @why A tool call open this long should flush even under the byte threshold. */
+
 function toolEarlyFlushOpenMs(): number {
   return positiveEnvMs('LEVERFRAME_TOOL_EARLY_FLUSH_MS', 5_000);
 }
-/** @why Bounds a runaway tool-input-delta stream independent of the flush thresholds above. */
+
 function toolJsonMaxBytes(): number {
   return positiveEnvMs('LEVERFRAME_TOOL_JSON_MAX_BYTES', 2_000_000);
 }
-/** @why Distinguishes "no client-visible output" from the SDK-part idle timeout above. */
+
 function outputIdleTimeoutMs(): number {
   return positiveEnvMs('LEVERFRAME_OUTPUT_IDLE_TIMEOUT_MS', 45_000);
 }
@@ -186,11 +169,7 @@ function streamAbortError(signal?: AbortSignal): Error {
   error.name = 'AbortError';
   return error;
 }
-/**
- * Forward caller cancellation into a Relay-owned controller without creating
- * an AbortSignal.any() composite. Node 24 retains source-aborted composite
- * signals in its internal gcPersistentSignals set when listeners remain.
- */
+
 function forwardAbortSignal(source: AbortSignal | undefined, target: AbortController): () => void {
   if (!source) return () => {};
   const forward = () => {
@@ -235,11 +214,11 @@ export async function writeAnthropicStream(
     cache_creation_input_tokens: 0,
     cache_read_input_tokens: 0,
   };
-  /** @why Fallback source when the provider's finish part omits outputTokens. */
+
   let outputContentBytes = 0;
 
   const emit = (event: string, data: unknown) => write(sseChunk(event, data));
-  /** @why Early deltas are safe only when sanitization cannot rewrite the payload. */
+
   const toolCanFlushEarly = (id: string): boolean => {
     const rules = inputRules.get(toolNameById.get(id) ?? '');
     return rules === undefined
@@ -247,12 +226,12 @@ export async function writeAnthropicStream(
         && Object.keys(rules.properties).length === 0
         && rules.omitEmptyArrays.size === 0);
   };
-  /** @why omitEmptyArrays tools (e.g. WebSearch) must stay fully buffered: an unsanitized array is an upstream 400. */
+
   const toolExemptFromEarlyFlushOverride = (id: string): boolean => {
     const rules = inputRules.get(toolNameById.get(id) ?? '');
     return rules !== undefined && rules.omitEmptyArrays.size > 0;
   };
-  /** @why A tool that can't safely flush early may still need to, once it has buffered enough or been open long enough. */
+
   const toolShouldEarlyFlush = (id: string): boolean => {
     if (toolCanFlushEarly(id)) return true;
     if (toolExemptFromEarlyFlushOverride(id)) return false;
@@ -261,7 +240,7 @@ export async function writeAnthropicStream(
     const openedAt = toolOpenedAt.get(id);
     return openedAt !== undefined && Date.now() - openedAt >= toolEarlyFlushOpenMs();
   };
-  /** @why Each tool must stop scheduling work once its block closes. */
+
   const clearToolTimer = (id: string): void => {
     const timer = toolFlushTimers.get(id);
     if (timer !== undefined) {
@@ -269,11 +248,11 @@ export async function writeAnthropicStream(
       toolFlushTimers.delete(id);
     }
   };
-  /** @why Early timers must not survive stream completion or failure. */
+
   const clearToolTimers = (): void => {
     for (const id of toolFlushTimers.keys()) clearToolTimer(id);
   };
-  /** @why Cumulative provider fragments require suffix-only downstream deltas. */
+
   const emitToolJson = (id: string, json: string): void => {
     const emittedLength = emittedToolLengths.get(id) ?? 0;
     const emittedPrefix = toolJsonBuffer.get(id)?.slice(0, emittedLength) ?? '';
@@ -294,7 +273,7 @@ export async function writeAnthropicStream(
     observer?.lifecycle?.markOutputEmitted();
     observer?.onOutputByte?.();
   };
-  /** @why Timers flush once early-flush is safe (identity-safe tool, or over the size/time override). */
+
   const flushToolJson = (id: string): void => {
     if (flushedTools.has(id) || !toolShouldEarlyFlush(id)) return;
     emitToolJson(id, toolJsonBuffer.get(id) ?? '');
@@ -337,10 +316,10 @@ export async function writeAnthropicStream(
     ensureStart(); closeOpen(); blockIndex++; openType = type;
     emit('content_block_start', { type: 'content_block_start', index: blockIndex, content_block: contentBlock });
   };
-  /** @why Truncation is useful only while a downstream consumer remains attached. */
+
   const clientStillListening = () =>
     started && observer?.clientAbortSignal !== undefined && !observer.clientAbortSignal.aborted;
-  /** @why Preserving buffered output avoids billing work that the client never receives. */
+
   const deliverTruncated = (): boolean => {
     if (!clientStillListening()) return false;
     closeOpen();
@@ -446,7 +425,7 @@ export async function writeAnthropicStream(
             flushedTools.add(id);
           }
         } else if (openType !== 'tool') {
-          // Non-streamed tool call (no input-start/delta arrived): emit a full block.
+
           const sig = grabRoundTripSignature(part);
           openBlock('tool', {
             type: 'tool_use', id: encodeToolUseId(id, sig), name: part.toolName, input: {},
@@ -529,7 +508,7 @@ export async function writeAnthropicStream(
     clearToolTimers();
   }
 }
-// ── high-level entry points ──────────────────────────────────────────────────
+
 export async function streamAnthropicResponse(
   model: LanguageModel,
   params: SdkCallParams,

@@ -1,10 +1,5 @@
-// Local-server E2E coverage for the RequestExecutionContext/RequestLifecycle
-// wiring in proxy.ts: every deadline class, downstream-disconnect
-// cancellation, malformed/truncated upstream completions, terminal-once
-// safety, and native Anthropic passthrough byte invariance under the
-// wiring. Uses `ProxyRoute.requestDeadlines` (test-only override) so
-// deadlines fire in milliseconds instead of the 30s-10min production
-// defaults.
+
+
 import { describe, it, expect } from 'vitest';
 import http from 'node:http';
 import { aliasModelId, startProxyCatalog, type ProxyRoute } from '../src/proxy.js';
@@ -45,11 +40,7 @@ function postToProxy({ port, token, body, path = '/v1/messages' }: PostToProxyRe
         };
         res.on('data', chunk => { data += chunk; });
         res.on('end', settle);
-        // A deadline-driven abort destroys the socket rather than ending the
-        // stream cleanly — resolve with whatever bytes arrived so a torn-down
-        // connection reads as a truncated response, not a hung test. An
-        // unhandled 'error' on the response would otherwise throw and can
-        // suppress the 'close' event that follows it, so it must settle too.
+
         res.on('close', settle);
         res.on('error', settle);
       },
@@ -87,9 +78,7 @@ describe('request execution — deadline classes (E2E)', () => {
   it('fails fast on the header deadline when the upstream accepts the connection but never responds', async () => {
     const upstream = http.createServer((req) => {
       req.resume();
-      // Accept the connection, read the body, then simply never write a
-      // response — this is a pure header-deadline stall, distinct from a
-      // connect-level hang.
+
     });
     const port = await listen(upstream);
     const route = baseRoute(port, {
@@ -102,8 +91,7 @@ describe('request execution — deadline classes (E2E)', () => {
         token: handle.token,
         body: { model: route.aliasId, messages: [{ role: 'user', content: 'hi' }] },
       });
-      // The lifecycle's header-deadline abort tears down the fetch; the relay
-      // surfaces that as an upstream-unreachable 502.
+
       expect(res.status).toBe(502);
     } finally {
       handle.close();
@@ -117,8 +105,7 @@ describe('request execution — deadline classes (E2E)', () => {
       req.resume();
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       res.write('event: content_block_start\ndata: {}\n\n');
-      // Never write again and never end — the idle deadline (not the header
-      // deadline, already satisfied) must be what tears this down.
+
     });
     const port = await listen(upstream);
     const route = baseRoute(port, {
@@ -131,9 +118,7 @@ describe('request execution — deadline classes (E2E)', () => {
         token: handle.token,
         body: { model: route.aliasId, stream: true, messages: [{ role: 'user', content: 'hi' }] },
       });
-      // Headers were already sent when the idle deadline fires, so the
-      // client observes a truncated 200 stream rather than a fresh error
-      // status — the connection is simply torn down.
+
       expect(res.status).toBe(200);
       expect(res.body).toContain('content_block_start');
     } finally {
@@ -155,11 +140,7 @@ describe('request execution — deadline classes (E2E)', () => {
     });
     const port = await listen(upstream);
     const route = baseRoute(port, {
-      // idleMs is generous relative to the 15ms ping cadence, so only the
-      // total deadline can be what ends this request. totalMs is kept well
-      // above the local loopback header round-trip (even under full-suite
-      // parallel load) so headers are always sent before it fires — a tight
-      // ~100ms budget was flaky under CI-level contention.
+
       requestDeadlines: { connectMs: 5_000, headerMs: 5_000, idleMs: 5_000, totalMs: 400 },
     });
     const handle = await startProxyCatalog([route], route.aliasId, false);
@@ -213,10 +194,7 @@ describe('request execution — downstream disconnect and terminal-once (E2E)', 
       clientReq.on('error', () => {});
       clientReq.end(payload);
       await firstChunkSent;
-      // Local shutdown edge, exercised via the client side: destroying the
-      // client socket is what `req.once('aborted', ...)` in proxy.ts turns
-      // into `clientAbort.abort()`, which the lifecycle's constructor signal
-      // turns into `cancel('local')`.
+
       clientReq.destroy();
       await upstreamClosed;
     } finally {
@@ -238,9 +216,7 @@ describe('request execution — downstream disconnect and terminal-once (E2E)', 
     });
     const handle = await startProxyCatalog([route], route.aliasId, false);
     try {
-      // First request completes normally and settles its lifecycle to
-      // `completed` (a terminal state); nothing about that first terminal
-      // transition should leak into or block the next request.
+
       const first = await postToProxy({
         port: handle.port,
         token: handle.token,

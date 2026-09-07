@@ -15,8 +15,7 @@ export function findBinaryOnPath(
 ): string | null {
   const isWindows = options.isWindows ?? process.platform === 'win32';
   const exists = options.exists ?? existsSync;
-  // argv form, never a shell string — the binary name must not be shell-interpretable
-  // (defense-in-depth originally added in d887984, must survive refactors).
+
   const runWhich = options.runWhich ?? ((binary, win) =>
     execFileSync(win ? 'where.exe' : 'which', [binary], {
       encoding: 'utf8',
@@ -33,7 +32,7 @@ export function findBinaryOnPath(
       ?? lines[0];
     if (path && (!options.verifyWhichResult || exists(path))) return path;
   } catch {
-    // Fall through to fallback paths.
+
   }
 
   for (const path of fallbackPaths) {

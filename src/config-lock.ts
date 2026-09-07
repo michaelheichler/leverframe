@@ -60,7 +60,6 @@ export class ConfigLockBusyError extends Error {
   }
 }
 
-/** @internal Exported for deterministic lock-behavior tests. */
 export const _configLockInternals = {
   lockPath: getConfigLockPath,
   serverPasswordLockPath: getServerPasswordLockPath,

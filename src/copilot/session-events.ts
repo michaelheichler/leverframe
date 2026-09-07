@@ -1,7 +1,4 @@
-/**
- * Adapts one SDK callback event source to a cancellable async stream.
- * The iterator has one reader because one connector request owns each source.
- */
+
 
 export interface EventSession<TEvent> {
   on(handler: (event: TEvent) => void): () => void;
@@ -15,7 +12,6 @@ export interface SessionEventSource<TEvent> extends AsyncIterable<TEvent> {
   close(): void;
 }
 
-/** Queues callback events until the stream consumes or closes them. */
 export function createSessionEventSource<TEvent>(
   session: EventSession<TEvent> | EventSubscription<TEvent>,
 ): SessionEventSource<TEvent> {

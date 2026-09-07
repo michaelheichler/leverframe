@@ -1,9 +1,4 @@
-// Tool-search helpers for Anthropic ↔ upstream proxy translation.
-//
-// Claude Code defers MCP tools (defer_loading: true) and discovers them via
-// tool_reference blocks. Upstream models (Gemini, OpenAI) only receive tools
-// that are immediately available: non-deferred, tool-search, and any tool
-// already referenced in the conversation.
+
 
 import type { AnthropicRequestMessage, AnthropicToolDefinition } from './proxy-types.js';
 
@@ -15,7 +10,6 @@ export function isToolSearchTool(tool: AnthropicToolDefinition): boolean {
   return name.includes('tool_search') || name === 'ToolSearch';
 }
 
-/** Collect tool names referenced anywhere in the message history. */
 export function extractReferencedToolNames(messages: AnthropicRequestMessage[] | undefined): Set<string> {
   const names = new Set<string>();
 
@@ -56,7 +50,6 @@ export function extractReferencedToolNames(messages: AnthropicRequestMessage[] |
   return names;
 }
 
-/** Tools to forward upstream — deferred tools omitted until referenced. */
 export function resolveUpstreamTools(
   tools: AnthropicToolDefinition[] | undefined,
   messages: AnthropicRequestMessage[] | undefined,

@@ -37,18 +37,18 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('runModelsCommand context ceiling flags', () => {
-  it('clears a stored ceiling opt-in even when the model no longer reports a maximum', async () => {
+describe('runModelsCommand retired context ceiling flags', () => {
+  it('preserves a stored ceiling preference and explains the picker migration', async () => {
     savePreferences({ contextCeilingOverrides: ['gpt-5.6-sol'] });
     expect(loadPreferences().contextCeilingOverrides).toEqual(['gpt-5.6-sol']);
 
     const code = await runModelsCommand({ noContextCeiling: 'gpt-5.6-sol' });
 
-    expect(code).toBe(0);
-    expect(loadPreferences().contextCeilingOverrides).toBeUndefined();
+    expect(code).toBe(1);
+    expect(loadPreferences().contextCeilingOverrides).toEqual(['gpt-5.6-sol']);
   });
 
-  it('still refuses to opt in when no live maximum is on record', async () => {
+  it('does not write a new ceiling preference', async () => {
     const code = await runModelsCommand({ contextCeiling: 'gpt-5.6-sol' });
 
     expect(code).toBe(1);

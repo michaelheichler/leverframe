@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { MAX_MODEL_CATALOG } from '../src/constants.js';
-import { buildCatalogRoutes, localModelToRoute } from '../src/catalog.js';
+import { buildCatalogRoutes, canonicalCatalogModelId, localModelToRoute } from '../src/catalog.js';
 import type { FavoriteModel, LocalProvider } from '../src/types.js';
 
 describe('buildCatalogRoutes', () => {
@@ -27,6 +27,33 @@ describe('buildCatalogRoutes', () => {
     expect(routes[0]).toEqual(starting);
     expect(routes).toHaveLength(2);
     expect(droppedFavorites).toEqual([{ providerId: 'zen', modelId: 'claude-sonnet-4' }]);
+  });
+});
+
+describe('canonicalCatalogModelId', () => {
+  it('normalizes catalog aliases to the picker identity', () => {
+    expect(canonicalCatalogModelId({
+      aliasId: 'anthropic-openai-oauth__gpt-5.6-luna[1m]',
+      providerId: 'openai-oauth',
+    })).toBe('leverframe:openai-oauth:gpt-5.6-luna');
+  });
+
+  it('keeps an existing canonical identity stable', () => {
+    expect(canonicalCatalogModelId({
+      aliasId: 'leverframe:openai:gpt-5.5',
+      providerId: 'openai',
+    })).toBe('leverframe:openai:gpt-5.5');
+  });
+
+  it('removes default and maximum markers before constructing the identity', () => {
+    expect(canonicalCatalogModelId({
+      aliasId: 'anthropic-openai-oauth__gpt-5.6-luna[maximum][default]',
+      providerId: 'openai-oauth',
+    })).toBe('leverframe:openai-oauth:gpt-5.6-luna');
+    expect(canonicalCatalogModelId({
+      aliasId: 'leverframe:openai:gpt-5.5[maximum]',
+      providerId: 'openai',
+    })).toBe('leverframe:openai:gpt-5.5');
   });
 });
 

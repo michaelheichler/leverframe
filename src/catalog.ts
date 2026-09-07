@@ -1,10 +1,22 @@
-// Route map + catalog assembly for the mid-session /model switch menu.
+
 import { MAX_MODEL_CATALOG } from './constants.js';
-import { claudeCodeClientModelId } from './context-model-id.js';
+import { claudeCodeClientModelId, stripContextMarkers } from './context-model-id.js';
 import { isSdkMigratedNpm } from './provider-factory.js';
 import { aliasModelId } from './proxy.js';
 import type { ProxyRoute } from './proxy.js';
 import type { FavoriteModel, LocalProvider, LocalProviderModel } from './types.js';
+
+export function canonicalCatalogModelId(
+  route: Pick<ProxyRoute, 'aliasId' | 'providerId'>,
+): string | undefined {
+  if (!route.providerId) return undefined;
+  const alias = stripContextMarkers(route.aliasId);
+  if (alias.startsWith('leverframe:')) return alias;
+  const separator = alias.indexOf('__');
+  const modelId = separator >= 0 ? alias.slice(separator + 2) : alias;
+  if (!modelId) return undefined;
+  return `leverframe:${route.providerId}:${modelId}`;
+}
 
 export function localModelToRoute(lp: LocalProvider, model: LocalProviderModel): ProxyRoute | null {
   if (model.modelFormat === 'anthropic' && !model.baseUrl) return null;
@@ -18,6 +30,10 @@ export function localModelToRoute(lp: LocalProvider, model: LocalProviderModel):
     apiKey: lp.apiKey,
     modelFormat: model.modelFormat,
     contextWindow: model.contextWindow,
+    maxContextWindow: model.maxContextWindow,
+    inputTokenLimit: model.inputTokenLimit,
+    outputTokenLimit: model.outputTokenLimit,
+    minimalClientVersion: model.minimalClientVersion,
     contextWindowUnconfirmed: model.contextWindowUnconfirmed,
     npm: model.npm,
     baseURL: model.apiBaseUrl,
@@ -28,6 +44,14 @@ export function localModelToRoute(lp: LocalProvider, model: LocalProviderModel):
     headers: lp.headers,
     supportedParameters: model.supportedParameters,
     reasoning: model.reasoning,
+    supportsTemperature: model.supportsTemperature,
+    supportedReasoningEfforts: model.supportedReasoningEfforts,
+    defaultReasoningEffort: model.defaultReasoningEffort,
+    supportsReasoningSummaries: model.supportsReasoningSummaries,
+    supportsReasoningSummaryParameter: model.supportsReasoningSummaryParameter,
+    supportsParallelToolCalls: model.supportsParallelToolCalls,
+    supportsReasoningToggle: model.supportsReasoningToggle,
+    supportsPromptCacheBreakpoints: model.supportsPromptCacheBreakpoints,
     interleavedReasoningField: model.interleavedReasoningField,
     useResponsesLite: model.useResponsesLite,
     preferWebSockets: model.preferWebSockets,
@@ -44,16 +68,6 @@ export function makeRouteResolver(
   };
 }
 
-/**
- * Claude-specific catalog builder. Takes a `resolveRoute` function (not a
- * ResolveContext) and returns built ProxyRoute[] — does NOT delegate to
- * `buildFavoritesList` in `./favorites-resolver.ts` because the input/output
- * shapes are different (closure-based lookup vs. ResolveContext, ProxyRoute
- * vs. ResolvedFavorite). The dedup+cap pattern is duplicated here on purpose;
- * cross-surface shared resolution lives in `favorites-resolver.ts` and is
- * intended to be consumed by other call sites (Codex, Server) that need a
- * route-shape-agnostic intermediate result.
- */
 export function buildCatalogRoutes(
   startingRoute: ProxyRoute,
   favorites: FavoriteModel[],
