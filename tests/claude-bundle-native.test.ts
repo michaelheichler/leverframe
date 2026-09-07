@@ -30,6 +30,14 @@ afterEach(() => {
 });
 
 type FixtureModule = [name: string, content: Buffer, bytecode?: Buffer];
+type NativePlatform = 'linux' | 'darwin';
+type NativeFormat = 'ELF' | 'MachO';
+type NativeFixtureOptions = { platform: NativePlatform; format: NativeFormat };
+
+const NATIVE_PLATFORMS: NativeFixtureOptions[] = [
+  { platform: 'linux', format: 'ELF' },
+  { platform: 'darwin', format: 'MachO' },
+];
 
 function makeBunSection(modules: FixtureModule[]): Buffer {
   const offsets = new Map<string, { offset: number; length: number }>();
@@ -86,27 +94,50 @@ function makeBunSection(modules: FixtureModule[]): Buffer {
   return section;
 }
 
-function nativeFixture(section: Buffer): string {
+function nativeFixture(section: Buffer, fixture: NativeFixtureOptions): string {
   const root = mkdtempSync(join(tmpdir(), 'leverframe-native-extraction-'));
   roots.push(root);
   const binaryPath = join(root, 'claude');
-  writeFileSync(binaryPath, Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
-  parse.mockReturnValue({
-    format: 'MachO',
-    getSegment: (name: string) => name === '__BUN'
-      ? { getSection: (sectionName: string) => sectionName === '__bun' ? { content: section } : undefined }
-      : undefined,
-  });
+  writeFileSync(binaryPath, fixture.format === 'ELF'
+    ? Buffer.from([0x7f, 0x45, 0x4c, 0x46])
+    : Buffer.from([0xcf, 0xfa, 0xed, 0xfe]));
+  const bunSection = { content: section, fileOffset: 0n };
+  parse.mockReturnValue(fixture.format === 'ELF'
+    ? {
+        format: 'ELF',
+        getSection: (name: string) => name === '.bun' ? bunSection : undefined,
+        hasOverlay: false,
+      }
+    : {
+        format: 'MachO',
+        getSegment: (name: string) => name === '__BUN'
+          ? { getSection: (sectionName: string) => sectionName === '__bun' ? bunSection : undefined }
+          : undefined,
+      });
   return binaryPath;
 }
 
-describe('native Claude bundle extraction', () => {
-  it('reports an explicit error instead of decoding bytecode-only content without network access', () => {
-    const bytecode = Buffer.concat([Buffer.from(`${BUN_BYTECODE_PREFIX}\n`, 'utf8'), Buffer.from([0x00, 0xff, 0x80])]);
-    const binaryPath = nativeFixture(makeBunSection([['claude', bytecode]]));
+function extractForPlatform(
+  section: Buffer,
+  fixture: NativeFixtureOptions,
+  version?: string,
+  options: { allowNetwork?: boolean } = {},
+) {
+  const binaryPath = nativeFixture(section, fixture);
+  const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue(fixture.platform);
+  try {
+    return extractClaudeJsFromNativeInstallation(binaryPath, version, options);
+  } finally {
+    platform.mockRestore();
+  }
+}
 
-    const extracted = extractClaudeJsFromNativeInstallation(
-      binaryPath,
+describe('native Claude bundle extraction', () => {
+  it.each(NATIVE_PLATFORMS)('reports an explicit error for bytecode-only $format on $platform without network access', (fixture) => {
+    const bytecode = Buffer.concat([Buffer.from(`${BUN_BYTECODE_PREFIX}\n`, 'utf8'), Buffer.from([0x00, 0xff, 0x80])]);
+    const extracted = extractForPlatform(
+      makeBunSection([['claude', bytecode]]),
+      fixture,
       '2.1.263',
       { allowNetwork: false },
     );
@@ -117,15 +148,14 @@ describe('native Claude bundle extraction', () => {
     expect(extracted.error).toMatch(/network/i);
   });
 
-  it('rejects bytecode in a secondary module before concatenating it as UTF-8', () => {
+  it.each(NATIVE_PLATFORMS)('rejects bytecode in a secondary module on $platform before concatenating it as UTF-8', (fixture) => {
     const bytecode = Buffer.concat([Buffer.from(`${BUN_BYTECODE_PREFIX}\n`, 'utf8'), Buffer.from([0x00, 0xff, 0x80])]);
-    const binaryPath = nativeFixture(makeBunSection([
-      ['claude', Buffer.from('export const cli = true;', 'utf8')],
-      ['chunk-runtime.js', bytecode],
-    ]));
-
-    const extracted = extractClaudeJsFromNativeInstallation(
-      binaryPath,
+    const extracted = extractForPlatform(
+      makeBunSection([
+        ['claude', Buffer.from('export const cli = true;', 'utf8')],
+        ['chunk-runtime.js', bytecode],
+      ]),
+      fixture,
       undefined,
       { allowNetwork: false },
     );
@@ -134,17 +164,31 @@ describe('native Claude bundle extraction', () => {
     expect(extracted.error).toMatch(/Bun bytecode/i);
   });
 
-  it('keeps a source module readable when Bun stores a bytecode cache beside it', () => {
+  it.each(NATIVE_PLATFORMS)('keeps a source module readable with a bytecode cache on $platform', (fixture) => {
     const source = Buffer.from(`${BUN_BYTECODE_PREFIX}\nexport const cli = true;`, 'utf8');
     const cachedBytecode = Buffer.from([0xde, 0xad, 0xbe, 0xef]);
-    const binaryPath = nativeFixture(makeBunSection([['claude', source, cachedBytecode]]));
-
-    const extracted = extractClaudeJsFromNativeInstallation(
-      binaryPath,
+    const extracted = extractForPlatform(
+      makeBunSection([['claude', source, cachedBytecode]]),
+      fixture,
       undefined,
       { allowNetwork: false },
     );
 
     expect(extracted).toEqual({ data: source, clearBytecode: false });
+  });
+
+  it.each([
+    { platform: 'linux' as const, format: 'MachO' as const, expected: 'ELF' },
+    { platform: 'darwin' as const, format: 'ELF' as const, expected: 'MachO' },
+  ])('rejects a $format fixture when running on $platform', ({ expected, ...fixture }) => {
+    const extracted = extractForPlatform(
+      makeBunSection([['claude', Buffer.from('export const cli = true;', 'utf8')]]),
+      fixture,
+      undefined,
+      { allowNetwork: false },
+    );
+
+    expect(extracted.data).toBeNull();
+    expect(extracted.error).toMatch(new RegExp(`does not match ${fixture.platform} \\(${expected}\\)`));
   });
 });

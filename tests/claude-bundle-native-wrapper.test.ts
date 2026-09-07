@@ -54,20 +54,24 @@ describe('Nix native wrapper resolution', () => {
       name: 'unquoted makeCWrapper path',
       format: 'ELF' as const,
       text: 'makeCWrapper /nix/store/abc123-claude/bin/claude\0--argv0\0',
+      expected: '/nix/store/abc123-claude/bin/claude',
+    },
+    {
+      name: 'quoted makeCWrapper path',
+      format: 'ELF' as const,
+      text: "makeCWrapper '/nix/store/ghi789-claude/bin/claude'\0--argv0\0",
+      expected: '/nix/store/ghi789-claude/bin/claude',
     },
     {
       name: 'fallback Nix path',
       format: 'MachO' as const,
       text: 'wrapper target /nix/store/def456-claude/bin/claude\0next C string\0',
+      expected: '/nix/store/def456-claude/bin/claude',
     },
-  ])('stops $name at the C-string terminator', ({ format, text }) => {
+  ])('stops $name at the C-string terminator', ({ format, text, expected }) => {
     const binaryPath = wrapperFixture();
     parse.mockReturnValue(binaryFixture(format, text));
 
-    expect(resolveNixBinaryWrapper(binaryPath)).toBe(
-      format === 'ELF'
-        ? '/nix/store/abc123-claude/bin/claude'
-        : '/nix/store/def456-claude/bin/claude',
-    );
+    expect(resolveNixBinaryWrapper(binaryPath)).toBe(expected);
   });
 });
