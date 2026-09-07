@@ -5,11 +5,11 @@ import {
   getReasoningCapabilities,
   isSdkMigratedNpm,
   maxToolsForNpm,
-  modelPrefersResponsesApi,
   shouldUseOpenAiResponsesEndpoint,
   thinkingProviderOptions,
 } from '../src/provider-factory.js';
 import { VERTEX_ANTHROPIC_NPM } from '../src/constants.js';
+import { OPENAI_OAUTH_ASTRA_MODEL } from './fixtures/openai-oauth-astra-metadata.js';
 
 vi.mock('../src/registry/url-security.js', () => ({
   isHardcodedTrustedHost: (url: string) => {
@@ -40,22 +40,6 @@ describe('isSdkMigratedNpm', () => {
   });
 });
 
-describe('modelPrefersResponsesApi', () => {
-  it('detects OpenAI and xAI responses-only models', () => {
-    expect(modelPrefersResponsesApi('gpt-5.5')).toBe(true);
-    expect(modelPrefersResponsesApi('gpt-5.5-fast')).toBe(true);
-    expect(modelPrefersResponsesApi('gpt-5.6')).toBe(true);
-    expect(modelPrefersResponsesApi('gpt-5.6-fast')).toBe(true);
-    expect(modelPrefersResponsesApi('gpt-5.6-sol')).toBe(true);
-    expect(modelPrefersResponsesApi('gpt-5.6-terra')).toBe(true);
-    expect(modelPrefersResponsesApi('gpt-5.6-luna')).toBe(true);
-    expect(modelPrefersResponsesApi('gpt-5.2-pro')).toBe(true);
-    expect(modelPrefersResponsesApi('grok-4.20-multi-agent')).toBe(true);
-    expect(modelPrefersResponsesApi('gpt-4o')).toBe(false);
-    expect(modelPrefersResponsesApi('gpt-5.2')).toBe(false);
-  });
-});
-
 describe('shouldUseOpenAiResponsesEndpoint', () => {
   it('defaults every OpenAI model to the Responses endpoint', () => {
     expect(shouldUseOpenAiResponsesEndpoint('gpt-4o')).toBe(true);
@@ -64,10 +48,8 @@ describe('shouldUseOpenAiResponsesEndpoint', () => {
     expect(shouldUseOpenAiResponsesEndpoint('gpt-7-does-not-exist-yet')).toBe(true);
   });
 
-  it('keeps pre-chat legacy completion models on Chat Completions', () => {
-    expect(shouldUseOpenAiResponsesEndpoint('davinci-002')).toBe(false);
-    expect(shouldUseOpenAiResponsesEndpoint('babbage-002')).toBe(false);
-    expect(shouldUseOpenAiResponsesEndpoint('gpt-3.5-turbo-instruct')).toBe(false);
+  it('honors an explicit Chat Completions capability', () => {
+    expect(shouldUseOpenAiResponsesEndpoint('legacy-model', 'chat')).toBe(false);
   });
 });
 
@@ -104,16 +86,21 @@ describe('getReasoningCapabilities', () => {
     expect(caps.supportsSummaries).toBe(false);
   });
 
-  it('returns high/off only for mistral-large', () => {
-    const caps = getReasoningCapabilities('@ai-sdk/mistral', 'mistral-large');
+  it('uses the reported levels for a Mistral model', () => {
+    const caps = getReasoningCapabilities('@ai-sdk/mistral', 'mistral-large', {
+      reasoning: true,
+      supportedReasoningEfforts: ['high', 'off'],
+      defaultReasoningEffort: 'high',
+    });
     expect(caps.levels).toEqual(['high', 'off']);
     expect(caps.defaultLevel).toBe('high');
   });
 
-  it('returns budget-mapped levels for gemini-2.5-pro', () => {
-    const caps = getReasoningCapabilities('@ai-sdk/google', 'gemini-2.5-pro');
-    expect(caps.levels).toEqual(['low', 'medium', 'high']);
-    expect(caps.defaultLevel).toBe('medium');
+  it('does not turn a Google budget-token report into guessed effort levels', () => {
+    const caps = getReasoningCapabilities('@ai-sdk/google', 'gemini-2.5-pro', { reasoning: true });
+    expect(caps.levels).toEqual([]);
+    expect(caps.defaultLevel).toBe('');
+    expect(caps.mode).toBe('internal-only');
   });
 
   it('returns empty levels for unknown openai-compatible models', () => {
@@ -122,31 +109,88 @@ describe('getReasoningCapabilities', () => {
     expect(caps.defaultLevel).toBe('');
   });
 
+  it('uses reported reasoning levels for a future OpenAI model', () => {
+    const caps = getReasoningCapabilities('@ai-sdk/openai', 'gpt-6-astra', {
+      reasoning: true,
+      supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultReasoningEffort: 'high',
+    });
+
+    expect(caps.levels).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    expect(caps.defaultLevel).toBe('high');
+    expect(caps.source).toBe('model-metadata');
+  });
+
+  it('forces the SDK reasoning path from reported capabilities', () => {
+    const metadata = {
+      reasoning: true,
+      supportedReasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+    };
+
+    expect(effortProviderOptions('@ai-sdk/openai', 'max', 'gpt-6-astra', metadata)).toEqual({
+      openai: {
+        reasoningEffort: 'max',
+        forceReasoning: true,
+        systemMessageMode: 'developer',
+      },
+    });
+    expect(thinkingProviderOptions('@ai-sdk/openai', metadata)?.openai).toMatchObject({
+      forceReasoning: true,
+      systemMessageMode: 'developer',
+    });
+  });
+
+  it('rejects an effort absent from the reported levels', () => {
+    expect(effortProviderOptions('@ai-sdk/openai', 'max', 'gpt-6-astra', {
+      reasoning: true,
+      supportedReasoningEfforts: ['low', 'medium', 'high'],
+    })).toBeUndefined();
+  });
+
   it('returns empty levels for grok-build-0.1 (internal reasoning only)', () => {
     const caps = getReasoningCapabilities('@ai-sdk/xai', 'grok-build-0.1');
     expect(caps.levels).toEqual([]);
   });
 
-  it('returns effort levels for grok-4.3, defaulting to low per xAI docs', () => {
-    const caps = getReasoningCapabilities('@ai-sdk/xai', 'grok-4.3');
+  it('uses the reported effort levels for xAI models', () => {
+    const caps = getReasoningCapabilities('@ai-sdk/xai', 'grok-4.3', {
+      reasoning: true,
+      supportedReasoningEfforts: ['none', 'low', 'medium', 'high'],
+      defaultReasoningEffort: 'low',
+    });
     expect(caps.levels).toEqual(['none', 'low', 'medium', 'high']);
     expect(caps.defaultLevel).toBe('low');
   });
 
-  it('returns effort levels for grok-4.5, defaulting to high per xAI docs', () => {
-    const caps = getReasoningCapabilities('@ai-sdk/xai', 'grok-4.5');
+  it('preserves the reported xAI default exactly', () => {
+    const caps = getReasoningCapabilities('@ai-sdk/xai', 'grok-4.5', {
+      reasoning: true,
+      supportedReasoningEfforts: ['none', 'low', 'medium', 'high'],
+      defaultReasoningEffort: 'high',
+    });
     expect(caps.levels).toEqual(['none', 'low', 'medium', 'high']);
     expect(caps.defaultLevel).toBe('high');
   });
 
-  it('returns high/max/off for deepseek-v4-flash', () => {
-    const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', 'deepseek-v4-flash');
-    expect(caps.levels).toEqual(['high', 'max', 'off']);
+  it('uses DeepSeek effort and toggle metadata without adding an off level', () => {
+    const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', 'deepseek-v4-flash', {
+      reasoning: true,
+      supportedReasoningEfforts: ['high', 'max'],
+      defaultReasoningEffort: 'high',
+      supportsReasoningToggle: true,
+    });
+    expect(caps.levels).toEqual(['high', 'max']);
     expect(caps.defaultLevel).toBe('high');
+    expect(caps.wireFormat).toEqual({ kind: 'deepseek-thinking' });
   });
 
-  it('returns documented GLM-5.2 reasoning levels for OpenAI-compatible routes', () => {
-    const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', 'glm-5.2');
+  it('uses reported GLM reasoning levels for OpenAI-compatible routes', () => {
+    const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', 'glm-5.2', {
+      reasoning: true,
+      supportedParameters: ['reasoning_effort'],
+      supportedReasoningEfforts: ['high', 'xhigh'],
+      defaultReasoningEffort: 'high',
+    });
     expect(caps.levels).toEqual(['high', 'xhigh']);
     expect(caps.defaultLevel).toBe('high');
     expect(caps.wireFormat).toEqual({ kind: 'openai-reasoning-effort' });
@@ -155,7 +199,12 @@ describe('getReasoningCapabilities', () => {
   it.each(['k3', 'kimi-for-coding', 'kimi-for-coding-highspeed'])(
     'returns compatible reasoning levels for Kimi Coding Plan model %s',
     modelId => {
-      const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', modelId);
+      const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', modelId, {
+        reasoning: true,
+        supportedParameters: ['reasoning_effort'],
+        supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+        defaultReasoningEffort: 'high',
+      });
       expect(caps.levels).toEqual(['low', 'medium', 'high', 'xhigh']);
       expect(caps.defaultLevel).toBe('high');
       expect(caps.wireFormat).toEqual({ kind: 'openai-reasoning-effort' });
@@ -164,22 +213,39 @@ describe('getReasoningCapabilities', () => {
 
   it('maps DeepSeek effort to openaiCompatible reasoningEffort + thinking enabled', () => {
     const merged = deepMergeProviderOptions(
-      effortProviderOptions('@ai-sdk/openai-compatible', 'max', 'deepseek-v4-flash'),
+      effortProviderOptions('@ai-sdk/openai-compatible', 'max', 'deepseek-v4-flash', {
+        reasoning: true,
+        supportedReasoningEfforts: ['high', 'max'],
+        supportsReasoningToggle: true,
+      }),
     );
     expect(merged?.openaiCompatible).toMatchObject({ reasoningEffort: 'max' });
     expect(merged?.deepseek).toMatchObject({ thinking: { type: 'enabled' } });
   });
 
-  it('maps Claude low effort to DeepSeek high', () => {
-    const opts = effortProviderOptions('@ai-sdk/openai-compatible', 'low', 'deepseek-v4-pro');
-    expect(opts?.openaiCompatible).toMatchObject({ reasoningEffort: 'high' });
+  it('omits an effort absent from DeepSeek metadata', () => {
+    const opts = effortProviderOptions('@ai-sdk/openai-compatible', 'low', 'deepseek-v4-pro', {
+      reasoning: true,
+      supportedReasoningEfforts: ['high', 'max'],
+      supportsReasoningToggle: true,
+    });
+    expect(opts).toBeUndefined();
   });
 
-  it('maps GLM-5.2 effort to OpenAI-compatible reasoningEffort', () => {
-    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'xhigh', 'glm-5.2')).toEqual({
-      openaiCompatible: { reasoningEffort: 'max' },
+  it('preserves the reported GLM effort on OpenAI-compatible routes', () => {
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'xhigh', 'glm-5.2', {
+      providerId: 'zai',
+      reasoning: true,
+      supportedParameters: ['reasoning_effort'],
+      supportedReasoningEfforts: ['high', 'xhigh'],
+    })).toEqual({
+      zai: { reasoningEffort: 'xhigh' },
     });
-    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'low', 'glm-5.2')).toBeUndefined();
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'low', 'glm-5.2', {
+      reasoning: true,
+      supportedParameters: ['reasoning_effort'],
+      supportedReasoningEfforts: ['high', 'xhigh'],
+    })).toBeUndefined();
   });
 });
 
@@ -187,7 +253,10 @@ describe('effortProviderOptions + deepMergeProviderOptions', () => {
   it('merges OpenAI thinking + effort without dropping store/include', () => {
     const merged = deepMergeProviderOptions(
       thinkingProviderOptions('@ai-sdk/openai'),
-      effortProviderOptions('@ai-sdk/openai', 'high', 'gpt-5.4'),
+      effortProviderOptions('@ai-sdk/openai', 'high', 'gpt-5.4', {
+        reasoning: true,
+        supportedReasoningEfforts: ['low', 'medium', 'high'],
+      }),
     );
     expect(merged?.openai).toMatchObject({
       store: false,
@@ -196,14 +265,20 @@ describe('effortProviderOptions + deepMergeProviderOptions', () => {
     });
   });
 
-  it('merges Google thinking + effort budget', () => {
+  it('merges Google thinking + reported effort', () => {
     const merged = deepMergeProviderOptions(
-      thinkingProviderOptions('@ai-sdk/google'),
-      effortProviderOptions('@ai-sdk/google', 'high', 'gemini-2.5-pro'),
+      thinkingProviderOptions('@ai-sdk/google', {
+        reasoning: true,
+        supportedReasoningEfforts: ['high'],
+      }),
+      effortProviderOptions('@ai-sdk/google', 'high', 'gemini-2.5-pro', {
+        reasoning: true,
+        supportedReasoningEfforts: ['high'],
+      }),
     );
     expect(merged?.google?.thinkingConfig).toMatchObject({
       includeThoughts: true,
-      thinkingBudget: 8192,
+      thinkingLevel: 'high',
     });
   });
 
@@ -233,6 +308,7 @@ describe('createLanguageModel', () => {
       apiKey: accessToken,
       authType: 'oauth',
       oauthAccountId: 'stored-acct-456',
+      preferWebSockets: true,
     });
 
     expect(createOpenAI).toHaveBeenCalledWith({
@@ -245,6 +321,59 @@ describe('createLanguageModel', () => {
       },
     });
     expect(responses).toHaveBeenCalledWith('gpt-5.5');
+    vi.doUnmock('@ai-sdk/openai');
+  });
+
+  it('uses the HTTP Responses transport when discovery does not prefer WebSockets', async () => {
+    vi.resetModules();
+    const responses = vi.fn((modelId: string) => ({ modelId, provider: 'openai-responses' }));
+    const chat = vi.fn((modelId: string) => ({ modelId, provider: 'openai-chat' }));
+    const createOpenAI = vi.fn(() => ({ responses, chat }));
+    vi.doMock('@ai-sdk/openai', () => ({ createOpenAI }));
+
+    const { createLanguageModel: create } = await import('../src/provider-factory.js');
+    await create({
+      npm: '@ai-sdk/openai',
+      modelId: 'gpt-6-astra',
+      apiKey: 'opaque-access-token',
+      authType: 'oauth',
+      preferWebSockets: false,
+    });
+
+    expect(createOpenAI).toHaveBeenCalledWith({
+      apiKey: 'opaque-access-token',
+      baseURL: 'https://chatgpt.com/backend-api/codex',
+      headers: { originator: 'leverframe' },
+    });
+    expect(responses).toHaveBeenCalledWith('gpt-6-astra');
+    vi.doUnmock('@ai-sdk/openai');
+  });
+
+  it('uses the live minimum client version for Responses Lite models', async () => {
+    vi.resetModules();
+    const responses = vi.fn((modelId: string) => ({ modelId, provider: 'openai-responses' }));
+    const chat = vi.fn((modelId: string) => ({ modelId, provider: 'openai-chat' }));
+    const createOpenAI = vi.fn(() => ({ responses, chat }));
+    vi.doMock('@ai-sdk/openai', () => ({ createOpenAI }));
+
+    const { createLanguageModel: create } = await import('../src/provider-factory.js');
+    await create({
+      npm: '@ai-sdk/openai',
+      modelId: 'gpt-6-astra',
+      apiKey: 'opaque-access-token',
+      authType: 'oauth',
+      useResponsesLite: true,
+      minimalClientVersion: OPENAI_OAUTH_ASTRA_MODEL.minimal_client_version,
+    });
+
+    expect(createOpenAI).toHaveBeenCalledWith(expect.objectContaining({
+      headers: {
+        originator: 'leverframe',
+        version: OPENAI_OAUTH_ASTRA_MODEL.minimal_client_version,
+        'x-openai-internal-codex-responses-lite': 'true',
+      },
+    }));
+    expect(responses).toHaveBeenCalledWith('gpt-6-astra');
     vi.doUnmock('@ai-sdk/openai');
   });
 
@@ -514,13 +643,14 @@ describe('createLanguageModel', () => {
     vi.doUnmock('@ai-sdk/openai-compatible');
   });
 
-  it('thinkingProviderOptions emits nothing for openai-compatible (Kimi/z.ai), only for openai/google', () => {
+  it('emits thinking options only when metadata reports the capability', () => {
     expect(thinkingProviderOptions('@ai-sdk/openai-compatible')).toBeUndefined();
     expect(thinkingProviderOptions('@ai-sdk/openai')).toEqual({
       openai: { store: false, include: ['reasoning.encrypted_content'] },
     });
-    expect(thinkingProviderOptions('@ai-sdk/google')).toEqual({
+    expect(thinkingProviderOptions('@ai-sdk/google', { reasoning: true })).toEqual({
       google: { thinkingConfig: { includeThoughts: true } },
     });
+    expect(thinkingProviderOptions('@ai-sdk/google')).toBeUndefined();
   });
 });

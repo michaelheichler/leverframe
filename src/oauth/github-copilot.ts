@@ -1,7 +1,4 @@
-/**
- * Owns GitHub OAuth App device authorization for Copilot subscriptions.
- * It stores only the durable GitHub bearer token. The Copilot SDK owns its internal tokens.
- */
+
 
 import { OAUTH_REQUEST_TIMEOUT_MS, withAbortTimeout } from './fetch-timeout.js';
 import type { OAuthTokenResponse, StoredOAuthCredential } from './types.js';
@@ -232,7 +229,6 @@ function tokenPollingFailure(error: string): Error {
   return new Error(`GitHub Copilot device authorization failed with ${error}`);
 }
 
-/** Requests an unscoped device code from the Leverframe GitHub OAuth App. */
 export async function requestGitHubCopilotDeviceCode(
   signal: AbortSignal | undefined,
 ): Promise<GitHubCopilotDeviceCodeData> {
@@ -257,12 +253,10 @@ export async function requestGitHubCopilotDeviceCode(
   }));
 }
 
-/** Returns the verification location supplied for this device authorization. */
 export function githubCopilotDeviceCodeUrl(deviceData: GitHubCopilotDeviceCodeData): string {
   return deviceData.verification_uri;
 }
 
-/** Polls at GitHub's required interval until authorization succeeds or terminates. */
 export async function pollGitHubCopilotDeviceCodeToken(
   deviceData: GitHubCopilotDeviceCodeData,
   options: GitHubCopilotPollingOptions,
@@ -331,7 +325,6 @@ export async function pollGitHubCopilotDeviceCodeToken(
   throw new Error('GitHub Copilot device authorization timed out');
 }
 
-/** Runs one device authorization attempt and reports the user-facing code once. */
 export async function runGitHubCopilotDeviceCodeFlow(
   onDeviceCode: (info: { url: string; userCode: string }) => void,
   options: GitHubCopilotPollingOptions,
@@ -344,7 +337,6 @@ export async function runGitHubCopilotDeviceCodeFlow(
   return pollGitHubCopilotDeviceCodeToken(deviceData, options);
 }
 
-/** Converts a GitHub OAuth token into a durable, JSON-safe keychain credential. */
 export function githubCopilotTokensToStoredCredential(
   tokens: OAuthTokenResponse,
 ): StoredOAuthCredential {

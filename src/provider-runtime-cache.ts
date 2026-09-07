@@ -29,12 +29,6 @@ function immutableSnapshot(generation: number, credential: string): CredentialSn
   });
 }
 
-/**
- * Owns immutable credential generations and the provider handles built from
- * them. Handle construction and rejected-token refresh are single-flight per
- * route, and a successful rotation makes every old-generation handle
- * unreachable before the new generation is published to callers.
- */
 export class ProviderRuntimeCache<T> {
   private readonly credentials = new Map<string, CredentialSnapshot>();
   private readonly handles = new Map<string, HandleEntry<T>>();
@@ -58,9 +52,7 @@ export class ProviderRuntimeCache<T> {
     create: (credential: CredentialSnapshot) => Promise<T>,
   ): Promise<T> {
     if (this.disposed) throw new Error('Provider runtime cache has been disposed');
-    // A caller may have captured a snapshot immediately before another request
-    // rotated the route. Canonicalize it here so that stale request-local state
-    // can never recreate a handle for an already-superseded generation.
+
     const credential = this.credentials.get(routeKey) ?? requestedCredential;
     const cacheKey = this.handleKey(routeKey, credential);
     const existing = this.handles.get(cacheKey);
@@ -129,9 +121,7 @@ export class ProviderRuntimeCache<T> {
     if (previous.fingerprint === fingerprintCredential(refreshedCredential)) return previous;
 
     const current = immutableSnapshot(previous.generation + 1, refreshedCredential);
-    // Removing stale entries and invoking the transport-eviction hook are both
-    // synchronous up to the returned promises. Publish immediately afterward,
-    // without an await gap in which an old snapshot could recreate stale state.
+
     const disposals = this.evictStaleHandles(routeKey, current);
     let transportEviction: void | Promise<void>;
     try {
@@ -160,7 +150,6 @@ export class ProviderRuntimeCache<T> {
     return disposals;
   }
 
-  /** Disposes every reachable provider handle and rejects later cache access. */
   dispose(): Promise<void> {
     if (this.disposePromise !== undefined) return this.disposePromise;
     this.disposed = true;

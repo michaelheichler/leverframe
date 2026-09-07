@@ -1,7 +1,4 @@
-/**
- * Validates public Copilot SDK model records and materializes registry metadata.
- * It never infers capabilities or limits that `listModels()` did not confirm.
- */
+
 
 import type {
   CachedModel,
@@ -13,7 +10,6 @@ type JsonRecord = Record<string, unknown>;
 
 export type CopilotModelFailureKind = ModelDiscoveryFailureKind;
 
-/** Distinguishes SDK schema drift from runtime transport failures. */
 class CopilotModelValidationError extends TypeError {
   constructor(message: string) {
     super(message);
@@ -67,7 +63,6 @@ function optionalRecord(value: unknown, field: string): JsonRecord {
   return value === undefined ? {} : requireRecord(value, field);
 }
 
-/** Validates SDK policy and excludes models unavailable to the authenticated account. */
 function policyAllowsModel(value: unknown): boolean {
   if (value === undefined) return true;
   const policy = requireRecord(value, 'policy');
@@ -106,7 +101,6 @@ function parseReasoningEfforts(value: unknown): ReasoningEffort[] | undefined {
   });
 }
 
-/** Converts one runtime-validated `ModelInfo` record into registry metadata. */
 export function parseCopilotModelInfo(record: unknown): CachedModel {
   const model = requireRecord(record, 'record');
   const id = requireNonEmptyString(model, 'id');
@@ -139,7 +133,6 @@ export function parseCopilotModelInfo(record: unknown): CachedModel {
   };
 }
 
-/** Validates and maps the complete `CopilotClient.listModels()` result. */
 export function mapCopilotModels(records: unknown): CachedModel[] {
   if (!Array.isArray(records)) {
     throw new CopilotModelValidationError('CopilotClient.listModels() must return an array');
@@ -185,7 +178,6 @@ export type CopilotModelRefreshResult =
   | { models: CachedModel[]; source: 'live' }
   | { models: CachedModel[]; source: 'cache'; failureReason: string; failureKind: CopilotModelFailureKind };
 
-/** Discovers models while preserving a valid cache on runtime failure. */
 export async function refreshCopilotModels(input: {
   listModels: () => Promise<unknown>;
   cachedModels: CachedModel[];

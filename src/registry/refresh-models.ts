@@ -18,8 +18,6 @@ import {
 } from './pricing.js';
 import { cachedModelCount, isLikelyPlaceholderKey, resolveRefreshCredential, skipWithCachedModels } from './refresh-credentials.js';
 import type { CachedModel, ProviderRegistry, RegistryProvider } from './types.js';
-import { buildOpenAiOAuthModels, CHATGPT_CODEX_UNSUPPORTED_MODELS } from '../data/openai-oauth-models.js';
-import { modelPrefersResponsesApi } from '../provider-factory.js';
 import { deriveBrand } from '../models.js';
 import { getInstalledClaudeVersion } from '../launch.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
@@ -38,6 +36,7 @@ export interface RefreshProviderResult {
   id: string;
   name: string;
   ok: boolean;
+  modelSource?: 'live' | 'cache' | 'seed' | 'fallback';
   modelCount?: number;
   previousModelCount?: number;
   skipped?: boolean;
@@ -60,8 +59,6 @@ type OAuthModelRefreshResult = {
 
 const MAX_DISCOVERY_ERROR_LENGTH = 500;
 
-/** Collects graceful and forced shutdown failures without masking the caller's error. */
-
 async function disposeCopilotRuntime(runtime: CopilotRuntimeHandle): Promise<Error[]> {
   const errors: Error[] = [];
   try {
@@ -77,8 +74,6 @@ async function disposeCopilotRuntime(runtime: CopilotRuntimeHandle): Promise<Err
   }
   return errors;
 }
-
-/** Runs one isolated SDK catalog request and always attempts complete runtime disposal. */
 
 async function refreshCopilotOAuthModels(
   provider: RegistryProvider,
@@ -137,15 +132,81 @@ interface OpenAiModelEntry {
   id: string;
   name: string;
   context_window?: unknown;
-  /** Provider-reported maximum, above the window it serves by default. */
+
   max_context_window?: unknown;
+  inputTokenLimit?: unknown;
+  outputTokenLimit?: unknown;
+  minimalClientVersion?: string;
+  supportedParameters?: string[];
+  reasoning?: boolean;
+  supportedReasoningEfforts?: string[];
+  supportsTemperature?: boolean;
+  supportsReasoningSummaries?: boolean;
+  supportsReasoningSummaryParameter?: boolean;
+  supportsParallelToolCalls?: boolean;
+  supportsReasoningToggle?: boolean;
+  defaultReasoningEffort?: string;
   useResponsesLite?: boolean;
   preferWebSockets?: boolean;
 }
 
-function readCapabilityFlags(m: Record<string, unknown>): Pick<OpenAiModelEntry, 'useResponsesLite' | 'preferWebSockets'> {
+function readReasoningEfforts(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const efforts = value.flatMap(option => {
+    if (typeof option === 'string') return [option];
+    if (!option || typeof option !== 'object' || Array.isArray(option)) return [];
+    const record = option as Record<string, unknown>;
+    if (typeof record.effort === 'string') return [record.effort];
+    if (record.type === 'effort' && Array.isArray(record.values)) {
+      return record.values.filter((effort): effort is string => typeof effort === 'string');
+    }
+    return [];
+  }).map(effort => effort.trim()).filter(effort => effort.length > 0);
+  return [...new Set(efforts)];
+}
+
+function readReasoningToggle(value: unknown): boolean | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.some(option => (
+    option !== null
+    && typeof option === 'object'
+    && !Array.isArray(option)
+    && (option as Record<string, unknown>).type === 'toggle'
+  ));
+}
+
+function readCapabilityFlags(m: Record<string, unknown>): Pick<OpenAiModelEntry, 'inputTokenLimit' | 'outputTokenLimit' | 'minimalClientVersion' | 'supportedParameters' | 'reasoning' | 'supportedReasoningEfforts' | 'supportsTemperature' | 'supportsReasoningSummaries' | 'supportsReasoningSummaryParameter' | 'supportsParallelToolCalls' | 'supportsReasoningToggle' | 'defaultReasoningEffort' | 'useResponsesLite' | 'preferWebSockets'> {
   const bool = (v: unknown): boolean | undefined => (typeof v === 'boolean' ? v : undefined);
+  const limit = m.limit;
+  const limitRecord = limit !== null && typeof limit === 'object' && !Array.isArray(limit)
+    ? limit as Record<string, unknown>
+    : undefined;
+  const supportedReasoningEfforts = readReasoningEfforts(
+    m.supported_reasoning_levels ?? m.reasoning_options,
+  );
+  const reportedReasoning = bool(m.reasoning);
+  const supportedParameters = Array.isArray(m.supported_parameters)
+    ? m.supported_parameters.filter((value): value is string => typeof value === 'string')
+    : undefined;
   return {
+    inputTokenLimit: limitRecord?.input ?? m.inputTokenLimit,
+    outputTokenLimit: limitRecord?.output ?? m.outputTokenLimit,
+    minimalClientVersion: typeof m.minimal_client_version === 'string'
+      ? m.minimal_client_version.trim() || undefined
+      : undefined,
+    supportedParameters,
+    reasoning: reportedReasoning ?? (
+      supportedReasoningEfforts === undefined ? undefined : supportedReasoningEfforts.length > 0
+    ),
+    supportedReasoningEfforts,
+    supportsTemperature: bool(m.temperature),
+    supportsReasoningSummaries: bool(m.supports_reasoning_summaries),
+    supportsReasoningSummaryParameter: bool(m.supports_reasoning_summary_parameter),
+    supportsParallelToolCalls: bool(m.supports_parallel_tool_calls),
+    supportsReasoningToggle: readReasoningToggle(m.reasoning_options),
+    defaultReasoningEffort: typeof m.default_reasoning_level === 'string'
+      ? m.default_reasoning_level.trim() || undefined
+      : undefined,
     useResponsesLite: bool(m['use_responses_lite']),
     preferWebSockets: bool(m['prefer_websockets']),
   };
@@ -184,20 +245,9 @@ function parseOpenAiModelEntries(body: unknown): OpenAiModelEntry[] {
   return [];
 }
 
-function buildDynamicOAuthModel(entry: OpenAiModelEntry, seedById: Map<string, CachedModel>): CachedModel {
-  const seed = seedById.get(entry.id);
+function buildDynamicOAuthModel(entry: OpenAiModelEntry): CachedModel {
   const contextWindow = confirmedContextWindow(entry.context_window);
   const maxContextWindow = confirmedContextWindow(entry.max_context_window);
-  if (seed) {
-    return {
-      ...seed,
-      contextWindow,
-      maxContextWindow,
-      contextWindowUnconfirmed: contextWindow === undefined ? true : undefined,
-      useResponsesLite: entry.useResponsesLite ?? seed.useResponsesLite,
-      preferWebSockets: entry.preferWebSockets ?? seed.preferWebSockets,
-    };
-  }
   const { id } = entry;
   const prefix = id.split('-')[0] ?? id;
   return {
@@ -208,10 +258,21 @@ function buildDynamicOAuthModel(entry: OpenAiModelEntry, seedById: Map<string, C
     brand: deriveBrand(prefix),
     contextWindow,
     maxContextWindow,
+    inputTokenLimit: confirmedContextWindow(entry.inputTokenLimit),
+    outputTokenLimit: confirmedContextWindow(entry.outputTokenLimit),
+    minimalClientVersion: entry.minimalClientVersion,
     contextWindowUnconfirmed: contextWindow === undefined ? true : undefined,
     modelFormat: 'openai' as const,
     npm: '@ai-sdk/openai',
-    reasoning: modelPrefersResponsesApi(id),
+    supportedParameters: entry.supportedParameters,
+    reasoning: entry.reasoning,
+    supportedReasoningEfforts: entry.supportedReasoningEfforts,
+    defaultReasoningEffort: entry.defaultReasoningEffort,
+    supportsTemperature: entry.supportsTemperature,
+    supportsReasoningSummaries: entry.supportsReasoningSummaries,
+    supportsReasoningSummaryParameter: entry.supportsReasoningSummaryParameter,
+    supportsParallelToolCalls: entry.supportsParallelToolCalls,
+    supportsReasoningToggle: entry.supportsReasoningToggle,
     useResponsesLite: entry.useResponsesLite,
     preferWebSockets: entry.preferWebSockets,
   };
@@ -245,11 +306,10 @@ async function fetchJsonWithAuth(
 
 async function refreshOpenAiOAuthModels(
   accessToken: string,
-): Promise<{ models: CachedModel[]; source: 'live' | 'seed'; failureReason?: string }> {
+): Promise<{ models: CachedModel[]; source: 'live' | 'cache'; failureReason?: string }> {
   const TIMEOUT_MS = 10_000;
-  const seedById = new Map(buildOpenAiOAuthModels().map(m => [m.id, m]));
   const toModels = (entries: OpenAiModelEntry[]) =>
-    entries.map(entry => buildDynamicOAuthModel(entry, seedById));
+    entries.map(entry => buildDynamicOAuthModel(entry));
 
   const claudeVersion = getInstalledClaudeVersion();
 
@@ -268,15 +328,14 @@ async function refreshOpenAiOAuthModels(
     accessToken,
     TIMEOUT_MS,
   );
-  const chatGptEntries = parseOpenAiModelEntries(chatGptResult.body)
-    .filter(({ id }) => !CHATGPT_CODEX_UNSUPPORTED_MODELS.has(id));
+  const chatGptEntries = parseOpenAiModelEntries(chatGptResult.body);
   if (chatGptEntries.length > 0) {
     return { models: toModels(chatGptEntries), source: 'live' };
   }
 
   return {
-    models: [...seedById.values()],
-    source: 'seed',
+    models: [],
+    source: 'cache',
     failureReason: chatGptResult.error ?? codexResult.error,
   };
 }
@@ -284,7 +343,7 @@ async function refreshOpenAiOAuthModels(
 async function refreshApiListProvider(
   provider: RegistryProvider,
   apiKey: string,
-): Promise<{ models: CachedModel[]; baseUrl?: string; error?: string }> {
+): Promise<{ models: CachedModel[]; baseUrl?: string; error?: string; usedStaticFallback?: boolean }> {
   const npm = provider.api.npm ?? '@ai-sdk/openai-compatible';
   const catalogTemplate = resolveProviderTemplate(provider);
   const baseUrl = effectiveProviderBaseUrl(provider, catalogTemplate);
@@ -340,6 +399,7 @@ async function refreshApiListProvider(
       apiUrl: fetched.baseUrl,
     })),
     baseUrl: fetched.baseUrl,
+    usedStaticFallback: fetched.usedStaticFallback,
   };
 }
 
@@ -448,6 +508,7 @@ async function refreshProviderModelsInner(
     let models: CachedModel[] = [];
     let baseUrl: string | undefined;
     let oauthFallbackReason: string | undefined;
+    let modelSource: RefreshProviderResult['modelSource'];
 
     const oauthTemplateId = provider.templateId ?? provider.id;
     const supportsOAuthDiscovery = provider.authType === 'oauth'
@@ -487,6 +548,7 @@ async function refreshProviderModelsInner(
           + 'model list, which may not include the newest models yet. Try refreshing again later.';
       }
       models = oauthResult.models;
+      modelSource = oauthResult.source;
       if (models.length === 0) {
         return {
           id: provider.id,
@@ -538,6 +600,11 @@ async function refreshProviderModelsInner(
       }
       models = fetched.models;
       baseUrl = fetched.baseUrl;
+      modelSource = fetched.usedStaticFallback
+        ? 'fallback'
+        : resolveModelSource(provider) === 'static-seed'
+          ? 'seed'
+          : 'live';
     }
 
     const pricingCache = loadPricingCache();
@@ -553,6 +620,7 @@ async function refreshProviderModelsInner(
       id: provider.id,
       name: provider.name,
       ok: true,
+      modelSource,
       modelCount: enriched.length,
       previousModelCount: provider.refreshedAt ? previousModelCount : undefined,
       reason: oauthFallbackReason,

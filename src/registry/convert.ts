@@ -1,4 +1,4 @@
-// src/registry/convert.ts — LocalProvider ↔ RegistryProvider conversion
+
 
 import type { LocalProvider, LocalProviderModel } from '../types.js';
 import type { CachedModel, RegistryProvider } from './types.js';
@@ -12,6 +12,10 @@ function modelToCached(model: LocalProviderModel): CachedModel {
     family: model.family,
     brand: model.brand,
     contextWindow: model.contextWindow,
+    maxContextWindow: model.maxContextWindow,
+    inputTokenLimit: model.inputTokenLimit,
+    outputTokenLimit: model.outputTokenLimit,
+    minimalClientVersion: model.minimalClientVersion,
     cost: model.cost,
     usageMultiplier: model.usageMultiplier,
     usageMultiplierApplies: model.usageMultiplierApplies,
@@ -24,13 +28,20 @@ function modelToCached(model: LocalProviderModel): CachedModel {
     apiUrl: model.apiBaseUrl,
     supportedParameters: model.supportedParameters,
     reasoning: model.reasoning,
+    supportsTemperature: model.supportsTemperature,
+    supportedReasoningEfforts: model.supportedReasoningEfforts,
+    defaultReasoningEffort: model.defaultReasoningEffort,
+    supportsReasoningSummaries: model.supportsReasoningSummaries,
+    supportsReasoningSummaryParameter: model.supportsReasoningSummaryParameter,
+    supportsParallelToolCalls: model.supportsParallelToolCalls,
+    supportsReasoningToggle: model.supportsReasoningToggle,
+    supportsPromptCacheBreakpoints: model.supportsPromptCacheBreakpoints,
     interleavedReasoningField: model.interleavedReasoningField,
     useResponsesLite: model.useResponsesLite,
     preferWebSockets: model.preferWebSockets,
   };
 }
 
-/** Convert a normalized OpenCode/local provider into a registry entry (no secret write). */
 export function localProviderToRegistry(
   provider: LocalProvider,
   opts?: { templateId?: string; authType?: 'api' | 'oauth'; authRef?: string },

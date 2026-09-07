@@ -22,7 +22,6 @@ const SERVER_KEY_FILE = 'api.anthropic.com-key.pem';
 const CERT_VERSION_FILE = 'version';
 const CERT_SET_FILE = 'set-id';
 
-// v2 rotates away every v1 CA (including the legacy 10-year ones).
 const CERT_VERSION = '2\n';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -114,8 +113,6 @@ function releaseCaLock(lockPath: string, nonce: string): void {
     return;
   }
 
-  // Hard-link restoration is create-only: it cannot replace a successor that
-  // acquired the canonical path while this foreign lock was quarantined.
   try {
     linkSync(tombstone, lockPath);
     unlinkSync(tombstone);
@@ -153,8 +150,7 @@ function tryAcquireCaLock(
     if (fd !== undefined) {
       try { closeSync(fd); } catch { /* fd may already be closed */ }
     }
-    // A partial file has no provable owner. Leave it for explicit recovery
-    // rather than risk deleting a lock another process replaced.
+
     unlinkLockIfOwned(lockPath, nonce);
     throw publishErr;
   }
@@ -185,8 +181,7 @@ function acquireCaLockSync(
   const monotonicNow = opts.monotonicNow ?? (() => performance.now());
   const sleep = opts.sleep ?? sleepSync;
   const deadline = monotonicNow() + waitMs;
-  // Invariant: no existing lock is removed; success means this caller exclusively created the lock.
-  // Variant: max(0, deadline - monotonicNow()) decreases after each bounded sleep.
+
   for (;;) {
     const release = tryAcquireCaLock(lockPath);
     if (release) return release;
@@ -196,7 +191,6 @@ function acquireCaLockSync(
   }
 }
 
-/** @internal Exported for deterministic lock-behavior tests. */
 export const _caLockInternals = {
   lockPath: caLockPath,
   tryAcquire: tryAcquireCaLock,
@@ -287,7 +281,7 @@ function generateCertificates(paths: ReturnType<typeof certPaths>): void {
   writePrivate(paths.serverKey, forge.pki.privateKeyToPem(serverKeys.privateKey));
   writePublic(paths.serverCert, forge.pki.certificateToPem(serverCert));
   writePublic(paths.version, CERT_VERSION);
-  // Commit marker written last. Readers accept only a complete, self-consistent set.
+
   writePublic(paths.setId, `${randomUUID()}\n`);
 }
 
@@ -326,7 +320,6 @@ function readCurrentCertificateSet(paths: ReturnType<typeof certPaths>): HttpPro
   }
 }
 
-/** Create the local CA once, then reuse it so active sessions keep trusting the proxy. */
 export function ensureHttpProxyCertificates(): HttpProxyCertificates {
   const paths = certPaths();
   const current = readCurrentCertificateSet(paths);
@@ -345,7 +338,6 @@ export function ensureHttpProxyCertificates(): HttpProxyCertificates {
   }
 }
 
-/** Preserve an existing corporate/custom Node CA bundle alongside Relay's CA. */
 export function ensureHttpProxyCaBundle(
   relayCaCertPath: string,
   additionalCaCertPath: string | undefined,

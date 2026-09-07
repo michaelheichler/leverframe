@@ -40,7 +40,6 @@ function hasFlag(args: string[], flag: string): boolean {
   return args.some(arg => arg === flag || arg.startsWith(`${flag}=`));
 }
 
-/** Claude -p with JSON or NDJSON on stdout — leverframe must stay off stdout. */
 export function isClaudeMachineReadableOutput(args: string[]): boolean {
   if (!isClaudePrintMode(args)) return false;
   const outFmt = readFlagValue(args, '--output-format');
@@ -53,7 +52,6 @@ export function wantsCleanAgentStdout(agent: 'claude', childArgs: string[]): boo
   return isClaudeMachineReadableOutput(childArgs);
 }
 
-/** Claude requires --verbose with stream-json in print mode. */
 export function normalizeClaudeAgentArgs(args: string[]): string[] {
   const out = [...args];
   const streamOut = readFlagValue(out, '--output-format') === 'stream-json';

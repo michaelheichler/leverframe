@@ -1,5 +1,4 @@
-// Google OpenAI-compatible model list returns ids like `models/gemini-2.5-flash`.
-// Claude Code and @ai-sdk/google expect bare ids (`gemini-2.5-flash`).
+
 
 const GOOGLE_MODEL_PREFIX = 'models/';
 

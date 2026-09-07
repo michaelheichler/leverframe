@@ -1,4 +1,4 @@
-// src/providers-command-args.ts, arg parsing and help/label text for the providers command
+
 import pc from 'picocolors';
 import type { ProviderAuthMethod } from './registry/provider-auth.js';
 import { fmtEnabledStar, fmtProvider } from './ui.js';

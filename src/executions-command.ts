@@ -1,7 +1,4 @@
-// src/executions-command.ts — `leverframe executions` CLI (stabilization
-// plan §8.3): local inspection and the reconciliation entry point for
-// ambiguous tool calls. Deliberately bypasses the main ParsedArgs pipeline
-// (see src/cli.ts) since it is a small, self-contained subcommand group.
+
 
 import { getExecutionDetail, listExecutionSummaries, type ExecutionStatus } from './execution-query.js';
 import type { ReconcileOutcome } from './execution-recovery.js';

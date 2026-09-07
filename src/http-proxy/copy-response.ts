@@ -1,5 +1,4 @@
-// Why: Claude --print retries HTTP 429 until timeout, so terminal usage
-// ceilings must be remapped before the client sees the upstream status.
+
 
 import type * as http from 'node:http';
 import {
@@ -52,10 +51,6 @@ function rebuildRawHeaders(
   return out;
 }
 
-/**
- * Copy an upstream response to the client. Error statuses are buffered so
- * terminal usage-limit 429s can become non-retryable 400s for Claude --print.
- */
 export function copyResponse(
   upstream: http.IncomingMessage,
   res: http.ServerResponse,

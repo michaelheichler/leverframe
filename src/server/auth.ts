@@ -1,4 +1,4 @@
-/** API keys and bearer tokens must be single-line (strip accidental paste noise). */
+
 import { randomBytes } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 
@@ -24,31 +24,18 @@ export function extractBearerToken(value: string | null): string | null {
   return sanitizeCredential(match?.[1]);
 }
 
-/**
- * Generate a cryptographically random per-start token for the local endpoint
- * gateway. 32 random bytes (~256 bits) base64url-encoded into ~43 URL-safe
- * chars. With a per-start secret, a stolen token dies with the process even
- * when no user password was configured.
- */
 export function generateLocalGatewayToken(): string {
   return randomBytes(32).toString('base64url');
 }
 
-/** Loopback hostnames accepted on a local-bound gateway Host header. */
 export const LOCAL_ALLOWED_HOSTNAMES = new Set([
   '127.0.0.1',
   'localhost',
   '[::1]',
 ]);
 
-/** Maximum TCP port number (IANA). Bounds the optional :port suffix. */
 const MAX_TCP_PORT = 65535;
 
-/**
- * Strict check for a single Host header value. Accepts exactly `localhost`,
- * `127.0.0.1`, or `[::1]`, each optionally followed by `:port` where port
- * is decimal 1-65535. Port 0 is reserved and rejected.
- */
 export function isLocalHostHeaderValue(host: string): boolean {
   if (!host) return false;
   const value = host.replace(/^[\t ]+|[\t ]+$/g, '').toLowerCase();
@@ -89,18 +76,10 @@ export function isLocalHostHeaderValue(host: string): boolean {
   return true;
 }
 
-/** Detect absolute-form request targets (RFC 7230 §5.3.2), used by forward proxies. */
 export function isAbsoluteFormRequestTarget(requestUrl: string | undefined): boolean {
   return typeof requestUrl === 'string' && /^https?:\/\//i.test(requestUrl);
 }
 
-/**
- * Enforce the loopback Host gate against a real HTTP request. Uses
- * `req.rawHeaders` so duplicate Host headers cannot smuggle a hostile name
- * past Node's first-wins `req.headers.host`. Requires exactly one Host
- * header whose value passes {@link isLocalHostHeaderValue}, and rejects
- * absolute-form request targets.
- */
 export function isLocalHostRequestAllowed(req: Pick<IncomingMessage, 'rawHeaders' | 'url'>): boolean {
   if (isAbsoluteFormRequestTarget(req.url)) return false;
 

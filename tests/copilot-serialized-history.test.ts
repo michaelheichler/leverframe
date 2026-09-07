@@ -1,4 +1,4 @@
-// Privacy-safe Copilot history serialization and rolling prefix hash tests.
+
 
 import type { ModelMessage } from 'ai';
 import { describe, expect, it } from 'vitest';
@@ -190,7 +190,6 @@ describe('serializeHistory tool-result status', () => {
     ]);
   });
 
-
   it('marks execution-denied tool results as errors', () => {
     const message = {
       role: 'tool',
@@ -219,7 +218,6 @@ describe('serializeHistory image references', () => {
       mediaType: 'image/png',
     }]);
   });
-
 
   it('rejects URLs that contain credentials, query values, or fragments', () => {
     expect(() => serializeHistory([
@@ -282,7 +280,6 @@ describe('serializeHistory unsupported content', () => {
     expect(() => serializeHistory([userRemotePdfFile()])).toThrow(UnsupportedContentError);
   });
 
-
   it('rejects malformed message content with a typed error', () => {
     const malformed = { role: 'user', content: null } as unknown as ModelMessage;
     expect(() => serializeHistory([malformed])).toThrow(UnsupportedContentError);
@@ -327,7 +324,6 @@ describe('serializeHistory unsupported content', () => {
     expect(() => serializeHistory(messages)).not.toThrow();
     expect(JSON.stringify(messages)).toBe(before);
   });
-
 
   it('accepts empty text and reasoning parts', () => {
     const messages: ModelMessage[] = [

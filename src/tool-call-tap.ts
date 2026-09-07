@@ -1,12 +1,4 @@
-// src/tool-call-tap.ts — read-only, best-effort observation of Anthropic and
-// OpenAI response shapes (SSE and full JSON), used to drive the persistent
-// tool-call ledger and the checkpoint's visible-byte accounting.
-//
-// This module never mutates, delays, or re-orders anything it observes. It
-// exists purely so router.ts can tee already-outbound bytes into the
-// execution tracker without touching the byte-for-byte passthrough path the
-// native-Anthropic golden tests protect (stabilization plan §11.3): callers
-// feed it a *copy* of the bytes already written to the client.
+
 
 export interface ToolCallTapCallbacks {
   onToolUse?: (toolCallId: string, toolName: string) => void;
@@ -94,17 +86,14 @@ function createLineBufferedTap(processEvent: (parsed: unknown, callbacks: ToolCa
   };
 }
 
-/** Stateful line-buffered tap for Anthropic-format SSE. Feed it raw text chunks in wire order. */
 export function createAnthropicSseTap(callbacks: ToolCallTapCallbacks): ToolCallTap {
   return createLineBufferedTap(processAnthropicEvent, callbacks);
 }
 
-/** Stateful line-buffered tap for OpenAI chat-completions SSE. Feed it raw text chunks in wire order. */
 export function createOpenAiSseTap(callbacks: ToolCallTapCallbacks): ToolCallTap {
   return createLineBufferedTap(processOpenAiEvent, callbacks);
 }
 
-/** Best-effort extraction from a full (non-streamed) Anthropic response body. */
 export function observeNonStreamAnthropicResponse(parsed: unknown, callbacks: ToolCallTapCallbacks): void {
   if (!isRecord(parsed) || !Array.isArray(parsed.content)) return;
   for (const block of parsed.content) {
@@ -118,7 +107,6 @@ export function observeNonStreamAnthropicResponse(parsed: unknown, callbacks: To
   callbacks.onMessageStop?.();
 }
 
-/** Best-effort extraction from a full (non-streamed) OpenAI chat-completions response body. */
 export function observeNonStreamOpenAiResponse(parsed: unknown, callbacks: ToolCallTapCallbacks): void {
   if (!isRecord(parsed) || !Array.isArray(parsed.choices)) return;
   for (const choiceValue of parsed.choices) {

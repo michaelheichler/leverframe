@@ -4,7 +4,6 @@ import { canonicalJson } from './responses-websocket-continuation-matching.js';
 
 export const RESPONSES_LITE_HEADER = 'x-openai-internal-codex-responses-lite';
 
-/** Normalize the SDK's HeadersInit into a plain record for `ws`. */
 export function toHeaderRecord(headers: HeadersInit | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   if (!headers) return out;
@@ -48,7 +47,6 @@ export function applyResponsesLiteShape(payload: JsonObject): JsonObject {
   return { ...payload, reasoning, parallel_tool_calls: false, store: false };
 }
 
-/** Fingerprint non-conversation request fields for privacy-safe diagnostics. */
 export function responsesWebSocketPromptFingerprint(payload: JsonObject): string {
   const stable = { ...payload };
   delete stable.input;
@@ -95,12 +93,6 @@ export function instructionChangeSummary(previous: string | undefined, current: 
   return `instructions changed: previous_chars=${previous.length} current_chars=${current.length} common_prefix_chars=${prefix} common_suffix_chars=${suffix} first_diff_line=${firstDiffLine}`;
 }
 
-/**
- * Opaque socket partition key. Prompt fields intentionally are not part of this
- * key: Responses accepts fresh instructions/tools on each create, and Claude can
- * change them during a normal tool loop. Exact conversation lineage is validated
- * separately before previous_response_id is used.
- */
 export function responsesWebSocketPartitionKey(
   wsUrl: string,
   payload: JsonObject,

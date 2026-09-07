@@ -5,8 +5,6 @@ import type { SdkCallParams } from './sdk-adapter.js';
 import type { RequestExecutionObserver } from './request-execution-context.js';
 import { toUpstreamStreamError } from './stream-error.js';
 
-// ── OpenAI request shapes ───────────────────────────────────────────────────
-
 export interface OpenAiMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content?: string | null | Array<unknown>;
@@ -33,16 +31,14 @@ export interface OpenAiRequest {
   stream?: boolean;
 }
 
-// ── Translation: OpenAI Request → SDK Call Params ───────────────────────────
-
 export function translateOpenAiRequest(
   body: OpenAiRequest,
   options?: {
-    /** ChatGPT Codex OAuth requires instructions in providerOptions and manages its own output limit. */
+
     openAiOAuth?: boolean;
   },
 ): SdkCallParams {
-  // Pre-scan to map tool_call_id → function name so tool result messages can reference it.
+
   const toolNameById = new Map<string, string>();
   for (const msg of body.messages) {
     if (msg.role === 'assistant' && msg.tool_calls) {
@@ -132,11 +128,7 @@ export function translateOpenAiRequest(
   const system = systemParts.length > 0 ? systemParts.join('\n\n') : undefined;
 
   if (options?.openAiOAuth) {
-    // Mirror the OAuth shaping in sdk-adapter's translateRequest: the ChatGPT
-    // Codex OAuth backend rejects the standard system/instructions field (it
-    // requires providerOptions.openai.instructions), manages its own output
-    // limit (an explicit max_output_tokens yields an empty finish:'other'
-    // response), and expects store:false.
+
     const instructions = system?.trim() || 'You are a coding assistant.';
     return {
       messages,
@@ -164,8 +156,6 @@ export function translateOpenAiRequest(
   };
 }
 
-// ── Translation: SDK Response → OpenAI JSON / SSE ───────────────────────────
-
 export interface CollectedOpenAiStream {
   text: string;
   toolCalls: Array<{ toolCallId: string; toolName: string; input: unknown }>;
@@ -173,7 +163,6 @@ export interface CollectedOpenAiStream {
   usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined;
 }
 
-/** Shape of one AI SDK `fullStream`/`textStream` part, as read dynamically by both adapters below. */
 interface SdkStreamPart {
   type: string;
   textDelta?: string;
@@ -190,7 +179,6 @@ interface SdkStreamPart {
   argsTextDelta?: string;
 }
 
-/** Reduce an SDK full stream into the fields a non-streaming chat completion needs. */
 export async function collectOpenAiStream(
   stream: AsyncIterable<unknown>,
   lifecycle?: RequestExecutionObserver,
@@ -227,13 +215,7 @@ export interface OpenAiResponseOptions {
   forceStream?: boolean;
   abortSignal?: AbortSignal;
   onWarning?: (message: string) => void;
-  /**
-   * Request execution context/observer: driven for phase (connect/first
-   * output/tool-call) transitions. Its `abortSignal` — already composed from
-   * the caller's cancellation signal plus the connect/header/idle/total
-   * deadline classes — takes priority over `abortSignal` above when present.
-   * Terminal transitions (`complete`/`fail`) stay owned by the caller.
-   */
+
   lifecycle?: RequestExecutionObserver;
 }
 
@@ -247,9 +229,7 @@ export async function generateOpenAiResponse(
   options?.lifecycle?.startConnecting();
   let result: { text: string; toolCalls?: CollectedOpenAiStream['toolCalls']; finishReason?: string; usage?: CollectedOpenAiStream['usage'] };
   if (options?.forceStream) {
-    // Some upstreams (e.g. ChatGPT's Codex OAuth backend) only ever answer as a
-    // stream. Request a real stream from the SDK and collect it into one
-    // response instead of issuing a non-streaming request upstream.
+
     const { stream } = streamText({
       model,
       ...params,

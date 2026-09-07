@@ -74,7 +74,7 @@ function transportErrorWithAttempt(
     provider: error.provider,
     model: error.model,
     phase: error.phase,
-    // Keep the original category so a reclassified error (e.g. bodyless 403 mapped to rate_limit) does not re-collapse to permission below.
+
     category: error.category,
     httpStatus: error.httpStatus,
     providerRequestId: error.providerRequestId,

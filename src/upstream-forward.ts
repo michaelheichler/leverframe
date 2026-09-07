@@ -19,7 +19,6 @@ function createBoundaryTransform(onWrite: (chunk: Buffer) => void): Transform {
   });
 }
 
-
 export function anthropicUpstreamHeaders(
   apiKey: string,
   stream = false,
@@ -72,7 +71,6 @@ export async function fetchWithOAuthRetry<TResponse extends { status: number }>(
   return { response, apiKey: refreshed, refreshed: true };
 }
 
-/** Relay an Anthropic /v1/messages response (JSON or SSE) to the client. */
 export interface RelayAnthropicOptions {
   inboundBeta?: string;
   authType?: 'api' | 'oauth';
@@ -83,17 +81,10 @@ export interface RelayAnthropicOptions {
   onTokenRefreshed?: (token: string) => void | Promise<void>;
   onUpstreamError?: (statusCode: number, body: string) => void;
   signal?: AbortSignal;
-  /** Optional provider-neutral lifecycle observer; receives native HTTP phase/output hooks. */
+
   lifecycle?: RequestExecutionObserver;
   responseModelId?: string;
-  /**
-   * Read-only observation hook: called with a copy of each streamed text
-   * chunk (or, for a non-stream response, the full decoded body once) in the
-   * exact bytes forwarded to the client. Never used to alter what is sent —
-   * exists so callers can tee already-outbound bytes into execution
-   * tracking without touching this function's byte-for-byte passthrough
-   * behavior (stabilization plan §11.3 golden tests).
-   */
+
   onObservedText?: (text: string) => void;
 }
 
@@ -248,18 +239,10 @@ export async function relayAnthropicMessages(
     if (options.onObservedText) {
       const observe = options.onObservedText;
       const decoder = new StringDecoder('utf8');
-      // A second 'data' listener observes the same chunks the pipeline
-      // consumes; it never reads from or mutates the stream, so the bytes
-      // reaching `res` are unaffected.
+
       upstream.on('data', (chunk: Buffer) => observe(decoder.write(chunk)));
     }
-    // `pipeline()` (rather than manual `.pipe()`) is what makes the terminal
-    // outcome truthful: it resolves only once `res` has actually finished
-    // writing, rejects on any failure anywhere in the chain (upstream error,
-    // transform error, or the response socket going away), and — unlike
-    // `.pipe()` — guarantees every stream in the chain is destroyed on
-    // either path, so a torn-down connection can never leave the lifecycle
-    // stuck non-terminal.
+
     const sink = new Writable({
       write(chunk, _encoding, callback) {
         if (res.writableEnded || res.destroyed) {

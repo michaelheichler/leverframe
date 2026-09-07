@@ -1,7 +1,4 @@
-/**
- * Exposes Claude tools to Copilot while keeping execution in Claude Code.
- * Handler promises cross HTTP requests and settle only from matching tool results.
- */
+
 
 import type { LanguageModelV3FunctionTool } from '@ai-sdk/provider';
 import type { ToolResultPart } from 'ai';
@@ -205,7 +202,6 @@ function settlePending(state: ToolBridgeState, reason: ToolBridgeSettleReason): 
   }
 }
 
-/** Creates declarations whose handlers wait for a later Claude tool-result request. */
 export function createToolBridge(
   tools: readonly LanguageModelV3FunctionTool[],
 ): ToolBridge {

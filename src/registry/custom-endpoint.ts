@@ -1,8 +1,7 @@
-// src/registry/custom-endpoint.ts: add custom OpenAI/Anthropic-compatible providers
+
 
 import { saveProviderCredential } from '../env.js';
 import { deriveBrand } from '../models.js';
-import { resolveContextWindow } from '../context-window.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
 import { loadRegistryStrict, updateRegistry } from './io.js';
 import { cancelCredentialDelete, journalCredentialWrite, reconcilePendingCredentialDeletes } from './credential-lifecycle.js';
@@ -21,7 +20,7 @@ export interface AddCustomEndpointInput {
   apiKey: string;
   kind: CustomEndpointKind;
   allowInsecureLocal?: boolean;
-  /** Static headers sent with every endpoint request, such as plan or auth tracking. */
+
   headers?: Record<string, string>;
 }
 
@@ -92,7 +91,7 @@ export async function fetchAnthropicModels(
           json = JSON.parse(rawBodyText) as { data?: Array<{ id?: string; name?: string }> };
         }
       } catch {
-        // Failed to parse
+
       }
 
       const models: CachedModel[] = [];
@@ -105,7 +104,8 @@ export async function fetchAnthropicModels(
           upstreamModelId: id,
           family: id.split('-')[0] ?? id,
           brand: deriveBrand(id),
-          contextWindow: resolveContextWindow(id),
+          contextWindow: undefined,
+          contextWindowUnconfirmed: true,
           modelFormat: 'anthropic',
           npm: '@ai-sdk/anthropic',
           apiUrl: root,

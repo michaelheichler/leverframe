@@ -1,4 +1,4 @@
-// Native provider authentication and transactional credential publication.
+
 
 import { printOAuthStepsPanel } from '../ui.js';
 import pc from 'picocolors';
@@ -57,7 +57,6 @@ function openBrowser(url: string): void {
   open(url).catch(() => {});
 }
 
-/** Completes one provider-specific device flow and returns a storage-ready credential. */
 async function runNativeDeviceCode(
   providerId: NativeOAuthProviderId,
   signal: AbortSignal | undefined,
@@ -98,7 +97,6 @@ async function runNativeDeviceCode(
   }
 }
 
-/** Publishes an OAuth credential only after its keyring write succeeds. */
 export async function saveNativeOAuthCredential(
   providerId: string,
   tokens: import('../oauth/types.js').OAuthTokenResponse,
@@ -118,10 +116,6 @@ export async function saveNativeOAuthCredential(
   }
 }
 
-/**
- * The OAuth provider shares a templateId with the API-key provider (openai),
- * so it needs a distinguishing display name for pickers.
- */
 function oauthDisplayName(registryId: string, fallbackName: string): string {
   if (registryId === 'openai-oauth') return 'OpenAI (ChatGPT)';
   return fallbackName;
@@ -189,7 +183,6 @@ async function persistOAuthProvider(
   });
 }
 
-/** Authenticates, stores, and publishes one native OAuth provider atomically. */
 async function authenticateProviderInner(
   providerId: string,
   options: ProviderAuthOptions = {},

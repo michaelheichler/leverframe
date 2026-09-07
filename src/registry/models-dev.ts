@@ -1,4 +1,4 @@
-// src/registry/models-dev.ts: models.dev capability cache (bundled + optional user refresh)
+
 
 import {
   chmodSync,
@@ -9,19 +9,23 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
-import bundledCache from '../data/models-dev-cache.json';
 import { getAppHome } from '../paths.js';
 import { normalizeModelIdCandidates } from './pricing.js';
 
 export const MODELS_DEV_API_URL = 'https://models.dev/api.json';
 const FETCH_TIMEOUT_MS = 15_000;
 const FILE_MODE = 0o600;
-/** Skip the models.dev refresh when the on-disk cache is younger than this. */
+
 const MODELS_DEV_REFRESH_TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface ModelsDevModalities {
   input?: string[];
   output?: string[];
+}
+
+export interface ModelsDevReasoningOption {
+  type?: string;
+  values?: string[];
 }
 
 export interface ModelsDevModel {
@@ -31,13 +35,34 @@ export interface ModelsDevModel {
   chat?: boolean;
   interactions?: boolean;
   reasoning?: boolean;
+  reasoning_options?: ModelsDevReasoningOption[];
+  temperature?: boolean;
   interleaved?: { field?: string };
   modalities?: ModelsDevModalities;
   family?: string;
   status?: string;
-  limit?: { context?: number; output?: number };
+  limit?: { context?: number; input?: number; output?: number };
   cost?: { input: number; output: number; cache_read?: number; cache_write?: number };
   provider?: { npm?: string };
+}
+
+export function modelsDevReasoningEfforts(
+  model: ModelsDevModel | null | undefined,
+): string[] | undefined {
+  const effortOption = model?.reasoning_options?.find(option => option.type === 'effort');
+  if (!effortOption?.values) return undefined;
+  const efforts = effortOption.values
+    .filter(value => typeof value === 'string')
+    .map(value => value.trim())
+    .filter(value => value.length > 0);
+  return [...new Set(efforts)];
+}
+
+export function modelsDevSupportsReasoningToggle(
+  model: ModelsDevModel | null | undefined,
+): boolean | undefined {
+  if (!model?.reasoning_options) return undefined;
+  return model.reasoning_options.some(option => option.type === 'toggle');
 }
 
 export interface ModelsDevProvider {
@@ -62,10 +87,10 @@ let memoryCache: ModelsDevCacheFile | null = null;
 let memoryCachePath: string | null = null;
 let memoryCacheMtime = 0;
 
-/** Registry / OpenCode provider id → models.dev top-level key */
 export const REGISTRY_TO_MODELS_DEV: Record<string, string> = {
   google: 'google',
   openai: 'openai',
+  'openai-oauth': 'openai',
   groq: 'groq',
   mistral: 'mistral',
   togetherai: 'together',
@@ -95,10 +120,6 @@ export function stripModelsDevCacheMeta(cache: ModelsDevCacheFile): ModelsDevCac
   return providers;
 }
 
-export function loadBundledModelsDevCache(): ModelsDevCacheFile {
-  return bundledCache as unknown as ModelsDevCacheFile;
-}
-
 export function invalidateModelsDevCache(): void {
   memoryCache = null;
   memoryCachePath = null;
@@ -118,7 +139,7 @@ function mkdirSafe(dir: string): void {
   try {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   } catch {
-    // ignore
+
   }
 }
 
@@ -143,7 +164,7 @@ function writeModelsDevCache(path: string, data: ModelsDevCacheFile): void {
   try {
     chmodSync(path, FILE_MODE);
   } catch {
-    // best-effort
+
   }
   invalidateModelsDevCache();
 }
@@ -174,19 +195,14 @@ export function loadModelsDevCache(): ModelsDevCacheFile {
       const data = readModelsDevFile(userPath);
       if (data) return rememberModelsDevCache(userPath, data);
     } catch {
-      // fall through to bundled
+
     }
   }
 
-  if (memoryCache && memoryCachePath === 'bundled') return memoryCache;
-  return rememberModelsDevCache('bundled', loadBundledModelsDevCache());
+  if (memoryCache && memoryCachePath === 'empty') return memoryCache;
+  return rememberModelsDevCache('empty', {});
 }
 
-/**
- * Read ONLY the user cache file (no bundled fallback). Returns null when the
- * file is missing or unreadable. Used by refreshModelsDevCacheAsync so the
- * TTL-skip path never treats the bundled snapshot as a valid user cache.
- */
 function readUserModelsDevCache(): ModelsDevCacheFile | null {
   return readModelsDevFile(getUserModelsDevCachePath());
 }
@@ -199,7 +215,7 @@ export function isModelsDevCacheFresh(
   const meta = readModelsDevCacheMeta(cache);
   const fetchedAt = meta?.fetched_at ? Date.parse(meta.fetched_at) : NaN;
   if (!Number.isFinite(fetchedAt)) return false;
-  // A fetched_at in the future (clock skew or tampering) is not fresh.
+
   if (fetchedAt > now) return false;
   return now - fetchedAt < MODELS_DEV_REFRESH_TTL_MS;
 }
@@ -235,18 +251,6 @@ export function resolveModelsDevSlug(providerId: string): string {
 
 type RefreshModelsDevOptions = { force?: boolean; onComplete?: (updated: boolean) => void | Promise<void> };
 
-/**
- * Fetch the latest models.dev catalog in the background; falls back to the
- * bundled snapshot offline. Skips the network fetch only when a valid USER
- * cache (not the bundled fallback) is younger than MODELS_DEV_REFRESH_TTL_MS.
- * Pass `force: true` to bypass the TTL.
- *
- * Accepts either the legacy callback form
- * `refreshModelsDevCacheAsync(onComplete?)` or the options object
- * `{ force, onComplete }`. The callback runs from a background promise. A
- * callback that throws synchronously OR returns a rejected promise is
- * swallowed so neither path creates an unhandled rejection.
- */
 export function refreshModelsDevCacheAsync(
   optionsOrCallback: RefreshModelsDevOptions | ((updated: boolean) => void | Promise<void>) = {},
 ): void {
@@ -264,7 +268,7 @@ export function refreshModelsDevCacheAsync(
     }
     if (result && typeof result === 'object' && typeof (result as Promise<unknown>).then === 'function') {
       Promise.resolve(result as Promise<unknown>).catch(() => {
-        // async callback rejection: swallow so the background refresh stays unhandled-rejection-free
+
       });
     }
   };
@@ -315,7 +319,6 @@ export function findModelsDevModelAnywhere(
   return null;
 }
 
-/** Conservative auto-hide rules: only when models.dev row exists and fields are explicit. */
 export function shouldHideByModelsDevCapabilities(entry: ModelsDevModel): boolean {
   const output = entry.modalities?.output;
   if (output && output.length > 0 && !output.includes('text')) return true;

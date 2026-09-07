@@ -210,15 +210,9 @@ ${pc.bold('Behavior:')}
   --alias <name=target> saves a short name for a proxy-mode favorite. The
   target is leverframe:<provider-id>:<model-id> (the leverframe: prefix is optional).
   --unalias <name> removes a saved short name.
-  --context-ceiling <model-id> opts a model in to the maximum context window its
-  provider reports, for providers that serve a smaller tuned default. The
-  maximum is read from live provider metadata (ChatGPT/Codex reports both
-  context_window and max_context_window), never from a bundled number, because
-  it varies by account. Run it with an unknown model to list the models that
-  currently offer one. Nothing is applied automatically, and an opted-in window
-  is recorded as an override rather than as provider-confirmed metadata. Run
-  leverframe patch afterwards to apply it.
-  --no-context-ceiling <model-id> returns a model to the window it is served.
+  --context-ceiling and --no-context-ceiling remain for migration compatibility.
+  They no longer write or remove a startup context preference. Run leverframe
+  claude and choose a reported context mode from Claude Code's /model picker.
 
 ${pc.bold('How it works:')}
   claude and server use the global favorites list.

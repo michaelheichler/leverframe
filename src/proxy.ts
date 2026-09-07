@@ -2,7 +2,10 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { readBody, extractApiKey, sendJson } from './http-utils.js';
 import { formatAnthropicModelEntry, formatAnthropicModelList } from './server/models.js';
-import { claudeCodeClientModelId, stripOneMContextSuffix } from './context-model-id.js';
+import {
+  claudeCodeClientModelId,
+  stripOneMContextSuffix,
+} from './context-model-id.js';
 import {
   writeInferenceResponseErrorLog,
   writeWebSocketDiagnosticLog,
@@ -48,7 +51,7 @@ import {
 } from './oauth/responses-websocket.js';
 import { ProviderRuntimeCache } from './provider-runtime-cache.js';
 import { disposeLanguageModel } from './language-model-disposal.js';
-import { resolveContextWindow } from './context-window.js';
+import { reportedContextWindow } from './context-window.js';
 import { listenTcpServer } from './listener-ready.js';
 import {
   beginExecutionTracking,
@@ -81,13 +84,12 @@ import {
   createTranslationLifecycle,
   makeProxyLog,
 } from './proxy-response.js';
+import { handleContextSelectionRequest } from './proxy-context-selection.js';
 
 export { isTransientSdkStreamFailure } from './proxy-retry.js';
 export { aliasModelId, type ProxyModelAlias, type ProxyRoute } from './proxy-request.js';
 
 const INTERNAL_ADAPTER_KEEPALIVE_TIMEOUT_MS = 60_000;
-
-// ── HTTP server ─────────────────────────────────────────────────────
 
 export interface ProxyHandle {
   port: number;
@@ -95,7 +97,6 @@ export interface ProxyHandle {
   close: () => void | Promise<void>;
 }
 
-/** Multi-model proxy: routes each request by body.model to the correct upstream. */
 export async function startProxyCatalog(
   routes: ProxyRoute[],
   defaultAliasId: string,
@@ -123,12 +124,7 @@ export async function startProxyCatalog(
     const route = byAlias.get(alias.routeId);
     if (route && !byAlias.has(alias.name)) byAlias.set(alias.name, route);
   }
-  // Agent-tool child sessions (e.g. Claude Code's Agent tool) send the bare upstream
-  // model id in the request body instead of the canonical alias id. Register realModelId
-  // as a lowest-precedence fallback (lookupRoute expands via routeLookupIds at query time,
-  // but byAlias itself is only ever keyed by literal aliasId/alias.name) so those requests
-  // still resolve instead of falling through to Anthropic passthrough. Never override an
-  // alias/canonical key already set.
+
   for (const route of routes) {
     if (!byAlias.has(route.realModelId)) byAlias.set(route.realModelId, route);
   }
@@ -149,7 +145,7 @@ export async function startProxyCatalog(
   process.on('unhandledRejection', onRejection);
   process.on('uncaughtException', onException);
 
-  const modelsPayload = JSON.stringify(
+  const modelsPayload = () => JSON.stringify(
     formatAnthropicModelList(
       routes.map(r => ({
         id: r.aliasId,
@@ -164,14 +160,14 @@ export async function startProxyCatalog(
     try {
       plog(() => `${req.method} ${req.url}`);
 
-    // HEAD / — health check ping from Claude Code
     if (req.method === 'HEAD') {
       res.writeHead(200);
       res.end();
       return;
     }
 
-    // GET /v1/models — Claude Code validates the model on startup and populates /model picker
+    if (await handleContextSelectionRequest(req, res, { proxyToken, byAlias })) return;
+
     if (req.method === 'GET' && req.url?.startsWith('/v1/models')) {
       const modelPathMatch = req.url.match(/^\/v1\/models\/([^?]+)/);
       if (modelPathMatch) {
@@ -191,14 +187,13 @@ export async function startProxyCatalog(
         }
       } else {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(modelsPayload);
+        res.end(modelsPayload());
       }
       return;
     }
 
     const messagesEndpoint = anthropicMessagesEndpoint(req.url);
 
-    // Anthropic message creation and token counting are distinct endpoints.
     if (req.method === 'POST' && messagesEndpoint) {
       const inboundKey = extractApiKey(req);
       if (inboundKey !== proxyToken) {
@@ -221,13 +216,6 @@ export async function startProxyCatalog(
       const relayRequestIdRaw = req.headers['x-relay-request-id'];
       const relayRequestId = Array.isArray(relayRequestIdRaw) ? relayRequestIdRaw[0] : relayRequestIdRaw;
 
-      // A missing `model` field falls back to the default route (Claude Code's
-      // token-counting and health-probe requests omit it). A *present* but
-      // unrecognized model id must never silently reroute to a different
-      // provider's route — that would send the request, and its credentials,
-      // to a provider the caller did not select (stabilization plan §9.2,
-      // upstream 383f464: configured routes must not bypass to another
-      // provider). Reject it explicitly instead.
       const resolvedRoute = typeof originalModel === 'string' ? lookupRoute(byAlias, originalModel) : undefined;
       if (typeof originalModel === 'string' && !resolvedRoute) {
         anthropicError(res, 404, `Unknown model: ${originalModel}`);
@@ -246,9 +234,7 @@ export async function startProxyCatalog(
       const apiKey = credential.credential;
       const upstreamUrl = route.upstreamUrl;
       const providerId = route.providerId ?? route.aliasId.split(':')[1] ?? 'unknown';
-      // The client-facing model id: the validated `model` field when present,
-      // else the alias the default route was matched under (Claude Code's
-      // token-counting/health-probe requests omit `model` entirely).
+
       const clientModelId = originalModel ?? route.aliasId;
 
       plog(() =>
@@ -257,11 +243,6 @@ export async function startProxyCatalog(
 
       const usesSdkAdapter = isSdkMigratedNpm(route.npm);
 
-      // Owns accepted/validated/dispatched/first-output/terminal transitions,
-      // the four deadline classes, and downstream-disconnect cancellation for
-      // this request; `clientAbort` (wired above) doubles as its local-shutdown
-      // signal. Every branch below drives it through its narrow observer
-      // surface and disposes it exactly once on the way out.
       const requestExecution = createRequestExecutionContext({
         requestId: relayRequestId ?? randomUUID(),
         provider: providerId,
@@ -270,10 +251,7 @@ export async function startProxyCatalog(
         signal: clientAbort.signal,
         deadlines: route.requestDeadlines,
       });
-      // Every response path below ends in exactly one of res 'finish' (sent)
-      // or 'close' (torn down before finishing); either one is this
-      // request's single terminal-disposal point regardless of which early
-      // return produced it.
+
       attachRequestExecutionDisposal(res, requestExecution);
 
       if (messagesEndpoint === 'count_tokens') {
@@ -281,10 +259,7 @@ export async function startProxyCatalog(
           const inputTokens = estimateAnthropicInputTokens(anthropicBody);
           plog(() => `token-count: local estimate model=${originalModel} input_tokens=${inputTokens}`);
           res.setHeader('x-relay-token-count-source', 'local-estimate');
-          // Local estimate never touches the upstream/SDK, so no phase call
-          // has moved the lifecycle past `resolving` yet; `complete()` is
-          // only a legal transition from `streaming`/`headers`, so advance
-          // through those phases here rather than relaxing that invariant.
+
           requestExecution.markStreamActivity();
           requestExecution.markOutputEmitted();
           requestExecution.complete();
@@ -342,11 +317,7 @@ export async function startProxyCatalog(
       const executionHeader = req.headers[EXECUTION_ID_HEADER];
       const requestedExecutionId = Array.isArray(executionHeader) ? executionHeader[0] : executionHeader;
       const trackedRequestId = relayRequestId ?? randomUUID();
-      // Provider capabilities are consulted once, at this operation boundary,
-      // and drive both execution tracking and the request-lifecycle deadline
-      // classes below (RequestLifecycle only arms the idle deadline once a
-      // response actually starts streaming, so a non-streaming-capable route
-      // never pays an idle-timeout cost it cannot trigger).
+
       const providerCapabilities = buildProviderCapabilities({
         providerId,
         supportedParameters: route.supportedParameters,
@@ -383,9 +354,6 @@ export async function startProxyCatalog(
 
       requestExecution.startResolving();
 
-      // ── Anthropic passthrough ───────────────────────────────────────
-      // Forward raw Anthropic body (with real model id) directly to the upstream.
-      // No translation needed — the upstream speaks Anthropic natively.
       if (route.modelFormat === 'anthropic') {
         if (!await revalidateUpstreamUrl(upstreamUrl)) {
           anthropicError(res, 400, 'Custom endpoint URL failed security revalidation.');
@@ -400,7 +368,7 @@ export async function startProxyCatalog(
         let effectiveBeta = inboundBeta;
         let claudeCodeSessionId: string | undefined;
         if (isOAuth) {
-          // Identity injection and beta selection for Claude Code OAuth.
+
           const seed = route.providerId ?? route.realModelId;
           const identity = injectClaudeIdentity(forwardBody, route.providerData, seed);
           if (route.providerId === 'claude-code') injectClaudeCodeBillingSystemLine(forwardBody);
@@ -434,7 +402,7 @@ export async function startProxyCatalog(
               try {
                 tracking.observeNonStreamAnthropic(JSON.parse(text));
               } catch {
-                // Invalid/error bodies do not contain observable tool calls.
+
               }
             },
             onUpstreamError: inferenceLogPath
@@ -458,9 +426,6 @@ export async function startProxyCatalog(
         return;
       }
 
-      // ── SDK-backed providers (Vercel AI SDK) ────────────────────────
-      // OpenCode-assigned npm packages route through the SDK, which owns wire
-      // format, endpoint selection, and provider quirks.
       if (usesSdkAdapter) {
         if (route.baseURL && !await revalidateUpstreamUrl(route.baseURL)) {
           anthropicError(res, 400, 'Custom endpoint URL failed security revalidation.');
@@ -478,10 +443,10 @@ export async function startProxyCatalog(
             ? req.headers['x-claude-code-session-id'][0]
             : req.headers['x-claude-code-session-id'];
           const claudeSessionId = extractClaudeSessionId(anthropicBody, claudeSessionIdHeader);
-          // Validated DTO: `sdkTranslateRequest` requires `model: string`, but
-          // the raw wire body's `model` is optional (see `clientModelId`).
+
           const sdkRequestBody: AnthropicRequest = { ...anthropicBody, model: clientModelId, messages: anthropicBody.messages ?? [] };
           const params = sdkTranslateRequest(sdkRequestBody, route.npm!, {
+            defaultEffort: route.defaultReasoningEffort,
             openAiOAuth,
             claudeSessionId,
             maxTools: maxToolsForNpm(route.npm),
@@ -490,6 +455,15 @@ export async function startProxyCatalog(
               apiBaseUrl: route.baseURL,
               supportedParameters: route.supportedParameters,
               reasoning: route.reasoning,
+              supportsTemperature: route.supportsTemperature,
+              supportedReasoningEfforts: route.supportedReasoningEfforts,
+              defaultReasoningEffort: route.defaultReasoningEffort,
+              supportsReasoningSummaries: route.supportsReasoningSummaries,
+              supportsReasoningSummaryParameter: route.supportsReasoningSummaryParameter,
+              supportsParallelToolCalls: route.supportsParallelToolCalls,
+              supportsReasoningToggle: route.supportsReasoningToggle,
+              supportsPromptCacheBreakpoints: route.supportsPromptCacheBreakpoints,
+              useResponsesLite: route.useResponsesLite,
               interleavedReasoningField: route.interleavedReasoningField,
               upstreamModelId: route.realModelId,
             },
@@ -513,6 +487,7 @@ export async function startProxyCatalog(
               headers: route.headers,
               useResponsesLite: route.useResponsesLite,
               preferWebSockets: route.preferWebSockets,
+              minimalClientVersion: route.minimalClientVersion,
               onDebug: (msg: string) => plog(() => msg),
               onWebSocketDiagnostic: webSocketDiagnosticsLogPath
                 ? event => writeWebSocketDiagnosticLog(webSocketDiagnosticsLogPath, event)
@@ -599,9 +574,7 @@ export async function startProxyCatalog(
               clientAbort.signal.removeEventListener('abort', clearHeartbeat);
             }
           } else {
-            // ChatGPT's Codex backend (OpenAI OAuth) rejects non-streaming requests
-            // outright ("Stream must be set to true"), so always stream internally
-            // for it and collect the result, regardless of what the client asked for.
+
             const anthropicResponse = await withResponsesWebSocketDiagnosticContext(
               { requestId: trackedRequestId, claudeSessionId },
               () => generateAnthropicResponse(
@@ -653,13 +626,14 @@ export async function startProxyCatalog(
             && isTerminalUsageLimitText(message, details?.errorContent);
           const contextLengthExceeded = upstreamStatus === 400
             && isContextLengthExceededError(err, message);
-          const clientMessage = contextLengthExceeded
+          const reportedWindow = reportedContextWindow(route.contextWindow, route.contextWindowUnconfirmed);
+          const clientMessage = contextLengthExceeded && reportedWindow !== undefined
             ? anthropicPromptTooLongMessage(
                 anthropicBody,
-                resolveContextWindow(route.realModelId, route.contextWindow, route.contextWindowUnconfirmed),
+                reportedWindow,
               )
             : message;
-          plog(() => `sdk error: ${message}${details?.errorContent ? ` — body: ${details.errorContent}` : ''}`);
+          plog(() => `sdk error: ${message}${details?.errorContent ? ` - body: ${details.errorContent}` : ''}`);
           if (inferenceLogPath && upstreamStatus >= 400) {
             writeInferenceResponseErrorLog(inferenceLogPath, {
               ...(relayRequestId ? { requestId: relayRequestId } : {}),
@@ -704,12 +678,10 @@ export async function startProxyCatalog(
         return;
       }
 
-      // Non-anthropic route without a registered SDK npm — misconfigured route.
       anthropicError(res, 500, `No SDK provider configured for model ${originalModel} (npm=${route.npm ?? 'none'})`);
       return;
     }
 
-    // Everything else → 404
     anthropicError(res, 404, `Unknown endpoint: ${req.method} ${req.url}`);
     } catch (err) {
       if (res.writableEnded || res.destroyed) return;
@@ -747,8 +719,7 @@ export async function startProxyCatalog(
     token: proxyToken,
     close: async () => {
       cleanupListeners();
-      // Local shutdown: settle every in-flight request to a `cancelled`
-      // terminal outcome instead of abandoning it mid-stream.
+
       cancelAllActiveRequestExecutions();
       await new Promise<void>(resolve => server.close(() => resolve()));
       await providerRuntimeCache.dispose();
@@ -756,7 +727,6 @@ export async function startProxyCatalog(
   };
 }
 
-/** Single-model proxy — backward-compatible wrapper around startProxyCatalog. */
 export function startProxy(
   completionsUrl: string,
   modelId: string,
@@ -773,9 +743,18 @@ export function startProxy(
     modelFormat?: 'anthropic' | 'openai';
     supportedParameters?: string[];
     reasoning?: boolean;
+    supportsTemperature?: boolean;
+    supportedReasoningEfforts?: string[];
+    defaultReasoningEffort?: string;
+    supportsReasoningSummaries?: boolean;
+    supportsReasoningSummaryParameter?: boolean;
+    supportsParallelToolCalls?: boolean;
+    supportsReasoningToggle?: boolean;
+    supportsPromptCacheBreakpoints?: boolean;
     interleavedReasoningField?: string;
     useResponsesLite?: boolean;
     preferWebSockets?: boolean;
+    minimalClientVersion?: string;
   },
   apiKey?: string,
 ): Promise<ProxyHandle> {
@@ -797,8 +776,17 @@ export function startProxy(
     providerData: sdk?.providerData,
     supportedParameters: sdk?.supportedParameters,
     reasoning: sdk?.reasoning,
+    supportsTemperature: sdk?.supportsTemperature,
+    supportedReasoningEfforts: sdk?.supportedReasoningEfforts,
+    defaultReasoningEffort: sdk?.defaultReasoningEffort,
+    supportsReasoningSummaries: sdk?.supportsReasoningSummaries,
+    supportsReasoningSummaryParameter: sdk?.supportsReasoningSummaryParameter,
+    supportsParallelToolCalls: sdk?.supportsParallelToolCalls,
+    supportsReasoningToggle: sdk?.supportsReasoningToggle,
+    supportsPromptCacheBreakpoints: sdk?.supportsPromptCacheBreakpoints,
     interleavedReasoningField: sdk?.interleavedReasoningField,
     useResponsesLite: sdk?.useResponsesLite,
     preferWebSockets: sdk?.preferWebSockets,
+    minimalClientVersion: sdk?.minimalClientVersion,
   }], clientModelId, debug);
 }

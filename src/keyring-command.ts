@@ -1,4 +1,4 @@
-// src/keyring-command.ts: `leverframe keyring` subcommand for repairing corrupted credential journals.
+
 
 import pc from 'picocolors';
 import { classifyKeyringError, repairStoredCredential } from './credential-store.js';
@@ -27,7 +27,6 @@ ${pc.bold('macOS note:')}
   "Always Allow" so subsequent runs stay silent.`;
 }
 
-/** OAuth providers store tokens under a second `oauth:` account, so repair must cover both. */
 function registryKeyringAccounts(): string[] {
   const accounts = new Set<string>();
   for (const provider of loadRegistry().providers) {
@@ -38,7 +37,6 @@ function registryKeyringAccounts(): string[] {
   return [...accounts];
 }
 
-/** Repairs continue past per-account failures because one broken journal must not block the rest. */
 export async function runKeyringRepairCommand(accountFilter?: string): Promise<number> {
   const accounts = accountFilter ? [accountFilter] : registryKeyringAccounts();
   if (accounts.length === 0) {

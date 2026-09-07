@@ -1,7 +1,4 @@
-/**
- * Implements the SDK SessionFs contract without touching disk.
- * Each provider owns one session, so prompts, events, and checkpoints vanish at disposal.
- */
+
 
 import { posix } from 'node:path';
 
@@ -56,7 +53,6 @@ function directChild(parent: string, candidate: string): string | undefined {
   return rest.length === 0 ? child : undefined;
 }
 
-/** Owns one ephemeral filesystem exposed only through the SDK SessionFs interface. */
 class MemorySessionFs implements MemorySessionFsProvider {
   private readonly files = new Map<string, MemoryFile>();
   private readonly directories = new Map<string, DirectoryMetadata>();
@@ -220,7 +216,6 @@ class MemorySessionFs implements MemorySessionFsProvider {
   }
 }
 
-/** Creates one isolated in-memory filesystem for a single Copilot session. */
 export function createMemorySessionFsProvider(): MemorySessionFsProvider {
   return new MemorySessionFs();
 }

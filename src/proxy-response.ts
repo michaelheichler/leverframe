@@ -1,4 +1,4 @@
-// src/proxy-response.ts, SSE/error response writing and inference lifecycle logging for the proxy
+
 import type { ServerResponse } from 'node:http';
 import { appendFileSync, openSync, writeSync, closeSync } from 'node:fs';
 import { sendJson } from './http-utils.js';

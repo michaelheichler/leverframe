@@ -1,4 +1,4 @@
-// Shared types for Anthropic ↔ upstream proxy translation.
+
 
 export interface AnthropicUsage {
   input_tokens: number;
@@ -45,9 +45,9 @@ export interface AnthropicToolDefinition {
   name: string;
   description?: string;
   input_schema?: Record<string, unknown>;
-  /** When true, tool is discovered via tool search instead of loaded upfront. */
+
   defer_loading?: boolean;
-  /** Anthropic tool-search tool types (e.g. tool_search_tool_regex_20251119). */
+
   type?: string;
 }
 

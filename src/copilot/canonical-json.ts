@@ -1,7 +1,4 @@
-/**
- * Produces one deterministic encoding for validated JSON values.
- * Non-JSON values fail before they can collapse into an ambiguous session hash.
- */
+
 
 function encode(value: unknown, ancestors: ReadonlySet<object>): string {
   if (value === null) return 'null';
@@ -26,7 +23,6 @@ function encode(value: unknown, ancestors: ReadonlySet<object>): string {
   )).join(',')}}`;
 }
 
-/** Encodes JSON with sorted object keys and strict value validation. */
 export function canonicalJson(value: unknown): string {
   return encode(value, new Set());
 }

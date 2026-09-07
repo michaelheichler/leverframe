@@ -1,4 +1,4 @@
-// src/registry/crud.ts — serialized provider mutations with crash-safe credential cleanup
+
 
 import { parseAuthRef } from '../env.js';
 import {
@@ -22,7 +22,6 @@ function storedRef(provider: RegistryProvider): string | null {
   return parsed?.kind === 'keyring' ? provider.authRef : null;
 }
 
-/** Queue before orphaning, commit under lock, then reconcile outside it. */
 export async function removeProviderFromRegistry(
   id: string,
   opts?: { deleteCredential?: boolean },
@@ -48,14 +47,12 @@ export async function removeProviderFromRegistry(
       return true;
     });
   } finally {
-    // A failed registry publication leaves the queued reference active; the
-    // strict re-read in reconciliation cancels it rather than deleting it.
+
     cleanup = await reconcilePendingCredentialDeletes();
   }
   if (!mutation || !removedProvider) {
     return { removed: false, id, credentialDeleted: false, error: `Provider not found: ${id}` };
   }
-
 
   return {
     removed: true,

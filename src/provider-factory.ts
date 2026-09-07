@@ -1,6 +1,6 @@
 export {
-  modelPrefersResponsesApi,
   shouldUseOpenAiResponsesEndpoint,
+  type OpenAiEndpoint,
   isSdkMigratedNpm,
   maxToolsForNpm,
   EndpointUrlValidationError,

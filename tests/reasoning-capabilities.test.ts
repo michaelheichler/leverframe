@@ -11,6 +11,9 @@ describe('resolveReasoningCapabilities', () => {
       npm: '@openrouter/ai-sdk-provider',
       modelId: 'z-ai/glm-5.2',
       supportedParameters: ['tools', 'reasoning', 'include_reasoning'],
+      reasoning: true,
+      supportedReasoningEfforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'],
+      defaultReasoningEffort: 'medium',
     });
 
     expect(caps.mode).toBe('controllable');
@@ -41,14 +44,29 @@ describe('resolveReasoningCapabilities', () => {
       npm: '@ai-sdk/openai-compatible',
       modelId: 'glm-5.2',
       reasoning: true,
+      supportedParameters: ['reasoning_effort'],
+      supportedReasoningEfforts: ['high', 'xhigh'],
+      defaultReasoningEffort: 'high',
       interleavedReasoningField: 'reasoning_content',
     });
 
     expect(caps.mode).toBe('controllable');
-    expect(caps.source).toBe('provider-rule');
+    expect(caps.source).toBe('model-metadata');
     expect(caps.confidence).toBe('documented');
     expect(caps.levels).toEqual(['high', 'xhigh']);
     expect(caps.defaultLevel).toBe('high');
+  });
+
+  it('does not infer Anthropic controls from a model id on a custom SDK route', () => {
+    const caps = resolveReasoningCapabilities({
+      providerId: 'custom',
+      npm: '@ai-sdk/openai-compatible',
+      modelId: 'claude-fable',
+    });
+
+    expect(caps.mode).toBe('none');
+    expect(caps.levels).toEqual([]);
+    expect(caps.defaultLevel).toBe('');
   });
 });
 
@@ -58,6 +76,7 @@ describe('effortProviderOptions', () => {
       effortProviderOptions('@openrouter/ai-sdk-provider', 'high', 'z-ai/glm-5.2', {
         providerId: 'openrouter',
         supportedParameters: ['reasoning'],
+        supportedReasoningEfforts: ['high'],
       }),
     ).toEqual({
       openrouter: {
@@ -69,14 +88,17 @@ describe('effortProviderOptions', () => {
     });
   });
 
-  it('maps GLM-5.2 effort to providerOptions with correct camel-cased key and wire value', () => {
-    expect(
-      effortProviderOptions('@ai-sdk/openai-compatible', 'xhigh', 'glm-5.2', {
-        providerId: 'opencode-go',
-      }),
-    ).toEqual({
+  it('preserves the reported GLM effort on the provider key', () => {
+    const options = effortProviderOptions('@ai-sdk/openai-compatible', 'xhigh', 'glm-5.2', {
+      providerId: 'opencode-go',
+      reasoning: true,
+      supportedParameters: ['reasoning_effort'],
+      supportedReasoningEfforts: ['xhigh'],
+    });
+    expect(options?.opencodeGo?.reasoningEffort).toBe('xhigh');
+    expect(options).toEqual({
       opencodeGo: {
-        reasoningEffort: 'max',
+        reasoningEffort: 'xhigh',
       },
     });
   });
@@ -87,6 +109,9 @@ describe('effortProviderOptions', () => {
       expect(
         effortProviderOptions('@ai-sdk/openai-compatible', 'high', modelId, {
           providerId: 'kimi',
+          reasoning: true,
+          supportedParameters: ['reasoning_effort'],
+          supportedReasoningEfforts: ['high'],
         }),
       ).toEqual({
         kimi: {
@@ -100,11 +125,20 @@ describe('effortProviderOptions', () => {
     expect(
       effortProviderOptions('@ai-sdk/openai-compatible', 'high', 'kimi-k2.7-code', {
         providerId: 'moonshot',
+        reasoning: true,
+        supportedParameters: ['reasoning_effort'],
+        supportedReasoningEfforts: ['high'],
       }),
     ).toEqual({
       moonshot: {
         reasoningEffort: 'high',
       },
     });
+  });
+
+  it('omits effort options when a custom route has no reported levels', () => {
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'high', 'claude-fable', {
+      providerId: 'custom',
+    })).toBeUndefined();
   });
 });

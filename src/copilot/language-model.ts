@@ -1,7 +1,4 @@
-/**
- * Owns one isolated Copilot session per deterministic Claude session key.
- * The public SDK remains behind injected runtime and event boundaries for offline tests.
- */
+
 
 import type {
   LanguageModelV3,
@@ -293,15 +290,6 @@ function streamResult(
   return { stream, request: { body: undefined }, response: undefined };
 }
 
-/**
- * Picks which session slot a call belongs to. Parallel Task-tool subagents
- * can share one top-level Claude session id while running independent
- * conversations (a different `context.key`); routing such a call into the
- * busy primary slot would either throw a false "already active" error or,
- * worse, disconnect a live session out from under the call using it. A
- * differently-keyed call gets its own slot instead, so only a call that
- * would actually reuse or replace the busy slot's session collides with it.
- */
 function resolveSlotKey(input: {
   sessions: ReadonlyMap<string, SessionState>;
   activeResponses: ReadonlySet<string>;
@@ -319,7 +307,6 @@ type TurnResolution =
   | { kind: 'replay'; parts: readonly LanguageModelV3StreamPart[] }
   | { kind: 'turn'; active: SessionState; decision: TranscriptDecision; recreating: boolean };
 
-/** Finds, replays, or (re)creates the session state a turn should run against. */
 async function resolveTurnSession(input: {
   slotKey: string;
   key: string;
@@ -366,7 +353,6 @@ async function resolveTurnSession(input: {
   return { kind: 'turn', active, decision, recreating };
 }
 
-/** Builds a custom V3 model backed only by the public Copilot SDK runtime. */
 export function createCopilotLanguageModel(
   config: CopilotLanguageModelConfig,
   deps: CopilotLanguageModelDependencies,

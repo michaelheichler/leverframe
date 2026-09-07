@@ -281,17 +281,15 @@ describe('bridge-mode memory', () => {
   it('persists only with an explicit save gesture (--save-mode), per command', () => {
     expect(resolveBridgeMode('claude', 'endpoint', { persist: true })).toBe('endpoint');
     expect(resolveBridgeMode('claude', undefined)).toBe('endpoint');
-    // server is remembered independently. Still the proxy default.
+
     expect(resolveBridgeMode('server', undefined)).toBe('proxy');
 
     expect(resolveBridgeMode('server', 'endpoint', { persist: true })).toBe('endpoint');
     expect(resolveBridgeMode('server', undefined)).toBe('endpoint');
 
-    // saved default is overridable for one run without losing the saved value
     expect(resolveBridgeMode('claude', 'proxy')).toBe('proxy');
     expect(resolveBridgeMode('claude', undefined)).toBe('endpoint');
 
-    // and replaceable with another --save-mode
     expect(resolveBridgeMode('claude', 'proxy', { persist: true })).toBe('proxy');
     expect(resolveBridgeMode('claude', undefined)).toBe('proxy');
     expect(resolveBridgeMode('server', undefined)).toBe('endpoint');
@@ -316,9 +314,9 @@ describe('legacy ~/.clodex migration', () => {
     expect(existsSync(join(appHome, 'config.json'))).toBe(true);
     expect(existsSync(join(appHome, 'providers.json'))).toBe(true);
     expect(existsSync(join(appHome, 'http-proxy', 'ca.pem'))).toBe(true);
-    // logs are session state, not config. Never copied.
+
     expect(existsSync(join(appHome, 'logs'))).toBe(false);
-    // the legacy home is never modified
+
     expect(readFileSync(join(legacyHome, 'config.json'), 'utf8')).toContain('gpt-5.6-sol');
     expect(readFileSync(join(legacyHome, 'logs', 'session.log'), 'utf8')).toBe('log');
   });
@@ -361,7 +359,7 @@ describe('corrupt config handling', () => {
     expect(prefs).toEqual({});
     expect(warn).toHaveBeenCalledOnce();
     expect(warn.mock.calls[0]?.[0]).toContain('config.json');
-    // The corrupt file is preserved untouched for inspection.
+
     expect(readFileSync(configPath, 'utf8')).toBe('{ not valid json');
     warn.mockRestore();
   });
@@ -383,7 +381,7 @@ describe('corrupt config handling', () => {
     writeFileSync(configPath, corrupt, { encoding: 'utf8', mode: 0o600 });
 
     expect(() => savePreferences({ lastModel: 'gpt-5.6-sol' })).toThrow(CorruptConfigError);
-    // Existing corrupt content survives the failed save attempt.
+
     expect(readFileSync(configPath, 'utf8')).toBe(corrupt);
   });
 
@@ -426,12 +424,12 @@ describe('atomic config write', () => {
     const configPath = getConfigPath();
     const dir = dirname(configPath);
     const entries = readdirSync(dir);
-    // The atomic write renames the temp away, leaving only config.json.
+
     expect(entries).toContain('config.json');
     expect(entries.some(name => name.endsWith('.tmp'))).toBe(false);
 
     const stat = statSync(configPath);
-    // 0o600 on POSIX. On platforms that strip the mode we still accept the file.
+
     if (process.platform !== 'win32') {
       expect(stat.mode & 0o777).toBe(0o600);
     }

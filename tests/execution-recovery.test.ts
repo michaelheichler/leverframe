@@ -197,8 +197,7 @@ describe('reconcileExecution — the confirmation endpoint shared by the CLI and
     home();
     const scopeHash = workspaceOrSessionHash('workspace-1');
     ensureExecutionDir(scopeHash, ledger.executionId);
-    // Publish whatever accumulated in-memory generation as the initial CAS write (0 -> 1):
-    // production code only ever increments generation once a document is actually persisted.
+
     saveLedgerCAS({ scopeHash, expectedCurrentGeneration: 0, next: { ...ledger, generation: 1 } });
     return { scopeHash, executionId: ledger.executionId };
   }

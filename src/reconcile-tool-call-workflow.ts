@@ -23,11 +23,6 @@ export interface ReconcileToolCallWorkflowResult {
   error?: string;
 }
 
-/**
- * Application use case shared by CLI/API presentation layers. It owns ledger
- * availability checks and the generation read used for the one-entry CAS, so
- * callers only parse intent and render the result.
- */
 export function reconcileToolCallWorkflow(input: ReconcileToolCallWorkflowInput): ReconcileToolCallWorkflowResult {
   if (input.selection.kind === 'all') {
     const results = reconcileAllAmbiguous({

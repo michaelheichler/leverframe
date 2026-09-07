@@ -1,7 +1,4 @@
-/**
- * Derives deterministic Copilot session identity and transcript transition decisions.
- * Resync diagnostics expose only stable reason codes, never prompt or tool payloads.
- */
+
 
 import { createHash } from 'node:crypto';
 import type { ModelMessage } from 'ai';
@@ -59,12 +56,10 @@ function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-/** Hashes the normalized system instruction exactly as sent. */
 export function hashSystemPrompt(systemPrompt: string): string {
   return sha256(canonicalJson({ systemPrompt }));
 }
 
-/** Hashes tool schemas independently of tool and object-key order. */
 export function hashToolSchema(tools: readonly CopilotToolSchema[]): string {
   const sorted = [...tools].sort((left, right) => (
     left.name < right.name ? -1 : left.name > right.name ? 1 : 0
@@ -72,12 +67,10 @@ export function hashToolSchema(tools: readonly CopilotToolSchema[]): string {
   return sha256(canonicalJson(sorted));
 }
 
-/** Derives a session partition key from every behavior-affecting component. */
 export function deriveCopilotSessionKey(input: CopilotSessionKeyInput): string {
   return sha256(canonicalJson(input));
 }
 
-/** Separates system messages and serializes the remaining immutable history. */
 export function normalizePrompt(messages: readonly ModelMessage[]): NormalizedPrompt {
   const systemPrompt = messages
     .filter(message => message.role === 'system')
@@ -119,7 +112,6 @@ function toolResultIds(history: SerializedHistory, fromIndex: number): string[] 
   return ids.length > 0 ? ids : undefined;
 }
 
-/** Classifies one immutable request against the previous session transcript. */
 export function classifyTranscript(
   previous: TranscriptComparisonState | null,
   current: TranscriptComparisonState,

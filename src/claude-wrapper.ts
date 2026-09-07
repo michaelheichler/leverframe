@@ -1,25 +1,4 @@
-// src/claude-wrapper.ts — the `leverframe-claude` bin.
-//
-// A tiny, fast exec-style wrapper around the Claude Code binary that injects
-// bridge env for a running standalone `leverframe server` (discovered via
-// ~/.leverframe/server-runtime.json). Two invocation shapes:
-//
-//   1. CLAUDE_CODE_PROCESS_WRAPPER contract: Claude Code invokes
-//      `leverframe-claude <claude-binary-path> <args...>` for every process it
-//      spawns (agents view sessions, background agents). First arg is the
-//      claude binary to exec.
-//   2. Direct terminal use: `leverframe-claude [args...]` — the claude binary is
-//      discovered the same way `leverframe claude` discovers it
-//      (LEVERFRAME_CLAUDE_PATH override, config override, PATH, fallbacks).
-//
-// With a live proxy-mode server: HTTPS_PROXY/HTTP_PROXY + NODE_EXTRA_CA_CERTS
-// point at it and ANTHROPIC_BASE_URL is removed (claude keeps its own
-// Anthropic auth — this is the recommended mode). With a live endpoint-mode
-// server: ANTHROPIC_BASE_URL points at the gateway. With no live server the
-// env is passed through untouched, so claude always launches.
-//
-// This file must stay a thin shell over pure helpers (wrapper-env.ts,
-// server-runtime.ts) with minimal imports — it runs for every spawned agent.
+
 
 import { spawn } from 'node:child_process';
 import { accessSync, constants as fsConstants, existsSync, realpathSync, statSync } from 'node:fs';
@@ -46,13 +25,6 @@ function isExecutableFile(path: string): boolean {
   }
 }
 
-/**
- * Heuristic: does this argv[0] look like a CLAUDE_CODE_PROCESS_WRAPPER binary
- * path rather than a Claude CLI flag? Catches the case where the contract
- * path exists but lost its executable bit, points through a dead symlink, or
- * names a binary on another platform. We never want to forward such a path
- * to claude as if it were a CLI argument.
- */
 export function looksLikeWrapperContractPath(arg: string): boolean {
   if (!arg) return false;
   if (existsSync(arg)) return true;
@@ -61,13 +33,6 @@ export function looksLikeWrapperContractPath(arg: string): boolean {
   return base === 'claude' || base.startsWith('claude.');
 }
 
-/**
- * Replace the wrapper process with Claude when Node and the platform support
- * execve. Keeping the original PID and process-group identity lets background
- * PTY resize signals reach Claude. The caller retains the spawn fallback when
- * execve is unavailable, validation fails, or the executable changed while the
- * wrapper was probing the server.
- */
 export function execIntoClaude(
   file: string,
   args: string[],
@@ -78,11 +43,10 @@ export function execIntoClaude(
   try {
     process.execve(file, [file, ...args], env);
   } catch {
-    // Pre-syscall validation failed. The spawn path reports launch failures.
+
   }
 }
 
-/** Fast TCP probe — the state file can outlive a SIGKILLed listener. Never hangs. */
 function portIsOpen(port: number, timeoutMs = 100): Promise<boolean> {
   return new Promise(resolve => {
     const socket = connect({ host: '127.0.0.1', port });
@@ -102,7 +66,7 @@ async function main(): Promise<void> {
   let claudePath: string | null;
   let claudeArgs: string[];
   if (argv[0] && isExecutableFile(argv[0])) {
-    // CLAUDE_CODE_PROCESS_WRAPPER shape: first arg is the claude binary path.
+
     claudePath = argv[0];
     claudeArgs = argv.slice(1);
   } else {
@@ -115,11 +79,6 @@ async function main(): Promise<void> {
     process.exit(127);
   }
 
-  // Selection policy (see orderWrapperServerCandidates): proxy-mode servers
-  // are preferred over endpoint-mode ones — bridging keeps Claude Code's own
-  // Anthropic auth — with newest startedAt breaking ties within a mode. The
-  // first candidate whose port answers the TCP probe wins; if only an
-  // endpoint server is live it is used; with none, claude launches untouched.
   let state: ServerRuntimeState | null = null;
   for (const candidate of orderWrapperServerCandidates(readLiveServerRuntimeStates())) {
     if (await portIsOpen(candidate.port)) {

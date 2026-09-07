@@ -1,7 +1,4 @@
-/**
- * Specifies the lazy Copilot runtime boundary without spawning its CLI.
- * SDK loading and client construction are controlled by test doubles.
- */
+
 import { describe, expect, it, vi } from 'vitest';
 import { getAppHome } from '../src/paths.js';
 import {

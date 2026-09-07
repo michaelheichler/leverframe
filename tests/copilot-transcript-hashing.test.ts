@@ -1,4 +1,4 @@
-// Deterministic Copilot prompt and session-key hash tests.
+
 
 import type { ModelMessage } from 'ai';
 import { describe, expect, it } from 'vitest';
@@ -94,7 +94,6 @@ describe('hashToolSchema', () => {
     expect(hashToolSchema([BASE_TOOLS[0]])).not.toBe(hashToolSchema(BASE_TOOLS));
   });
 
-
   it.each([
     undefined,
     Number.NaN,
@@ -110,7 +109,6 @@ describe('hashToolSchema', () => {
     expect(() => hashToolSchema(tools)).toThrow(TypeError);
   });
 });
-
 
 describe('deriveCopilotSessionKey', () => {
   const base: CopilotSessionKeyInput = {
@@ -144,7 +142,6 @@ describe('deriveCopilotSessionKey', () => {
   });
 });
 
-
 describe('normalizePrompt', () => {
   it('joins multiple system messages into one canonical system prompt', () => {
     const result = normalizePrompt([systemMessage('Part A'), systemMessage('Part B'), userText('hi')]);
@@ -169,5 +166,4 @@ describe('normalizePrompt', () => {
     expect(JSON.stringify(messages)).toBe(before);
   });
 });
-
 

@@ -1,7 +1,4 @@
-/**
- * Converts public Copilot session events into AI SDK V3 stream parts.
- * Only root-agent events cross the provider boundary.
- */
+
 
 import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
 import {
@@ -29,12 +26,7 @@ interface EventBridgeState {
   openTools: Map<string, OpenToolInput>;
   usage: CopilotUsageState;
   sawToolCalls: boolean;
-  /**
-   * Last `model.call_failure` with no successful retry after it. Copilot emits
-   * `assistant.turn_end` before `session.error`, so without this the turn would
-   * close cleanly and the real cause (quota, auth, upstream 4xx) would be lost
-   * behind a generic empty-response error.
-   */
+
   callFailure?: CopilotCallFailure;
 }
 
@@ -292,11 +284,6 @@ function closeOpenParts(state: EventBridgeState): LanguageModelV3StreamPart[] {
   return parts;
 }
 
-/**
- * `model.call_failure.errorMessage` carries the upstream body, usually JSON
- * like `{"message":"You have exceeded your monthly quota"}`. Prefer that
- * message, fall back to the raw string.
- */
 function callFailureMessage(raw: string | undefined, statusCode: number | undefined): string {
   const fallback = statusCode === undefined
     ? 'Copilot model call failed'
@@ -309,7 +296,7 @@ function callFailureMessage(raw: string | undefined, statusCode: number | undefi
       if (typeof message === 'string' && message.length > 0) return message;
     }
   } catch {
-    // Not JSON, use the raw body below.
+
   }
   return raw;
 }
@@ -380,8 +367,7 @@ function eventParts(
 ): LanguageModelV3StreamPart[] {
   if (event.agentId !== undefined) return [];
   if (state.closed) throw new CopilotEventStreamClosedError();
-  // A fresh attempt supersedes an earlier failed one, so a retried call that
-  // succeeds does not inherit the previous failure.
+
   if (event.type === 'model.call_start') {
     state.callFailure = undefined;
     return [];
@@ -399,7 +385,6 @@ function eventParts(
   return [];
 }
 
-/** Creates one stateful mapper for a single root Copilot turn. */
 export function createCopilotEventStreamBridge(): CopilotEventStreamBridge {
   const state: EventBridgeState = {
     closed: false,

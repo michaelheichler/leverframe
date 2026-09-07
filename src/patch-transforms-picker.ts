@@ -1,0 +1,382 @@
+import type { PatchSiteResult } from './patch-transforms.js';
+import { ONE_M_CONTEXT_WINDOW } from './context-model-id.js';
+
+export interface NativeContextMode {
+  default: number;
+  maximum?: number;
+}
+
+export type NativeContextModes = Record<string, NativeContextMode>;
+
+export interface NativeContextPickerOutcome {
+  content: string;
+  result: PatchSiteResult;
+}
+
+const PATCH_COMMENT_START = '/' + '*';
+const PATCH_COMMENT_END = '*' + '/';
+const PATCH_NAME = 'PATCH 12: context mode picker';
+const PATCH_MARKER = PATCH_COMMENT_START + 'ccpatch:context-mode-picker' + PATCH_COMMENT_END;
+
+interface PickerShape {
+  functionStart: number;
+  bodyStart: number;
+  select: string;
+}
+
+interface RendererShape {
+  createElement: string;
+  component: string;
+}
+
+function result(status: PatchSiteResult['status'], extra?: string): PatchSiteResult {
+  return extra === undefined
+    ? { status, name: PATCH_NAME }
+    : { status, name: PATCH_NAME, extra };
+}
+
+function escaped(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function patchOnce(
+  source: string,
+  regex: RegExp,
+  replacement: (match: string, ...groups: string[]) => string,
+  opts: { noopIsSkip?: boolean } = {},
+): { content: string; result: PatchSiteResult } {
+  const global = new RegExp(regex.source, regex.flags.includes('g') ? regex.flags : regex.flags + 'g');
+  const matches = source.match(global);
+  const count = matches?.length ?? 0;
+  if (count === 0) return { content: source, result: result('FAIL', 'anchor not found') };
+  if (count > 1) return { content: source, result: result('FAIL', 'anchor matched ' + count + ' times (expected 1)') };
+  const content = source.replace(regex, replacement as (substring: string, ...args: unknown[]) => string);
+  return content === source
+    ? {
+      content: source,
+      result: result(opts.noopIsSkip ? 'SKIP' : 'FAIL', opts.noopIsSkip ? 'already patched' : 'replacement made no change'),
+    }
+    : { content, result: result('OK') };
+}
+
+function findProperty(params: string, property: string): string | undefined {
+  const match = new RegExp(
+    '(?:^|,)\\s*' + escaped(property) + '\\s*:\\s*([A-Za-z_$][\\w$]*)',
+  ).exec(params);
+  return match?.[1];
+}
+
+function pickerModelKeys(key: string): string[] {
+  const normalized = key.trim().toLowerCase();
+  if (!normalized.startsWith('leverframe:')) return [normalized];
+  const target = normalized.slice('leverframe:'.length);
+  const separator = target.indexOf(':');
+  if (separator <= 0 || separator === target.length - 1) return [normalized];
+  const provider = target.slice(0, separator).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const model = target.slice(separator + 1);
+  const alias = model.startsWith('claude-') ? model : `anthropic-${provider}__${model}`;
+  return [...new Set([normalized, alias])];
+}
+
+function findPicker(source: string): PickerShape[] {
+  const pattern = /function\s+[A-Za-z_$][\w$]*\s*\(\{([^{}]*)\}\)\s*\{/g;
+  const candidates: PickerShape[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(source)) !== null) {
+    const params = match[1]!;
+    if (
+      findProperty(params, 'initial') === undefined
+      || findProperty(params, 'sessionModel') === undefined
+      || findProperty(params, 'onSetDefault') === undefined
+      || findProperty(params, 'onCancel') === undefined
+      || findProperty(params, 'options') === undefined
+    ) continue;
+    const select = findProperty(params, 'onSelect');
+    if (select === undefined) continue;
+    candidates.push({ functionStart: match.index, bodyStart: pattern.lastIndex, select });
+  }
+  return candidates;
+}
+
+function findBalancedBlockEnd(source: string, bodyStart: number): number | undefined {
+  let depth = 1;
+  let quote: 'single' | 'double' | 'template' | undefined;
+  for (let index = bodyStart; index < source.length; index++) {
+    const char = source[index]!;
+    const next = source[index + 1];
+    if (quote !== undefined) {
+      if (char === '\\') {
+        index++;
+      } else if (
+        (quote === 'single' && char === "'")
+        || (quote === 'double' && char === '"')
+        || (quote === 'template' && char === '`')
+      ) {
+        quote = undefined;
+      }
+      continue;
+    }
+    if (char === "'") { quote = 'single'; continue; }
+    if (char === '"') { quote = 'double'; continue; }
+    if (char === '`') { quote = 'template'; continue; }
+    if (char === '/' && next === '/') {
+      const newline = source.indexOf('\n', index + 2);
+      index = newline === -1 ? source.length : newline;
+      continue;
+    }
+    if (char === '/' && next === '*') {
+      const close = source.indexOf('*/', index + 2);
+      index = close === -1 ? source.length : close + 1;
+      continue;
+    }
+    if (char === '{') depth++;
+    else if (char === '}' && --depth === 0) return index;
+  }
+  return undefined;
+}
+
+function findRenderer(body: string): RendererShape[] {
+  const pattern = /\b([A-Za-z_$][\w$]*)\s*\(\s*([A-Za-z_$][\w$]*)\s*,\s*\{/g;
+  const candidates: RendererShape[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(body)) !== null) {
+    const objectStart = match.index + match[0].length;
+    const objectEnd = findBalancedBlockEnd(body, objectStart);
+    if (objectEnd === undefined) continue;
+    const object = body.slice(objectStart, objectEnd);
+    if (
+      hasTopLevelProperty(object, 'options')
+      && hasTopLevelProperty(object, 'onChange')
+      && hasTopLevelProperty(object, 'onCancel')
+    ) {
+      candidates.push({ createElement: match[1]!, component: match[2]! });
+    }
+  }
+  return candidates;
+}
+
+function hasTopLevelProperty(object: string, property: string): boolean {
+  let curly = 0;
+  let square = 0;
+  let paren = 0;
+  let quote: 'single' | 'double' | 'template' | undefined;
+  for (let index = 0; index < object.length; index++) {
+    const char = object[index]!;
+    const next = object[index + 1];
+    if (quote !== undefined) {
+      if (char === '\\') index++;
+      else if (
+        (quote === 'single' && char === "'")
+        || (quote === 'double' && char === '"')
+        || (quote === 'template' && char === '`')
+      ) quote = undefined;
+      continue;
+    }
+    if (char === "'") { quote = 'single'; continue; }
+    if (char === '"') { quote = 'double'; continue; }
+    if (char === '`') { quote = 'template'; continue; }
+    if (char === '/' && next === '/') {
+      const newline = object.indexOf('\n', index + 2);
+      index = newline === -1 ? object.length : newline;
+      continue;
+    }
+    if (char === '/' && next === '*') {
+      const close = object.indexOf('*/', index + 2);
+      index = close === -1 ? object.length : close + 1;
+      continue;
+    }
+    if (curly === 0 && square === 0 && paren === 0) {
+      const propertyPattern = new RegExp('^' + escaped(property) + '\\s*:').exec(object.slice(index));
+      if (propertyPattern) return true;
+    }
+    if (char === '{') curly++;
+    else if (char === '}') curly--;
+    else if (char === '[') square++;
+    else if (char === ']') square--;
+    else if (char === '(') paren++;
+    else if (char === ')') paren--;
+  }
+  return false;
+}
+
+function invalid(detail: string, nativeBundleSource: boolean, source: string): NativeContextPickerOutcome {
+  return {
+    content: source,
+    result: result(nativeBundleSource ? 'FAIL' : 'SKIP', detail),
+  };
+}
+
+export function applyNativeContextPicker(
+  source: string,
+  contextModes: NativeContextModes,
+): NativeContextPickerOutcome {
+  const modelKeys = [...new Set(
+    Object.entries(contextModes)
+      .filter(([, value]) => Number.isSafeInteger(value.default) && value.default > 0)
+      .flatMap(([key]) => pickerModelKeys(key))
+      .filter(Boolean),
+  )].sort();
+  const modelTable = JSON.stringify(Object.fromEntries(modelKeys.map(key => [key, true])));
+  const declaration = PATCH_MARKER + 'var __lfcModels=JSON.parse(' + JSON.stringify(modelTable) + ');';
+
+  if (source.includes(PATCH_MARKER)) {
+    return patchOnce(
+      source,
+      new RegExp(escaped(PATCH_MARKER) + 'var __lfcModels=JSON\\.parse\\("(?:[^"\\\\]|\\\\.)*"\\);'),
+      () => declaration,
+      { noopIsSkip: true },
+    );
+  }
+
+  if (modelKeys.length === 0) {
+    return { content: source, result: result('SKIP', 'no maximum context modes configured') };
+  }
+
+  const nativeBundleSource =
+    source.includes('//#__leverframe_claude_module__:')
+    || source.includes('/*__LEVERFRAME_CLAUDE_MODULE_BOUNDARY__*/');
+  const pickers = findPicker(source);
+  if (pickers.length !== 1) {
+    return invalid(
+      pickers.length === 0
+        ? 'picker prop shape anchor not found'
+        : 'picker prop shape anchor matched ' + pickers.length + ' functions',
+      nativeBundleSource,
+      source,
+    );
+  }
+  const picker = pickers[0]!;
+  const bodyEnd = findBalancedBlockEnd(source, picker.bodyStart);
+  if (bodyEnd === undefined) return invalid('picker function body could not be delimited', nativeBundleSource, source);
+  const body = source.slice(picker.bodyStart, bodyEnd);
+
+  const stateHookMatch = /\[\s*[A-Za-z_$][\w$]*\s*,\s*[A-Za-z_$][\w$]*\s*\]\s*=\s*([A-Za-z_$][\w$]*)\s*\(/.exec(body);
+  const stateHook = stateHookMatch?.[1];
+  if (stateHook === undefined) return invalid('picker state hook anchor not found', nativeBundleSource, source);
+
+  const renderers = findRenderer(body);
+  if (renderers.length !== 1) {
+    return invalid(
+      renderers.length === 0
+        ? 'picker renderer anchor not found'
+        : 'picker renderer anchor matched ' + renderers.length + ' calls',
+      nativeBundleSource,
+      source,
+    );
+  }
+
+  const callbackPattern = new RegExp(
+    '\\b' + escaped(picker.select)
+    + '\\(([A-Za-z_$][\\w$]*),([A-Za-z_$][\\w$]*)\\)\\}(?=\\s*(?:let|var|const)\\s+[A-Za-z_$][\\w$]*\\s*=)',
+  );
+  if (!callbackPattern.test(body)) return invalid('picker selection callback anchor not found', nativeBundleSource, source);
+
+  const names = {
+    pending: '__lfcPending',
+    setPending: '__lfcSetPending',
+    generation: '__lfcGeneration',
+    models: '__lfcModels',
+    safeOptions: '__lfcSafeOptions',
+    remember: '__lfcRememberContext',
+    cancel: '__lfcCancelContext',
+    commit: '__lfcCommitContext',
+    begin: '__lfcBeginContext',
+  };
+  const helper = [
+    declaration,
+    'let[' + names.pending + ',' + names.setPending + ']=' + stateHook + '(null);',
+    'let __lfcAllowLateRefresh=false;',
+    'const ' + names.safeOptions + '=function(value){',
+    'if(!Array.isArray(value))return[];',
+    'const result=[];',
+    'for(const candidate of value){',
+    'if(!candidate||typeof candidate!=="object")continue;',
+    'const mode=candidate.mode;',
+    'const contextWindow=candidate.contextWindow;',
+    'const label=candidate.label;',
+    'if((mode!=="default"&&mode!=="maximum")||!Number.isSafeInteger(contextWindow)||contextWindow<=0||typeof label!=="string"||label.length===0||label.length>160)continue;',
+    'if(result.some(function(item){return item.mode===mode}))continue;',
+    'result.push({mode:mode,contextWindow:contextWindow,label:label});',
+    '}',
+    'result.sort(function(left){return left.mode==="default"?-1:1});',
+    'return result;',
+    '};',
+    'const ' + names.remember + '=function(model,options){',
+    'if(typeof globalThis!=="object"||globalThis===null)return;',
+    'let __lfcStore=globalThis.__lfcContextWindows;',
+    'if(!__lfcStore||typeof __lfcStore!=="object"||Object.getPrototypeOf(__lfcStore)!==null){__lfcStore=Object.create(null);globalThis.__lfcContextWindows=__lfcStore;}',
+    'const __lfcModelKey=String(model==null?"":model).trim().toLowerCase().replace(/(?:\\[(?:default|maximum|1m)\\])+$/i,"");',
+    'if(__lfcModelKey==="")return;',
+    '__lfcStore[__lfcModelKey]=0;',
+    '__lfcStore[__lfcModelKey+"[default]"]=0;',
+    '__lfcStore[__lfcModelKey+"[maximum]"]=0;',
+    '__lfcStore[__lfcModelKey+"[1m]"]=0;',
+    'for(const __lfcOption of options){',
+    '__lfcStore[__lfcModelKey+"["+__lfcOption.mode+"]"]=__lfcOption.contextWindow;',
+    'if(__lfcOption.mode==="default"||__lfcStore[__lfcModelKey]===0)__lfcStore[__lfcModelKey]=__lfcOption.contextWindow;',
+    'if(__lfcOption.contextWindow>=' + ONE_M_CONTEXT_WINDOW + '&&__lfcStore[__lfcModelKey+"[1m]"]===0)__lfcStore[__lfcModelKey+"[1m]"]=__lfcOption.contextWindow;',
+    '}',
+    '};',
+    'const ' + names.cancel + '=function(){' + names.generation + '++;__lfcAllowLateRefresh=true;' + names.setPending + '(null);};',
+    'const ' + names.commit + '=function(model,effort,option){',
+    'if(!option||(option.mode!=="default"&&option.mode!=="maximum"))return;',
+    'const __lfcModelKey=String(model==null?"":model).trim().replace(/(?:\\[(?:default|maximum|1m)\\])+$/i,"");',
+    'if(__lfcModelKey==="")return;',
+    '__lfcAllowLateRefresh=false;' + names.generation + '++;' + names.setPending + '(null);',
+    names.remember + '(__lfcModelKey,[option]);',
+    picker.select + '(option.mode==="maximum"?__lfcModelKey+"[maximum]":__lfcModelKey,effort);',
+    '};',
+    'const ' + names.begin + '=function(model,effort){',
+    '__lfcAllowLateRefresh=false;',
+    'const __lfcModelKey=String(model==null?"":model).trim().replace(/(?:\\[(?:default|maximum|1m)\\])+$/i,"");',
+    'const key=__lfcModelKey.toLowerCase();',
+    'if(!Object.prototype.hasOwnProperty.call(' + names.models + ',key))return false;',
+    'const generation=++' + names.generation + ';',
+    names.setPending + '({status:"loading",model:__lfcModelKey,effort:effort});',
+    'const base=typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_BASE_URL:void 0;',
+    'const token=typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_API_KEY:void 0;',
+    'if(typeof base!=="string"||!/^http:\\/\\/127\\.0\\.0\\.1(?::\\d+)?(?:\\/|$)/.test(base)||typeof token!=="string"||token.length===0){',
+    names.setPending + '({status:"error",model:__lfcModelKey,effort:effort});return true;',
+    '}',
+    'let endpoint;',
+    'try{endpoint=new URL("/v1/leverframe/context-selection",base)}catch{' + names.setPending + '({status:"error",model:__lfcModelKey,effort:effort});return true}',
+    'endpoint.searchParams.set("model",__lfcModelKey);',
+    'fetch(endpoint,{headers:{Authorization:"Bearer "+token},redirect:"error"}).then(function(response){if(!response.ok)throw new Error("context discovery failed");return response.json()}).then(function(payload){',
+    'const options=' + names.safeOptions + '(payload&&payload.options);',
+    'const current=generation===' + names.generation + ';',
+    'if(current||__lfcAllowLateRefresh)' + names.remember + '(__lfcModelKey,options);',
+    'if(!current)return;',
+    'if(options.length===0)throw new Error("no confirmed context options");',
+    'if(options.length===1){' + names.commit + '(__lfcModelKey,effort,options[0]);return;}',
+    names.setPending + '({status:"ready",model:__lfcModelKey,effort:effort,options:options});',
+    '}).catch(function(){if(generation===' + names.generation + ')' + names.setPending + '({status:"error",model:__lfcModelKey,effort:effort});});',
+    'return true;',
+    '};',
+  ].join('');
+  const renderer = renderers[0]!;
+  const renderBranch =
+    'if(' + names.pending + '!==null){'
+    + 'const displayOptions=' + names.pending + '.status==="ready"?'
+    + names.pending + '.options.map(function(option){return{value:option.mode,label:option.label}}):'
+    + '[{value:"__leverframe_context_status",label:' + names.pending + '.status==="loading"?"Refreshing context limits...":"Context limits unavailable; cancel"}];'
+    + 'return ' + renderer.createElement + '(' + renderer.component + ',{options:displayOptions,onChange:function(choice){'
+    + 'if(' + names.pending + '===null||' + names.pending + '.status!=="ready")return;'
+    + 'const value=typeof choice==="string"?choice:choice&&choice.value;'
+    + 'const selected=' + names.pending + '.options.find(function(option){return option.mode===value});'
+    + 'if(selected)' + names.commit + '(' + names.pending + '.model,' + names.pending + '.effort,selected);'
+    + '},onCancel:function(){' + names.cancel + '();}});}' ;
+  const sharedState = 'var ' + names.generation + '=0;';
+  const withHelper = source.slice(0, picker.functionStart)
+    + sharedState
+    + source.slice(picker.functionStart, picker.bodyStart)
+    + helper
+    + source.slice(picker.bodyStart);
+  const patched = patchOnce(
+    withHelper,
+    callbackPattern,
+    (_match, model, effort) =>
+      'if(' + names.begin + '(' + model! + ',' + effort! + '))return;'
+      + picker.select + '(' + model! + ',' + effort! + ');}' + renderBranch,
+  );
+  return patched;
+}

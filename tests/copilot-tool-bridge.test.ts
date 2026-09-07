@@ -1,9 +1,4 @@
-/**
- * Specifies src/copilot/tool-bridge.ts: converts an AI SDK ToolSet into isolated
- * Copilot SDK tools whose handlers stay pending until a matching AI SDK
- * tool-result part resolves or rejects them. RED by construction: the module
- * under test does not exist yet.
- */
+
 
 import type { LanguageModelV3FunctionTool } from '@ai-sdk/provider';
 import type { JSONValue, ToolResultPart } from 'ai';
@@ -94,7 +89,6 @@ function errorJsonResult(toolCallId: string, toolName: string, value: JSONValue)
   return { type: 'tool-result', toolCallId, toolName, output: { type: 'error-json', value } };
 }
 
-/** Prevents accidental writes so bridge behavior can be checked without mutation. */
 function deepFreeze<T>(value: T): T {
   if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
     for (const key of Object.keys(value as Record<string, unknown>)) {

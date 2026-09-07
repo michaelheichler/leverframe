@@ -60,11 +60,6 @@ export function assertSafeExistingFile(path: string, description = 'file'): void
   }
 }
 
-/**
- * Open a file only after lstat, then verify that the opened descriptor still
- * names the same inode. Destructive callers use this rather than interpreting
- * an unreadable or replaced file as empty state.
- */
 export function readFileStrict(path: string, options: StrictReadOptions = {}): string {
   const description = options.description ?? 'State file';
   const before = lstatSync(path);
@@ -119,7 +114,6 @@ function completeWrite(fd: number, content: string | Buffer): void {
   }
 }
 
-/** Publish bytes with O_EXCL 0600 temp, fsync, fenced rename, and parent fsync. */
 export function durableAtomicWrite(
   path: string,
   content: string | Buffer,

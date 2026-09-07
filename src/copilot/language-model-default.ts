@@ -1,7 +1,4 @@
-/**
- * Wires the custom V3 connector to the optional public Copilot SDK boundary.
- * Runtime creation stays lazy, so unrelated providers do not load or require the SDK.
- */
+
 
 import type { LanguageModelV3FunctionTool, LanguageModelV3StreamPart } from '@ai-sdk/provider';
 import type { ToolResultPart } from 'ai';
@@ -82,7 +79,6 @@ function connectorDependencies(input: {
   };
 }
 
-/** Creates the production connector without starting the SDK runtime. */
 export function createDefaultCopilotLanguageModel(input: {
   modelId: string;
   gitHubToken: string;

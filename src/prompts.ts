@@ -1,4 +1,4 @@
-// src/prompts.ts
+
 import * as p from '@clack/prompts';
 import pc from 'picocolors';
 import type { UserPreferences, ConflictInfo, LocalProvider, LocalProviderModel } from './types.js';
@@ -15,9 +15,9 @@ import { scoreModelSearch } from './model-search.js';
 
 const BROWSE_ALL = '__browse_all__';
 const MAX_RECENT = 3;
-/** Providers with more models than this offer search or paginated browse. */
+
 export const MODEL_SEARCH_THRESHOLD = 25;
-/** Models shown per page when browsing large catalogs. */
+
 export const MODEL_PAGE_SIZE = 15;
 
 const PAGE_PREV = '__page_prev__';
@@ -61,7 +61,6 @@ export function filterModelsBySearch<T extends ModelSearchable>(models: T[], que
     .map(result => result.model);
 }
 
-/** Slice a model list for paginated browse UI. */
 export function sliceModelPage<T>(
   items: T[],
   page: number,
@@ -83,7 +82,6 @@ function isSelectedModel<T extends { id: string }>(value: PagedPickResult<T>): v
   return value !== 'search' && value !== 'browse' && value !== 'menu';
 }
 
-/** Paginated model picker — exported for global favorites search. */
 export async function pickModelFromPagedList<T extends { id: string }>(
   list: T[],
   toOption: (m: T) => ModelSelectOption,
@@ -307,7 +305,7 @@ export async function pickLocalModel(
   conflicts: ConflictInfo[],
   prefs: UserPreferences,
 ): Promise<LocalProviderModel | 'back' | null> {
-  // Show recently used models for this provider if we have any.
+
   const recentIds = (prefs.recentModelsByProvider?.[provider.id] ?? []).slice(0, MAX_RECENT);
   const recentModels = recentIds
     .map(id => provider.models.find(m => m.id === id))

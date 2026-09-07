@@ -1,7 +1,5 @@
-// Anthropic /v1/messages ↔ Vercel AI SDK. One turn per request. Claude Code owns the tool loop.
-// Orchestration entry point: re-exports the public surface assembled from the
-// request-translation, usage-extraction, streaming-response, and
-// non-streaming-response modules below.
+
+
 import { silenceSdkWarnings } from './proxy-shared.js';
 
 export { silenceSdkWarnings };

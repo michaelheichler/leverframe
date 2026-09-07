@@ -109,7 +109,7 @@ function nextActionFor(
     case 'modified_but_injected': return 'The Leverframe patch sites still verify; no action required, though the exact bytes changed (e.g. re-signing).';
     case 'partially_patched': return 'The patch is damaged. Run `leverframe patch --restore` then `leverframe patch` to repair it.';
     case 'unsupported': {
-      // Never send the reader back to the command that produced this report.
+
       if (inspectError) return `The claude binary could not be inspected: ${inspectError}`;
       return 'Could not confidently classify this target. Inspect the drift and integration sections above.';
     }
@@ -186,12 +186,10 @@ export async function diagnosePatchV2(
     live.readable && observedSha256 && live.injection.state === 'present'
     && (!manifest || observedSha256 !== manifest.patchedSha256),
   );
-  // Read content whenever the binary is at least readable, not only when a
-  // semantic verdict is needed, so the per-site status section below always
-  // has something to show for a resolved, supported target.
+
   if (live.readable) {
     try {
-      const content = await runtime.readContent(installation.canonicalPath);
+      const content = await runtime.readContent(installation.canonicalPath, installation.version);
       const verification = verifyPatchSites(content, desired.config);
       patchSites = verification.results;
       if (wantsSemanticVerdict) semanticSitesComplete = verification.complete;
@@ -237,8 +235,7 @@ export async function diagnosePatchV2(
       observedSha256,
       expectedPatchedSha256: manifest?.patchedSha256 ?? null,
       hashesMatch: manifest ? observedSha256 === manifest.patchedSha256 : null,
-      // An unreadable binary was never marker-scanned, so report the state as
-      // unknown rather than as an observed ambiguous marker.
+
       injectionState: live.readable ? live.injection.state : null,
       semanticSitesComplete,
     },
@@ -262,7 +259,7 @@ export async function diagnosePatchV2(
           mode: legacyRecovery.kind,
         },
     integration: {
-      status: patchSites.some(site => site.status === 'FAIL')
+      status: semanticSitesComplete === false && wantsSemanticVerdict
         ? 'incompatible'
         : live.injection.state === 'present' && semanticSitesComplete !== false
           ? 'integrated'

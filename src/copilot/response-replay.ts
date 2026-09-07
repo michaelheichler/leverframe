@@ -1,11 +1,7 @@
-/**
- * Records only responses fully consumed by the caller.
- * An interrupted stream has no replay entry, so the connector resynchronizes instead.
- */
+
 
 import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
 
-/** Records immutable stream parts after the upstream stream closes normally. */
 export function recordCopilotResponse(input: {
   stream: ReadableStream<LanguageModelV3StreamPart>;
   onComplete: (parts: readonly LanguageModelV3StreamPart[]) => void;
@@ -37,7 +33,6 @@ export function recordCopilotResponse(input: {
   });
 }
 
-/** Creates a fresh stream over previously completed immutable parts. */
 export function replayCopilotResponse(
   parts: readonly LanguageModelV3StreamPart[],
 ): ReadableStream<LanguageModelV3StreamPart> {

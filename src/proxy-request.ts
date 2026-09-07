@@ -1,5 +1,10 @@
-// src/proxy-request.ts, inbound request parsing and route resolution for the proxy
-import { routeLookupIds } from './context-model-id.js';
+
+import {
+  ONE_M_CONTEXT_WINDOW,
+  hasOneMContextSuffix,
+  parseContextModeModelId,
+  routeLookupIds,
+} from './context-model-id.js';
 import { revalidateCustomEndpointUrl } from './registry/url-security.js';
 import type { AnthropicRequest } from './sdk-adapter.js';
 import type { LifecycleDeadlines } from './request-lifecycle.js';
@@ -17,16 +22,6 @@ export type ParsedAnthropicRequest =
   | { ok: true; body: ProxyAnthropicRequestBody }
   | { ok: false; status: number; message: string };
 
-/**
- * Parses and validates the raw wire body for /v1/messages (and its
- * count_tokens sibling). `model` stays optional here on purpose - Claude
- * Code's token-counting and health-probe requests omit it, and the caller
- * falls back to the default route. Beyond the type check on `model`, this
- * intentionally validates nothing else about the body's shape (e.g. a
- * non-array `messages`) - that stays the translation/relay layer's job, so
- * its existing error taxonomy (400 vs 502, retryability, etc.) for a
- * malformed-but-present field is unchanged by this refactor.
- */
 export function parseAnthropicRequest(raw: string): ParsedAnthropicRequest {
   let parsed: unknown;
   try {
@@ -77,14 +72,6 @@ export function proxyToolResults(body: unknown): Array<{ toolUseId: string; cont
   return results;
 }
 
-/**
- * A single entry in a proxy catalog.
- * aliasId: the id advertised in /v1/models (must start with 'claude-' or 'anthropic-')
- * realModelId: the actual model id sent to the upstream provider
- * upstreamUrl: full chat-completions URL (openai) or base URL without /v1 (anthropic)
- * apiKey: per-route upstream key. SDK routes may intentionally be empty for
- * anonymous free providers; passthrough and Cloud Code routes still require it.
- */
 export interface ProxyRoute {
   aliasId: string;
   realModelId: string;
@@ -93,7 +80,11 @@ export interface ProxyRoute {
   apiKey: string;
   modelFormat: 'anthropic' | 'openai';
   contextWindow?: number;
-  /** Provider never confirmed a context window, resolve to the conservative default, never a heuristic. */
+  maxContextWindow?: number;
+  inputTokenLimit?: number;
+  outputTokenLimit?: number;
+  minimalClientVersion?: string;
+
   contextWindowUnconfirmed?: boolean;
   npm?: string;      // OpenCode api.npm - when SDK-migrated, routes via the adapter
   baseURL?: string;  // base URL for openai-compatible / openrouter SDK providers
@@ -101,43 +92,88 @@ export interface ProxyRoute {
   authType?: 'api' | 'oauth' | 'none';
   oauthAccountId?: string;
   providerData?: Record<string, unknown>;
-  /** Called once on upstream HTTP 401 to get a refreshed OAuth token. Retry happens only if token differs from current apiKey. */
+
   refreshToken?: (rejectedToken: string) => Promise<string | null>;
   supportedParameters?: string[];
   reasoning?: boolean;
+  supportsTemperature?: boolean;
+  supportedReasoningEfforts?: string[];
+  defaultReasoningEffort?: string;
+  supportsReasoningSummaries?: boolean;
+  supportsReasoningSummaryParameter?: boolean;
+  supportsParallelToolCalls?: boolean;
+  supportsReasoningToggle?: boolean;
+  supportsPromptCacheBreakpoints?: boolean;
   interleavedReasoningField?: string;
-  /** Backend capability: model requires the Responses-Lite request shape (x-openai-internal-codex-responses-lite). */
+
   useResponsesLite?: boolean;
-  /** Backend capability: model must use the WebSocket Responses transport instead of HTTP. */
+
   preferWebSockets?: boolean;
-  /** Static headers sent on every upstream request (e.g. a plan/auth-tracking header a custom endpoint requires). */
+
   headers?: Record<string, string>;
-  /** Test-only: overrides RequestLifecycle's production deadline defaults for this route's requests. */
+
   requestDeadlines?: LifecycleDeadlines;
 }
 
-/**
- * Produce a gateway-discovery-safe alias for a model id.
- * Claude Code's gateway discovery only shows ids starting with 'claude' or 'anthropic'.
- * claude-* ids are returned unchanged; everything else gets an 'anthropic-{providerId}__' prefix.
- * Uses stable provider id (slug), not display name - renaming a provider does not break aliases.
- */
 export function aliasModelId(realId: string, providerId: string): string {
   if (realId.startsWith('claude-')) return realId;
   const sanitized = providerId.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   return `anthropic-${sanitized}__${realId}`;
 }
 
-/** Resolve catalog alias when Claude Code or legacy registry ids differ by prefix/suffix. */
 export function lookupRoute(byAlias: Map<string, ProxyRoute>, id: string): ProxyRoute | undefined {
+  const { mode } = parseContextModeModelId(id);
+  const legacyOneM = hasOneMContextSuffix(id);
   for (const key of routeLookupIds(id)) {
     const route = byAlias.get(key);
-    if (route) return route;
+    if (!route) continue;
+    if (legacyOneM) {
+      const current = route.contextWindow;
+      if (
+        typeof current === 'number'
+        && Number.isSafeInteger(current)
+        && current >= ONE_M_CONTEXT_WINDOW
+        && route.contextWindowUnconfirmed !== true
+      ) {
+        return { ...route, aliasId: id, contextWindow: current, contextWindowUnconfirmed: undefined };
+      }
+      const maximum = route.maxContextWindow;
+      if (
+        typeof current === 'number'
+        && Number.isSafeInteger(current)
+        && current > 0
+        && typeof maximum === 'number'
+        && Number.isSafeInteger(maximum)
+        && maximum >= ONE_M_CONTEXT_WINDOW
+        && route.contextWindowUnconfirmed !== true
+      ) {
+        return { ...route, aliasId: id, contextWindow: maximum, contextWindowUnconfirmed: undefined };
+      }
+      continue;
+    }
+    if (mode === 'maximum') {
+      const maximum = route.maxContextWindow;
+      const current = route.contextWindow;
+      if (
+        typeof maximum !== 'number'
+        || !Number.isSafeInteger(maximum)
+        || maximum <= 0
+        || typeof current !== 'number'
+        || !Number.isSafeInteger(current)
+        || current <= 0
+        || route.contextWindowUnconfirmed === true
+        || maximum <= current
+      ) {
+        return undefined;
+      }
+      return { ...route, aliasId: id, contextWindow: maximum, contextWindowUnconfirmed: undefined };
+    }
+    if (mode === 'default') return { ...route, aliasId: id };
+    return route;
   }
   return undefined;
 }
 
-/** Short alias name → route id, resolvable in request bodies alongside route aliasIds. */
 export interface ProxyModelAlias {
   name: string;
   routeId: string;

@@ -1,4 +1,4 @@
-// src/providers-command.ts: leverframe providers command, dispatch entry point
+
 import * as p from '@clack/prompts';
 import { providerAuthHelpText } from './registry/provider-auth.js';
 import { reconcilePendingCredentialDeletes } from './registry/credential-lifecycle.js';

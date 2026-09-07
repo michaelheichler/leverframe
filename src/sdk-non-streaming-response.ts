@@ -1,4 +1,4 @@
-// Non-streaming Anthropic response: collects one SDK generateText/streamText call into a message.
+
 import { streamText, generateText } from 'ai';
 import type { LanguageModel } from 'ai';
 import { encodeToolUseId, grabRoundTripSignature, type FullStreamPart } from './proxy-shared.js';
@@ -27,7 +27,7 @@ export async function generateAnthropicResponse(
     onPart?: (partType: string) => void;
     onUsage?: (usage: AnthropicUsageTrace) => void;
     idleTimeoutMs?: number;
-    /** See {@link import('./sdk-streaming-response.js').AnthropicStreamObserver.lifecycle}. */
+
     lifecycle?: RequestExecutionObserver;
     contextWindow?: number;
     log?: LogFn;
@@ -41,9 +41,7 @@ export async function generateAnthropicResponse(
   const { inputTokensIncludeCache = false, ...sdkParams } = params;
 
   if (options?.forceStream) {
-    // Some upstreams (e.g. ChatGPT's Codex backend) reject non-streaming requests
-    // outright. Request a real stream from the SDK and collect it into one
-    // response instead of forwarding the client's non-streaming request upstream.
+
     const forceAbort = new AbortController();
     const stopForwardingAbort = forwardAbortSignal(options.lifecycle?.abortSignal ?? options.abortSignal, forceAbort);
     const abortSignal = forceAbort.signal;

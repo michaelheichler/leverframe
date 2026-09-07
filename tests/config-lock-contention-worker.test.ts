@@ -22,20 +22,6 @@ function readCapabilityMarker(home: string): string | null {
   }
 }
 
-/**
- * The worker fixture is gated on four things matching at once:
- *  - LEVERFRAME_LOCK_WORKER_MODE=run
- *  - LEVERFRAME_HOME equal to the exact temp home the parent named
- *  - a fresh capability the parent generated
- *  - the capability marker file inside that temp home holding the same capability
- *
- * The on-disk marker is the ownership token. A stray LEVERFRAME_LOCK_WORKER_MODE=run
- * inherited through process.env (the suite shares env with spawned children)
- * cannot activate the fixture on its own: with no marker file at the runtime
- * LEVERFRAME_HOME, or a marker holding a different capability, the describe is
- * skipped and no writes happen. The parent generates a fresh capability per
- * run, so an old marker left behind by a previous run also fails to match.
- */
 function shouldRunWorkerFixture(): boolean {
   if (WORKER_MODE !== 'run') return false;
   if (!WORKER_HOME || !WORKER_CAPABILITY || !WORKER_SYNC_DIR) return false;

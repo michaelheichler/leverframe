@@ -84,7 +84,7 @@ const TOP_LEVEL_KEYS = new Set(['schemaVersion', 'providers', 'importedAt', 'pri
 const PROVIDER_KEYS = new Set(['id', 'templateId', 'name', 'enabled', 'authRef', 'authType', 'subscriptionFilter', 'api', 'modelsCache', 'addedAt', 'refreshedAt']);
 const API_KEYS = new Set(['npm', 'url', 'id']);
 const CACHE_KEYS = new Set(['fetchedAt', 'models']);
-const MODEL_KEYS = new Set(['id', 'name', 'upstreamModelId', 'family', 'brand', 'contextWindow', 'cost', 'usageMultiplier', 'usageMultiplierApplies', 'deprecated', 'contextWindowUnconfirmed', 'isFree', 'freeStatus', 'modelFormat', 'npm', 'apiUrl', 'sourceBackend', 'supportedParameters', 'reasoning', 'interleavedReasoningField', 'useResponsesLite', 'preferWebSockets']);
+const MODEL_KEYS = new Set(['id', 'name', 'upstreamModelId', 'family', 'brand', 'contextWindow', 'maxContextWindow', 'inputTokenLimit', 'outputTokenLimit', 'minimalClientVersion', 'cost', 'usageMultiplier', 'usageMultiplierApplies', 'deprecated', 'contextWindowUnconfirmed', 'isFree', 'freeStatus', 'modelFormat', 'npm', 'apiUrl', 'sourceBackend', 'supportedParameters', 'reasoning', 'supportsTemperature', 'supportsReasoningSummaries', 'supportsReasoningSummaryParameter', 'supportsParallelToolCalls', 'supportsReasoningToggle', 'supportsPromptCacheBreakpoints', 'supportedReasoningEfforts', 'defaultReasoningEffort', 'interleavedReasoningField', 'useResponsesLite', 'preferWebSockets']);
 const COST_KEYS = new Set(['input', 'output', 'cache_read', 'cache_write']);
 const CREDENTIAL_KEY = /(?:api.?key|access.?token|refresh.?token|credential|secret|password|cookie|authorization|bearer|keyring|oauth.?token|(?:^|[_-])key(?:$|[_-]))/i;
 const CANDIDATE_ENV_ALLOWLIST = new Set([
@@ -168,14 +168,15 @@ function validateCachedModel(value: unknown, providerId: string): CachedModel {
   if (row.context === null && value.contextWindow !== undefined) throw new Error(`Candidate registry contextWindow must be unconfirmed for ${providerId}:${value.id}`);
   if (value.useResponsesLite !== undefined && value.useResponsesLite !== row.expectedTransport.useResponsesLite) throw new Error(`Candidate registry useResponsesLite mismatch for ${providerId}:${value.id}`);
   if (value.preferWebSockets !== undefined && value.preferWebSockets !== row.expectedTransport.preferWebSockets) throw new Error(`Candidate registry preferWebSockets mismatch for ${providerId}:${value.id}`);
-  const optionalStrings = ['family', 'brand', 'freeStatus', 'sourceBackend', 'interleavedReasoningField'];
+  const optionalStrings = ['family', 'brand', 'freeStatus', 'sourceBackend', 'minimalClientVersion', 'defaultReasoningEffort', 'interleavedReasoningField'];
   for (const key of optionalStrings) if (value[key] !== undefined && typeof value[key] !== 'string') throw new Error(`Candidate registry CachedModel.${key} must be a string`);
-  const optionalNumbers = ['contextWindow', 'usageMultiplier'];
+  const optionalNumbers = ['contextWindow', 'maxContextWindow', 'inputTokenLimit', 'outputTokenLimit', 'usageMultiplier'];
   for (const key of optionalNumbers) if (value[key] !== undefined && (typeof value[key] !== 'number' || !Number.isFinite(value[key]))) throw new Error(`Candidate registry CachedModel.${key} must be a number`);
-  const optionalBooleans = ['usageMultiplierApplies', 'deprecated', 'contextWindowUnconfirmed', 'isFree', 'reasoning', 'useResponsesLite', 'preferWebSockets'];
+  const optionalBooleans = ['usageMultiplierApplies', 'deprecated', 'contextWindowUnconfirmed', 'isFree', 'reasoning', 'supportsTemperature', 'supportsReasoningSummaries', 'supportsReasoningSummaryParameter', 'supportsParallelToolCalls', 'supportsReasoningToggle', 'supportsPromptCacheBreakpoints', 'useResponsesLite', 'preferWebSockets'];
   for (const key of optionalBooleans) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error(`Candidate registry CachedModel.${key} must be boolean`);
   if (value.cost !== undefined) validateCost(value.cost, `CachedModel ${providerId}:${value.id}`);
   if (value.supportedParameters !== undefined && (!Array.isArray(value.supportedParameters) || value.supportedParameters.some(item => typeof item !== 'string'))) throw new Error(`Candidate registry supportedParameters must be a string array for ${providerId}:${value.id}`);
+  if (value.supportedReasoningEfforts !== undefined && (!Array.isArray(value.supportedReasoningEfforts) || value.supportedReasoningEfforts.some(item => typeof item !== 'string'))) throw new Error(`Candidate registry supportedReasoningEfforts must be a string array for ${providerId}:${value.id}`);
   return value as unknown as CachedModel;
 }
 

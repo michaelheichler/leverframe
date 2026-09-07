@@ -148,7 +148,7 @@ describe('server runtime state file', () => {
   });
 
   it('a stale lock from a dead pid does not block registration', () => {
-    // Ensure home exists, then plant a lock owned by a dead pid.
+
     registerServerRuntimeState(proxyState(), env);
     writeFileSync(getServerRuntimeLockPath(env), JSON.stringify({ pid: 999999, startedAt: 0 }));
 
@@ -194,7 +194,7 @@ describe('parseServerRuntimeStates', () => {
     writeFileSync(path, `${JSON.stringify(legacy, null, 2)}\n`);
 
     expect(readLiveServerRuntimeState(env)).toEqual(legacy);
-    // A new registration upgrades the file to the array shape without losing the legacy record.
+
     const endpoint = endpointState({ pid: 999999 });
     registerServerRuntimeState(endpoint, env, { isAlive: () => true });
     expect(JSON.parse(readFileSync(path, 'utf8'))).toBeInstanceOf(Array);
@@ -254,7 +254,7 @@ describe('wrapper selection policy', () => {
     registerServerRuntimeState(proxy, env, { isAlive: () => true });
 
     expect(readLiveServerRuntimeState(env, { isAlive: () => true })).toEqual(proxy);
-    // Kill the proxy → the endpoint server is selected (current single-server behavior).
+
     expect(readLiveServerRuntimeState(env, { isAlive: pid => pid !== 999998 })).toEqual(endpoint);
   });
 });

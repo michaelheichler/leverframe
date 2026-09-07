@@ -490,7 +490,6 @@ describe('conservative legacy migration', () => {
     expect(existsSync(backupPath)).toBe(true); // legacy backup left untouched
     expect(readFileSync(backupPath, 'utf8')).toBe(BASELINE);
 
-    // Running again is a no-op: V2 state already exists.
     const second = await migrateLegacyStateIfVerified({ installation, runtime: fakeRuntime(), legacy });
     expect(second.migrated).toBe(false);
   });

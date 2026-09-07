@@ -1,7 +1,4 @@
-/**
- * Normalizes V3 prompts for session identity, continuation, and resynchronization.
- * Prompt content stays in memory and is rendered only when sent to the owned SDK session.
- */
+
 
 import { createHash } from 'node:crypto';
 import type {
@@ -70,7 +67,6 @@ function serializedPart(part: Record<string, unknown>): SerializedHistoryPart {
   throw new TypeError(`Copilot does not support ${String(part.type)} prompt parts`);
 }
 
-/** Serializes a V3 prompt into the same comparison shape used by Task 5. */
 export function v3History(prompt: LanguageModelV3Prompt): SerializedHistory {
   return {
     version: SERIALIZED_HISTORY_VERSION,
@@ -83,14 +79,12 @@ export function v3History(prompt: LanguageModelV3Prompt): SerializedHistory {
   };
 }
 
-/** Extracts one canonical system message and rejects multiple conflicting ones. */
 export function v3SystemPrompt(prompt: LanguageModelV3Prompt): string {
   const systems = prompt.filter(message => message.role === 'system');
   if (systems.length > 1) throw new TypeError('Copilot accepts one normalized system message');
   return systems[0]?.content ?? '';
 }
 
-/** Builds immutable comparison state for one connector request. */
 export function v3ComparisonState(input: {
   prompt: LanguageModelV3Prompt;
   modelId: string;
@@ -111,7 +105,6 @@ export function v3ComparisonState(input: {
   };
 }
 
-/** Reads tool-result parts in transcript order for pending-handler continuation. */
 export function v3ToolResults(prompt: LanguageModelV3Prompt): LanguageModelV3ToolResultPart[] {
   return prompt.flatMap(message => (
     message.role === 'tool'
@@ -120,7 +113,6 @@ export function v3ToolResults(prompt: LanguageModelV3Prompt): LanguageModelV3Too
   )) as LanguageModelV3ToolResultPart[];
 }
 
-/** Returns the final user text as the next session turn. */
 export function v3LatestUserPrompt(prompt: LanguageModelV3Prompt): string {
   const user = [...prompt].reverse().find(message => message.role === 'user');
   if (user === undefined) throw new TypeError('Copilot request requires a user message');

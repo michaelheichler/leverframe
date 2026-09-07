@@ -5,8 +5,8 @@ export default defineConfig({
   format: ['esm'],
   target: 'node22',
   clean: true,
-  minify: false,
-  sourcemap: true,
+  minify: true,
+  sourcemap: false,
   banner: {
     js: '#!/usr/bin/env node',
   },

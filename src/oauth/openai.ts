@@ -1,4 +1,4 @@
-// openai.ts — native OpenAI ChatGPT Plus/Pro OAuth (device code, ported from OpenCode)
+
 
 import { positiveSecondsToMs, sleepMs } from './pkce.js';
 import type { OAuthTokenResponse } from './types.js';

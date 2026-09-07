@@ -1,14 +1,4 @@
-// src/registry/pricing.ts — async pricing enrich from ai-model-pricing.com + bundled fallback
-//
-// Schema mapping:
-//   ai-model-pricing.com entries use dollars per 1M tokens (input_per_1m_tokens, output_per_1m_tokens).
-//   CachedModel.cost stores the same units as OpenCode models.json ({ input, output } per 1M tokens).
-//   Multi-tier rows: prefer tier=standard + modality=text for the provider platform; else first text row.
-//
-// Model ID normalization (lookup order):
-//   1. Exact id / upstreamModelId
-//   2. Platform alias from pricing entry (aliases[platform])
-//   3. Lowercase id, strip openrouter/ and provider/ prefixes
+
 
 import {
   chmodSync,
@@ -51,7 +41,6 @@ export interface PricingCacheFile {
   models?: PricingModelEntry[];
 }
 
-/** Registry template id → ai-model-pricing platform slug */
 export const TEMPLATE_TO_PRICING_PLATFORM: Record<string, string> = {
   groq: 'groq',
   mistral: 'mistral',
@@ -90,7 +79,7 @@ function writePricingCache(path: string, data: PricingCacheFile): void {
   try {
     chmodSync(path, FILE_MODE);
   } catch {
-    // best-effort
+
   }
 }
 
@@ -98,7 +87,7 @@ function mkdirSafe(dir: string): void {
   try {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   } catch {
-    // ignore
+
   }
 }
 
@@ -243,7 +232,6 @@ export function applyPricingToRegistryProviders(
   return changed;
 }
 
-/** Apply bundled or on-disk pricing cache synchronously (non-blocking enrich baseline). */
 export function applyCachedPricing(): boolean {
   try {
     const cache = loadPricingCache();
@@ -253,7 +241,6 @@ export function applyCachedPricing(): boolean {
   }
 }
 
-/** Fetch latest pricing in the background; updates registry when complete. */
 export function enrichPricingAsync(onComplete?: (updated: boolean) => void): void {
   void (async () => {
     try {

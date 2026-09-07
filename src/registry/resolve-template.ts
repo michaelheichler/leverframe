@@ -1,9 +1,8 @@
-// src/registry/resolve-template.ts — map imported OpenCode ids to builtin templates + default URLs
+
 
 import { getTemplateById, type ProviderTemplate } from '../provider-templates.js';
 import type { RegistryProvider } from './types.js';
 
-/** Legacy provider ids that differ from leverframe template ids */
 const TEMPLATE_ID_ALIASES: Record<string, string> = {
   'google-vertex': 'vertex',
 };

@@ -32,7 +32,6 @@ function directoryFsyncIsUnsupported(err: unknown): boolean {
   return code === 'EBADF' || code === 'EINVAL' || code === 'ENOTSUP' || code === 'EPERM';
 }
 
-/** Flush a file's contents and metadata to durable storage. */
 export function fsyncFileSync(path: string): void {
   const fd = openSync(path, 'r');
   try {
@@ -42,7 +41,6 @@ export function fsyncFileSync(path: string): void {
   }
 }
 
-/** Flush directory-entry changes. Windows does not expose a portable directory fsync. */
 export function fsyncDirectorySync(path: string): void {
   let fd: number | undefined;
   try {
@@ -55,10 +53,6 @@ export function fsyncDirectorySync(path: string): void {
   }
 }
 
-/**
- * Create a directory tree and durably publish every newly-created directory
- * entry. Existing directories are left untouched.
- */
 export function ensureDirectoryDurableSync(path: string, mode = 0o700): void {
   const target = resolve(path);
   const missing: string[] = [];
@@ -76,14 +70,12 @@ export function ensureDirectoryDurableSync(path: string, mode = 0o700): void {
   }
 }
 
-/** Remove a file and durably publish the directory-entry deletion. */
 export function removeFileDurableSync(path: string): void {
   const target = resolve(path);
   rmSync(target, { force: true });
   fsyncDirectorySync(dirname(target));
 }
 
-/** Return a collision-resistant stage path in the target's own directory. */
 export function sameDirectoryStagePath(targetPath: string, purpose = 'stage'): string {
   const target = resolve(targetPath);
   return `${dirname(target)}/.leverframe-${basename(target)}-${purpose}-${process.pid}-${randomUUID()}`;
@@ -93,10 +85,6 @@ function canonicalDirectory(path: string): string {
   return realpathSync(dirname(resolve(path)));
 }
 
-/**
- * Commit a fully-written stage with an atomic same-directory rename, then
- * flush both the committed file and its containing directory.
- */
 export function commitSameDirectoryStageSync(
   stagePath: string,
   targetPath: string,
@@ -113,7 +101,6 @@ export function commitSameDirectoryStageSync(
   fsyncDirectorySync(dirname(resolve(targetPath)));
 }
 
-/** Atomically and durably replace a file using a stage beside the target. */
 export function atomicWriteFileSync(
   targetPath: string,
   data: string | NodeJS.ArrayBufferView,
@@ -139,7 +126,6 @@ export function atomicWriteFileSync(
   }
 }
 
-/** Atomically write newline-terminated, human-readable JSON. */
 export function atomicWriteJsonSync(
   targetPath: string,
   value: unknown,
@@ -148,11 +134,6 @@ export function atomicWriteJsonSync(
   atomicWriteFileSync(targetPath, `${JSON.stringify(value, null, 2)}\n`, options);
 }
 
-/**
- * Publish a new immutable file by content-addressed path. The destination must
- * not already exist; callers must verify an existing object's hash instead of
- * replacing it.
- */
 export function copyImmutableFileSync(
   sourcePath: string,
   targetPath: string,
@@ -169,8 +150,6 @@ export function copyImmutableFileSync(
     chmodSync(stage, mode);
     fsyncFileSync(stage);
 
-    // A hard-link publication is the portable no-replace primitive: unlike
-    // rename, it fails with EEXIST rather than overwriting an immutable object.
     linkSync(stage, target);
     fsyncFileSync(target);
     rmSync(stage);

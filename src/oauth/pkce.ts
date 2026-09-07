@@ -1,4 +1,4 @@
-// pkce.ts — shared PKCE helpers for OAuth device/browser flows
+
 
 export interface PkceCodes {
   verifier: string;

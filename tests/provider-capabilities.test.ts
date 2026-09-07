@@ -13,7 +13,7 @@ describe('buildProviderCapabilities', () => {
     expect(matrix.reasoning).toBe(false);
     expect(matrix.websocket).toBe(false);
     expect(matrix.nativeResume).toBe(false);
-    // No native resume, but client-managed state defaults true -> reconstruction is available.
+
     expect(matrix.clientManagedState).toBe(true);
     expect(matrix.reconstructedRecovery).toBe(true);
     expect(matrix.checkpoints).toBe(true);

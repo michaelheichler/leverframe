@@ -7,7 +7,7 @@ export type JsonObject = Record<string, unknown>;
 export interface ResponsesWebSocketFetchOptions {
   providerId?: string;
   accountId?: string;
-  /** Test overrides. production callers should leave these unset. */
+
   hardTtlMs?: number;
   idleTtlMs?: number;
   nurseryIdleTtlMs?: number;
@@ -20,7 +20,7 @@ export interface ResponsesWebSocketFetchOptions {
   random?: () => number;
   eagerResponseForTests?: boolean;
   now?: () => number;
-  /** Opt-in structured transport diagnostics. never receives conversation content. */
+
   onDiagnostic?: (event: ResponsesWebSocketDiagnosticEvent) => void;
 }
 
@@ -75,13 +75,10 @@ export interface RequestContext {
   emitDiagnostic?: (event: { event: string } & Record<string, unknown>) => void;
   entry?: ConnectionEntry;
   createReplacement: () => ConnectionEntry;
-  /** Redispatch this context onto a freshly created entry. Threaded in as a
-   * closure (like createReplacement) so the retry-backoff module can trigger
-   * a redispatch without importing the orchestrator that owns dispatchContext. */
+
   redispatch: (entry: ConnectionEntry) => void;
   abortCleanup?: () => void;
-  /** Correlation id from the calling proxy request, used to target eviction at the
-   * specific connection that served a request the caller later found corrupted. */
+
   requestId?: string;
 }
 
@@ -106,8 +103,7 @@ export interface ConnectionEntry {
   responseId?: string;
   requestInput?: unknown[];
   expectedAssistant?: unknown[];
-  /** requestId of the turn most recently dispatched on this entry. used to target
-   * eviction without evicting an entry a later, unrelated request has since claimed. */
+
   lastRequestId?: string;
   options: Required<Pick<
     ResponsesWebSocketFetchOptions,

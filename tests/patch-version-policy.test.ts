@@ -12,6 +12,7 @@ import { runPatchCommandV2 } from '../src/patch-reconcile.js';
 import type { PatchPresenter } from '../src/patch-presenter.js';
 import type { PatchRuntime } from '../src/patch-transaction.js';
 import { currentTransformVersion, readManifestV2, writeManifestV2 } from '../src/patch-state.js';
+import { evaluatePatchStateV2 } from '../src/patch-classify.js';
 
 const dirs: string[] = [];
 const previousHome = process.env['LEVERFRAME_HOME'];
@@ -188,6 +189,38 @@ describe('Claude Code binary patch version policy', () => {
     expect(output.errors).toEqual([]);
     expect(output.notices).toEqual([]);
     expect(existsSync(baselinePath)).toBe(true);
+  });
+
+  it('marks an unchanged model config stale when the transform version advances', () => {
+    const current = currentTransformVersion();
+    expect(current).toBeGreaterThan(0);
+    expect(evaluatePatchStateV2({
+      installationVersion: '2.1.263',
+      manifest: {
+        schemaVersion: 2,
+        transformVersion: current - 1,
+        generation: 1,
+        logicalPath: '/tmp/claude',
+        canonicalPath: '/tmp/claude',
+        installationKind: 'custom',
+        claudeVersion: '2.1.263',
+        baselineSha256: 'baseline',
+        baselinePath: '/tmp/claude.orig',
+        patchedSha256: 'patched',
+        patchedSize: 7,
+        semanticFingerprint: 'fixture',
+        configHash: 'same-config',
+        provenance: 'live',
+        completedAt: new Date().toISOString(),
+      },
+      live: {
+        readable: true,
+        version: '2.1.263',
+        sha256: 'patched',
+        injectionState: 'present',
+      },
+      desiredConfigHash: 'same-config',
+    })).toBe('config_stale');
   });
 
 });

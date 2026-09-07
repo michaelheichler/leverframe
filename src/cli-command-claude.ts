@@ -7,14 +7,15 @@ import { detectConflicts, buildChildEnv, buildHttpProxyChildEnv, withProxyAnthro
 import { claudeCodeClientModelId } from './context-model-id.js';
 import { needsFirstRunSetup, runFirstRunWizard } from './first-run.js';
 import { startProxy, startProxyCatalog } from './proxy.js';
-import type { ProxyHandle, ProxyRoute } from './proxy.js';
+import type { ProxyHandle, ProxyModelAlias, ProxyRoute } from './proxy.js';
 import {
   buildCatalogRoutes,
+  canonicalCatalogModelId,
   makeRouteResolver,
 } from './catalog.js';
 import { loadPreferences, recordLaunchSelection, resolveBridgeMode } from './config.js';
 import { pickLocalModel } from './prompts.js';
-import { fetchProviderCatalog, providersForPicker, resolveLocalProviderApiKey } from './provider-catalog.js';
+import { fetchFreshProviderCatalog, providersForPicker, resolveLocalProviderApiKey } from './provider-catalog.js';
 import type { ParsedArgs, LocalProvider, LocalProviderModel } from './types.js';
 import {
   getInferenceSessionLogPath,
@@ -44,19 +45,31 @@ import { runLaunchPatchCheck } from './patcher.js';
 interface CatalogLaunchOptions {
   installation: ClaudeInstallation;
   catalogRoutes: ProxyRoute[];
+  modelAliases: ProxyModelAlias[];
   startingRoute: ProxyRoute;
-  contextWindow: number | undefined;
   trace: boolean;
   claudeArgs: string[];
 }
 
 async function launchClaudeViaCatalog(options: CatalogLaunchOptions): Promise<number> {
-  const { installation, catalogRoutes, startingRoute, contextWindow, trace, claudeArgs } = options;
+  const { installation, catalogRoutes, modelAliases, startingRoute, trace, claudeArgs } = options;
+  const canonicalAliases = catalogRoutes.flatMap(route => {
+    const canonicalId = canonicalCatalogModelId(route);
+    return canonicalId ? [{ name: canonicalId, routeId: route.aliasId }] : [];
+  });
   let proxyHandle: ProxyHandle;
   try {
-    proxyHandle = await startProxyCatalog(catalogRoutes, startingRoute.aliasId, trace);
+    proxyHandle = await startProxyCatalog(
+      catalogRoutes,
+      startingRoute.aliasId,
+      trace,
+      undefined,
+      undefined,
+      undefined,
+      [...canonicalAliases, ...modelAliases],
+    );
     p.log.info(
-      `Switch menu active — proxy on port ${proxyHandle.port} ` +
+      `Switch menu active - proxy on port ${proxyHandle.port} ` +
       pc.dim(`(${catalogRoutes.length} model${catalogRoutes.length !== 1 ? 's' : ''} in /model)`),
     );
   } catch (err) {
@@ -64,14 +77,19 @@ async function launchClaudeViaCatalog(options: CatalogLaunchOptions): Promise<nu
     return 1;
   }
 
+  const startingModel = claudeCodeClientModelId(
+    canonicalCatalogModelId(startingRoute) ?? startingRoute.aliasId,
+    startingRoute.contextWindow,
+  );
   const childEnv = buildChildEnv(
     `http://127.0.0.1:${proxyHandle.port}`,
-    startingRoute.aliasId,
+    canonicalCatalogModelId(startingRoute) ?? startingRoute.aliasId,
     proxyHandle.token,
     proxyHandle.port,
-    contextWindow,
+    undefined,
     true,
   );
+  childEnv['ANTHROPIC_MODEL'] = startingModel;
 
   const debugLogPath = prepareClaudeTraceLog();
   const traceArgs = trace ? ['--debug-file', debugLogPath] : [];
@@ -81,7 +99,7 @@ async function launchClaudeViaCatalog(options: CatalogLaunchOptions): Promise<nu
     const exitCode = await launchClaude({
       installation,
       env: childEnv,
-      model: claudeCodeClientModelId(startingRoute.aliasId, contextWindow),
+      model: startingModel,
       extraArgs: [...traceArgs, ...claudeArgs],
     });
     return exitCode;
@@ -106,13 +124,13 @@ async function runClaudeHttpProxyCommand(options: HttpProxyLaunchOptions): Promi
     return 1;
   }
 
-  if (!agentStdout) leverframeIntro('Claude Code — Proxy Mode');
+  if (!agentStdout) leverframeIntro('Claude Code - Proxy Mode');
 
   if (parsed.dryRun) {
     try {
       const loaded = await loadHttpProxyRoutes();
       console.log('');
-      console.log(pc.bold(pc.cyan('  DRY RUN — proxy bridge mode')));
+      console.log(pc.bold(pc.cyan('  DRY RUN - proxy bridge mode')));
       console.log('  ANTHROPIC_BASE_URL=https://api.anthropic.com (pinned so Claude settings cannot hijack MITM routing).');
       console.log('  HTTPS_PROXY/HTTP_PROXY=http://127.0.0.1:<random-port>');
       console.log('  NODE_EXTRA_CA_CERTS=~/.leverframe/http-proxy/leverframe-ca.pem');
@@ -239,15 +257,12 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     persist: Boolean(parsed.saveBridgeMode) && !dryRun,
   });
 
-  // Launch-time patch check: prompt on TTY, auto-apply otherwise. Blocks launch
-  // when integration cannot be applied; the check already reported the error.
-  try {
-    await runLaunchPatchCheck({ agentStdout, dryRun, installation });
-  } catch {
-    return 1;
-  }
-
   if (bridgeMode === 'proxy') {
+    try {
+      await runLaunchPatchCheck({ agentStdout, dryRun, installation });
+    } catch {
+      return 1;
+    }
     return runClaudeHttpProxyCommand({ parsed, claudeArgs, agentStdout, installation });
   }
 
@@ -265,8 +280,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     console.error(pc.red(`\nError: ${launchPlan.error}\n`));
     return 1;
   }
-  // Without a TTY the interactive wizard cannot run, fall back to the last-used
-  // provider/model (like print mode) instead of crashing on a clack prompt.
+
   if (!launchPlan.skip && process.stdin.isTTY !== true) {
     const savedPrefs = dryRun ? loadPreferences() : prefs;
     if (savedPrefs.lastProvider && savedPrefs.lastModel) {
@@ -277,7 +291,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       return 1;
     }
   }
-  const switchMenuActive = favorites.length > 0 && !launchPlan.skip;
+  const switchMenuActive = favorites.length > 0;
 
   if (!agentStdout) leverframeIntro('Claude Code');
 
@@ -286,10 +300,10 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     if (firstRun === 'cancel') return 0;
   }
 
-  let catalog: Awaited<ReturnType<typeof fetchProviderCatalog>>;
+  let freshCatalog: Awaited<ReturnType<typeof fetchFreshProviderCatalog>>;
   if (agentStdout) {
     try {
-      catalog = await fetchProviderCatalog();
+      freshCatalog = await fetchFreshProviderCatalog({ agent: 'claude' });
     } catch (err) {
       console.error(pc.red(String(err instanceof Error ? err.message : err)));
       return 1;
@@ -298,7 +312,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     const catalogSpinner = p.spinner();
     catalogSpinner.start('Loading your providers...');
     try {
-      catalog = await fetchProviderCatalog();
+      freshCatalog = await fetchFreshProviderCatalog({ agent: 'claude' });
     } catch (err) {
       catalogSpinner.stop('');
       console.error(pc.red(String(err instanceof Error ? err.message : err)));
@@ -307,9 +321,17 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     catalogSpinner.stop('');
   }
 
+  const catalog = freshCatalog.providers;
   const allProviders = providersForTarget(providersForPicker(catalog), 'claude');
   if (allProviders.length === 0) {
-    p.log.warn('No providers available.');
+    if (freshCatalog.unavailable.length > 0) {
+      p.log.error('No providers passed fresh model discovery.');
+      for (const unavailable of freshCatalog.unavailable) {
+        p.log.info(pc.dim(`${unavailable.providerName}: ${unavailable.reason}`));
+      }
+    } else {
+      p.log.warn('No providers available.');
+    }
     p.log.info(pc.dim('Run leverframe providers to get started.'));
     return 0;
   }
@@ -335,6 +357,16 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   if (launchPlan.skip && launchPlan.target) {
     const resolved = findProviderAndModel(allProviders, launchPlan.target);
     if (!resolved) {
+      const unavailable = freshCatalog.unavailable.find(entry =>
+        entry.providerId === launchPlan.target?.providerId
+        && (!entry.modelIds || entry.modelIds.includes(launchPlan.target?.modelId ?? '')),
+      );
+      if (unavailable) {
+        p.log.error(
+          `Model unavailable after fresh discovery: ${launchPlan.target.modelId}. ${unavailable.reason}`,
+        );
+        return 1;
+      }
       p.log.error(
         `Provider/model not found: ${launchPlan.target.providerId} / ${launchPlan.target.modelId}`,
       );
@@ -405,8 +437,22 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     }
   }
 
+  try {
+    await runLaunchPatchCheck({
+      agentStdout,
+      dryRun,
+      installation,
+      freshProviders: freshCatalog.providers,
+      selectedModel: selectedModel.modelFormat === 'openai'
+        ? { providerId: activeProvider.id, modelId: selectedModel.id }
+        : undefined,
+    });
+  } catch {
+    return 1;
+  }
+
   const localProviders = catalog.length > 0 ? catalog : null;
-  if (switchMenuActive) {
+  if (switchMenuActive || selectedModel.modelFormat === 'openai') {
     const resolveRoute = makeRouteResolver(
       localProviders,
     );
@@ -426,7 +472,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     if (dryRun) {
       const endpoint = selectedModel.baseUrl ?? selectedModel.completionsUrl ?? '(unknown)';
       console.log('');
-      console.log(pc.bold(pc.cyan('  DRY RUN — would execute (switch-menu mode):')));
+      console.log(pc.bold(pc.cyan('  DRY RUN - would execute (switch-menu mode):')));
       console.log('');
       console.log(`  ${pc.bold('Provider:')}      ${activeProvider.name}`);
       console.log(`  ${pc.bold('Starting model:')} ${selectedModel.id}`);
@@ -434,22 +480,26 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       console.log(`  ${pc.bold('/model catalog:')} ${catalogRoutes.length} model(s)`);
       catalogRoutes.forEach(r => console.log(`    ${pc.dim(r.displayName)}`));
       console.log('');
-      console.log(pc.dim('  (dry run complete — Claude Code was NOT launched)'));
+      console.log(pc.dim('  (dry run complete - Claude Code was NOT launched)'));
       console.log('');
       return 0;
     }
 
+    const modelAliases = (prefs.modelAliases ?? []).flatMap(alias => {
+      const resolved = resolveRoute(alias.providerId, alias.modelId);
+      const route = resolved && catalogRoutes.find(candidate => candidate.aliasId === resolved.aliasId);
+      return route ? [{ name: alias.name, routeId: route.aliasId }] : [];
+    });
+
     return launchClaudeViaCatalog({
       installation,
       catalogRoutes,
+      modelAliases,
       startingRoute,
-      contextWindow: selectedModel.contextWindow,
       trace,
       claudeArgs,
     });
   }
-
-  // ── Single-model path ──
 
   if (dryRun) {
     const formatDesc = selectedModel.modelFormat === 'anthropic'
@@ -459,7 +509,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       ? (selectedModel.baseUrl ?? '(unknown)')
       : (selectedModel.npm ?? 'SDK');
     console.log('');
-    console.log(pc.bold(pc.cyan('  DRY RUN — would execute:')));
+    console.log(pc.bold(pc.cyan('  DRY RUN - would execute:')));
     console.log('');
     console.log(`  ${pc.bold('Provider:')}  ${activeProvider.name}`);
     console.log(`  ${pc.bold('Model:')}     ${selectedModel.id}`);
@@ -467,7 +517,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     console.log(`  ${pc.bold(selectedModel.modelFormat === 'anthropic' ? 'Endpoint:' : 'SDK npm:')} ${endpoint}`);
     console.log(`  ${pc.bold('Key:')}       ${activeProvider.name} provider key`);
     console.log('');
-    console.log(pc.dim('  (dry run complete — Claude Code was NOT launched)'));
+    console.log(pc.dim('  (dry run complete - Claude Code was NOT launched)'));
     console.log('');
     return 0;
   }
@@ -486,7 +536,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   const isOAuthAnthropic = selectedModel.modelFormat === 'anthropic' && activeProvider.authType === 'oauth';
 
   if (isOAuthAnthropic) {
-    // Anthropic OAuth passthrough, proxy injects compatibility metadata and Bearer auth.
+
     try {
       proxyHandle = await startProxy(
         selectedModel.baseUrl ?? 'https://api.anthropic.com',
@@ -538,9 +588,18 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
           oauthAccountId: activeProvider.oauthAccountId,
           supportedParameters: selectedModel.supportedParameters,
           reasoning: selectedModel.reasoning,
+          supportsTemperature: selectedModel.supportsTemperature,
+          supportedReasoningEfforts: selectedModel.supportedReasoningEfforts,
+          defaultReasoningEffort: selectedModel.defaultReasoningEffort,
+          supportsReasoningSummaries: selectedModel.supportsReasoningSummaries,
+          supportsReasoningSummaryParameter: selectedModel.supportsReasoningSummaryParameter,
+          supportsParallelToolCalls: selectedModel.supportsParallelToolCalls,
+          supportsReasoningToggle: selectedModel.supportsReasoningToggle,
+          supportsPromptCacheBreakpoints: selectedModel.supportsPromptCacheBreakpoints,
           interleavedReasoningField: selectedModel.interleavedReasoningField,
           useResponsesLite: selectedModel.useResponsesLite,
           preferWebSockets: selectedModel.preferWebSockets,
+          minimalClientVersion: selectedModel.minimalClientVersion,
         },
         launchApiKey,
       );

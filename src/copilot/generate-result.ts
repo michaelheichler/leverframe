@@ -1,7 +1,4 @@
-/**
- * Collects a V3 stream into the non-streaming result shape.
- * Block IDs keep interleaved text and reasoning content separated.
- */
+
 
 import type {
   LanguageModelV3Content,
@@ -14,7 +11,6 @@ interface CollectedBlock {
   value: string;
 }
 
-/** Consumes one complete V3 stream and retains generated content plus terminal metadata. */
 export async function collectCopilotGenerateResult(
   stream: ReadableStream<LanguageModelV3StreamPart>,
 ): Promise<LanguageModelV3GenerateResult> {

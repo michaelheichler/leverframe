@@ -3,9 +3,9 @@ import { join } from 'node:path';
 import { cpSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 
 export const APP_DIR_NAME = 'leverframe';
-/** One-time silent migration source from the immediately preceding product. */
+
 export const LEGACY_APP_DIR_NAME = 'clodex';
-/** Older migration source retained for installations that predate clodex. */
+
 export const OLDER_LEGACY_APP_DIR_NAME = 'relay-ai';
 
 interface HomeEnv {
@@ -29,8 +29,6 @@ export function getAppHome(env: HomeEnv = process.env): string {
   return join(userHome(env), `.${APP_DIR_NAME}`);
 }
 
-/** User-level ~/.leverframe, ignoring LEVERFRAME_HOME. Patch injection lives on
- *  the global Claude binary; V2 manifests for that identity may only exist here. */
 export function getDefaultAppHome(env: HomeEnv = process.env): string {
   return join(userHome(env), `.${APP_DIR_NAME}`);
 }
@@ -45,11 +43,6 @@ export function getOlderLegacyAppHome(env: HomeEnv = process.env): string {
 
 let legacyMigrationDone = false;
 
-/**
- * One-time silent migration: when the Leverframe home does not exist yet, copy
- * persisted state from ~/.clodex, or from the older ~/.relay-ai home. Migration
- * never modifies or deletes either source directory.
- */
 export function ensureLegacyAppHomeMigrated(env: HomeEnv = process.env): void {
   if (legacyMigrationDone) return;
   legacyMigrationDone = true;
@@ -62,18 +55,16 @@ export function ensureLegacyAppHomeMigrated(env: HomeEnv = process.env): void {
 
     mkdirSync(appHome, { recursive: true, mode: 0o700 });
     const entries = readdirSync(legacyHome);
-    // Invariant: every visited non-log entry has been copied into appHome.
-    // Variant: the number of unvisited entries strictly decreases.
+
     for (const entry of entries) {
       if (entry === 'logs') continue; // session logs are not config/auth state
       cpSync(join(legacyHome, entry), join(appHome, entry), { recursive: true });
     }
   } catch {
-    // Migration is best-effort; a fresh home still works.
+
   }
 }
 
-/** Test hook: allow the migration to run again against a new LEVERFRAME_HOME. */
 export function resetLegacyMigrationForTests(): void {
   legacyMigrationDone = false;
 }

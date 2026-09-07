@@ -1,4 +1,4 @@
-// tests/launch.test.ts
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -106,9 +106,7 @@ describe('findBinaryOnPath', () => {
   });
 
   it('never shell-interprets the binary name in the default which lookup', () => {
-    // Regression: commit d887984 hardened detection to argv-based execFileSync;
-    // the shared-helper refactor reintroduced shell-string execSync. A name with
-    // shell metacharacters must not execute anything.
+
     const marker = join(mkdtempSync(join(tmpdir(), 'leverframe-inj-')), 'pwned');
     try {
       const result = findBinaryOnPath(`no-such-binary; touch ${marker}`, []);

@@ -1,4 +1,4 @@
-// Exercises the proxy replay boundary with mocked SDK transport outcomes while retaining real lifecycle and checkpoint persistence.
+
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import http from 'node:http';

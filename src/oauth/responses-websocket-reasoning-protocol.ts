@@ -39,12 +39,6 @@ function emitProtocolAnomaly(
   });
 }
 
-/**
- * Track OpenAI's reasoning-item/summary-part protocol as it streams and emit a
- * diagnostic the first time an event arrives out of the expected sequence
- * (e.g. a summary delta before its part is added, an item done before it was
- * started). Diagnostics-only: never throws, never alters what is forwarded.
- */
 export function trackReasoningProtocol(
   entry: ConnectionEntry,
   ctx: RequestContext,

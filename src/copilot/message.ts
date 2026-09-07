@@ -1,7 +1,4 @@
-/**
- * Converts V3 user images into SDK blob attachments.
- * Files remain in memory and never become runtime filesystem paths.
- */
+
 
 import type { LanguageModelV3Prompt } from '@ai-sdk/provider';
 import { copilotImageBlob } from './image-part.js';
@@ -40,7 +37,6 @@ function userImageAttachments(
   });
 }
 
-/** Collects every user image in transcript order for the current request. */
 export function v3ImageAttachments(
   prompt: LanguageModelV3Prompt,
 ): CopilotBlobAttachment[] {
@@ -49,7 +45,6 @@ export function v3ImageAttachments(
   ));
 }
 
-/** Collects images from the latest user message only. */
 export function v3LatestUserImageAttachments(
   prompt: LanguageModelV3Prompt,
 ): CopilotBlobAttachment[] {
@@ -60,7 +55,6 @@ export function v3LatestUserImageAttachments(
   return [];
 }
 
-/** Adds attachments only when the request contains images. */
 export function copilotMessage(
   prompt: string,
   attachments: CopilotBlobAttachment[],

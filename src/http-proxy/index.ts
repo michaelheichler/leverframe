@@ -168,7 +168,6 @@ export async function runHttpProxyServerCommand(
   console.log(pc.dim('Use `/model <listed-name>` for a favorite or saved alias.'));
   console.log(pc.dim('Press Ctrl+C to stop.'));
 
-  // Standalone server only: a per-session proxy must not overwrite discovery state.
   if (!noDiscovery) {
     registerServerRuntimeState({
       mode: 'proxy',

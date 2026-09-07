@@ -1,6 +1,4 @@
-/**
- * Verifies the registry dispatches Copilot discovery through an injected SDK runtime.
- */
+
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -157,7 +155,6 @@ describe('refreshProviderModels github-copilot failure safety', () => {
     expect(runtime.stop).toHaveBeenCalledTimes(1);
   });
 
-
   it('reports SDK schema drift separately from transient failures', async () => {
     seedProvider([{ id: 'cached-model', name: 'Cached Model' }]);
     runtime.listModels.mockResolvedValue([{ id: 'missing-fields' }]);
@@ -313,7 +310,6 @@ describe('refreshProviderModels github-copilot failure safety', () => {
     expect(persisted.length).toBeLessThanOrEqual(500);
     expect(persisted).toContain('[truncated]');
   });
-
 
   it('keeps the discovery failure primary when cleanup also fails', async () => {
     seedProvider([]);

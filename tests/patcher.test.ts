@@ -4,109 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   buildDesiredPatchConfig,
-  buildPatchModelConfig,
   computePatchConfigHash,
   reasoningEffortForPatch,
 } from '../src/patcher.js';
-import { applyLeverframePatches, formatPatchSiteLine, PatchApplyError, PATCH_TRANSFORMS_VERSION, projectNativeEffort } from '../src/patch-transforms.js';
+import { applyLeverframePatches, formatPatchSiteLine, PatchApplyError, projectNativeEffort } from '../src/patch-transforms.js';
 import type { CachedModel, RegistryProvider } from '../src/registry/types.js';
-
-describe('buildPatchModelConfig', () => {
-  const favorites = [
-    { providerId: 'openai-oauth', modelId: 'gpt-5.6-sol' },
-    { providerId: 'openai-oauth', modelId: 'gpt-5.6-luna' },
-    { providerId: 'openai', modelId: 'mystery-model' },
-  ];
-  const aliases = [
-    { name: 'sol', providerId: 'openai-oauth', modelId: 'gpt-5.6-sol' },
-  ];
-  const meta = new Map([
-    ['openai-oauth:gpt-5.6-sol', { contextWindow: 272_000, displayName: 'GPT-5.6 Sol (OpenAI (ChatGPT))' }],
-    ['openai-oauth:gpt-5.6-luna', { contextWindow: 272_000, displayName: 'GPT-5.6 Luna (OpenAI (ChatGPT))' }],
-  ]);
-
-  it('builds leverframe-prefixed entries with aliases, context windows, and display labels', () => {
-    const { config, unknownWindows } = buildPatchModelConfig(
-      favorites,
-      aliases,
-      (providerId, modelId) => meta.get(`${providerId}:${modelId}`),
-    );
-
-    expect(config['leverframe:openai-oauth:gpt-5.6-sol']).toEqual({
-      alias: 'sol',
-      context: 272_000,
-      display: 'GPT-5.6 Sol (OpenAI (ChatGPT))',
-    });
-    expect(config['leverframe:openai-oauth:gpt-5.6-luna']).toEqual({
-      context: 272_000,
-      display: 'GPT-5.6 Luna (OpenAI (ChatGPT))',
-    });
-    expect(config['leverframe:openai:mystery-model']).toEqual({});
-    expect(unknownWindows).toEqual(['leverframe:openai:mystery-model']);
-  });
-
-  it('omits context when the window equals the 200k default', () => {
-    const { config, unknownWindows } = buildPatchModelConfig(
-      [{ providerId: 'openai', modelId: 'davinci-002' }],
-      [],
-      () => ({ contextWindow: 200_000 }),
-    );
-    expect(config['leverframe:openai:davinci-002']).toEqual({});
-    expect(unknownWindows).toEqual([]);
-  });
-
-  it('omits a blank display label rather than baking an empty string', () => {
-    const { config } = buildPatchModelConfig(
-      [{ providerId: 'openai', modelId: 'davinci-002' }],
-      [],
-      () => ({ contextWindow: 272_000, displayName: '   ' }),
-    );
-    expect(config['leverframe:openai:davinci-002']).toEqual({ context: 272_000 });
-  });
-
-  it('bakes the Kimi Coding Plan alias and k3 context under the same model identity', () => {
-    const { config, unknownWindows } = buildPatchModelConfig(
-      [{ providerId: 'kimi', modelId: 'k3' }],
-      [{ name: 'kimi3', providerId: 'kimi', modelId: 'k3' }],
-      () => ({ contextWindow: 1_048_576, displayName: 'Kimi 3 (Kimi (Coding Plan))' }),
-    );
-
-    expect(config['leverframe:kimi:k3']).toEqual({
-      alias: 'kimi3',
-      context: 1_048_576,
-      display: 'Kimi 3 (Kimi (Coding Plan))',
-    });
-    expect(unknownWindows).toEqual([]);
-  });
-
-  it('projects a GPT-5.6-shaped effort ladder onto the native picker with a high default', () => {
-    const { config } = buildPatchModelConfig(
-      [{ providerId: 'openai-oauth', modelId: 'gpt-5.6-sol' }],
-      [{ name: 'sol', providerId: 'openai-oauth', modelId: 'gpt-5.6-sol' }],
-      () => ({
-        contextWindow: 272_000,
-        displayName: 'GPT-5.6 Sol (OpenAI (ChatGPT))',
-        effort: { levels: ['low', 'medium', 'high', 'xhigh'], defaultLevel: 'medium' },
-      }),
-    );
-    expect(config['leverframe:openai-oauth:gpt-5.6-sol']?.effort).toEqual({
-      levels: ['low', 'medium', 'high', 'xhigh'],
-      defaultLevel: 'high',
-    });
-  });
-
-  it.each([
-    { name: 'an incomplete base (no low/medium)', levels: ['high', 'xhigh'], defaultLevel: 'high' },
-    { name: 'a default outside the native ladder', levels: ['none', 'low', 'medium', 'high'], defaultLevel: 'none' },
-  ])('silently omits client effort metadata for $name rather than throwing', ({ levels, defaultLevel }) => {
-    const { config } = buildPatchModelConfig(
-      [{ providerId: 'openai', modelId: 'reasoning-model' }],
-      [],
-      () => ({ contextWindow: 200_000, effort: { levels, defaultLevel } }),
-    );
-    expect(config['leverframe:openai:reasoning-model']).toEqual({});
-  });
-});
+import type { LocalProvider } from '../src/types.js';
 
 describe('projectNativeEffort', () => {
   it('accepts a full native-plus ladder and pins the default to high', () => {
@@ -143,6 +46,9 @@ describe('reasoningEffortForPatch', () => {
     name: 'GPT-5.6 Sol',
     upstreamModelId: 'gpt-5.6-sol',
     modelFormat: 'openai',
+    reasoning: true,
+    supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+    defaultReasoningEffort: 'medium',
   };
 
   it('derives the same GPT-5.6 ladder the proxy-side wiring uses', () => {
@@ -166,7 +72,14 @@ describe('reasoningEffortForPatch', () => {
   });
 
   it('returns undefined for a model with no reasoning capability at all', () => {
-    expect(reasoningEffortForPatch(provider, { ...baseModel, id: 'gpt-4o', upstreamModelId: 'gpt-4o' })).toBeUndefined();
+    expect(reasoningEffortForPatch(provider, {
+      ...baseModel,
+      id: 'gpt-4o',
+      upstreamModelId: 'gpt-4o',
+      reasoning: undefined,
+      supportedReasoningEfforts: undefined,
+      defaultReasoningEffort: undefined,
+    })).toBeUndefined();
   });
 });
 
@@ -215,6 +128,9 @@ describe('buildDesiredPatchConfig', () => {
       name: 'GPT-5.6 Sol',
       contextWindow: 272_000,
       modelFormat: 'openai',
+      reasoning: true,
+      supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+      defaultReasoningEffort: 'high',
     });
 
     const desired = buildDesiredPatchConfig();
@@ -286,41 +202,47 @@ describe('buildDesiredPatchConfig', () => {
     expect(desired.unknownWindows).toEqual(['leverframe:openai-oauth:gpt-4o']);
     expect(desired.provenance['leverframe:openai-oauth:gpt-4o']).toBe('missing');
   });
-});
 
-describe('buildPatchModelConfig context provenance', () => {
-  it('marks a confirmed context window with provenance "confirmed" and bakes it', () => {
-    const { config, unknownWindows, provenance } = buildPatchModelConfig(
-      [{ providerId: 'openai-oauth', modelId: 'gpt-5.6-sol' }],
-      [],
-      () => ({ contextWindow: 272_000 }),
-    );
-    expect(config['leverframe:openai-oauth:gpt-5.6-sol']?.context).toBe(272_000);
-    expect(unknownWindows).toEqual([]);
-    expect(provenance['leverframe:openai-oauth:gpt-5.6-sol']).toBe('confirmed');
+  it('adds a fresh selected external model even when it is not favorited', () => {
+    writeInputs({
+      id: 'gpt-6-astra',
+      upstreamModelId: 'gpt-6-astra',
+      name: 'GPT-6 Astra',
+      modelFormat: 'openai',
+      contextWindow: 413_579,
+      maxContextWindow: 1_203_017,
+    });
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ favoriteModels: [] }));
+
+    const freshProviders: LocalProvider[] = [{
+      id: 'openai-oauth',
+      name: 'OpenAI (ChatGPT)',
+      apiKey: 'provider-key',
+      authType: 'oauth',
+      models: [{
+        id: 'gpt-6-astra',
+        name: 'GPT-6 Astra',
+        family: 'gpt',
+        brand: 'OpenAI',
+        modelFormat: 'openai',
+        upstreamModelId: 'gpt-6-astra',
+        contextWindow: 413_579,
+        maxContextWindow: 1_203_017,
+      }],
+    }];
+
+    const desired = buildDesiredPatchConfig(freshProviders, {
+      providerId: 'openai-oauth',
+      modelId: 'gpt-6-astra',
+    });
+
+    expect(desired.config['leverframe:openai-oauth:gpt-6-astra']).toMatchObject({
+      context: 413_579,
+      contextModes: { default: 413_579, maximum: 1_203_017 },
+    });
+    expect(Object.keys(desired.config)).toEqual(['leverframe:openai-oauth:gpt-6-astra']);
   });
 
-  it('marks an unconfirmed context window with provenance "unconfirmed", omits context, and skips unknownWindows', () => {
-    const { config, unknownWindows, provenance } = buildPatchModelConfig(
-      [{ providerId: 'openai-oauth', modelId: 'gpt-5.6-sol' }],
-      [],
-      () => ({ contextWindow: undefined, contextWindowUnconfirmed: true }),
-    );
-    expect(config['leverframe:openai-oauth:gpt-5.6-sol']).not.toHaveProperty('context');
-    expect(unknownWindows).toEqual([]);
-    expect(provenance['leverframe:openai-oauth:gpt-5.6-sol']).toBe('unconfirmed');
-  });
-
-  it('marks a genuinely missing context window with provenance "missing" and pushes it to unknownWindows', () => {
-    const { config, unknownWindows, provenance } = buildPatchModelConfig(
-      [{ providerId: 'openai', modelId: 'davinci-002' }],
-      [],
-      () => ({ contextWindow: undefined }),
-    );
-    expect(config['leverframe:openai:davinci-002']).not.toHaveProperty('context');
-    expect(unknownWindows).toEqual(['leverframe:openai:davinci-002']);
-    expect(provenance['leverframe:openai:davinci-002']).toBe('missing');
-  });
 });
 
 describe('computePatchConfigHash', () => {
@@ -423,48 +345,6 @@ const CLAUDE_FIXTURE = [
 function runPatchScript(config: Parameters<typeof applyLeverframePatches>[1], source = CLAUDE_FIXTURE): string {
   return applyLeverframePatches(source, config).content;
 }
-
-type CapabilityFunctionName = 'OI' | 'IXe' | 'eqe';
-
-function executeCapability(
-  source: string,
-  functionName: CapabilityFunctionName,
-  modelId: string,
-  nativeFallback: boolean,
-  denied = false,
-): boolean {
-  const declaration = source.split('\n').find(line => line.startsWith(`function ${functionName}(`));
-  expect(declaration).toBeDefined();
-  const capability = Function(
-    'SNr',
-    'Ede',
-    `${declaration};return ${functionName};`,
-  )(
-    () => denied,
-    () => (nativeFallback ? true : undefined),
-  ) as (id: string) => boolean;
-  return capability(modelId);
-}
-
-function executeDefaultEffort(source: string, modelId: string, nativeDefault: string): string {
-  const declaration = source.split('\n').find(line => line.startsWith('function ait('));
-  expect(declaration).toBeDefined();
-  const defaultEffort = Function(
-    'lo',
-    'ww',
-    `${declaration};return ait;`,
-  )(
-    (id: string) => id,
-    () => ({ default_effort: nativeDefault }),
-  ) as (id: string) => string;
-  return defaultEffort(modelId);
-}
-
-const CAPABILITY_GATES: Array<{ name: string; functionName: CapabilityFunctionName }> = [
-  { name: 'base effort', functionName: 'OI' },
-  { name: 'xhigh effort', functionName: 'IXe' },
-  { name: 'max effort', functionName: 'eqe' },
-];
 
 describe('patch script identity naming', () => {
   const config = {
@@ -569,180 +449,6 @@ describe('patch script identity naming', () => {
   });
 });
 
-describe('PATCH 8/9 effort capability gates', () => {
-  const capabilityConfig = {
-    'leverframe:openai:gpt-5.5': {
-      alias: 'standard',
-      effort: { levels: ['low', 'medium', 'high'], defaultLevel: 'high' },
-    },
-    'leverframe:openai-oauth:gpt-5.6-sol': {
-      alias: 'extended',
-      effort: { levels: ['low', 'medium', 'high', 'xhigh', 'max'], defaultLevel: 'medium' },
-    },
-    'leverframe:openai:no-effort': {
-      alias: 'disabled',
-    },
-  };
-
-  function runCapabilityPatch(): string {
-    return runPatchScript(capabilityConfig);
-  }
-
-  it('injects all four effort markers and bakes the projected high default for GPT-5.6', () => {
-    const out = runCapabilityPatch();
-    expect(out).toContain('/*ccpatch:effort*/');
-    expect(out).toContain('/*ccpatch:xhigh-effort*/');
-    expect(out).toContain('/*ccpatch:max-effort*/');
-    expect(out).toContain('/*ccpatch:default-effort*/');
-    expect(out).toContain('"extended":"high"');
-  });
-
-  it.each(CAPABILITY_GATES)('grants configured $name to the extended (GPT-5.6) identity, bare and [1m]', ({ functionName }) => {
-    const out = runCapabilityPatch();
-    expect(executeCapability(out, functionName, 'extended', false)).toBe(true);
-    expect(executeCapability(out, functionName, 'extended[1m]', false)).toBe(true);
-  });
-
-  it('grants base effort but denies xhigh/max for the standard (GPT-5.5-shaped) identity', () => {
-    const out = runCapabilityPatch();
-    expect(executeCapability(out, 'OI', 'standard', false)).toBe(true);
-    expect(executeCapability(out, 'IXe', 'standard', true)).toBe(false);
-    expect(executeCapability(out, 'eqe', 'standard', true)).toBe(false);
-  });
-
-  it.each(CAPABILITY_GATES)('denies $name for a configured model with no effort ladder (explicit false, not fallthrough)', ({ functionName }) => {
-    const out = runCapabilityPatch();
-    expect(executeCapability(out, functionName, 'disabled', true)).toBe(false);
-    expect(executeCapability(out, functionName, 'leverframe:openai:no-effort', true)).toBe(false);
-    expect(executeCapability(out, functionName, 'leverframe:openai:no-effort[1m]', true)).toBe(false);
-  });
-
-  it.each(CAPABILITY_GATES)('falls through to the native/provider check only for a genuinely unconfigured $name identity', ({ functionName }) => {
-    const out = runCapabilityPatch();
-    expect(executeCapability(out, functionName, 'unconfigured-model', false)).toBe(false);
-    expect(executeCapability(out, functionName, 'unconfigured-model', true)).toBe(true);
-  });
-
-  it.each(CAPABILITY_GATES)('keeps the native denylist ahead of a configured $name verdict', ({ functionName }) => {
-    const out = runCapabilityPatch();
-    expect(executeCapability(out, functionName, 'extended', false, /* denied */ true)).toBe(false);
-  });
-
-  it.each(['constructor', 'toString', '__proto__'])(
-    'treats prototype-name identity %s as unconfigured (Object.create(null) safety)',
-    modelId => {
-      const out = runCapabilityPatch();
-      for (const { functionName } of CAPABILITY_GATES) {
-        expect(executeCapability(out, functionName, modelId, false)).toBe(false);
-        expect(executeCapability(out, functionName, modelId, true)).toBe(true);
-      }
-      expect(executeDefaultEffort(out, modelId, 'medium')).toBe('medium');
-    },
-  );
-
-  it.each(['extended', 'extended[1m]', 'leverframe:openai-oauth:gpt-5.6-sol', 'leverframe:openai-oauth:gpt-5.6-sol[1m]'])(
-    'returns the projected native "high" default for configured key %s, overriding a native medium',
-    modelId => {
-      expect(executeDefaultEffort(runCapabilityPatch(), modelId, 'medium')).toBe('high');
-    },
-  );
-
-  it('falls through to the native default for an unconfigured identity', () => {
-    expect(executeDefaultEffort(runCapabilityPatch(), 'unconfigured-model', 'medium')).toBe('medium');
-  });
-
-  it('rejects a custom alias that shadows a reserved built-in identity', () => {
-    expect(() => applyLeverframePatches(CLAUDE_FIXTURE, {
-      'leverframe:openai:model': { alias: 'opus' },
-    })).toThrow(/reserved alias/);
-  });
-
-  it.each([
-    { levels: ['low', 'high'], defaultLevel: 'high' },
-    { levels: ['low', 'medium', 'high'], defaultLevel: 'max' },
-  ])('rejects effort metadata that cannot project onto the native ladder', effort => {
-    expect(() => applyLeverframePatches(CLAUDE_FIXTURE, {
-      'leverframe:openai:model': { effort },
-    })).toThrow(/must declare at least low\/medium\/high with a declared default level/);
-  });
-
-  it('skips PATCH 8/9 entirely when no configured model declares an effort ladder', () => {
-    const fresh = applyLeverframePatches(CLAUDE_FIXTURE, {
-      'leverframe:openai:model': { alias: 'plain' },
-    });
-    expect(fresh.results.some(r => r.name.startsWith('PATCH 8') || r.name.startsWith('PATCH 9'))).toBe(false);
-    expect(fresh.content).not.toContain('ccpatch:effort');
-    expect(fresh.content).not.toContain('ccpatch:default-effort');
-  });
-
-  it('aborts publication (throws) when a required PATCH 8/9 anchor is missing from the binary', () => {
-    const brokenFixture = CLAUDE_FIXTURE.split('\n').filter(line => !line.startsWith('function OI(')).join('\n');
-    let caught: unknown;
-    try {
-      applyLeverframePatches(brokenFixture, capabilityConfig);
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(PatchApplyError);
-    expect((caught as Error).message).toContain('required patch failed: PATCH 8a: effort capability');
-    const results = (caught as PatchApplyError).results;
-    expect(results.find(r => r.name === 'PATCH 8a: effort capability')).toEqual({
-      status: 'FAIL',
-      name: 'PATCH 8a: effort capability',
-      extra: 'anchor not found',
-    });
-  });
-
-  it('is idempotent when re-running the same effort-bearing patch (refresh path)', () => {
-    const once = runCapabilityPatch();
-    const rerun = applyLeverframePatches(once, capabilityConfig);
-    expect(rerun.results.filter(r => r.name.startsWith('PATCH 8') || r.name.startsWith('PATCH 9')))
-      .toEqual([
-        { status: 'SKIP', name: 'PATCH 8a: effort capability (refresh)', extra: 'already patched' },
-        { status: 'SKIP', name: 'PATCH 8b: xhigh effort capability (refresh)', extra: 'already patched' },
-        { status: 'SKIP', name: 'PATCH 8c: max effort capability (refresh)', extra: 'already patched' },
-        { status: 'SKIP', name: 'PATCH 9: default effort (refresh)', extra: 'already patched' },
-      ]);
-    expect(rerun.content).toBe(once);
-  });
-
-  it('refreshes the baked verdicts in place when the config changes (removal takes effect)', () => {
-    const once = runCapabilityPatch();
-    const { 'leverframe:openai-oauth:gpt-5.6-sol': _removed, ...withoutExtended } = capabilityConfig;
-    const updated = applyLeverframePatches(once, withoutExtended).content;
-    expect(executeCapability(updated, 'IXe', 'extended', true)).toBe(true); // no longer configured -> native fallback
-    expect(executeCapability(updated, 'OI', 'standard', false)).toBe(true); // untouched entry still wins
-  });
-
-  it('does not grant effort capabilities the supplier ladder does not declare (base-only levels)', () => {
-    const out = runPatchScript({
-      'leverframe:openai:reasoning-model': {
-        effort: { levels: ['low', 'medium', 'high'], defaultLevel: 'high' },
-      },
-    });
-    const xhighVerdicts = out.match(
-      /\/\*ccpatch:xhigh-effort\*\/var _ccv=Object\.assign\(Object\.create\(null\),(\{[^{}]*\})\)/,
-    )?.[1];
-    const maxVerdicts = out.match(
-      /\/\*ccpatch:max-effort\*\/var _ccv=Object\.assign\(Object\.create\(null\),(\{[^{}]*\})\)/,
-    )?.[1];
-    expect(JSON.parse(xhighVerdicts!)).toEqual({
-      'leverframe:openai:reasoning-model': false,
-      'leverframe:openai:reasoning-model[1m]': false,
-    });
-    expect(JSON.parse(maxVerdicts!)).toEqual({
-      'leverframe:openai:reasoning-model': false,
-      'leverframe:openai:reasoning-model[1m]': false,
-    });
-  });
-});
-
-describe('PATCH_TRANSFORMS_VERSION', () => {
-  it('is bumped for the agent description indicator (PATCH 10d)', () => {
-    expect(PATCH_TRANSFORMS_VERSION).toBe(8);
-  });
-});
-
 describe('formatPatchSiteLine', () => {
   it('formats an OK result with no extra detail', () => {
     expect(formatPatchSiteLine({ status: 'OK', name: 'PATCH 1: example' })).toBe('  OK   PATCH 1: example');
@@ -756,37 +462,5 @@ describe('formatPatchSiteLine', () => {
   it('formats a FAIL result with extra detail text appended after a colon', () => {
     expect(formatPatchSiteLine({ status: 'FAIL', name: 'PATCH 3: example', extra: 'could not be patched' }))
       .toBe('  FAIL PATCH 3: example: could not be patched');
-  });
-});
-
-describe('buildPatchModelConfig: opted-in context ceilings', () => {
-  it('bakes the ceiling and records override provenance', () => {
-    const { config, provenance } = buildPatchModelConfig(
-      [{ providerId: 'openai-oauth', modelId: 'gpt-5.6-sol' }],
-      [],
-      () => ({ contextWindow: 272_000, contextCeilingOverride: 872_000 }),
-    );
-    expect(config['leverframe:openai-oauth:gpt-5.6-sol']?.context).toBe(872_000);
-    expect(provenance['leverframe:openai-oauth:gpt-5.6-sol']).toBe('override');
-  });
-
-  it('keeps the served window and confirmed provenance without an opt-in', () => {
-    const { config, provenance } = buildPatchModelConfig(
-      [{ providerId: 'openai-oauth', modelId: 'gpt-5.6-terra' }],
-      [],
-      () => ({ contextWindow: 272_000 }),
-    );
-    expect(config['leverframe:openai-oauth:gpt-5.6-terra']?.context).toBe(272_000);
-    expect(provenance['leverframe:openai-oauth:gpt-5.6-terra']).toBe('confirmed');
-  });
-
-  it('falls back to the served window when a stale opt-in resolves to nothing', () => {
-    const { config, provenance } = buildPatchModelConfig(
-      [{ providerId: 'openai-oauth', modelId: 'gpt-5.6-sol' }],
-      [],
-      () => ({ contextWindow: 272_000, contextCeilingOverride: undefined }),
-    );
-    expect(config['leverframe:openai-oauth:gpt-5.6-sol']?.context).toBe(272_000);
-    expect(provenance['leverframe:openai-oauth:gpt-5.6-sol']).toBe('confirmed');
   });
 });

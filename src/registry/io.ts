@@ -1,4 +1,4 @@
-// src/registry/io.ts: strict reads and durable, lock-fenced provider registry writes
+
 
 import { existsSync, renameSync } from 'node:fs';
 import { getAppHome, getProvidersPath, ensureLegacyAppHomeMigrated } from '../paths.js';
@@ -203,13 +203,12 @@ export function loadRegistry(path = getProvidersPath()): ProviderRegistry {
         if (migrateOAuthOpenAiProvider(current)) saveRegistryUnlocked(current, path);
       }, { lockPath: getRegistryLockPath(path) });
     } catch {
-      // Parsed data remains usable when a best-effort migration cannot persist.
+
     }
   }
   return registry;
 }
 
-/** Strict read for deletion and other irreversible decisions. */
 export function loadRegistryStrict(path = getProvidersPath()): ProviderRegistry {
   ensureLegacyAppHomeMigrated();
   if (!existsSync(path)) return emptyRegistry();
@@ -234,7 +233,6 @@ export function saveRegistry(registry: ProviderRegistry, path = getProvidersPath
   );
 }
 
-/** Serialize a complete sync read-modify-write transaction across processes. */
 export function updateRegistry<T>(
   update: (registry: ProviderRegistry) => T,
   path = getProvidersPath(),
@@ -248,7 +246,6 @@ export function updateRegistry<T>(
   }, { lockPath: getRegistryLockPath(path) });
 }
 
-/** Serialize a complete async read-modify-write transaction across processes. */
 export function updateRegistryAsync<T>(
   update: (registry: ProviderRegistry) => Promise<T> | T,
   path = getProvidersPath(),

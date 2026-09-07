@@ -13,12 +13,6 @@ export function httpProxyModelId(providerId: string, modelId: string): string {
   return `${HTTP_PROXY_MODEL_PREFIX}${providerId}:${modelId}`;
 }
 
-/**
- * Canonical human-readable model label — `GPT-5.6 Sol (OpenAI (ChatGPT))`.
- * This is what `leverframe server` prints at startup and what `leverframe models --list`
- * shows; `leverframe patch` bakes the same string into the /model picker so every
- * surface names a model identically.
- */
 export function httpProxyDisplayName(
   model: Pick<LocalProviderModel, 'id' | 'name'>,
   providerName: string,
@@ -40,7 +34,6 @@ export interface ResolvedHttpProxyAlias {
   displayName: string;
 }
 
-/** Build a positive allowlist: only favorite AI-SDK routes can leave Anthropic's path. */
 export function buildHttpProxyRoutes(
   providers: LocalProvider[],
   favorites: FavoriteModel[],

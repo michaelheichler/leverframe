@@ -37,7 +37,6 @@ const supplierBackedTemplate = template({
   modelsDevProviderId: 'supplier-backed',
 });
 
-/** Routes the provider listing and the models.dev catalog to separate bodies. */
 function stubSupplierFetch(listing: unknown, catalog: unknown): void {
   vi.mocked(fetch).mockImplementation(async (input: unknown) => {
     if (String(input).includes('models.dev')) {
@@ -254,6 +253,38 @@ describe('fetchTemplateModels', () => {
     expect(result.models[0]?.contextWindowUnconfirmed).toBeFalsy();
   });
 
+  it('marks an omitted context window as unconfirmed without a template guess', async () => {
+    const liveListingTemplate = template({
+      id: 'declared-context',
+      name: 'Declared Context',
+      npm: '@ai-sdk/openai-compatible',
+      defaultBaseUrl: 'https://api.declared.example/v1',
+    });
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ data: [{ id: 'model-a', name: 'Model A' }] }),
+    } as Response);
+
+    const result = await fetchTemplateModels(liveListingTemplate, 'sk-test');
+
+    expect(result.models[0]).toMatchObject({ contextWindow: undefined, contextWindowUnconfirmed: true });
+  });
+
+  it('does not synthesize models when live discovery is unavailable', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: async () => 'service unavailable',
+    } as Response);
+
+    const result = await fetchTemplateModels(openaiCompatTemplate, 'sk-test');
+
+    expect(result.models).toEqual([]);
+    expect(result.error).toMatch(/HTTP 503/);
+    expect(result.usedStaticFallback).toBeUndefined();
+  });
+
   it('fills a missing context window from the supplier catalog', async () => {
     stubSupplierFetch(
       { data: [{ id: 'supplier-only', name: 'Supplier Only' }] },
@@ -263,5 +294,35 @@ describe('fetchTemplateModels', () => {
     const result = await fetchTemplateModels(supplierBackedTemplate, 'sk-test');
 
     expect(result.models[0]).toMatchObject({ id: 'supplier-only', contextWindow: 131_072 });
+  });
+
+  it('preserves supplier reasoning, temperature, and input/output limits', async () => {
+    stubSupplierFetch(
+      { data: [{ id: 'gpt-6-astra', name: 'GPT-6 Astra' }] },
+      {
+        'supplier-backed': {
+          models: {
+            'gpt-6-astra': {
+              reasoning: true,
+              reasoning_options: [{ type: 'effort', values: ['low', 'medium', 'high', 'xhigh', 'max'] }],
+              temperature: false,
+              limit: { context: 1_050_000, input: 922_000, output: 128_000 },
+            },
+          },
+        },
+      },
+    );
+
+    const result = await fetchTemplateModels(supplierBackedTemplate, 'sk-test');
+
+    expect(result.models[0]).toMatchObject({
+      id: 'gpt-6-astra',
+      contextWindow: 1_050_000,
+      inputTokenLimit: 922_000,
+      outputTokenLimit: 128_000,
+      reasoning: true,
+      supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      supportsTemperature: false,
+    });
   });
 });

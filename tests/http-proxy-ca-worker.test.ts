@@ -22,8 +22,7 @@ function enabled(): boolean {
 
 async function waitForStart(): Promise<void> {
   const deadline = Date.now() + 15_000;
-  // Invariant: start is absent and the worker has not passed its deadline.
-  // Variant: max(0, deadline - Date.now()) decreases after each sleep.
+
   while (!existsSync(join(syncDir!, 'start'))) {
     if (Date.now() >= deadline) throw new Error('CA worker timed out waiting for start');
     await new Promise(resolve => setTimeout(resolve, 25));

@@ -16,18 +16,19 @@ import {
   setServerMaskGatewayIds,
 } from '../config.js';
 import { MAX_MODEL_CATALOG, DEFAULT_SERVER_PORT } from '../constants.js';
+import { fetchProviderCatalog } from '../provider-catalog.js';
+import type { ServerModelInfo } from './models.js';
 import {
-  fetchProviderCatalog,
-  localProvidersToServerModels,
-} from '../provider-catalog.js';
-import { providersForTarget } from '../target-compatibility.js';
-import type { ServerModelInfo, GatewayModelOptions } from './models.js';
-import {
-  upstreamModelId,
-  gatewayProviderLabel,
-  buildDedupedModelRows,
-} from './models.js';
-import { getReasoningCapabilities } from '../provider-factory.js';
+  loadServerModels,
+  printModelCatalog,
+  providerOptionsFromCatalog,
+} from './catalog.js';
+export {
+  enrichServerModelReasoning,
+  formatModelCatalogLines,
+  loadServerModels,
+  providerOptionsFromCatalog,
+} from './catalog.js';
 import {
   askFavoritesOnly,
   askListenMode,
@@ -45,7 +46,7 @@ import {
   filterServerModelsByProviders,
   summarizeServerProviders,
 } from './catalog-filter.js';
-import { selectServerProviders, type ServerProviderOption } from './provider-select.js';
+import { selectServerProviders } from './provider-select.js';
 import { runHttpProxyServerCommand } from '../http-proxy/index.js';
 import {
   isDiscoveryDisabled,
@@ -70,9 +71,9 @@ export interface ServerCommandOptions {
   maskGatewayIds?: boolean;
   password?: string;
   wsDiagnostics?: boolean;
-  /** TCP port override; defaults to DEFAULT_SERVER_PORT (17645). Applies to gateway and http-proxy modes. */
+
   port?: number;
-  /** Skip server-runtime.json discovery registration (--no-discovery / LEVERFRAME_NO_DISCOVERY=1). Both modes. */
+
   noDiscovery?: boolean;
 }
 
@@ -87,98 +88,6 @@ export function getLocalIps(): Array<{ name: string; address: string }> {
     }
   }
   return result;
-}
-
-function cappedWidth(values: string[], label: string, cap: number): number {
-  return Math.max(label.length, ...values.map(value => Math.min(value.length, cap)));
-}
-
-export function formatModelCatalogLines(models: ServerModelInfo[], gateway?: GatewayModelOptions): string[] {
-  if (models.length === 0) return [];
-
-  const groups = new Map<string, ServerModelInfo[]>();
-  for (const model of models) {
-    const label = gatewayProviderLabel(model);
-    let list = groups.get(label);
-    if (!list) {
-      list = [];
-      groups.set(label, list);
-    }
-    list.push(model);
-  }
-
-  const lines: string[] = ['Model catalog:', ''];
-  const sortedGroups = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  for (const [label, groupModels] of sortedGroups) {
-    const rows = buildDedupedModelRows(groupModels, gateway);
-    const hiddenDuplicates = groupModels.length - rows.length;
-    const duplicateNote = hiddenDuplicates > 0 ? `, ${hiddenDuplicates} duplicate${hiddenDuplicates !== 1 ? 's' : ''} hidden` : '';
-    const nameWidth = cappedWidth(rows.map(row => row.name), 'Model', 28);
-    const anthropicWidth = cappedWidth(rows.map(row => row.anthropicId), 'Anthropic ID', 46);
-    const indexWidth = Math.max(String(rows.length).length, 1);
-
-    lines.push(`  ${label} (${rows.length}${duplicateNote})`);
-    lines.push(`  ${'#'.padStart(indexWidth)}  ${'Model'.padEnd(nameWidth)}  ${'Anthropic ID'.padEnd(anthropicWidth)}  OpenAI ID`);
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i]!;
-      lines.push(`  ${String(i + 1).padStart(indexWidth)}  ${row.name.padEnd(nameWidth)}  ${row.anthropicId.padEnd(anthropicWidth)}  ${row.openaiId}`);
-    }
-    lines.push('');
-  }
-  return lines;
-}
-
-function printModelCatalog(models: ServerModelInfo[], gateway?: GatewayModelOptions): void {
-  if (models.length === 0) return;
-
-  for (const line of formatModelCatalogLines(models, gateway)) {
-    if (line === 'Model catalog:') {
-      console.log(pc.bold(line));
-    } else if (/^  [^#\d\s].+\(\d+/.test(line)) {
-      console.log(pc.bold(line));
-    } else if (/^  \s*#\s+Model\s+Anthropic ID\s+OpenAI ID/.test(line)) {
-      console.log(pc.dim(line));
-    } else {
-      console.log(line);
-    }
-  }
-}
-
-export function providerOptionsFromCatalog(catalog: import('../types.js').LocalProvider[]): ServerProviderOption[] {
-  const options: ServerProviderOption[] = [];
-  for (const provider of providersForTarget(catalog, 'server')) {
-    options.push({
-      id: provider.id,
-      name: provider.name,
-      modelCount: provider.models.length,
-    });
-  }
-  return options;
-}
-
-export async function loadServerModels(): Promise<ServerModelInfo[]> {
-  const catalog = await fetchProviderCatalog({ agent: 'server' });
-  const models: ServerModelInfo[] = [];
-
-  const serverProviders = providersForTarget(catalog, 'server');
-  if (serverProviders.length > 0) {
-    models.push(...localProvidersToServerModels(serverProviders));
-  }
-
-  return models.map(enrichServerModelReasoning);
-}
-
-export function enrichServerModelReasoning(model: ServerModelInfo): ServerModelInfo {
-  if (!model.npm || model.modelFormat !== 'openai') return model;
-  const caps = getReasoningCapabilities(model.npm, upstreamModelId(model), {
-    providerId: model.providerId,
-    apiBaseUrl: model.apiBaseUrl,
-    supportedParameters: model.supportedParameters,
-    reasoning: model.reasoning,
-    interleavedReasoningField: model.interleavedReasoningField,
-  });
-  if (!caps.defaultLevel) return model;
-  return { ...model, defaultEffort: caps.defaultLevel };
 }
 
 function waitForShutdown(): Promise<void> {
@@ -320,7 +229,7 @@ function shouldUseQuickServerMode(options: ServerCommandOptions): boolean {
 }
 
 async function configureExposedProviders(): Promise<string[] | null | undefined> {
-  p.log.info('Add providers to expose. Listed providers are removed when selected — like favorites.');
+  p.log.info('Add providers to expose. Listed providers are removed when selected - like favorites.');
   const spinner = p.spinner();
   spinner.start('Loading providers...');
   const catalog = await fetchProviderCatalog({ agent: 'server' });
@@ -350,7 +259,6 @@ async function runServerWizard(): Promise<{ runConfig: ServerRunConfig; promptFo
   if (favoritesOnly) {
     p.log.info('Manage favorites with `leverframe models`.');
   }
-
 
   let exposedProviders: string[] | null | undefined = null;
   if (!favoritesOnly) {
@@ -419,7 +327,7 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
 
   const mode = runConfig.listenMode;
   const host = mode === 'network' ? '0.0.0.0' : '127.0.0.1';
-  // Local mode mints a per-start token. Network mode keeps the configured password.
+
   const isLocalMode = mode === 'local';
   const localGatewayToken = isLocalMode ? generateLocalGatewayToken() : null;
   const serverPassword = chosenPassword ?? localGatewayToken;
@@ -461,10 +369,10 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
     const localCount = models.filter(m => m.apiKey !== undefined).length;
     const summary = summarizeServerProviders(models);
     const filterNote = runConfig.exposedProviders
-      ? ` — ${runConfig.exposedProviders.length} provider${runConfig.exposedProviders.length !== 1 ? 's' : ''}`
+      ? ` - ${runConfig.exposedProviders.length} provider${runConfig.exposedProviders.length !== 1 ? 's' : ''}`
       : '';
-    const favoritesNote = runConfig.favoritesOnly ? ' — favorites only' : '';
-    const maskNote = runConfig.maskGatewayIds ? ' — discovery ids masked' : '';
+    const favoritesNote = runConfig.favoritesOnly ? ' - favorites only' : '';
+    const maskNote = runConfig.maskGatewayIds ? ' - discovery ids masked' : '';
     spinner.stop(`Loaded ${models.length} models (${localCount} from registry providers)${filterNote}${favoritesNote}${maskNote}`);
     if (summary) p.log.info(summary);
   } catch (err) {
@@ -474,10 +382,7 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
   }
 
   const gateway = runConfig.maskGatewayIds ? { maskGatewayIds: true as const } : undefined;
-  // Saved short aliases (leverframe models --alias) are accepted as request model
-  // ids — the same alias table the proxy-mode MITM resolves — so a patched
-  // Claude Code or a direct API client can send e.g. "luna". They are never
-  // advertised in /models listings; see createGatewayModelCatalog.
+
   const modelAliases = loadPreferences().modelAliases ?? [];
   const inferenceLogPath = getInferenceRequestLogPath();
   const webSocketDiagnosticsLogPath = options.wsDiagnostics
@@ -529,14 +434,14 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
       console.log(`    Anthropic:  http://${address}:${server.port}/anthropic`);
       console.log(`    OpenAI:     http://${address}:${server.port}/openai/v1`);
     }
-    // Never print the configured network password to stdout/logs.
+
     if (passwordWasSaved) {
       console.log('  API key:    saved, rotate with `leverframe server --setup`');
     } else {
       console.log('  API key:    (one-run password not shown)');
     }
   } else {
-    // Local mode: per-start token. Print once for direct-client use.
+
     console.log(`  API key:    ${serverPassword}`);
   }
   if (runConfig.exposedProviders) {
@@ -552,8 +457,6 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
   printModelCatalog(models, gateway);
   console.log(pc.dim('Press Ctrl+C to stop.'));
 
-  // Advertise the running server for discovery (e.g. the leverframe-claude
-  // wrapper) unless --no-discovery / LEVERFRAME_NO_DISCOVERY opted out.
   if (!noDiscovery) {
     registerServerRuntimeState({
       mode: 'endpoint',

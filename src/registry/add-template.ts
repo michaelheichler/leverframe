@@ -1,4 +1,4 @@
-// src/registry/add-template.ts: add a provider from a builtin template
+
 
 import { saveProviderCredential } from '../env.js';
 import { isSdkMigratedNpm } from '../provider-factory.js';
@@ -23,14 +23,7 @@ export interface AddTemplateResult {
   modelCount?: number;
   error?: string;
   hint?: string;
-  /**
-   * True only when leverframe actually exchanged the API key with the upstream
-   * provider and got back a successful response. False when the seed models
-   * were persisted without any network call (static-seed templates that opt
-   * out of verification) or when an api-list template fell back to its
-   * declared staticModels after a listing outage. Callers surface this so
-   * the user knows the key was stored, not validated.
-   */
+
   keyVerified?: boolean;
 }
 
@@ -88,7 +81,6 @@ function buildRegistryEntry(
   };
 }
 
-/** Persist credential + registry entry. Returns whether the upstream API key was actually validated. */
 async function addProviderFromTemplateLocked(
   template: ProviderTemplate,
   apiKey: string,

@@ -1,4 +1,4 @@
-// src/trace-log.ts, debug log content formatting, redaction, and writers
+
 
 import {
   chmodSync,
@@ -230,7 +230,6 @@ function diagnosticBytes(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value) ?? '');
 }
 
-/** Preserve every inbound header except credential-bearing values. */
 export function sanitizeDiagnosticHeaders(
   headers: Record<string, string | string[] | undefined>,
 ): Record<string, string | string[]> {
@@ -254,11 +253,6 @@ function contentKinds(content: unknown): string[] {
   });
 }
 
-/**
- * Capture the complete non-conversation envelope plus hashes/shapes for prompt
- * fields. Hashes make rewinds and harness requests comparable without writing
- * message, system-prompt, tool-description, schema, or tool-result content.
- */
 export function summarizeDiagnosticRequestBody(body: Record<string, unknown>): Record<string, unknown> {
   const parameters = Object.fromEntries(
     Object.entries(body).filter(([key]) => !CONVERSATION_BODY_FIELDS.has(key)),
@@ -300,7 +294,6 @@ export function summarizeDiagnosticRequestBody(body: Record<string, unknown>): R
   };
 }
 
-/** Append privacy-minimal routing metadata, plus an explicitly enabled request preview. */
 export function writeInferenceRequestLog(
   path: string,
   entry: InferenceRequestLogEntry,
@@ -326,7 +319,6 @@ function nonNegativeInteger(value: number | undefined): number | undefined {
     : undefined;
 }
 
-/** Append privacy-minimal response timing and delivery metadata. */
 export function writeInferenceResponseLifecycleLog(
   path: string,
   entry: InferenceResponseLifecycleLogEntry,
@@ -379,7 +371,6 @@ export function writeInferenceResponseLifecycleLog(
   }));
 }
 
-/** Record enough process lifetime metadata to distinguish a dead local proxy from an upstream failure. */
 export function writeProxyLifecycleLog(path: string, entry: ProxyLifecycleLogEntry): void {
   writeSecureLogLine(path, JSON.stringify({
     timestamp: new Date().toISOString(),
@@ -395,7 +386,6 @@ export function writeProxyLifecycleLog(path: string, entry: ProxyLifecycleLogEnt
   }));
 }
 
-/** Write one opt-in request-envelope diagnostic without conversation content. */
 export function writeWebSocketDiagnosticRequestLog(
   path: string,
   entry: WebSocketDiagnosticRequestLogEntry,
@@ -413,7 +403,6 @@ export function writeWebSocketDiagnosticRequestLog(
   }));
 }
 
-/** Append a structured WebSocket transport diagnostic event. */
 export function writeWebSocketDiagnosticLog(
   path: string,
   entry: Record<string, unknown>,
@@ -442,7 +431,6 @@ export function writeInferenceResponseErrorLog(
   }));
 }
 
-/** Reset log file and return a writer that redacts caller-resolved secrets. */
 export function makeTraceLogger(
   logPath: string,
   secrets: Iterable<string> = [],
@@ -457,13 +445,13 @@ export function makeTraceLogger(
 }
 
 const REDACTION_PATTERNS: Array<(line: string) => string> = [
-  // Bearer / Authorization headers
+
   line => line.replace(/Bearer\s+[A-Za-z0-9._\-+/=]+/gi, 'Bearer [REDACTED]'),
   line => line.replace(/("authorization"\s*:\s*")[^"]+/gi, '$1[REDACTED]'),
   line => line.replace(/(x-api-key"\s*:\s*")[^"]+/gi, '$1[REDACTED]'),
-  // JWTs require three substantial base64url segments to avoid matching prose.
+
   line => line.replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, 'eyJ[REDACTED]'),
-  // Common API key prefixes
+
   line => line.replace(/\bsk-or-[A-Za-z0-9_-]{20,}\b/g, 'sk-or-[REDACTED]'),
   line => line.replace(/\bxai-[A-Za-z0-9_-]{20,}\b/g, 'xai-[REDACTED]'),
   line => line.replace(/\bhf_[A-Za-z0-9]{20,}\b/g, 'hf_[REDACTED]'),
@@ -505,7 +493,7 @@ export function writeSecureLogLine(
     writeFileSync(path, `${redacted}\n`, { flag: 'a', mode: FILE_MODE });
     chmodSync(path, FILE_MODE);
   } catch {
-    // ignore
+
   }
 }
 

@@ -2,7 +2,6 @@ import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import type { ConflictInfo, LocalProvider, LocalProviderModel } from './types.js';
 
-/** Human-readable label for a model (registry names are often raw ids). */
 export function formatModelLabel(model: Pick<LocalProviderModel, 'id' | 'name'>): string {
   const trimmed = model.name.trim();
   if (trimmed && trimmed !== model.id) return trimmed;
@@ -63,7 +62,6 @@ function panelWidth(lines: string[], title: string): number {
   return Math.max(maxLine, stripAnsi(title).length) + 2;
 }
 
-/** Colored panel. Clack note shape without dimmed body. */
 export function printPanel(title: string, lines: string[]): void {
   const width = panelWidth(lines, title);
   const topRule = hline.repeat(Math.max(width - stripAnsi(title).length - 1, 1));
@@ -100,7 +98,6 @@ export function fmtProvider(name: string): string {
   return pc.cyanBright(pc.bold(name));
 }
 
-/** Bracketed provider tag for global favorites search. Bright, color per provider id. */
 export function fmtProviderBracket(providerId: string, providerName: string, isFree?: boolean): string {
   const color = providerTagColor(providerId);
   const text = isFree ? `${providerName} · free` : providerName;
@@ -177,8 +174,6 @@ export function confirmLaunchMessage(
   return `Launch ${pc.bold(target)} · ${fmtModel(modelLabel, modelId)} ${pc.dim('via')} ${fmtProvider(providerName)}?${viaSuffix}`;
 }
 
-
-
 export function logConnected(name: string, modelCount: number): void {
   p.log.success(
     `${pc.bold('Connected')} ${pc.dim('·')} ${fmtCount(modelCount, 'model')} ${pc.dim('—')} ${fmtProvider(name)}`,
@@ -207,9 +202,6 @@ export function printEnvConflictPanel(conflicts: ConflictInfo[]): void {
   ]);
 }
 
-
-
-
 export function printProviderDetailPanel(
   name: string,
   modelCount: number,
@@ -223,7 +215,6 @@ export function printProviderDetailPanel(
   ]);
 }
 
-
 export function printOAuthStepsPanel(title: string, providerLabel: string): void {
   printPanel(pc.cyan(title), [
     `${pc.white('1. Open the URL below in your browser')}`,
@@ -231,7 +222,6 @@ export function printOAuthStepsPanel(title: string, providerLabel: string): void
     `${pc.white('3. Approve access for ')}${fmtProvider(providerLabel)}`,
   ]);
 }
-
 
 export function printGatewayMaskPanel(): void {
   printPanel(pc.cyan('Claude Desktop / Cowork'), [

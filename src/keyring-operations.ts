@@ -6,7 +6,6 @@ import type { Readable, Writable } from 'node:stream';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-// Linux fails fast on hung D-Bus, other platforms wait for keychain approval and journal writes.
 export const KEYRING_TIMEOUT_MS = process.platform === 'linux' ? 3_000 : 45_000;
 
 function keyringChildPath(): string {

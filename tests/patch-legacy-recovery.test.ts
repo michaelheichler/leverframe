@@ -611,8 +611,7 @@ describe('default-home V2 ownership across LEVERFRAME_HOME', () => {
       completedAt: '2026-08-14T00:00:00.000Z',
     }));
     process.env['HOME'] = defaultHome;
-    // Isolated homes used by live smoke have no legacy backup of the global
-    // Claude binary; recovery is unavailable and used to warn on every launch.
+
     rmSync(f.backupPath, { force: true });
     const notices: string[] = [];
     const recorded = recordingPresenter();

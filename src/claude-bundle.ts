@@ -2,6 +2,11 @@ import { readFile, writeFile } from 'node:fs/promises';
 
 export type ClaudeExecutableFormat = 'native' | 'script';
 
+interface NativeBundlePaths {
+  launcherPath: string;
+  payloadPath: string;
+}
+
 export function classifyClaudeExecutable(head: Buffer): ClaudeExecutableFormat {
   if (head.length >= 4) {
     const u32le = head.readUInt32LE(0);
@@ -25,11 +30,6 @@ function isModuleNotFound(error: unknown): boolean {
     && error.code === 'ERR_MODULE_NOT_FOUND';
 }
 
-/**
- * Native binaries are read through node-lief. A missing dependency is an
- * install problem, not a damaged or unrecognized binary, so it must say so
- * instead of surfacing as an unreadable target further up the patch pipeline.
- */
 async function loadNativeBundleSupport(): Promise<typeof import('./claude-bundle-native.js')> {
   try {
     return await import('./claude-bundle-native.js');
@@ -46,25 +46,36 @@ async function loadNativeBundleSupport(): Promise<typeof import('./claude-bundle
   }
 }
 
-export async function readClaudeContent(path: string): Promise<string> {
-  const bytes = await readFile(path);
+export async function readClaudeContent(launcherPath: string, version?: string): Promise<string> {
+  const bytes = await readFile(launcherPath);
   if (classifyClaudeExecutable(bytes.subarray(0, 4)) === 'script') return bytes.toString('utf8');
   const { extractClaudeJsFromNativeInstallation, resolveNixBinaryWrapper } = await loadNativeBundleSupport();
-  const resolved = resolveNixBinaryWrapper(path) ?? path;
-  const extracted = extractClaudeJsFromNativeInstallation(resolved);
+  const paths: NativeBundlePaths = {
+    launcherPath,
+    payloadPath: resolveNixBinaryWrapper(launcherPath) ?? launcherPath,
+  };
+  const extracted = extractClaudeJsFromNativeInstallation(paths.payloadPath, version);
   if (!extracted.data) {
     throw new Error(`Failed to extract Claude JavaScript module graph: ${extracted.error ?? 'unknown format'}`);
   }
   return extracted.data.toString('utf8');
 }
 
-export async function writeClaudeContent(path: string, content: string): Promise<void> {
-  const head = (await readFile(path)).subarray(0, 4);
+export async function writeClaudeContent(launcherPath: string, content: string): Promise<void> {
+  const head = (await readFile(launcherPath)).subarray(0, 4);
   if (classifyClaudeExecutable(head) === 'script') {
-    await writeFile(path, content, 'utf8');
+    await writeFile(launcherPath, content, 'utf8');
     return;
   }
   const { repackNativeInstallation, resolveNixBinaryWrapper } = await loadNativeBundleSupport();
-  const resolved = resolveNixBinaryWrapper(path) ?? path;
-  repackNativeInstallation(resolved, Buffer.from(content), path, true);
+  const paths: NativeBundlePaths = {
+    launcherPath,
+    payloadPath: resolveNixBinaryWrapper(launcherPath) ?? launcherPath,
+  };
+  if (paths.payloadPath !== paths.launcherPath) {
+    throw new Error(
+      `Refusing to replace Nix wrapper launcher ${paths.launcherPath} with native payload ${paths.payloadPath}.`,
+    );
+  }
+  repackNativeInstallation(paths.payloadPath, Buffer.from(content), paths.launcherPath, true);
 }

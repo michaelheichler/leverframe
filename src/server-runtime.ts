@@ -1,28 +1,4 @@
-// src/server-runtime.ts
-//
-// Runtime-state advertisement for the standalone `leverframe server` command.
-// Each registering server ADDS its own record (keyed by pid) to
-// ~/.leverframe/server-runtime.json on startup and removes ONLY its own record on
-// graceful shutdown, so other processes (notably the `leverframe-claude` wrapper
-// bin) can discover every running server's mode, port, and CA path without any
-// hardcoding. The file holds an ARRAY of records; the legacy single-object
-// shape (pre multi-server) is tolerated on read as a one-element list. Stale
-// detection is the READER's job: a crashed server leaves its record behind, so
-// readers must validate pid liveness before trusting it. Writers additionally
-// prune dead-pid records while they hold the write lock.
-//
-// Concurrency: read-modify-write cycles are serialized by a short-lived pid
-// lock (~/.leverframe/server-runtime.lock — same pattern as the patcher's
-// patch.lock: O_EXCL create, pid + staleness, ESRCH liveness) and the file is
-// replaced via write-temp-then-rename so a reader never sees a torn write. A
-// crashed lock holder cannot deadlock registration: the lock goes stale after
-// 10 seconds or when its pid dies, and after a brief bounded wait a writer
-// proceeds lockless (best-effort — same exposure as the old single-slot write).
-//
-// NOTE: only the standalone `leverframe server` command writes this file. The
-// per-session MITM proxy spawned by `leverframe claude --proxy` is private to that
-// session and must NOT advertise itself here. `leverframe server --no-discovery`
-// (or LEVERFRAME_NO_DISCOVERY=1) also opts a server out of registration entirely.
+
 
 import {
   closeSync,
@@ -41,26 +17,9 @@ export interface ServerRuntimeState {
   mode: 'endpoint' | 'proxy';
   port: number;
   pid: number;
-  /** Proxy mode only: absolute path to the CA bundle a client must trust. */
+
   caPath?: string;
-  /**
-   * Per-start credential the registered server expects on every request.
-   *
-   * For `mode: 'endpoint'`: a random bearer/x-api-key token minted at
-   * startup when no user password is configured. The `leverframe-claude`
-   * wrapper reads it from this 0600 file and sets ANTHROPIC_API_KEY so
-   * discovery "just works" without persisting the token anywhere else.
-   *
-   * For `mode: 'proxy'`: a random Proxy-Authorization password. The
-   * wrapper embeds it in the child HTTPS_PROXY URL userinfo so Claude
-   * Code's HTTP layer presents it on CONNECT/plain-HTTP without it ever
-   * touching the parent process.env.
-   *
-   * The runtime file is written mode 0600 (atomicWriteRecords). Legacy
-   * records without a token are tolerated on read; the wrapper refuses to
-   * use them for endpoint mode (the gateway now requires a token) but
-   * still tolerates them for proxy mode to preserve upgrade compat.
-   */
+
   token?: string;
   startedAt: string;
 }
@@ -79,7 +38,6 @@ export function getServerRuntimeLockPath(env: HomeEnv = process.env): string {
   return join(getAppHome(env), 'server-runtime.lock');
 }
 
-/** `--no-discovery` flag, with LEVERFRAME_NO_DISCOVERY=1 as the env fallback. */
 export function isDiscoveryDisabled(
   flag: boolean | undefined,
   env: { LEVERFRAME_NO_DISCOVERY?: string } = process.env,
@@ -93,7 +51,6 @@ function isPort(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 65535;
 }
 
-/** Validate one runtime record. Returns null for anything malformed. */
 export function parseServerRuntimeRecord(value: unknown): ServerRuntimeState | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -110,19 +67,13 @@ export function parseServerRuntimeRecord(value: unknown): ServerRuntimeState | n
     ? record['token']
     : undefined;
   if (mode === 'proxy') {
-    // A proxy-mode server without a CA path is unusable to clients. Treat as invalid.
+
     if (typeof caPath !== 'string' || !caPath.trim()) return null;
     return { mode, port: record['port'], pid, caPath, token, startedAt };
   }
   return { mode, port: record['port'], pid, token, startedAt };
 }
 
-/**
- * Parse a raw server-runtime.json payload into a list of records. Tolerates
- * BOTH shapes: the current array of records and the legacy single object
- * (wrapped as a one-element list). Malformed input or records are skipped —
- * never throws.
- */
 export function parseServerRuntimeStates(raw: string): ServerRuntimeState[] {
   let parsed: unknown;
   try {
@@ -139,7 +90,6 @@ export function parseServerRuntimeStates(raw: string): ServerRuntimeState[] {
   return states;
 }
 
-/** kill(pid, 0) liveness probe: EPERM still means the process exists. */
 export function isPidAlive(
   pid: number,
   kill: (pid: number, signal: number) => unknown = process.kill.bind(process),
@@ -151,8 +101,6 @@ export function isPidAlive(
     return (err as NodeJS.ErrnoException)?.code === 'EPERM';
   }
 }
-
-// ── Write lock (pid + staleness, patcher pattern) ───────────────────────────
 
 const RUNTIME_LOCK_STALE_MS = 10_000;
 const RUNTIME_LOCK_WAIT_MS = 500;
@@ -181,11 +129,11 @@ function tryAcquireRuntimeLock(
         try {
           unlinkSync(lockPath);
         } catch {
-          // already gone
+
         }
       };
     } catch {
-      // Lock exists — check staleness.
+
       let stale = false;
       try {
         const existing = JSON.parse(readFileSync(lockPath, 'utf8')) as RuntimeLockContent;
@@ -199,7 +147,7 @@ function tryAcquireRuntimeLock(
       try {
         unlinkSync(lockPath);
       } catch {
-        // raced with the owner's cleanup — retry loop handles it
+
       }
     }
   }
@@ -210,13 +158,6 @@ function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-/**
- * Run a read-modify-write mutation under the runtime lock. The lock is only
- * ever held for a few milliseconds, so after a short bounded wait the mutation
- * proceeds WITHOUT the lock rather than dropping a registration — the atomic
- * rename still prevents torn files; the worst case is a lost concurrent
- * update, which is no worse than the old single-slot behavior.
- */
 function withRuntimeWriteLock(env: HomeEnv, mutate: () => void): void {
   const lockPath = getServerRuntimeLockPath(env);
   let release: (() => void) | null = null;
@@ -243,7 +184,6 @@ function readAllRecords(env: HomeEnv): ServerRuntimeState[] {
   return parseServerRuntimeStates(raw);
 }
 
-/** Atomic replace: write a temp file in the same directory, then rename over. */
 function atomicWriteRecords(path: string, records: ServerRuntimeState[]): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const tmpPath = `${path}.${process.pid}.tmp`;
@@ -255,11 +195,6 @@ export interface RuntimeMutateOptions {
   isAlive?: (pid: number) => boolean;
 }
 
-/**
- * Add or update this server's own record (keyed by pid), pruning records whose
- * pids are dead. Best-effort — a state-file failure must never take the server
- * down.
- */
 export function registerServerRuntimeState(
   state: ServerRuntimeState,
   env: HomeEnv = process.env,
@@ -275,15 +210,10 @@ export function registerServerRuntimeState(
       atomicWriteRecords(getServerRuntimePath(env), records);
     });
   } catch {
-    // Discovery is optional; the server itself keeps running.
+
   }
 }
 
-/**
- * Remove ONLY this server's own record (by pid) on graceful shutdown, pruning
- * dead-pid records along the way. Missing file/record is fine. When no live
- * records remain the file is removed entirely.
- */
 export function unregisterServerRuntimeState(
   pid: number = process.pid,
   env: HomeEnv = process.env,
@@ -302,7 +232,7 @@ export function unregisterServerRuntimeState(
       }
     });
   } catch {
-    // Stale records are handled by readers via pid liveness.
+
   }
 }
 
@@ -310,11 +240,6 @@ export interface ReadServerRuntimeOptions {
   isAlive?: (pid: number) => boolean;
 }
 
-/**
- * Read every advertised server record whose process is still alive. Missing or
- * malformed files yield an empty list. Read-only: stale records are ignored
- * here and physically pruned on the next registration/unregistration.
- */
 export function readLiveServerRuntimeStates(
   env: HomeEnv = process.env,
   options: ReadServerRuntimeOptions = {},
@@ -323,14 +248,6 @@ export function readLiveServerRuntimeStates(
   return readAllRecords(env).filter(state => alive(state.pid));
 }
 
-/**
- * Wrapper selection policy: order candidate servers by preference —
- *  1. proxy mode before endpoint mode (bridging through the MITM proxy keeps
- *     Claude Code's own Anthropic auth, the recommended setup);
- *  2. within a mode, newest startedAt first.
- * If only an endpoint server is live it is used; with no live server the
- * wrapper launches claude untouched (both handled by the caller).
- */
 export function orderWrapperServerCandidates(records: ServerRuntimeState[]): ServerRuntimeState[] {
   return [...records].sort((a, b) => {
     if (a.mode !== b.mode) return a.mode === 'proxy' ? -1 : 1;
@@ -338,10 +255,6 @@ export function orderWrapperServerCandidates(records: ServerRuntimeState[]): Ser
   });
 }
 
-/**
- * Read the single preferred live server (selection policy above), or null when
- * none is advertised/alive.
- */
 export function readLiveServerRuntimeState(
   env: HomeEnv = process.env,
   options: ReadServerRuntimeOptions = {},

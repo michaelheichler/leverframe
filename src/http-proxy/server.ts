@@ -4,7 +4,6 @@ import * as net from 'node:net';
 import type { AddressInfo, Socket } from 'node:net';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { URL } from 'node:url';
-import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib';
 import type { ProxyHandle, ProxyRoute } from '../proxy.js';
 import { startProxyCatalog } from '../proxy.js';
 import { ensureHttpProxyCertificates } from './ca.js';
@@ -24,6 +23,7 @@ import {
 } from '../claude-code-credentials.js';
 import { rewriteUpstreamAuthHeaders } from './claude-passthrough-auth.js';
 import { copyResponse as copyHttpProxyResponse } from './copy-response.js';
+import { observeResponseUsage, type ResponseUsage } from './response-usage.js';
 
 const ANTHROPIC_HOST = 'api.anthropic.com';
 
@@ -33,7 +33,6 @@ function headerValue(headers: http.IncomingHttpHeaders, name: string): string | 
   return raw;
 }
 
-/** Why: placeholder auth must not reach Anthropic (Claude retries 401 for minutes). */
 function requestUsesHttpProxyPlaceholderKey(headers: http.IncomingHttpHeaders): boolean {
   const apiKey = headerValue(headers, 'x-api-key')?.trim();
   if (apiKey === HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY) return true;
@@ -44,176 +43,33 @@ function requestUsesHttpProxyPlaceholderKey(headers: http.IncomingHttpHeaders): 
 }
 
 const MAX_BODY_BYTES = 50 * 1024 * 1024;
-const MAX_USAGE_SSE_BLOCK_BYTES = 64 * 1024;
-
-type ResponseUsage = {
-  usageStage: 'message_start' | 'message_delta';
-  inputTokens?: number;
-  outputTokens?: number;
-  cacheCreationInputTokens?: number;
-  cacheReadInputTokens?: number;
-};
-
-function numericUsage(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-function responseUsageFromSseBlock(block: string): ResponseUsage | undefined {
-  const lines = block.split('\n');
-  const event = lines.find(line => line.startsWith('event:'))?.slice('event:'.length).trim();
-  const data = lines
-    .filter(line => line.startsWith('data:'))
-    .map(line => line.slice('data:'.length).trimStart())
-    .join('\n');
-  if (!data) return undefined;
-
-  try {
-    const parsed = JSON.parse(data) as Record<string, unknown>;
-    const type = parsed.type;
-    if (type !== 'message_start' && type !== 'message_delta') return undefined;
-    if (event && event !== type) return undefined;
-    const message = type === 'message_start'
-      ? parsed.message as Record<string, unknown> | undefined
-      : undefined;
-    const usage = (type === 'message_start' ? message?.usage : parsed.usage) as Record<string, unknown> | undefined;
-    if (!usage) return undefined;
-    return {
-      usageStage: type,
-      inputTokens: numericUsage(usage.input_tokens),
-      outputTokens: numericUsage(usage.output_tokens),
-      cacheCreationInputTokens: numericUsage(usage.cache_creation_input_tokens),
-      cacheReadInputTokens: numericUsage(usage.cache_read_input_tokens),
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-type ResponseUsageCapture = {
-  capture: (chunk: Buffer) => void;
-  flush: () => void;
-};
-
-function createResponseUsageCapture(
-  onUsage: (usage: ResponseUsage) => void,
-): ResponseUsageCapture {
-  let buffered = '';
-  const processBuffer = (flush: boolean) => {
-    let boundary: number;
-    while ((boundary = buffered.indexOf('\n\n')) >= 0) {
-      const block = buffered.slice(0, boundary);
-      buffered = buffered.slice(boundary + 2);
-      if (Buffer.byteLength(block) > MAX_USAGE_SSE_BLOCK_BYTES) continue;
-      const usage = responseUsageFromSseBlock(block);
-      if (usage) onUsage(usage);
-    }
-    if (flush && buffered.length > 0) {
-      const block = buffered;
-      buffered = '';
-      if (Buffer.byteLength(block) <= MAX_USAGE_SSE_BLOCK_BYTES) {
-        const usage = responseUsageFromSseBlock(block);
-        if (usage) onUsage(usage);
-      }
-    }
-    if (Buffer.byteLength(buffered) > MAX_USAGE_SSE_BLOCK_BYTES) buffered = '';
-  };
-
-  return {
-    capture: chunk => {
-      buffered = (buffered + chunk.toString('utf8')).replace(/\r\n/g, '\n');
-      processBuffer(false);
-    },
-    flush: () => processBuffer(true),
-  };
-}
-
-function observeResponseUsage(
-  upstream: http.IncomingMessage,
-  contentEncoding: string | string[] | undefined,
-  callbacks: { onUsage: (usage: ResponseUsage) => void; onComplete: () => void },
-): void {
-  const encoding = (Array.isArray(contentEncoding) ? contentEncoding[0] : contentEncoding)
-    ?.trim()
-    .toLowerCase();
-  if (!encoding || encoding === 'identity') {
-    const capture = createResponseUsageCapture(callbacks.onUsage);
-    upstream.on('data', capture.capture);
-    upstream.once('end', () => {
-      capture.flush();
-      upstream.off('data', capture.capture);
-      callbacks.onComplete();
-    });
-    return;
-  }
-
-  const decoder = encoding === 'gzip'
-    ? createGunzip()
-    : encoding === 'br'
-      ? createBrotliDecompress()
-      : encoding === 'deflate'
-        ? createInflate()
-        : undefined;
-  if (!decoder) {
-    callbacks.onComplete();
-    return;
-  }
-
-  const onCompressedData = (chunk: Buffer) => {
-    if (!decoder.destroyed) decoder.write(chunk);
-  };
-  const onCompressedEnd = () => {
-    if (!decoder.destroyed) decoder.end();
-  };
-  const cleanup = () => {
-    upstream.off('data', onCompressedData);
-    upstream.off('end', onCompressedEnd);
-    decoder.destroy();
-  };
-  const capture = createResponseUsageCapture(callbacks.onUsage);
-  decoder.on('data', capture.capture);
-  decoder.once('error', () => {
-    cleanup();
-    callbacks.onComplete();
-  });
-  decoder.once('end', () => {
-    capture.flush();
-    cleanup();
-    callbacks.onComplete();
-  });
-  upstream.on('data', onCompressedData);
-  upstream.once('end', onCompressedEnd);
-}
 
 export interface HttpProxyOptions {
   host?: string;
   port?: number;
   routes: ProxyRoute[];
-  /** Short incoming model names mapped to canonical adapter route ids. */
+
   modelAliases?: ResolvedHttpProxyAlias[];
   debug?: boolean;
-  /** Per-process translated-adapter debug log used when debug is enabled. */
+
   debugLogPath?: string;
-  /** Append privacy-minimal inference routing records as JSONL. */
+
   inferenceLogPath?: string;
-  /** Opt-in request-envelope and WebSocket head-decision diagnostics. */
+
   webSocketDiagnosticsLogPath?: string;
-  /** Test hook. Production always uses https://api.anthropic.com. */
+
   anthropicOrigin?: string;
-  /** Test hook for a local self-signed Anthropic origin. */
+
   anthropicRejectUnauthorized?: boolean;
-  /** Test hook for observing relay-route isolation without calling an AI provider. */
+
   adapterHandle?: ProxyHandle;
-  /** Test hook for verifying adapter connection-pool ownership. */
+
   adapterRequest?: typeof http.request;
-  /** Test hook. Production emits a progress record every 30 seconds. */
+
   responseProgressIntervalMs?: number;
-  /**
-   * Per-start Proxy-Authorization password the listener requires on every
-   * plain-HTTP request and CONNECT tunnel. When omitted a fresh random
-   * token is generated and returned on HttpProxyHandle.token.
-   */
+
   proxyAuthToken?: string;
-  /** Why: tests inject Claude auth without touching the real keychain. */
+
   resolveClaudeCodeAuth?: ClaudeCodeCredentialReader;
 }
 
@@ -221,7 +77,7 @@ export interface HttpProxyHandle {
   host: string;
   port: number;
   caCertPath: string;
-  /** Per-start Proxy-Authorization password clients must present. */
+
   token: string;
   modelIds: string[];
   inferenceLogPath?: string;
@@ -243,10 +99,8 @@ export function shouldInterceptConnect(authority: string): boolean {
   return Boolean(target && target.port === 443 && target.host.replace(/\.$/, '').toLowerCase() === ANTHROPIC_HOST);
 }
 
-/** WWW-Authenticate header value returned on 407 Proxy Authentication Required. */
 const PROXY_AUTHENTICATE_HEADER = 'Basic realm="leverframe"';
 
-/** Constant-time string compare to avoid leaking token bytes via timing. */
 function constantTimeEquals(a: string, b: string): boolean {
   const aBuf = Buffer.from(a, 'utf8');
   const bBuf = Buffer.from(b, 'utf8');
@@ -270,7 +124,6 @@ function extractProxyPassword(headers: http.IncomingHttpHeaders): string | null 
   return decoded.slice(idx + 1);
 }
 
-/** Strict canonical Base64 (RFC 4648 §4): alphabet, padding, round-trip. */
 function isCanonicalBase64(value: string): boolean {
   if (value.length === 0 || value.length % 4 !== 0) return false;
   const padStart = value.indexOf('=');
@@ -284,7 +137,6 @@ function isCanonicalBase64(value: string): boolean {
   return Buffer.from(value, 'base64').toString('base64') === value;
 }
 
-/** Send a 407 over a raw CONNECT socket. */
 function sendConnectProxyAuthRequired(socket: { end: (data: string) => void }): void {
   const body = 'Proxy authentication required';
   socket.end(
@@ -298,7 +150,6 @@ function sendConnectProxyAuthRequired(socket: { end: (data: string) => void }): 
   );
 }
 
-/** Send a 407 over a plain-HTTP ServerResponse. */
 function respondProxyAuthRequired(res: http.ServerResponse): void {
   const body = 'Proxy authentication required';
   res.writeHead(407, {
@@ -787,20 +638,6 @@ function forwardPlainHttp(req: http.IncomingMessage, res: http.ServerResponse): 
   req.pipe(upstream);
 }
 
-/**
- * Positive allowlist of relay routes, keyed by every id a client may send.
- *
- * Precedence (highest first, later passes never override earlier keys):
- *   1. Canonical route aliasId (and its routeLookupIds variants).
- *   2. Saved model-alias names, resolved against the routeId they name.
- *   3. Bare realModelId. Claude Code's Agent tool spawns child sessions that send the
- *      bare upstream model id (e.g. "gpt-5.6-luna") instead of the canonical alias id;
- *      without this fallback those requests miss the route map, routing fails closed to
- *      Anthropic passthrough, and Anthropic 404s the unknown model.
- *
- * Mirrors the precedence contract documented on createGatewayModelCatalog in
- * src/server/models.ts.
- */
 export function buildProxyRoutesById(
   routes: ProxyRoute[],
   modelAliases?: ResolvedHttpProxyAlias[],
@@ -870,10 +707,10 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
     switch (decision.action) {
       case 'translated': {
         if (!adapter) {
-          // decideHttpProxyRoute only returns 'translated' when hasAdapter was true.
+
           throw new Error('HTTP proxy route decision selected an adapter that is no longer running');
         }
-        // Adapter resolves aliases itself and must echo the request model id.
+
         await forwardToAdapter(
           req,
           res,
@@ -952,6 +789,18 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
         );
         return;
       }
+      case 'rejected': {
+        const errorBody = JSON.stringify({
+          type: 'error',
+          error: { type: 'not_found_error', message: decision.message },
+        });
+        res.writeHead(404, {
+          'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(errorBody)),
+        });
+        res.end(errorBody);
+        return;
+      }
       case 'raw':
         await forwardRawAnthropicRequest(
           req,
@@ -988,7 +837,7 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
     socket.once('close', () => sockets.delete(socket));
   });
   proxyServer.on('connect', (req, clientSocket, head) => {
-    // Client RSTs are routine. Unlistened, they crash the whole process.
+
     clientSocket.on('error', () => clientSocket.destroy());
     const presented = extractProxyPassword(req.headers);
     if (!presented || !constantTimeEquals(presented, proxyAuthToken)) {
@@ -1042,7 +891,7 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
       options.host ?? '127.0.0.1',
     );
   } catch (err) {
-    // Bind/readiness failed: no listener or private adapter resource may survive.
+
     adapterAgent.destroy();
     if (mitmServer.listening) {
       await new Promise<void>(resolve => mitmServer.close(() => resolve()));

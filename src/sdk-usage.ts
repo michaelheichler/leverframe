@@ -1,4 +1,4 @@
-// SDK usage → Anthropic usage buckets, plus the usage-fallback estimation logic.
+
 import { createHash } from 'node:crypto';
 import type { SdkCallParams } from './sdk-request-translation.js';
 
@@ -10,7 +10,7 @@ export interface SdkUsage {
     cacheReadTokens?: number;
     cacheWriteTokens?: number;
   };
-  /** AI SDK 6 compatibility for older third-party LanguageModel implementations. */
+
   cachedInputTokens?: number;
 }
 export interface AnthropicUsage {
@@ -19,11 +19,7 @@ export interface AnthropicUsage {
   cache_creation_input_tokens: number;
   cache_read_input_tokens: number;
 }
-/**
- * Normalize SDK usage into disjoint Anthropic buckets. The SDK-normalized
- * `noCacheTokens` value is authoritative when present; provider semantics
- * control the fallback for implementations that omit that breakdown.
- */
+
 export function toAnthropicUsage(
   u: SdkUsage | undefined,
   inputTokensIncludeCache: boolean,

@@ -1,6 +1,4 @@
-/**
- * Specifies Copilot runtime shutdown, escalation, and startup race behavior.
- */
+
 
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -150,7 +148,6 @@ describe('Copilot runtime force stop', () => {
     expect(clientForceStop).toHaveBeenCalledTimes(1);
   });
 
-
   it('escalates after graceful stop rejects', async () => {
     const clientForceStop = vi.fn(async () => undefined);
     const client = fakeClient({
@@ -165,7 +162,6 @@ describe('Copilot runtime force stop', () => {
 
     expect(clientForceStop).toHaveBeenCalledTimes(1);
   });
-
 
   it('escalates while graceful stop is still pending', async () => {
     const stopped = deferred<Error[]>();

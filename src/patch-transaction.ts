@@ -105,7 +105,7 @@ export interface PatchRuntimeInspection {
   version: string | null;
   sha256: string | null;
   injection: InjectionClassification;
-  /** Why inspection failed, when `readable` is false. */
+
   error?: string;
 }
 
@@ -117,8 +117,8 @@ export function describeInspectFailure(live: PatchRuntimeInspection): string {
 
 export interface PatchRuntime {
   inspect(path: string, knownPatchedSha256?: string): Promise<PatchRuntimeInspection>;
-  patch(path: string, config: PatchScriptModelConfig): Promise<PatchSiteResult[]>;
-  readContent(path: string): Promise<string>;
+  patch(path: string, config: PatchScriptModelConfig, verifiedVersion?: string): Promise<PatchSiteResult[]>;
+  readContent(path: string, verifiedVersion?: string): Promise<string>;
 }
 
 export const defaultPatchRuntime: PatchRuntime = {
@@ -129,7 +129,7 @@ export const defaultPatchRuntime: PatchRuntime = {
       const installation = resolveClaudeInstallation({ target: path });
       const version = installation?.version ?? null;
       if (!version || !/^\d+\.\d+\.\d+$/.test(version)) throw new Error('embedded version unavailable');
-      const content = await readClaudeContent(path);
+      const content = await readClaudeContent(path, version ?? undefined);
       return {
         path,
         readable: true,
@@ -148,14 +148,14 @@ export const defaultPatchRuntime: PatchRuntime = {
       };
     }
   },
-  async patch(path, config) {
-    const source = await readClaudeContent(path);
+  async patch(path, config, verifiedVersion) {
+    const source = await readClaudeContent(path, verifiedVersion);
     const patched = applyLeverframeIntegration(source, config);
     await writeClaudeContent(path, addLeverframeInjectionMarker(patched.content));
     return patched.results;
   },
-  async readContent(path) {
-    return readClaudeContent(path);
+  async readContent(path, verifiedVersion) {
+    return readClaudeContent(path, verifiedVersion);
   },
 };
 
@@ -199,10 +199,7 @@ export interface ApplyPatchInput {
   desiredConfig: PatchScriptModelConfig;
   configHash: string;
   manifest: PatchManifestV2 | null;
-  /**
-   * Allows an injected target with missing V2 state to be rebuilt from a
-   * separately verified pristine baseline, never from its injected live bytes.
-   */
+
   recoveryBaseline?: VerifiedRecoveryBaseline;
   trace: boolean;
 }
@@ -213,11 +210,6 @@ interface BaselineCandidate {
   provenance: BaselineProvenance;
 }
 
-/**
- * Revalidate a purported pristine baseline immediately before a transaction.
- * This closes the gap between read-only recovery inspection and the first
- * write: a missing, replaced, injected, or hash-mismatched baseline is rejected.
- */
 async function validatePristineBaseline(input: {
   candidate: BaselineCandidate;
   version: string;
@@ -242,15 +234,6 @@ async function validatePristineBaseline(input: {
   return null;
 }
 
-/**
- * Patch the live binary in a crash-safe, journaled sequence:
- *   1. journal `prepared`               (no destructive write yet)
- *   2. commit the baseline copy         -> journal `baseline_committed`
- *   3. same-directory stage, patch, validate, rename onto the live binary
- *                                        -> journal `binary_committed`
- *   4. publish the V2 manifest          -> journal `manifest_committed`
- *   5. journal `completed`
- */
 export async function applyPatchTransactionV2(
   input: ApplyPatchInput,
   runtime: PatchRuntime = defaultPatchRuntime,
@@ -336,7 +319,7 @@ export async function applyPatchTransactionV2(
   let results: PatchSiteResult[] = [];
   try {
     copyImmutableFileSync(baselinePath, stage, { mode: statSync(canonicalPath).mode & 0o777 });
-    results = await runtime.patch(stage, desiredConfig);
+    results = await runtime.patch(stage, desiredConfig, version);
     const stagedPatched = await runtime.inspect(stage);
     if (
       !stagedPatched.readable
@@ -414,13 +397,6 @@ export interface RestorePatchInput {
   manifest: PatchManifestV2 | null;
 }
 
-/**
- * Restore the pristine baseline over the live binary and clear this target's
- * patch state, in the same journaled sequence as apply (no separate baseline
- * step is needed: the baseline is already immutable content-addressed
- * storage, so the transaction goes straight to `binary_committed`, then
- * `manifest_committed` removes the manifest).
- */
 export async function restorePatchTransactionV2(
   input: RestorePatchInput,
   runtime: PatchRuntime = defaultPatchRuntime,
@@ -442,8 +418,6 @@ export async function restorePatchTransactionV2(
   if (!manifest) return { ok: false, message: 'Injected claude has no patch manifest for this target.' };
   if (!existsSync(manifest.baselinePath)) return { ok: false, message: 'The saved baseline is missing.' };
 
-  // Pre-fix baselines were stored owner-read-only; inspect shells out to
-  // `--version` and treats that as unreadable unless the execute bit is back.
   ensureBaselineExecutable(manifest.baselinePath);
   const backup = await runtime.inspect(manifest.baselinePath);
   if (!backup.readable) {

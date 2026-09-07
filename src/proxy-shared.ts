@@ -1,4 +1,4 @@
-// Shared helpers for Anthropic ↔ upstream translation proxies.
+
 
 export type FullStreamPart = {
   type: string;
@@ -13,7 +13,7 @@ export type FullStreamPart = {
     inputTokens?: number;
     outputTokens?: number;
     inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
-    /** AI SDK 6 compatibility for older third-party LanguageModel implementations. */
+
     cachedInputTokens?: number;
   };
   providerMetadata?: {
@@ -71,17 +71,6 @@ export function sseChunk(eventType: string, data: unknown): string {
   return `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
-/**
- * DeepSeek V4's "DSML" tool-calling protocol: an XML-style block using the fullwidth
- * pipe `｜` as a marker character, e.g. `<｜DSML｜tool_calls><｜DSML｜invoke name="x">
- * <｜DSML｜parameter name="y" string="true">value</｜DSML｜parameter></｜DSML｜invoke>
- * </｜DSML｜tool_calls>`. Not officially documented by DeepSeek, but widely reported
- * (vLLM issue #41240, Cherry Studio issue #14714) as leaking into plain assistant text
- * instead of firing real tool calls when a serving backend's tool-call parser doesn't
- * fully handle it — observed live via OpenCode Zen's free deepseek-v4-flash-free.
- * The marker is also observed rendered with stray ASCII pipes/whitespace instead of the
- * clean fullwidth character, so matching tolerates either.
- */
 const DSML_NOISE = '[|｜\\s]*';
 const DSML_BLOCK_RE = new RegExp(`<${DSML_NOISE}DSML${DSML_NOISE}tool_calls>([\\s\\S]*?)<\\/${DSML_NOISE}DSML${DSML_NOISE}tool_calls>`, 'i');
 const DSML_INVOKE_RE = new RegExp(`<${DSML_NOISE}DSML${DSML_NOISE}invoke\\s+name="([^"]+)"[^>]*>([\\s\\S]*?)<\\/${DSML_NOISE}DSML${DSML_NOISE}invoke>`, 'gi');
@@ -93,14 +82,11 @@ export interface DsmlToolCall {
 }
 
 export interface DsmlParseResult {
-  /** Any text before the <DSML tool_calls> block (usually empty). */
+
   leadingText: string;
   calls: DsmlToolCall[];
 }
 
-/** Returns null when no complete DSML tool_calls block is present (including a
- *  truncated/unclosed one — safer to leave a partial block as visible text than
- *  guess at incomplete arguments). */
 export function parseDsmlToolCalls(text: string): DsmlParseResult | null {
   const outer = DSML_BLOCK_RE.exec(text);
   if (!outer) return null;
@@ -131,7 +117,6 @@ export function parseDsmlToolCalls(text: string): DsmlParseResult | null {
   return { leadingText: text.slice(0, outer.index).trim(), calls };
 }
 
-/** Parse one SSE line into a JSON payload string, or null if not a data line. */
 export function extractSseDataPayload(line: string): string | null {
   const trimmed = line.trim();
   if (!trimmed || trimmed.startsWith(':')) return null;
@@ -153,7 +138,6 @@ export function splitToolUseId(id: string): { rawId: string; thoughtSignature?: 
     };
   }
 
-  // Legacy fallback for active sessions that used ::ts:: before the restart
   sep = id.lastIndexOf('::ts::');
   if (sep !== -1) {
     return {
@@ -184,7 +168,6 @@ export function serializeToolResultContent(content: unknown): string {
   return typeof content === 'string' ? content : JSON.stringify(content);
 }
 
-/** Incrementally read SSE lines from an upstream stream without re-splitting the full buffer. */
 export function attachSseLineReader(
   upstream: NodeJS.ReadableStream,
   onLine: (line: string) => void,

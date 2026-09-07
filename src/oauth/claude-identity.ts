@@ -1,5 +1,4 @@
-// src/oauth/claude-identity.ts — Request identity simulation for Claude Code OAuth.
-// Anthropic validates that OAuth requests match the claude-cli fingerprint.
+
 
 import { createHash, randomUUID } from 'node:crypto';
 
@@ -8,8 +7,6 @@ export const CLAUDE_CODE_USER_AGENT = `claude-cli/${CLAUDE_CODE_CLI_VERSION} (ex
 export const CLAUDE_CODE_ENTRYPOINT = process.env.CLAUDE_CODE_ENTRYPOINT ?? 'cli';
 export const CLAUDE_CODE_BILLING_HEADER_PREFIX = 'x-anthropic-billing-header:';
 
-// Per-process session IDs keyed by seed — same value emitted for X-Claude-Code-Session-Id
-// and metadata.user_id.session_id.
 const sessionCache = new Map<string, string>();
 
 function getOrCreateSessionId(seed: string): string {
@@ -18,7 +15,6 @@ function getOrCreateSessionId(seed: string): string {
   return id;
 }
 
-// Deterministic UUIDv4 from a SHA-256 hash — used as fallback when bootstrap hasn't run.
 function uuidFromHash(input: string): string {
   const h = createHash('sha256').update(input).digest('hex');
   return [h.slice(0,8), h.slice(8,12), '4'+h.slice(13,16),
@@ -28,7 +24,6 @@ function uuidFromHash(input: string): string {
 const HEX64_RE = /^[a-f0-9]{64}$/i;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Resolve cliUserID (device_id) from stored providerData, falling back to a hash. */
 export function resolveCliUserID(
   providerData: Record<string, unknown> | undefined,
   seed: string,
@@ -38,7 +33,6 @@ export function resolveCliUserID(
   return createHash('sha256').update(`cliUserID:${seed}`).digest('hex');
 }
 
-/** Resolve accountUUID from stored providerData, falling back to a deterministic UUID. */
 export function resolveAccountUUID(
   providerData: Record<string, unknown> | undefined,
   seed: string,
@@ -86,9 +80,6 @@ export function injectClaudeCodeBillingSystemLine(body: Record<string, unknown>)
   }
 }
 
-// ── Beta flag selection ────────────────────────────────────────────────────
-// Anthropic validates the anthropic-beta set matches the request shape.
-
 const ALWAYS: string[] = [
   'oauth-2025-04-20',
   'context-management-2025-06-27',
@@ -108,11 +99,6 @@ const THINKING: string[] = [
 const HEAVY: string[] = ['advanced-tool-use-2025-11-20', 'effort-2025-11-24'];
 const OPUS_ONLY: string[] = ['context-1m-2025-08-07', 'mid-conversation-system-2026-04-07'];
 
-/**
- * Select anthropic-beta flags matching the request shape.
- * clientBeta: the inbound anthropic-beta header from the client — respected to avoid
- * forcing betas the client never requested (can cause malformed tool_use streams).
- */
 export function selectBetaFlags(
   body: Record<string, unknown>,
   model?: string | null,
@@ -143,10 +129,6 @@ export function selectBetaFlags(
   return flags.join(',');
 }
 
-/**
- * Inject Claude Code identity metadata into an Anthropic request body in-place.
- * Must be called before forwarding the request to api.anthropic.com.
- */
 export function injectClaudeIdentity(
   body: Record<string, unknown>,
   providerData: Record<string, unknown> | undefined,

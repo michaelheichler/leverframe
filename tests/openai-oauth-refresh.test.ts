@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderRegistry } from '../src/registry/types.js';
 import * as io from '../src/registry/io.js';
 import { refreshProviderModels } from '../src/registry/refresh-models.js';
+import {
+  OPENAI_OAUTH_ASTRA_FAILURE,
+  OPENAI_OAUTH_ASTRA_MODEL,
+} from './fixtures/openai-oauth-astra-metadata.js';
 
 vi.mock('../src/registry/credential-lifecycle.js', () => ({
   reconcilePendingCredentialDeletes: vi.fn(async () => ({ deleted: [], pending: [] })),
@@ -37,7 +41,7 @@ function registry(): ProviderRegistry {
   };
 }
 
-function listing(contextWindow: unknown): Response {
+function listing(contextWindow: unknown, fields: Record<string, unknown> = {}): Response {
   return {
     ok: true,
     json: async () => ({
@@ -45,6 +49,7 @@ function listing(contextWindow: unknown): Response {
         slug: 'gpt-5.6-sol',
         title: 'GPT-5.6 Sol',
         context_window: contextWindow,
+        ...fields,
       }],
     }),
   } as Response;
@@ -67,19 +72,24 @@ describe('OpenAI OAuth model refresh', () => {
   it('persists a confirmed positive context window from provider metadata', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(listing(272_000)));
 
-    await refreshProviderModels('openai-oauth', 'token', persisted);
+    const result = await refreshProviderModels('openai-oauth', 'token', persisted);
+
+    expect(result).toMatchObject({ ok: true, modelSource: 'live' });
 
     expect(persisted.providers[0]?.modelsCache?.models[0]).toMatchObject({
       id: 'gpt-5.6-sol',
       contextWindow: 272_000,
       contextWindowUnconfirmed: undefined,
+      reasoning: undefined,
     });
   });
 
   it('persists missing context metadata as unconfirmed', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(listing(undefined)));
 
-    await refreshProviderModels('openai-oauth', 'token', persisted);
+    const result = await refreshProviderModels('openai-oauth', 'token', persisted);
+
+    expect(result).toMatchObject({ ok: true, modelSource: 'live' });
 
     expect(persisted.providers[0]?.modelsCache?.models[0]).toMatchObject({
       contextWindow: undefined,
@@ -90,7 +100,9 @@ describe('OpenAI OAuth model refresh', () => {
   it('persists invalid context metadata as unconfirmed', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(listing(0)));
 
-    await refreshProviderModels('openai-oauth', 'token', persisted);
+    const result = await refreshProviderModels('openai-oauth', 'token', persisted);
+
+    expect(result).toMatchObject({ ok: true, modelSource: 'live' });
 
     expect(persisted.providers[0]?.modelsCache?.models[0]).toMatchObject({
       contextWindow: undefined,
@@ -98,18 +110,45 @@ describe('OpenAI OAuth model refresh', () => {
     });
   });
 
-  it('persists the unconfirmed seed when discovery fails without a cache', async () => {
+  it('preserves provider-reported reasoning and parameter capabilities', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(listing(
+      OPENAI_OAUTH_ASTRA_MODEL.context_window,
+      OPENAI_OAUTH_ASTRA_MODEL,
+    )));
+
+    const result = await refreshProviderModels('openai-oauth', 'token', persisted);
+
+    expect(result).toMatchObject({ ok: true, modelSource: 'live' });
+
+    expect(persisted.providers[0]?.modelsCache?.models[0]).toMatchObject({
+      id: 'gpt-6-astra',
+      contextWindow: 272_000,
+      maxContextWindow: 872_000,
+      inputTokenLimit: 922_000,
+      outputTokenLimit: 128_000,
+      reasoning: true,
+      supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+      defaultReasoningEffort: 'medium',
+      minimalClientVersion: '0.153.0',
+      supportsReasoningSummaries: true,
+      supportsReasoningSummaryParameter: true,
+      supportsParallelToolCalls: true,
+      useResponsesLite: true,
+      preferWebSockets: true,
+      supportsTemperature: false,
+    });
+  });
+
+  it('does not publish built-in model seeds when discovery fails without a cache', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false,
-      status: 503,
-      text: async () => 'unavailable',
+      status: OPENAI_OAUTH_ASTRA_FAILURE.status,
+      text: async () => OPENAI_OAUTH_ASTRA_FAILURE.body,
     } as Response));
 
-    await refreshProviderModels('openai-oauth', 'token', persisted);
+    const result = await refreshProviderModels('openai-oauth', 'token', persisted);
 
-    expect(persisted.providers[0]?.modelsCache?.models.find(model => model.id === 'gpt-5.6-sol')).toMatchObject({
-      contextWindow: undefined,
-      contextWindowUnconfirmed: true,
-    });
+    expect(persisted.providers[0]?.modelsCache).toBeUndefined();
+    expect(result.reason).toContain('newer version of Codex');
   });
 });

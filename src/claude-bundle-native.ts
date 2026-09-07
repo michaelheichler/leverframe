@@ -1,50 +1,43 @@
-/**
- * Utilities for extracting and repacking native installation binaries.
- */
-
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { execSync, execFileSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import LIEF from 'node-lief';
+import {
+  BUN_BYTECODE_PREFIX,
+  BUN_TRAILER,
+  SIZEOF_MODULE_NEW,
+  SIZEOF_MODULE_OLD,
+  SIZEOF_OFFSETS,
+  getStringPointerContent,
+  isChunkModule,
+  isClaudeModule,
+  mapModules,
+  parseStringPointer,
+  rebuildBunData,
+  repackELFOverlay,
+  repackELFSection,
+  repackMachO,
+  repackPE,
+  type BunData,
+  type BunOffsets,
+} from './claude-bundle-repack.js';
+
+export { isChunkModule, isClaudeModule };
+export {
+  bytecodeForReplacement,
+  computeBunSectionPlacement,
+  sourceForInvalidatedBytecode,
+  type BunSectionPlacement,
+} from './claude-bundle-repack.js';
 
 const debug = (..._args: unknown[]): void => {};
-const isDebug = (): boolean => false;
 
-// ============================================================================
-// Nix binary wrapper detection
-// ============================================================================
-
-/**
- * Maximum file size for a Nix binary wrapper. These are tiny compiled C
- * programs (~5-20KB). Anything larger is definitely not a wrapper.
- */
 const NIX_WRAPPER_MAX_SIZE = 200_000;
 
-/**
- * Detects whether a binary is a Nix `makeBinaryWrapper` output and, if so,
- * extracts the path to the real wrapped executable.
- *
- * Nix's `makeBinaryWrapper` generates a small C program that:
- *   1. Manipulates the environment (setenv/unsetenv/putenv)
- *   2. Calls `execv("/nix/store/.../real-binary", argv)`
- *
- * The wrapper always embeds a DOCSTRING in `.rodata` (ELF) or `__cstring`
- * (Mach-O) containing the literal `makeCWrapper` invocation, whose first
- * argument is the real executable path. This is a contractual part of the
- * wrapper format (used by `makeBinaryWrapper.extractCmd`).
- *
- * Detection strategy:
- *   1. Size gate: wrappers are tiny (<200KB), real Bun binaries are multi-MB
- *   2. Symbol gate: wrappers import `execv`, real Bun apps do not
- *   3. Parse the DOCSTRING: `makeCWrapper '/nix/store/.../real-binary' ...`
- *   4. Fallback: find `/nix/store/` paths with `/bin/` in `.rodata`
- *
- * @returns The path to the real wrapped executable, or null if not a wrapper.
- */
 export function resolveNixBinaryWrapper(binaryPath: string): string | null {
   try {
-    // Gate 1: file size — wrappers are tiny
+
     const stat = fs.statSync(binaryPath);
     if (stat.size > NIX_WRAPPER_MAX_SIZE) {
       return null;
@@ -53,7 +46,6 @@ export function resolveNixBinaryWrapper(binaryPath: string): string | null {
     LIEF.logging.disable();
     const binary = LIEF.parse(binaryPath);
 
-    // Gate 2: must import execv — the hallmark of a makeBinaryWrapper
     const symbols = binary.symbols();
     const hasExecv = symbols.some(sym => {
       const name = sym.name;
@@ -71,7 +63,6 @@ export function resolveNixBinaryWrapper(binaryPath: string): string | null {
       'resolveNixBinaryWrapper: execv import found, checking for Nix wrapper DOCSTRING'
     );
 
-    // Extract string data from .rodata (ELF) or __TEXT,__cstring (Mach-O)
     let rawBytes: Buffer | null = null;
 
     if (binary.format === 'ELF') {
@@ -97,8 +88,6 @@ export function resolveNixBinaryWrapper(binaryPath: string): string | null {
 
     const text = rawBytes.toString('utf-8');
 
-    // Strategy 1: parse the DOCSTRING
-    // makeBinaryWrapper always embeds: makeCWrapper '/nix/store/.../real' ...
     const docstringMatch = text.match(/makeCWrapper\s+'(\/nix\/store\/[^']+)'/);
     if (docstringMatch) {
       const resolvedPath = docstringMatch[1];
@@ -108,7 +97,6 @@ export function resolveNixBinaryWrapper(binaryPath: string): string | null {
       return resolvedPath;
     }
 
-    // Also handle unquoted (shouldn't happen but defensive)
     const unquotedMatch = text.match(/makeCWrapper\s+(\/nix\/store\/\S+)/);
     if (unquotedMatch) {
       const resolvedPath = unquotedMatch[1];
@@ -118,9 +106,6 @@ export function resolveNixBinaryWrapper(binaryPath: string): string | null {
       return resolvedPath;
     }
 
-    // Strategy 2: find /nix/store/ paths in the string table
-    // The execv target is the one that points to an executable (contains /bin/)
-    // as opposed to env var values (--prefix PATH) which point to directories.
     const nixPaths = text.match(/\/nix\/store\/[^\s]+/g);
     if (nixPaths) {
       for (const p of nixPaths) {
@@ -141,117 +126,12 @@ export function resolveNixBinaryWrapper(binaryPath: string): string | null {
   }
 }
 
-/**
- * Constants for Bun trailer and serialized layout sizes.
- *
- * Bun data layout (normalized across formats) is:
- * [data...][OFFSETS struct][BUN_TRAILER]
- *
- * Where OFFSETS struct (SIZEOF_OFFSETS bytes) is:
- * - byteCount:   u64  (total size of [data][OFFSETS][BUN_TRAILER])
- * - modulesPtr:  { u32 offset, u32 length } into [data...] for modules table
- * - entryPointId: u32
- * - compileExecArgvPtr: { u32 offset, u32 length }
- * - flags: u32
- */
-const BUN_TRAILER = Buffer.from('\n---- Bun! ----\n');
-const BUN_BYTECODE_PREFIX = '// @bun @bytecode';
-// A `// @bun @bytecode @bun-cjs` header marks a readable CommonJS SOURCE module
-// (patchable JS), NOT compiled bytecode — so it must NOT trigger the npm-source
-// fallback. This marker distinguishes the two.
 const BUN_CJS_MARKER = '@bun-cjs';
-
-// Size constants for binary structures
-const SIZEOF_OFFSETS = 32;
-const SIZEOF_STRING_POINTER = 8;
-// Module struct sizes vary by Bun version:
-// - Old format (pre-ESM bytecode, before Bun ~1.3.7): 4 StringPointers + 4 u8s = 36 bytes
-// - New format (ESM bytecode, Bun ~1.3.7+): 6 StringPointers + 4 u8s = 52 bytes
-const SIZEOF_MODULE_OLD = 4 * SIZEOF_STRING_POINTER + 4;
-const SIZEOF_MODULE_NEW = 6 * SIZEOF_STRING_POINTER + 4;
-
-// Types
-interface StringPointer {
-  offset: number;
-  length: number;
-}
-
-interface BunOffsets {
-  byteCount: bigint | number;
-  modulesPtr: StringPointer;
-  entryPointId: number;
-  compileExecArgvPtr: StringPointer;
-  flags: number;
-}
-
-interface BunModule {
-  name: StringPointer;
-  contents: StringPointer;
-  sourcemap: StringPointer;
-  bytecode: StringPointer;
-  moduleInfo: StringPointer;
-  bytecodeOriginPath: StringPointer;
-  encoding: number;
-  loader: number;
-  moduleFormat: number;
-  side: number;
-}
-
-interface BunData {
-  bunOffsets: BunOffsets;
-  bunData: Buffer;
-  /** Header size used in section format: 4 for old format (Bun < 1.3.4), 8 for new format. Only for Mach-O and PE. */
-  sectionHeaderSize?: number;
-  /** Detected module struct size: SIZEOF_MODULE_OLD (36) or SIZEOF_MODULE_NEW (52). */
-  moduleStructSize: number;
-}
 
 interface LocatedBundle extends BunData {
   offset: number;
   length: number;
   write(newBunBuffer: Buffer, outputPath: string): void;
-}
-
-/**
- * Read a StringPointer slice from given buffer.
- */
-function getStringPointerContent(
-  buffer: Buffer,
-  stringPointer: StringPointer
-): Buffer {
-  return buffer.subarray(
-    stringPointer.offset,
-    stringPointer.offset + stringPointer.length
-  );
-}
-
-function parseStringPointer(buffer: Buffer, offset: number): StringPointer {
-  return {
-    offset: buffer.readUInt32LE(offset),
-    length: buffer.readUInt32LE(offset + 4),
-  };
-}
-
-/**
- * True if the module represents the native claude entrypoint.
- */
-export function isClaudeModule(moduleName: string): boolean {
-  const normalizedName = moduleName.replaceAll('\\', '/');
-  return (
-    normalizedName.endsWith('/claude') ||
-    normalizedName === 'claude' ||
-    normalizedName.endsWith('/claude.exe') ||
-    normalizedName === 'claude.exe' ||
-    normalizedName.endsWith('/src/entrypoints/cli.js') ||
-    normalizedName === 'src/entrypoints/cli.js' ||
-    normalizedName === '/$bunfs/root/cli' ||
-    normalizedName === 'B:/~BUN/root/cli' ||
-    normalizedName === 'cli'
-  );
-}
-
-export function isChunkModule(moduleName: string): boolean {
-  return /(^|[\\/])chunk-[^\\/]+\.js$/.test(moduleName);
 }
 
 export const CLAUDE_MODULE_BOUNDARY = '\n//#__leverframe_claude_module__:';
@@ -289,22 +169,6 @@ export function buildModuleReplacements(
   return replacements;
 }
 
-export function bytecodeForReplacement(original: Buffer, replacement: Buffer, bytecode: Buffer): Buffer {
-  return original.equals(replacement) ? bytecode : Buffer.alloc(0);
-}
-
-export function sourceForInvalidatedBytecode(source: Buffer): Buffer {
-  if (!source.subarray(0, BUN_BYTECODE_PREFIX.length).equals(Buffer.from(BUN_BYTECODE_PREFIX))) {
-    return source;
-  }
-  const newline = source.indexOf(0x0a);
-  return newline === -1 ? Buffer.alloc(0) : source.subarray(newline + 1);
-}
-
-/**
- * Detects the module struct size from the modules list byte length.
- * Returns SIZEOF_MODULE_NEW (52) or SIZEOF_MODULE_OLD (36).
- */
 function detectModuleStructSize(modulesListLength: number): number {
   const fitsNew = modulesListLength % SIZEOF_MODULE_NEW === 0;
   const fitsOld = modulesListLength % SIZEOF_MODULE_OLD === 0;
@@ -312,60 +176,17 @@ function detectModuleStructSize(modulesListLength: number): number {
   if (fitsNew && !fitsOld) return SIZEOF_MODULE_NEW;
   if (fitsOld && !fitsNew) return SIZEOF_MODULE_OLD;
   if (fitsNew && fitsOld) {
-    // Ambiguous — prefer new format (more likely with recent Bun versions)
+
     debug(
       `detectModuleStructSize: Ambiguous module list length ${modulesListLength}, assuming new format`
     );
     return SIZEOF_MODULE_NEW;
   }
 
-  // Neither fits cleanly — try new format as default
   debug(
     `detectModuleStructSize: Module list length ${modulesListLength} doesn't cleanly divide by either struct size, assuming new format`
   );
   return SIZEOF_MODULE_NEW;
-}
-
-/**
- * Iterates over modules in the Bun data and calls visitor for each.
- * Handles all module parsing and iteration logic in one place.
- */
-function mapModules<T>(
-  bunData: Buffer,
-  bunOffsets: BunOffsets,
-  moduleStructSize: number,
-  visitor: (
-    module: BunModule,
-    moduleName: string,
-    index: number
-  ) => T | undefined
-): T | undefined {
-  const modulesListBytes = getStringPointerContent(
-    bunData,
-    bunOffsets.modulesPtr
-  );
-  const modulesListCount = Math.floor(
-    modulesListBytes.length / moduleStructSize
-  );
-
-  for (let i = 0; i < modulesListCount; i++) {
-    const offset = i * moduleStructSize;
-    const module = parseCompiledModuleGraphFile(
-      modulesListBytes,
-      offset,
-      moduleStructSize
-    );
-    const moduleName = getStringPointerContent(bunData, module.name).toString(
-      'utf-8'
-    );
-
-    const result = visitor(module, moduleName, i);
-    if (result !== undefined) {
-      return result;
-    }
-  }
-
-  return undefined;
 }
 
 function collectClaudeJavaScriptModules(
@@ -398,59 +219,6 @@ function parseOffsets(buffer: Buffer): BunOffsets {
   return { byteCount, modulesPtr, entryPointId, compileExecArgvPtr, flags };
 }
 
-function parseCompiledModuleGraphFile(
-  buffer: Buffer,
-  offset: number,
-  moduleStructSize: number
-): BunModule {
-  let pos = offset;
-  const name = parseStringPointer(buffer, pos);
-  pos += 8;
-  const contents = parseStringPointer(buffer, pos);
-  pos += 8;
-  const sourcemap = parseStringPointer(buffer, pos);
-  pos += 8;
-  const bytecode = parseStringPointer(buffer, pos);
-  pos += 8;
-
-  let moduleInfo: StringPointer;
-  let bytecodeOriginPath: StringPointer;
-  if (moduleStructSize === SIZEOF_MODULE_NEW) {
-    moduleInfo = parseStringPointer(buffer, pos);
-    pos += 8;
-    bytecodeOriginPath = parseStringPointer(buffer, pos);
-    pos += 8;
-  } else {
-    moduleInfo = { offset: 0, length: 0 };
-    bytecodeOriginPath = { offset: 0, length: 0 };
-  }
-
-  const encoding = buffer.readUInt8(pos);
-  pos += 1;
-  const loader = buffer.readUInt8(pos);
-  pos += 1;
-  const moduleFormat = buffer.readUInt8(pos);
-  pos += 1;
-  const side = buffer.readUInt8(pos);
-
-  return {
-    name,
-    contents,
-    sourcemap,
-    bytecode,
-    moduleInfo,
-    bytecodeOriginPath,
-    encoding,
-    loader,
-    moduleFormat,
-    side,
-  };
-}
-
-/**
- * Parses Bun data blob that contains: [data][offsets][trailer]
- * This is the common structure across all formats after extraction.
- */
 function parseBunDataBlob(bunDataContent: Buffer): {
   bunOffsets: BunOffsets;
   bunData: Buffer;
@@ -460,7 +228,6 @@ function parseBunDataBlob(bunDataContent: Buffer): {
     throw new Error('BUN data is too small to contain trailer and offsets');
   }
 
-  // Verify trailer
   const trailerStart = bunDataContent.length - BUN_TRAILER.length;
   const trailerBytes = bunDataContent.subarray(trailerStart);
 
@@ -468,11 +235,10 @@ function parseBunDataBlob(bunDataContent: Buffer): {
   debug(`parseBunDataBlob: Got trailer: ${trailerBytes.toString('hex')}`);
 
   if (!trailerBytes.equals(BUN_TRAILER)) {
-    // Expected/Got hex already logged just above on every call.
+
     throw new Error('BUN trailer bytes do not match trailer');
   }
 
-  // Parse Offsets structure
   const offsetsStart =
     bunDataContent.length - SIZEOF_OFFSETS - BUN_TRAILER.length;
   const offsetsBytes = bunDataContent.subarray(
@@ -489,14 +255,6 @@ function parseBunDataBlob(bunDataContent: Buffer): {
   };
 }
 
-/**
- * Section format helper (for Mach-O and PE):
- * Old format (Bun < 1.3.4): [u32 size][size bytes of Bun data blob...]
- * New format (Bun >= 1.3.4): [u64 size][size bytes of Bun data blob...]
- *
- * Size is the length of the Bun blob (which itself is [data][OFFSETS][TRAILER]).
- * We detect which format by checking if (headerSize + size) matches the section length.
- */
 function extractBunDataFromSection(sectionData: Buffer): BunData {
   if (sectionData.length < 4) {
     throw new Error('Section data too small');
@@ -504,11 +262,9 @@ function extractBunDataFromSection(sectionData: Buffer): BunData {
 
   debug(`extractBunDataFromSection: sectionData.length=${sectionData.length}`);
 
-  // Try u32 header (old format, Bun < 1.3.4)
   const bunDataSizeU32 = sectionData.readUInt32LE(0);
   const expectedLengthU32 = 4 + bunDataSizeU32;
 
-  // Try u64 header (new format, Bun >= 1.3.4) - only if we have enough bytes
   const bunDataSizeU64 =
     sectionData.length >= 8 ? Number(sectionData.readBigUInt64LE(0)) : 0;
   const expectedLengthU64 = 8 + bunDataSizeU64;
@@ -523,13 +279,12 @@ function extractBunDataFromSection(sectionData: Buffer): BunData {
   let headerSize: number;
   let bunDataSize: number;
 
-  // Check which format matches the section length (allowing for padding up to 4KB)
   if (
     sectionData.length >= 8 &&
     expectedLengthU64 <= sectionData.length &&
     expectedLengthU64 >= sectionData.length - 4096
   ) {
-    // u64 format matches
+
     headerSize = 8;
     bunDataSize = bunDataSizeU64;
     debug(
@@ -539,7 +294,7 @@ function extractBunDataFromSection(sectionData: Buffer): BunData {
     expectedLengthU32 <= sectionData.length &&
     expectedLengthU32 >= sectionData.length - 4096
   ) {
-    // u32 format matches
+
     headerSize = 4;
     bunDataSize = bunDataSizeU32;
     debug(
@@ -574,18 +329,6 @@ function extractBunDataFromSection(sectionData: Buffer): BunData {
   };
 }
 
-/**
- * New ELF format (Bun >= 1.3.x, post-PR#26923):
- * Bun data is stored in a .bun ELF section, using the same
- * [u64 payload_len][payload bytes] format as macOS and PE.
- *
- * At build time, Bun's writeBunSection() appends the module graph data to
- * the end of the ELF, creates a PT_LOAD segment for it, and updates the
- * .bun section header to point there. The original BUN_COMPILED location
- * (in the RW data segment) stores a vaddr pointing to the appended data.
- *
- * Returns null if the .bun section doesn't exist or doesn't have valid data.
- */
 function extractBunDataFromELFSection(
   elfBinary: LIEF.ELF.Binary
 ): BunData | null {
@@ -606,7 +349,6 @@ function extractBunDataFromELFSection(
       `extractBunDataFromELFSection: .bun section found, size=${sectionContent.length}`
     );
 
-    // The .bun section uses the same [u64 size][payload] format as macOS/PE
     const result = extractBunDataFromSection(sectionContent);
     debug('extractBunDataFromELFSection: successfully extracted data');
     return result;
@@ -616,13 +358,6 @@ function extractBunDataFromELFSection(
   }
 }
 
-/**
- * Legacy ELF layout (Bun < 1.3.x, pre-PR#26923):
- * [original ELF ...][Bun data...][Bun offsets][Bun trailer][u64 totalByteCount]
- *
- * Matches bun_unpack.py logic: parse Offsets structure and use its byteCount
- * field instead of the trailing totalByteCount (which is unreliable for musl).
- */
 function extractBunDataFromELFOverlay(elfBinary: LIEF.ELF.Binary): BunData {
   if (!elfBinary.hasOverlay) {
     throw new Error('ELF binary has no overlay data');
@@ -637,7 +372,6 @@ function extractBunDataFromELFOverlay(elfBinary: LIEF.ELF.Binary): BunData {
     throw new Error('ELF overlay data is too small');
   }
 
-  // Read totalByteCount from last 8 bytes
   const totalByteCount = overlayData.readBigUInt64LE(overlayData.length - 8);
   debug(
     `extractBunDataFromELFOverlay: Total byte count from tail=${totalByteCount}`
@@ -647,7 +381,6 @@ function extractBunDataFromELFOverlay(elfBinary: LIEF.ELF.Binary): BunData {
     throw new Error(`ELF total byte count is out of range: ${totalByteCount}`);
   }
 
-  // Verify trailer at [len - 8 - trailer_len : len - 8]
   const trailerStart = overlayData.length - 8 - BUN_TRAILER.length;
   const trailerBytes = overlayData.subarray(
     trailerStart,
@@ -665,7 +398,6 @@ function extractBunDataFromELFOverlay(elfBinary: LIEF.ELF.Binary): BunData {
     throw new Error('BUN trailer bytes do not match trailer');
   }
 
-  // Parse Offsets at [len - 8 - trailer_len - sizeof_offsets : len - 8 - trailer_len]
   const offsetsStart =
     overlayData.length - 8 - BUN_TRAILER.length - SIZEOF_OFFSETS;
   const offsetsBytes = overlayData.subarray(
@@ -678,7 +410,6 @@ function extractBunDataFromELFOverlay(elfBinary: LIEF.ELF.Binary): BunData {
     `extractBunDataFromELFOverlay: Offsets.byteCount=${bunOffsets.byteCount}`
   );
 
-  // Validate byteCount from Offsets structure
   const byteCount =
     typeof bunOffsets.byteCount === 'bigint'
       ? bunOffsets.byteCount
@@ -688,7 +419,6 @@ function extractBunDataFromELFOverlay(elfBinary: LIEF.ELF.Binary): BunData {
     throw new Error('ELF total byte count is out of range');
   }
 
-  // Extract data region using byteCount from Offsets (not totalByteCount)
   const tailDataLen = 8 + BUN_TRAILER.length + SIZEOF_OFFSETS;
   const dataStart = overlayData.length - tailDataLen - Number(byteCount);
   const dataRegion = overlayData.subarray(
@@ -700,7 +430,6 @@ function extractBunDataFromELFOverlay(elfBinary: LIEF.ELF.Binary): BunData {
     `extractBunDataFromELFOverlay: Extracted ${dataRegion.length} bytes of data`
   );
 
-  // Reconstruct full blob [data][offsets][trailer] to match other formats
   const bunDataBlob = Buffer.concat([dataRegion, offsetsBytes, trailerBytes]);
   const moduleStructSize = detectModuleStructSize(bunOffsets.modulesPtr.length);
 
@@ -711,11 +440,6 @@ function extractBunDataFromELFOverlay(elfBinary: LIEF.ELF.Binary): BunData {
   };
 }
 
-/**
- * Mach-O layout:
- * __BUN/__bun section content is:
- * [u32 size][size bytes of Bun blob...]
- */
 function extractBunDataFromMachO(machoBinary: LIEF.MachO.Binary): BunData {
   const bunSegment = machoBinary.getSegment('__BUN');
   if (!bunSegment) {
@@ -730,11 +454,6 @@ function extractBunDataFromMachO(machoBinary: LIEF.MachO.Binary): BunData {
   return extractBunDataFromSection(bunSection.content);
 }
 
-/**
- * PE layout:
- * .bun section content is:
- * [u32 size][size bytes of Bun blob...]
- */
 function extractBunDataFromPE(peBinary: LIEF.PE.Binary): BunData {
   const bunSection = peBinary.sections().find(s => s.name === '.bun');
 
@@ -861,15 +580,6 @@ function locateBundle(
   }
 }
 
-/**
- * Extracts claude.js from a native installation binary.
- * Returns the contents as a Buffer, or null if not found.
- *
- * Note: If the binary might be a Nix `makeBinaryWrapper` wrapper, callers
- * should resolve it first using `resolveNixBinaryWrapper()` and pass the
- * real binary path here. This is handled at detection time in
- * `resolveClaudeInstallation`.
- */
 function fetchNpmSource(version: string): Buffer | null {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'leverframe-claude-'));
   try {
@@ -914,7 +624,7 @@ function fetchNpmSource(version: string): Buffer | null {
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch {
-      // Ignore cleanup errors
+
     }
   }
 }
@@ -956,13 +666,7 @@ export function extractClaudeJsFromNativeInstallation(
 
     if (result) {
       const head = result.subarray(0, 64).toString('utf8');
-      // Only ACTUAL bytecode (no @bun-cjs source marker) should fall back to
-      // fetching npm source. Modern CC ships the claude module as readable
-      // `// @bun @bytecode @bun-cjs` SOURCE — patchable directly — so the old
-      // `startsWith` check false-matched it and ran a doomed `npm pack` on every
-      // native apply (the npm package no longer ships package/cli.js). Skipping
-      // it returns the same data with clearBytecode=false, and the patched source
-      // executes (the bytecode field is vestigial for @bun-cjs modules). (F-67)
+
       if (
         head.startsWith(BUN_BYTECODE_PREFIX) &&
         !head.includes(BUN_CJS_MARKER)
@@ -1017,815 +721,6 @@ export function extractClaudeJsFromNativeInstallation(
   }
 }
 
-function rebuildBunData(
-  bunData: Buffer,
-  bunOffsets: BunOffsets,
-  modifiedClaudeJs: Buffer | Map<string, Buffer> | null,
-  moduleStructSize: number,
-  clearBytecode: boolean
-): Buffer {
-  if (modifiedClaudeJs instanceof Map) {
-    return rebuildBunDataPreservingLayout(
-      bunData,
-      bunOffsets,
-      modifiedClaudeJs,
-      moduleStructSize
-    );
-  }
-  // Phase 1: Collect all string data
-  const stringsData: Buffer[] = [];
-  const modulesMetadata: Array<{
-    name: Buffer;
-    contents: Buffer;
-    sourcemap: Buffer;
-    bytecode: Buffer;
-    moduleInfo: Buffer;
-    bytecodeOriginPath: Buffer;
-    encoding: number;
-    loader: number;
-    moduleFormat: number;
-    side: number;
-  }> = [];
-
-  // Use mapModules to iterate and collect module data
-  mapModules(bunData, bunOffsets, moduleStructSize, (module, moduleName) => {
-    const nameBytes = getStringPointerContent(bunData, module.name);
-
-    // Check if this is claude.js and we have modified contents
-    let contentsBytes: Buffer;
-    let bytecodeBytes: Buffer;
-    if (modifiedClaudeJs instanceof Map && modifiedClaudeJs.has(moduleName)) {
-      const originalContents = getStringPointerContent(bunData, module.contents);
-      contentsBytes = modifiedClaudeJs.get(moduleName)!;
-      bytecodeBytes = bytecodeForReplacement(
-        originalContents,
-        contentsBytes,
-        getStringPointerContent(bunData, module.bytecode),
-      );
-    } else if (modifiedClaudeJs instanceof Buffer && isClaudeModule(moduleName)) {
-      contentsBytes = modifiedClaudeJs;
-      bytecodeBytes = clearBytecode
-        ? Buffer.alloc(0)
-        : getStringPointerContent(bunData, module.bytecode);
-    } else {
-      contentsBytes = getStringPointerContent(bunData, module.contents);
-      bytecodeBytes = getStringPointerContent(bunData, module.bytecode);
-    }
-
-    const sourcemapBytes = getStringPointerContent(bunData, module.sourcemap);
-    const moduleInfoBytes = getStringPointerContent(bunData, module.moduleInfo);
-    const bytecodeOriginPathBytes = getStringPointerContent(
-      bunData,
-      module.bytecodeOriginPath
-    );
-
-    modulesMetadata.push({
-      name: nameBytes,
-      contents: contentsBytes,
-      sourcemap: sourcemapBytes,
-      bytecode: bytecodeBytes,
-      moduleInfo: moduleInfoBytes,
-      bytecodeOriginPath: bytecodeOriginPathBytes,
-      encoding: module.encoding,
-      loader: module.loader,
-      moduleFormat: module.moduleFormat,
-      side: module.side,
-    });
-
-    if (moduleStructSize === SIZEOF_MODULE_NEW) {
-      stringsData.push(
-        nameBytes,
-        contentsBytes,
-        sourcemapBytes,
-        bytecodeBytes,
-        moduleInfoBytes,
-        bytecodeOriginPathBytes
-      );
-    } else {
-      stringsData.push(nameBytes, contentsBytes, sourcemapBytes, bytecodeBytes);
-    }
-    return undefined;
-  });
-
-  const stringsPerModule = moduleStructSize === SIZEOF_MODULE_NEW ? 6 : 4;
-
-  // Phase 2: Calculate buffer layout
-  let currentOffset = 0;
-  const stringOffsets: StringPointer[] = [];
-
-  // Allocate space for strings with null terminators
-  for (const stringData of stringsData) {
-    stringOffsets.push({ offset: currentOffset, length: stringData.length });
-    currentOffset += stringData.length + 1; // +1 for null terminator
-  }
-
-  // Module structures
-  const modulesListOffset = currentOffset;
-  const modulesListSize = modulesMetadata.length * moduleStructSize;
-  currentOffset += modulesListSize;
-
-  // compileExecArgv
-  const compileExecArgvBytes = getStringPointerContent(
-    bunData,
-    bunOffsets.compileExecArgvPtr
-  );
-  const compileExecArgvOffset = currentOffset;
-  const compileExecArgvLength = compileExecArgvBytes.length;
-  currentOffset += compileExecArgvLength + 1; // +1 for null terminator
-
-  // Offsets structure
-  const offsetsOffset = currentOffset;
-  currentOffset += SIZEOF_OFFSETS;
-
-  // Trailer
-  const trailerOffset = currentOffset;
-  currentOffset += BUN_TRAILER.length;
-
-  // Phase 3: Build the new buffer
-  const newBuffer = Buffer.allocUnsafe(currentOffset);
-  newBuffer.fill(0);
-
-  // Write all strings with null terminators
-  let stringIdx = 0;
-  for (const { offset, length } of stringOffsets) {
-    if (length > 0) {
-      stringsData[stringIdx].copy(newBuffer, offset, 0, length);
-    }
-    newBuffer[offset + length] = 0; // null terminator
-    stringIdx++;
-  }
-
-  // Write compileExecArgv
-  if (compileExecArgvLength > 0) {
-    compileExecArgvBytes.copy(
-      newBuffer,
-      compileExecArgvOffset,
-      0,
-      compileExecArgvLength
-    );
-    newBuffer[compileExecArgvOffset + compileExecArgvLength] = 0;
-  }
-
-  // Build and write module structures
-  for (let i = 0; i < modulesMetadata.length; i++) {
-    const metadata = modulesMetadata[i];
-    const baseStringIdx = i * stringsPerModule;
-
-    const moduleStruct: BunModule = {
-      name: stringOffsets[baseStringIdx],
-      contents: stringOffsets[baseStringIdx + 1],
-      sourcemap: stringOffsets[baseStringIdx + 2],
-      bytecode: stringOffsets[baseStringIdx + 3],
-      moduleInfo:
-        moduleStructSize === SIZEOF_MODULE_NEW
-          ? stringOffsets[baseStringIdx + 4]
-          : { offset: 0, length: 0 },
-      bytecodeOriginPath:
-        moduleStructSize === SIZEOF_MODULE_NEW
-          ? stringOffsets[baseStringIdx + 5]
-          : { offset: 0, length: 0 },
-      encoding: metadata.encoding,
-      loader: metadata.loader,
-      moduleFormat: metadata.moduleFormat,
-      side: metadata.side,
-    };
-
-    // Serialize module structure inline
-    const moduleOffset = modulesListOffset + i * moduleStructSize;
-    let pos = moduleOffset;
-
-    // Write StringPointers (common to both formats)
-    newBuffer.writeUInt32LE(moduleStruct.name.offset, pos);
-    newBuffer.writeUInt32LE(moduleStruct.name.length, pos + 4);
-    pos += 8;
-    newBuffer.writeUInt32LE(moduleStruct.contents.offset, pos);
-    newBuffer.writeUInt32LE(moduleStruct.contents.length, pos + 4);
-    pos += 8;
-    newBuffer.writeUInt32LE(moduleStruct.sourcemap.offset, pos);
-    newBuffer.writeUInt32LE(moduleStruct.sourcemap.length, pos + 4);
-    pos += 8;
-    newBuffer.writeUInt32LE(moduleStruct.bytecode.offset, pos);
-    newBuffer.writeUInt32LE(moduleStruct.bytecode.length, pos + 4);
-    pos += 8;
-
-    // Write new-format-only StringPointers
-    if (moduleStructSize === SIZEOF_MODULE_NEW) {
-      newBuffer.writeUInt32LE(moduleStruct.moduleInfo.offset, pos);
-      newBuffer.writeUInt32LE(moduleStruct.moduleInfo.length, pos + 4);
-      pos += 8;
-      newBuffer.writeUInt32LE(moduleStruct.bytecodeOriginPath.offset, pos);
-      newBuffer.writeUInt32LE(moduleStruct.bytecodeOriginPath.length, pos + 4);
-      pos += 8;
-    }
-
-    // Write enum fields
-    newBuffer.writeUInt8(moduleStruct.encoding, pos);
-    newBuffer.writeUInt8(moduleStruct.loader, pos + 1);
-    newBuffer.writeUInt8(moduleStruct.moduleFormat, pos + 2);
-    newBuffer.writeUInt8(moduleStruct.side, pos + 3);
-  }
-
-  // Build and write Offsets structure inline
-  const newOffsets: BunOffsets = {
-    byteCount: offsetsOffset,
-    modulesPtr: {
-      offset: modulesListOffset,
-      length: modulesListSize,
-    },
-    entryPointId: bunOffsets.entryPointId,
-    compileExecArgvPtr: {
-      offset: compileExecArgvOffset,
-      length: compileExecArgvLength,
-    },
-    flags: bunOffsets.flags,
-  };
-
-  let offsetsPos = offsetsOffset;
-  const byteCount =
-    typeof newOffsets.byteCount === 'bigint'
-      ? newOffsets.byteCount
-      : BigInt(newOffsets.byteCount);
-  newBuffer.writeBigUInt64LE(byteCount, offsetsPos);
-  offsetsPos += 8;
-  newBuffer.writeUInt32LE(newOffsets.modulesPtr.offset, offsetsPos);
-  newBuffer.writeUInt32LE(newOffsets.modulesPtr.length, offsetsPos + 4);
-  offsetsPos += 8;
-  newBuffer.writeUInt32LE(newOffsets.entryPointId, offsetsPos);
-  offsetsPos += 4;
-  newBuffer.writeUInt32LE(newOffsets.compileExecArgvPtr.offset, offsetsPos);
-  newBuffer.writeUInt32LE(newOffsets.compileExecArgvPtr.length, offsetsPos + 4);
-  offsetsPos += 8;
-  newBuffer.writeUInt32LE(newOffsets.flags, offsetsPos);
-
-  // Write trailer
-  BUN_TRAILER.copy(newBuffer, trailerOffset);
-
-  return newBuffer;
-}
-
-/**
- * Rebuild a current Bun module graph without relocating its bytecode or
- * module-info regions. JSC requires bytecode to retain a platform-specific
- * alignment (currently 128 bytes, offset by the section header on Mach-O/PE),
- * so compacting every field into a generic string table can make an otherwise
- * valid executable segfault at startup.
- *
- * The original data region remains byte-for-byte intact. Changed source is
- * appended, followed by a copied module table whose content pointers are
- * updated and whose stale bytecode pointers are cleared. Unchanged graphs are
- * returned exactly as received.
- */
-function rebuildBunDataPreservingLayout(
-  bunData: Buffer,
-  bunOffsets: BunOffsets,
-  replacements: Map<string, Buffer>,
-  moduleStructSize: number
-): Buffer {
-  const originalDataLength = Number(bunOffsets.byteCount);
-  const modulesList = getStringPointerContent(bunData, bunOffsets.modulesPtr);
-  const selected: Array<{ index: number; original: Buffer; replacement: Buffer }> = [];
-
-  mapModules(bunData, bunOffsets, moduleStructSize, (module, name, index) => {
-    const replacement = replacements.get(name);
-    if (replacement) selected.push({
-      index,
-      original: getStringPointerContent(bunData, module.contents),
-      replacement,
-    });
-    return undefined;
-  });
-
-  if (!selected.some(item => !item.replacement.equals(item.original))) return bunData;
-
-  // Bun's code-split graph cannot mix source-parsed modules with modules whose
-  // import metadata still comes from bytecode. Once one JavaScript module is
-  // changed, convert the complete selected JavaScript graph back to source.
-  const changed = selected.map(({ index, replacement }) => ({
-    index,
-    contents: sourceForInvalidatedBytecode(replacement),
-  }));
-
-  const appendedContentsLength = changed.reduce(
-    (total, item) => total + item.contents.length + 1,
-    0
-  );
-  const newModulesOffset = originalDataLength + appendedContentsLength;
-  const newOffsetsOffset = newModulesOffset + modulesList.length;
-  const newBuffer = Buffer.alloc(
-    newOffsetsOffset + SIZEOF_OFFSETS + BUN_TRAILER.length
-  );
-
-  bunData.copy(newBuffer, 0, 0, originalDataLength);
-  const newModules = Buffer.from(modulesList);
-  let contentsOffset = originalDataLength;
-  for (const { index, contents } of changed) {
-    contents.copy(newBuffer, contentsOffset);
-    newBuffer[contentsOffset + contents.length] = 0;
-
-    const moduleOffset = index * moduleStructSize;
-    newModules.writeUInt32LE(contentsOffset, moduleOffset + 8);
-    newModules.writeUInt32LE(contents.length, moduleOffset + 12);
-    newModules.writeUInt32LE(0, moduleOffset + 24);
-    newModules.writeUInt32LE(0, moduleOffset + 28);
-    if (moduleStructSize === SIZEOF_MODULE_NEW) {
-      newModules.writeUInt32LE(0, moduleOffset + 32);
-      newModules.writeUInt32LE(0, moduleOffset + 36);
-      newModules.writeUInt32LE(0, moduleOffset + 40);
-      newModules.writeUInt32LE(0, moduleOffset + 44);
-    }
-    contentsOffset += contents.length + 1;
-  }
-  newModules.copy(newBuffer, newModulesOffset);
-
-  let offsetsPos = newOffsetsOffset;
-  newBuffer.writeBigUInt64LE(BigInt(newOffsetsOffset), offsetsPos);
-  offsetsPos += 8;
-  newBuffer.writeUInt32LE(newModulesOffset, offsetsPos);
-  newBuffer.writeUInt32LE(modulesList.length, offsetsPos + 4);
-  offsetsPos += 8;
-  newBuffer.writeUInt32LE(bunOffsets.entryPointId, offsetsPos);
-  offsetsPos += 4;
-  newBuffer.writeUInt32LE(bunOffsets.compileExecArgvPtr.offset, offsetsPos);
-  newBuffer.writeUInt32LE(bunOffsets.compileExecArgvPtr.length, offsetsPos + 4);
-  offsetsPos += 8;
-  newBuffer.writeUInt32LE(bunOffsets.flags, offsetsPos);
-  BUN_TRAILER.copy(newBuffer, newOffsetsOffset + SIZEOF_OFFSETS);
-
-  return newBuffer;
-}
-
-/**
- * Atomically writes a binary using LIEF and copies permissions from original.
- * Includes robust handling for busy/executing files.
- * @param binary - LIEF binary to write
- * @param outputPath - Target file path
- * @param originalPath - Original file to copy permissions from
- */
-function atomicWriteBinary(
-  binary: LIEF.ELF.Binary | LIEF.PE.Binary | LIEF.MachO.Binary,
-  outputPath: string,
-  originalPath: string,
-  copyPermissions: boolean = true
-): void {
-  const tempPath = outputPath + '.tmp';
-  binary.write(tempPath);
-
-  if (copyPermissions) {
-    const origStat = fs.statSync(originalPath);
-    fs.chmodSync(tempPath, origStat.mode);
-  }
-
-  try {
-    fs.renameSync(tempPath, outputPath);
-  } catch (error) {
-    // Clean up temp file if it exists
-    try {
-      if (fs.existsSync(tempPath)) {
-        fs.unlinkSync(tempPath);
-      }
-    } catch {
-      // Ignore cleanup errors
-    }
-
-    // Check if it's a "file busy" / permission error when replacing the executable
-    if (
-      error instanceof Error &&
-      'code' in error &&
-      (error.code === 'ETXTBSY' ||
-        error.code === 'EBUSY' ||
-        error.code === 'EPERM')
-    ) {
-      throw new Error(
-        'Cannot update the Claude executable while it is running.\n' +
-          'Please close all Claude instances and try again.'
-      );
-    }
-
-    throw error;
-  }
-}
-
-/**
- * Builds section data with size header followed by content.
- * Format: [size header][content]
- *
- * @param bunBuffer - The bun data buffer to wrap
- * @param headerSize - Header size: 4 for old format (Bun < 1.3.4), 8 for new format (default)
- */
-function buildSectionData(bunBuffer: Buffer, headerSize: number = 8): Buffer {
-  const sectionData = Buffer.allocUnsafe(headerSize + bunBuffer.length);
-  if (headerSize === 8) {
-    sectionData.writeBigUInt64LE(BigInt(bunBuffer.length), 0);
-  } else {
-    sectionData.writeUInt32LE(bunBuffer.length, 0);
-  }
-  bunBuffer.copy(sectionData, headerSize);
-  return sectionData;
-}
-
-function repackMachO(
-  machoBinary: LIEF.MachO.Binary,
-  binPath: string,
-  newBunBuffer: Buffer,
-  outputPath: string,
-  sectionHeaderSize: number
-): void {
-  try {
-    // CRITICAL: Remove code signature first - it will be invalidated by modifications
-    debug(`repackMachO: Has code signature: ${machoBinary.hasCodeSignature}`);
-    if (machoBinary.hasCodeSignature) {
-      debug('repackMachO: Removing code signature...');
-      machoBinary.removeSignature();
-    }
-
-    // Find __BUN segment and __bun section
-    const bunSegment = machoBinary.getSegment('__BUN');
-    if (!bunSegment) {
-      throw new Error('__BUN segment not found');
-    }
-
-    const bunSection = bunSegment.getSection('__bun');
-    if (!bunSection) {
-      throw new Error('__bun section not found');
-    }
-
-    // Use the same header size as the original binary
-    const newSectionData = buildSectionData(newBunBuffer, sectionHeaderSize);
-
-    debug(`repackMachO: Original section size: ${bunSection.size}`);
-    debug(`repackMachO: Original segment fileSize: ${bunSegment.fileSize}`);
-    debug(
-      `repackMachO: Original segment virtualSize: ${bunSegment.virtualSize}`
-    );
-    debug(`repackMachO: New data size: ${newSectionData.length}`);
-    debug(`repackMachO: Using header size: ${sectionHeaderSize}`);
-
-    // Calculate how much we need to expand
-    const sizeDiff = newSectionData.length - Number(bunSection.size);
-
-    if (sizeDiff > 0) {
-      // CRITICAL: Round up to page alignment
-      // See #180.
-      // macOS requires segments to be page-aligned, otherwise __LINKEDIT becomes misaligned
-      // Page size depends on architecture:
-      // - x86_64: 4KB (4096 bytes)
-      // - ARM64 (Apple Silicon): 16KB (16384 bytes)
-      const isARM64 =
-        machoBinary.header.cpuType === LIEF.MachO.Header.CPU_TYPE.ARM64;
-      const PAGE_SIZE = isARM64 ? 16384 : 4096;
-      const alignedSizeDiff = Math.ceil(sizeDiff / PAGE_SIZE) * PAGE_SIZE;
-
-      debug(`repackMachO: CPU type: ${isARM64 ? 'ARM64' : 'x86_64'}`);
-      debug(`repackMachO: Page size: ${PAGE_SIZE} bytes`);
-      debug(`repackMachO: Need to expand by ${sizeDiff} bytes`);
-      debug(
-        `repackMachO: Rounding up to page-aligned: ${alignedSizeDiff} bytes`
-      );
-
-      const success = machoBinary.extendSegment(bunSegment, alignedSizeDiff);
-      debug(`repackMachO: extendSegment returned: ${success}`);
-
-      if (!success) {
-        throw new Error('Failed to extend __BUN segment');
-      }
-
-      debug(`repackMachO: Section size after extend: ${bunSection.size}`);
-      debug(
-        `repackMachO: Segment fileSize after extend: ${bunSegment.fileSize}`
-      );
-      debug(
-        `repackMachO: Segment virtualSize after extend: ${bunSegment.virtualSize}`
-      );
-    }
-
-    // Update section content
-    bunSection.content = newSectionData;
-    bunSection.size = BigInt(newSectionData.length);
-
-    debug(`repackMachO: Final section size: ${bunSection.size}`);
-    debug(`repackMachO: Writing modified binary to ${outputPath}...`);
-
-    atomicWriteBinary(machoBinary, outputPath, binPath);
-
-    // Re-sign the binary with an ad-hoc signature
-    try {
-      debug(`repackMachO: Re-signing binary with ad-hoc signature...`);
-      execSync(`codesign -s - -f "${outputPath}"`, {
-        stdio: isDebug() ? 'inherit' : 'ignore',
-      });
-      debug('repackMachO: Code signing completed successfully');
-    } catch (codesignError) {
-      console.warn(
-        'Warning: Failed to re-sign binary. The binary may not run correctly on macOS:',
-        codesignError
-      );
-    }
-
-    debug('repackMachO: Write completed successfully');
-  } catch (error) {
-    console.error('repackMachO failed:', error);
-    throw error;
-  }
-}
-
-function repackPE(
-  peBinary: LIEF.PE.Binary,
-  binPath: string,
-  newBunBuffer: Buffer,
-  outputPath: string,
-  sectionHeaderSize: number
-): void {
-  try {
-    const bunSection = peBinary.sections().find(s => s.name === '.bun');
-    if (!bunSection) {
-      throw new Error('.bun section not found');
-    }
-
-    // Use the same header size as the original binary
-    const newSectionData = buildSectionData(newBunBuffer, sectionHeaderSize);
-
-    debug(
-      `repackPE: Original section size: ${bunSection.size}, virtual size: ${bunSection.virtualSize}`
-    );
-    debug(`repackPE: New data size: ${newSectionData.length}`);
-    debug(`repackPE: Using header size: ${sectionHeaderSize}`);
-
-    // Update section content
-    bunSection.content = newSectionData;
-
-    // Explicitly set both the virtual size AND the raw size
-    // PE sections have both:
-    // - size (raw size on disk, must be aligned to FileAlignment)
-    // - virtualSize (size in memory when loaded)
-    bunSection.virtualSize = BigInt(newSectionData.length);
-    bunSection.size = BigInt(newSectionData.length);
-
-    debug(`repackPE: Writing modified binary to ${outputPath}...`);
-    atomicWriteBinary(peBinary, outputPath, binPath, false);
-    debug('repackPE: Write completed successfully');
-  } catch (error) {
-    console.error('repackPE failed:', error);
-    throw error;
-  }
-}
-
-/**
- * Alignment constant used by BUN_COMPILED in c-bindings.cpp.
- * The BUN_COMPILED symbol is placed with __attribute__((aligned(BLOB_HEADER_ALIGNMENT))).
- */
-const BLOB_HEADER_ALIGNMENT = 16384;
-
-function alignBigInt(value: bigint, alignment: bigint): bigint {
-  return ((value + alignment - 1n) / alignment) * alignment;
-}
-
-export interface BunSectionPlacement {
-  newVaddr: bigint;
-  newFileOffset: bigint;
-  alignedNewSize: bigint;
-  extensionSize: bigint;
-  /** Placed directly after the writable segment (gap-free) rather than at nextVirtualAddress. */
-  compact: boolean;
-}
-
-/**
- * Where to place the rebuilt `.bun` section inside the writable PT_LOAD.
- *
- * A PT_LOAD maps a CONTIGUOUS file -> vaddr range, and the writable segment is
- * extended to cover the new section — so every byte between the segment's
- * current end and the new section's vaddr becomes a real zero byte in the file.
- * LIEF's `nextVirtualAddress()` rounds up to a coarse boundary (the next 256 MB
- * here), which on a ~275 MB Claude Code binary padded the output with roughly
- * 427 MB of zeroes.
- *
- * When the writable segment is the TOPMOST LOAD segment the section can instead
- * go immediately after it, page-aligned, with no gap at all. That is only safe
- * when nothing is mapped above it — otherwise extending the segment would
- * overlap a higher one — so anything else falls back to the original placement.
- *
- * `topmostLoadEnd` must be max(vaddr + memsz) across every LOAD segment, and
- * `rwVirtualSize` must be the MEMORY size, so a BSS tail is not mistaken for
- * file content.
- *
- * ELF-only, so it changes nothing on macOS. Kept as a pure function of its
- * inputs precisely so the arithmetic is testable without a Linux binary.
- * Ported from upstream b36a8ca (#915).
- */
-export function computeBunSectionPlacement(params: {
-  rwVirtualAddress: bigint;
-  rwVirtualSize: bigint;
-  rwFileOffset: bigint;
-  rwFileSize: bigint;
-  topmostLoadEnd: bigint;
-  nextVirtualAddress: bigint;
-  newContentSize: bigint;
-  pageSize: bigint;
-}): BunSectionPlacement {
-  const {
-    rwVirtualAddress,
-    rwVirtualSize,
-    rwFileOffset,
-    rwFileSize,
-    topmostLoadEnd,
-    nextVirtualAddress,
-    newContentSize,
-    pageSize,
-  } = params;
-
-  const alignedNewSize = alignBigInt(newContentSize, pageSize);
-  const rwMemEnd = rwVirtualAddress + rwVirtualSize;
-  const compact = rwMemEnd >= topmostLoadEnd;
-  const newVaddr = compact
-    ? alignBigInt(rwMemEnd, pageSize)
-    : alignBigInt(nextVirtualAddress, pageSize);
-
-  const offsetInSegment = newVaddr - rwVirtualAddress;
-  const newFileOffset = rwFileOffset + offsetInSegment;
-  const oldRwFileEnd = rwFileOffset + rwFileSize;
-  const extensionSize = newFileOffset + alignedNewSize - oldRwFileEnd;
-
-  return { newVaddr, newFileOffset, alignedNewSize, extensionSize, compact };
-}
-
-/**
- * Repack an ELF binary that uses the new .bun section format (post-PR#26923).
- *
- * The .bun section uses the same [u64 payload_len][payload] format as macOS/PE.
- * At build time, Bun's writeBunSection() creates a PT_LOAD segment to map the
- * .bun section data, and stores the segment's vaddr in the BUN_COMPILED symbol
- * (located at its original position in the RW data segment). At runtime, the
- * Bun runtime reads BUN_COMPILED.size as a vaddr pointer to the mapped data.
- *
- * On repack we need to:
- * 1. Set the .bun section content (LIEF handles file layout)
- * 2. Update the PT_LOAD segment's fileSize/virtualSize to cover the new data
- * 3. Patch BUN_COMPILED.size with the (possibly unchanged) vaddr
- */
-function repackELFSection(
-  elfBinary: LIEF.ELF.Binary,
-  binPath: string,
-  newBunBuffer: Buffer,
-  outputPath: string,
-  sectionHeaderSize: number
-): void {
-  try {
-    const bunSection = elfBinary.getSection('.bun');
-    if (!bunSection) {
-      throw new Error('.bun section not found');
-    }
-
-    const rwSegment = elfBinary
-      .segments()
-      .find(s => s.type === 'LOAD' && (s.flags & 2) !== 0);
-    if (!rwSegment) {
-      throw new Error('No writable ELF PT_LOAD segment found');
-    }
-
-    const newSectionData = buildSectionData(newBunBuffer, sectionHeaderSize);
-    const oldBunSectionVaddr = bunSection.virtualAddress;
-    const vaddrBytes = Buffer.alloc(8);
-    vaddrBytes.writeBigUInt64LE(oldBunSectionVaddr);
-
-    let bunCompiledVaddr: bigint | null = null;
-    const rwContent = rwSegment.content;
-    const rwVaddrStart = rwSegment.virtualAddress;
-    const firstAligned = alignBigInt(
-      rwVaddrStart,
-      BigInt(BLOB_HEADER_ALIGNMENT)
-    );
-    const lastCandidate = rwVaddrStart + BigInt(rwContent.length) - 8n;
-
-    for (
-      let va = firstAligned;
-      va <= lastCandidate;
-      va += BigInt(BLOB_HEADER_ALIGNMENT)
-    ) {
-      const off = Number(va - rwVaddrStart);
-      if (rwContent.subarray(off, off + 8).equals(vaddrBytes)) {
-        bunCompiledVaddr = va;
-        break;
-      }
-    }
-
-    if (bunCompiledVaddr === null) {
-      throw new Error(
-        `Could not find original BUN_COMPILED location in binary (searched for 0x${oldBunSectionVaddr.toString(16)})`
-      );
-    }
-
-    const pageSize = elfBinary.pageSize();
-    const newContentSize = BigInt(newSectionData.length);
-    // Place the rebuilt .bun right after the writable segment when that segment
-    // is the topmost LOAD, instead of at LIEF's nextVirtualAddress() — which
-    // rounds to a coarse boundary and pads the file with ~427 MB of zeroes,
-    // since the extended PT_LOAD has to cover the whole span contiguously.
-    const loadSegments = elfBinary.segments().filter(s => s.type === 'LOAD');
-    const topmostLoadEnd = loadSegments.reduce((max, s) => {
-      const end = BigInt(s.virtualAddress) + BigInt(s.virtualSize);
-      return end > max ? end : max;
-    }, 0n);
-
-    const placement = computeBunSectionPlacement({
-      rwVirtualAddress: BigInt(rwSegment.virtualAddress),
-      rwVirtualSize: BigInt(rwSegment.virtualSize),
-      rwFileOffset: BigInt(rwSegment.fileOffset),
-      rwFileSize: BigInt(rwSegment.fileSize),
-      topmostLoadEnd,
-      nextVirtualAddress: BigInt(elfBinary.nextVirtualAddress()),
-      newContentSize,
-      pageSize: BigInt(pageSize),
-    });
-    const { newVaddr, newFileOffset, extensionSize, compact } = placement;
-    debug(
-      `repackELFSection: ${compact ? 'compact' : 'fallback'} placement ` +
-        `(topmost LOAD ends at 0x${topmostLoadEnd.toString(16)})`
-    );
-
-    if (extensionSize < 0n) {
-      throw new Error(
-        'New .bun location overlaps existing writable ELF segment'
-      );
-    }
-
-    debug(
-      `repackELFSection: moving .bun to offset=0x${newFileOffset.toString(16)}, vaddr=0x${newVaddr.toString(16)}, size=0x${newContentSize.toString(16)}`
-    );
-
-    if (extensionSize > 0n) {
-      const extendedSegment = elfBinary.extend(rwSegment, extensionSize);
-      if (!extendedSegment) {
-        throw new Error('Failed to extend writable ELF PT_LOAD segment');
-      }
-    }
-
-    bunSection.fileOffset = newFileOffset;
-    bunSection.virtualAddress = newVaddr;
-    bunSection.content = newSectionData;
-    bunSection.size = newContentSize;
-
-    const vaddrPatch = Buffer.alloc(8);
-    vaddrPatch.writeBigUInt64LE(newVaddr);
-    elfBinary.patchAddress(bunCompiledVaddr, vaddrPatch);
-
-    debug(
-      `repackELFSection: Patched BUN_COMPILED at vaddr 0x${bunCompiledVaddr.toString(16)} -> 0x${newVaddr.toString(16)}`
-    );
-
-    atomicWriteBinary(elfBinary, outputPath, binPath);
-    debug('repackELFSection: Write completed successfully');
-  } catch (error) {
-    console.error('repackELFSection failed:', error);
-    throw error;
-  }
-}
-
-/**
- * Legacy ELF repack: data is appended as an overlay (pre-PR#26923).
- */
-function repackELFOverlay(
-  elfBinary: LIEF.ELF.Binary,
-  binPath: string,
-  newBunBuffer: Buffer,
-  outputPath: string
-): void {
-  try {
-    // Build new overlay: [bunData][totalByteCount (8 bytes)]
-    // Note: newBunBuffer already includes offsets and trailer
-    const newOverlay = Buffer.allocUnsafe(newBunBuffer.length + 8);
-    newBunBuffer.copy(newOverlay, 0);
-    newOverlay.writeBigUInt64LE(
-      BigInt(newBunBuffer.length),
-      newBunBuffer.length
-    );
-
-    debug(
-      `repackELFOverlay: Setting overlay data (${newOverlay.length} bytes)`
-    );
-
-    elfBinary.overlay = newOverlay;
-    debug(`repackELFOverlay: Writing modified binary to ${outputPath}...`);
-
-    atomicWriteBinary(elfBinary, outputPath, binPath);
-    debug('repackELFOverlay: Write completed successfully');
-  } catch (error) {
-    console.error('repackELFOverlay failed:', error);
-    throw error;
-  }
-}
-
-/**
- * Repacks a modified claude.js back into the native installation binary.
- *
- * Note: If the binary might be a Nix `makeBinaryWrapper` wrapper, callers
- * should resolve it first using `resolveNixBinaryWrapper()` and pass the
- * real binary path here. This is handled at detection time in
- * `resolveClaudeInstallation`, so `nativeInstallationPath` should already
- * point to the real binary.
- *
- * @param binPath - Path to the original native installation binary
- * @param modifiedClaudeJs - Modified claude.js contents as a Buffer
- * @param outputPath - Where to write the repacked binary
- */
 export function repackNativeInstallation(
   binPath: string,
   modifiedClaudeJs: Buffer,

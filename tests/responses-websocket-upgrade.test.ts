@@ -161,22 +161,12 @@ describe('Responses WebSocket rejected upgrades', () => {
     expect(server.attempts).toBe(1);
   });
 
-  // OpenAI's edge/WAF rejects the upgrade with a bodyless HTTP 403 when the
-  // account's concurrency/usage throttle trips, before the request reaches
-  // the application; the only application-level 403 is a geo restriction.
-  // Per OpenAI's documented error codes and the official codex client,
-  // terminal conditions are 401 (re-auth) or a 429 with a JSON body, and
-  // codex retries ALL 403s — so every upgrade 403 is treated as retryable,
-  // body or not (stabilization plan §9.2, upstream 303db6e/32c1f7b).
   it.each([
     ['bodyless', ''],
     ['with an explanatory body', JSON.stringify({ error: 'permission denied' })],
   ])('treats an HTTP 403 upgrade rejection %s as a retryable throttle', async (_label, body) => {
     const server = await startRejectionServer(403, body);
 
-    // Mapped to 429 (not left as 403): the real upstream failure is a
-    // throttle, not a permission error, and 403 code paths elsewhere in the
-    // stack (e.g. sdkUpstreamErrorDetails) treat 403 as terminal.
     await expect(request(server)).rejects.toMatchObject({
       name: 'ProviderTransportError',
       phase: 'websocket_upgrade',

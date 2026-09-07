@@ -1,4 +1,4 @@
-// src/providers-command-crud.ts, list/add/remove/hub command implementations for the providers command
+
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import {
@@ -53,14 +53,6 @@ export async function runProvidersList(): Promise<number> {
   return 0;
 }
 
-/**
- * Add an API-key provider from a builtin template. Until 1.x leverframe shipped
- * only the OpenAI template, so existing muscle memory (`leverframe providers add`
- * then "OpenAI API key") still works. The menu is now built dynamically from
- * every addable API template plus the ChatGPT OAuth entry, so new builtin
- * templates (Kimi Coding Plan, Moonshot, z.ai) appear automatically without
- * further edits here.
- */
 async function runTemplateAddFlow(templateId: string): Promise<number> {
   const registry = loadRegistry();
   const configuredIds = registry.providers.map(p => p.id);
@@ -93,13 +85,9 @@ async function runTemplateAddFlow(templateId: string): Promise<number> {
   const apiKey = String(apiKeyInput).trim();
 
   const spinner = p.spinner();
-  const hasStaticFallback = template.modelSource === 'api-list'
-    && (template.staticModels?.length ?? 0) > 0;
   spinner.start(template.skipKeyVerification
     ? `Saving ${template.name} API key...`
-    : hasStaticFallback
-      ? `Adding ${template.name}...`
-      : `Testing connection to ${template.name}...`);
+    : `Testing connection to ${template.name}...`);
   const result = await addProviderFromTemplate(template, apiKey);
   spinner.stop('');
 
