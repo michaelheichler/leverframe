@@ -44,7 +44,7 @@ leverframe claude
 
 ChatGPT/Codex model context limits come from positive finite `context_window` values reported by the authenticated provider. Missing or invalid values remain unconfirmed. Leverframe does not present a seed or heuristic as a provider limit. An unconfirmed limit omits the `[1m]` suffix and the `CLAUDE_CODE_MAX_CONTEXT_TOKENS` override.
 
-The same endpoint also reports `max_context_window`, the maximum a model accepts, which is often far above the window it serves by default. Opt a model in with `leverframe models --context-ceiling <model-id>`, then re-run `leverframe patch`. Run it with an unknown model id to list the models that currently offer more. The maximum is read live per account and is never bundled, because it differs between accounts and between models on one account. Long-context requests are usually billed at a higher rate, which is why nothing is applied automatically.
+The provider can also report `max_context_window`. In a normal `leverframe claude` proxy session, choose an external model through `/model`, then choose its default or maximum context when both are available and distinct. Limits come from fresh account metadata. See [context selection](docs/CONTEXT-SELECTION.md) for selection and cancellation behavior.
 ### GitHub Copilot subscription
 ```bash
 leverframe providers auth github-copilot
@@ -118,6 +118,8 @@ Aliases can replace a full route after being saved with `leverframe models --ali
 ## Bridge modes
 
 Both `leverframe claude` and `leverframe server` default to proxy mode. A mode flag applies only to the current run unless paired with `--save-mode`.
+
+Normal Claude proxy launch exposes all freshly available external models from configured providers. Favorites and aliases do not restrict that catalog. Native Anthropic models stay selectable through Claude Code.
 
 - `--proxy`: selectively intercepts requests to `api.anthropic.com`. Anthropic models and Claude Code credentials pass through untouched. `leverframe:` routes and saved aliases go to their configured providers.
 - `--endpoint`: runs a local Anthropic-format gateway and launches Claude Code with `ANTHROPIC_BASE_URL` pointed at it.

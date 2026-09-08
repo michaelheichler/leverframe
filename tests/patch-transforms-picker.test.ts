@@ -157,6 +157,97 @@ describe('native context picker transform', () => {
     expect(selected).toEqual([['leverframe:provider:model[maximum]', 'high']]);
   });
 
+  it('uses the proxy control address without changing the Anthropic origin', async () => {
+    const result = applyNativeContextPicker(pickerSource(), {
+      'leverframe:provider:model': { default: 272_000, maximum: 872_000 },
+    });
+    let state: unknown = null;
+    let requestUrl: string | undefined;
+    let requestInit: RequestInit | undefined;
+    type PickerUseState = (initial: unknown) => [unknown, (value: unknown) => void];
+    type PickerCreateElement = (type: unknown, props: Record<string, unknown>) => { props: Record<string, unknown> };
+    const useState: PickerUseState = (initial: unknown): [unknown, (value: unknown) => void] => [
+      state ?? initial,
+      value => { state = value; },
+    ];
+    const createElement: PickerCreateElement = (_type: unknown, props: Record<string, unknown>) => ({ props });
+    const fetch = async (input: unknown, init?: RequestInit): Promise<{ ok: boolean; json: () => Promise<unknown> }> => {
+      requestUrl = String(input);
+      requestInit = init;
+      return {
+        ok: true,
+        json: async () => ({ options: [{ mode: 'default', contextWindow: 272_000, label: 'Default (272,000)' }] }),
+      };
+    };
+    const fakeProcess = {
+      env: {
+        ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
+        ANTHROPIC_API_KEY: 'sk-ant-api03-leverframe-http-proxy',
+        LEVERFRAME_CONTEXT_SELECTION_BASE_URL: 'http://127.0.0.1:17645',
+        LEVERFRAME_CONTEXT_SELECTION_TOKEN: 'per-run-control-token',
+      },
+    };
+    const factory = new Function('useState', 'createElement', 'Picker', 'fetch', 'process', [
+      result.content,
+      ';return picker;',
+    ].join('\n')) as (
+      useState: PickerUseState,
+      createElement: PickerCreateElement,
+      Picker: object,
+      fetch: (input: unknown, init?: RequestInit) => Promise<{ ok: boolean; json: () => Promise<unknown> }>,
+      process: typeof fakeProcess,
+    ) => (props: Record<string, unknown>) => { props: Record<string, unknown> };
+    const picker = factory(useState, createElement, {}, fetch, fakeProcess);
+    const props = {
+      initial: 'base',
+      sessionModel: 'base',
+      onSelect: () => undefined,
+      onSetDefault: undefined,
+      onCancel: () => undefined,
+      isStandaloneCommand: false,
+      showFastModeNotice: false,
+      headerText: undefined,
+      options: [{ value: 'leverframe:provider:model', label: 'Model' }],
+      skipSettingsWrite: false,
+    };
+
+    const first = picker(props);
+    (first.props.onChange as (value: string) => void)('leverframe:provider:model');
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(requestUrl).toBe('http://127.0.0.1:17645/v1/leverframe/context-selection?model=leverframe%3Aprovider%3Amodel');
+    const requestHeaders = requestInit?.headers;
+    const authorization = requestHeaders && !Array.isArray(requestHeaders)
+      ? (requestHeaders as Record<string, string>).Authorization
+      : undefined;
+    expect(authorization).toBe('Bearer per-run-control-token');
+  });
+
+  it('migrates a previous context picker helper to the proxy control environment', () => {
+    const modes = { 'leverframe:provider:model': { default: 272_000, maximum: 872_000 } };
+    const patched = applyNativeContextPicker(pickerSource(), modes);
+    const currentEnvironment = [
+      'const configuredBase=typeof process==="object"&&process&&process.env?process.env.LEVERFRAME_CONTEXT_SELECTION_BASE_URL:void 0;',
+      'const configuredToken=typeof process==="object"&&process&&process.env?process.env.LEVERFRAME_CONTEXT_SELECTION_TOKEN:void 0;',
+      'const baseValue=typeof configuredBase==="string"&&configuredBase.trim()!==""?configuredBase:typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_BASE_URL:void 0;',
+      'const base=typeof baseValue==="string"?baseValue.trim():void 0;',
+      'const token=typeof configuredToken==="string"&&configuredToken.length>0?configuredToken:typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_API_KEY:void 0;',
+    ].join('');
+    const legacyEnvironment = [
+      'const base=typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_BASE_URL:void 0;',
+      'const token=typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_API_KEY:void 0;',
+    ].join('');
+    const legacy = patched.content.replace(currentEnvironment, legacyEnvironment);
+    expect(legacy).not.toContain('LEVERFRAME_CONTEXT_SELECTION_BASE_URL');
+
+    const migrated = applyNativeContextPicker(legacy, modes);
+
+    expect(migrated.result.status).toBe('OK');
+    expect(migrated.content).toContain('LEVERFRAME_CONTEXT_SELECTION_BASE_URL');
+    expect(migrated.content).toContain('LEVERFRAME_CONTEXT_SELECTION_TOKEN');
+    expect(migrated.content).not.toContain(legacyEnvironment);
+  });
+
   it('freshly validates a default-only external model before selecting it', async () => {
     const result = applyNativeContextPicker(pickerSource(), {
       'leverframe:provider:model': { default: 301_000 },

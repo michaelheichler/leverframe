@@ -57,6 +57,25 @@ describe('HTTP proxy routes', () => {
     expect(result.unavailable).toEqual([{ providerId: 'missing', modelId: 'gone' }]);
   });
 
+  it('routes every discovered external model with favorites first and no catalog cap', () => {
+    const modelCount = 21;
+    const provider: LocalProvider = {
+      ...providers[0]!,
+      models: Array.from({ length: modelCount }, (_, index) => ({
+        ...providers[0]!.models[0]!,
+        id: `llama-${index}`,
+        upstreamModelId: `llama-${index}`,
+        name: `Llama ${index}`,
+      })),
+    };
+
+    const result = buildHttpProxyRoutes([provider], [{ providerId: provider.id, modelId: 'llama-20' }]);
+
+    expect(result.routes).toHaveLength(modelCount);
+    expect(result.routes[0]?.aliasId).toBe('leverframe:groq:llama-20[1m]');
+    expect(result.routes.some(route => route.aliasId === 'leverframe:groq:llama-0[1m]')).toBe(true);
+  });
+
   it('does not create a route when the provider credential is empty', () => {
     const noKey = [{ ...providers[0]!, apiKey: '' }];
     const result = buildHttpProxyRoutes(noKey, [{ providerId: 'groq', modelId: 'llama-3.3-70b' }]);

@@ -116,6 +116,21 @@ interface HttpProxyLaunchOptions {
   agentStdout: boolean;
 }
 
+function ensureLoopbackNoProxy(env: NodeJS.ProcessEnv): void {
+  const entries = [...new Set(
+    [env['NO_PROXY'], env['no_proxy']]
+      .flatMap(value => value?.split(',') ?? [])
+      .map(value => value.trim())
+      .filter(Boolean),
+  )];
+  for (const host of ['127.0.0.1', 'localhost']) {
+    if (!entries.includes(host)) entries.push(host);
+  }
+  const value = entries.join(',');
+  env['NO_PROXY'] = value;
+  env['no_proxy'] = value;
+}
+
 async function runClaudeHttpProxyCommand(options: HttpProxyLaunchOptions): Promise<number> {
   const { installation, parsed, claudeArgs, agentStdout } = options;
   if (parsed.launchProvider || parsed.launchModel) {
@@ -129,6 +144,13 @@ async function runClaudeHttpProxyCommand(options: HttpProxyLaunchOptions): Promi
   if (parsed.dryRun) {
     try {
       const loaded = await loadHttpProxyRoutes();
+      await runLaunchPatchCheck({
+        agentStdout,
+        dryRun: true,
+        installation,
+        freshProviders: loaded.providers,
+        contextSelectionAvailable: true,
+      });
       console.log('');
       console.log(pc.bold(pc.cyan('  DRY RUN - proxy bridge mode')));
       console.log('  ANTHROPIC_BASE_URL=https://api.anthropic.com (pinned so Claude settings cannot hijack MITM routing).');
@@ -156,6 +178,18 @@ async function runClaudeHttpProxyCommand(options: HttpProxyLaunchOptions): Promi
   }
 
   const { handle, loaded } = started;
+  try {
+    await runLaunchPatchCheck({
+      agentStdout,
+      dryRun: false,
+      installation,
+      freshProviders: loaded.providers,
+      contextSelectionAvailable: true,
+    });
+  } catch {
+    await handle.close();
+    return 1;
+  }
   const inheritedProxyPort = (() => {
     const value = process.env['HTTPS_PROXY'] ?? process.env['HTTP_PROXY']
       ?? process.env['https_proxy'] ?? process.env['http_proxy'];
@@ -201,6 +235,9 @@ async function runClaudeHttpProxyCommand(options: HttpProxyLaunchOptions): Promi
   }
 
   const childEnv = buildHttpProxyChildEnv(handle.port, handle.caCertPath, handle.token);
+  ensureLoopbackNoProxy(childEnv);
+  childEnv['LEVERFRAME_CONTEXT_SELECTION_BASE_URL'] = `http://127.0.0.1:${handle.port}`;
+  childEnv['LEVERFRAME_CONTEXT_SELECTION_TOKEN'] = handle.token;
   const debugLogPath = parsed.trace
     ? prepareClaudeTraceLog(getSessionLogPath('claude-debug'))
     : undefined;
@@ -258,16 +295,6 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   });
 
   if (bridgeMode === 'proxy') {
-    try {
-      await runLaunchPatchCheck({
-        agentStdout,
-        dryRun,
-        installation,
-        contextSelectionAvailable: false,
-      });
-    } catch {
-      return 1;
-    }
     return runClaudeHttpProxyCommand({ parsed, claudeArgs, agentStdout, installation });
   }
 

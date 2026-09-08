@@ -17,6 +17,17 @@ const PATCH_COMMENT_START = '/' + '*';
 const PATCH_COMMENT_END = '*' + '/';
 const PATCH_NAME = 'PATCH 12: context mode picker';
 const PATCH_MARKER = PATCH_COMMENT_START + 'ccpatch:context-mode-picker' + PATCH_COMMENT_END;
+const LEGACY_PICKER_ENV = [
+  'const base=typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_BASE_URL:void 0;',
+  'const token=typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_API_KEY:void 0;',
+].join('');
+const CURRENT_PICKER_ENV = [
+  'const configuredBase=typeof process==="object"&&process&&process.env?process.env.LEVERFRAME_CONTEXT_SELECTION_BASE_URL:void 0;',
+  'const configuredToken=typeof process==="object"&&process&&process.env?process.env.LEVERFRAME_CONTEXT_SELECTION_TOKEN:void 0;',
+  'const baseValue=typeof configuredBase==="string"&&configuredBase.trim()!==""?configuredBase:typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_BASE_URL:void 0;',
+  'const base=typeof baseValue==="string"?baseValue.trim():void 0;',
+  'const token=typeof configuredToken==="string"&&configuredToken.length>0?configuredToken:typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_API_KEY:void 0;',
+].join('');
 
 interface PickerShape {
   functionStart: number;
@@ -202,12 +213,26 @@ export function applyNativeContextPicker(
   const declaration = PATCH_MARKER + 'var __lfcModels=JSON.parse(' + JSON.stringify(modelTable) + ');';
 
   if (source.includes(PATCH_MARKER)) {
-    return patchOnce(
+    const declarationUpdate = patchOnce(
       source,
       new RegExp(escaped(PATCH_MARKER) + 'var __lfcModels=JSON\\.parse\\("(?:[^"\\\\]|\\\\.)*"\\);'),
       () => declaration,
       { noopIsSkip: true },
     );
+    if (declarationUpdate.result.status === 'FAIL') return declarationUpdate;
+    if (declarationUpdate.content.includes('LEVERFRAME_CONTEXT_SELECTION_BASE_URL')) return declarationUpdate;
+    const migration = patchOnce(
+      declarationUpdate.content,
+      new RegExp(escaped(LEGACY_PICKER_ENV)),
+      () => CURRENT_PICKER_ENV,
+    );
+    if (migration.result.status === 'FAIL') {
+      return {
+        content: migration.content,
+        result: result('FAIL', 'legacy context picker helper could not be migrated'),
+      };
+    }
+    return migration;
   }
 
   if (modelKeys.length === 0) {
@@ -315,8 +340,7 @@ export function applyNativeContextPicker(
     'if(!Object.prototype.hasOwnProperty.call(' + names.models + ',key))return false;',
     'const generation=++' + names.generation + ';',
     names.setPending + '({status:"loading",model:__lfcModelKey,effort:effort});',
-    'const base=typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_BASE_URL:void 0;',
-    'const token=typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_API_KEY:void 0;',
+    CURRENT_PICKER_ENV,
     'if(typeof base!=="string"||!/^http:\\/\\/127\\.0\\.0\\.1(?::\\d+)?(?:\\/|$)/.test(base)||typeof token!=="string"||token.length===0){',
     names.setPending + '({status:"error",model:__lfcModelKey,effort:effort});return true;',
     '}',

@@ -62,6 +62,8 @@ export interface PatchModelMeta {
 
   modelFormat?: 'anthropic' | 'openai';
 
+  nativeAnthropic?: boolean;
+
   contextCeilingOverride?: number;
   displayName?: string;
 
@@ -88,6 +90,7 @@ function patchModelFormat(model: Pick<PatchMetadataModel, 'modelFormat'>): Patch
 }
 
 function buildPatchModelMeta(
+  providerId: string,
   providerName: string,
   model: PatchMetadataModel,
   effort?: PatchScriptEffort,
@@ -99,6 +102,7 @@ function buildPatchModelMeta(
     maxContextWindow: model.maxContextWindow,
     contextWindowUnconfirmed: model.contextWindowUnconfirmed,
     modelFormat: patchModelFormat(model),
+    nativeAnthropic: providerId === 'anthropic' && model.modelFormat === 'anthropic',
     displayName: httpProxyDisplayName(model, providerName),
     effort,
   };
@@ -159,7 +163,7 @@ export function buildPatchModelConfig(
     if (
       options.includeContextModes !== false
       && meta?.modelFormat !== undefined
-      && meta.modelFormat !== 'anthropic'
+      && meta.nativeAnthropic !== true
       && meta?.contextWindow !== undefined
       && meta.contextWindow > 0
       && meta.contextWindowUnconfirmed !== true
@@ -223,6 +227,7 @@ export function buildDesiredPatchConfig(
         meta.set(
           `${provider.id}:${model.id}`,
           buildPatchModelMeta(
+            provider.id,
             provider.name,
             model,
             registryProvider && cachedModel
@@ -237,15 +242,22 @@ export function buildDesiredPatchConfig(
       for (const model of provider.modelsCache?.models ?? []) {
         meta.set(
           `${provider.id}:${model.id}`,
-          buildPatchModelMeta(provider.name, model, reasoningEffortForPatch(provider, model)),
+          buildPatchModelMeta(provider.id, provider.name, model, reasoningEffortForPatch(provider, model)),
         );
       }
     }
   }
 
-  const requestedModels = selectedModel === undefined
-    ? favorites
-    : [selectedModel, ...favorites];
+  const freshModels = freshProviders === undefined
+    ? []
+    : freshProviders.flatMap(provider => provider.models
+      .filter(model => !(provider.id === 'anthropic' && model.modelFormat === 'anthropic'))
+      .map(model => ({ providerId: provider.id, modelId: model.id })));
+  const requestedModels = freshProviders !== undefined && selectedModel === undefined
+    ? freshModels
+    : selectedModel === undefined
+      ? favorites
+      : [selectedModel, ...favorites];
   const freshSelections = freshProviders === undefined
     ? requestedModels
     : requestedModels.filter(favorite => freshProviders.some(provider =>

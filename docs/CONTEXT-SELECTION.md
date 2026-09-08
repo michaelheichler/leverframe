@@ -1,10 +1,12 @@
 # Context selection
 
-In Claude endpoint mode, Claude Code shows one row for each external model. If fresh provider discovery reports a default context and a larger maximum, the model row opens a second prompt with both reported values.
+Launch Claude Code with `leverframe claude` in proxy mode. The native `/model` menu includes the freshly available external models from configured providers alongside native Anthropic models. Favorites affect ordering and aliases, not model availability.
 
-Leverframe refreshes provider metadata through its loopback context endpoint whenever the context prompt opens. A failed refresh or a response without confirmed limits cancels the selection and keeps the current model. Endpoint mode applies the default limit at launch and applies the maximum only after the user selects that mode.
+Choose an external model to see its reported default and maximum context limits when they differ. Each model has one row. The context choice applies with the model selection. Cancel keeps the previous model and context choice.
 
-Proxy bridge mode keeps Anthropic authentication through the MITM proxy and has no context selection endpoint. Its picker therefore omits the secondary context choices. The standalone `leverframe server` command exposes model metadata through server routes but does not provide the Claude Code picker.
+Leverframe refreshes provider metadata when the context prompt opens. A failed refresh or missing confirmed limits prevents the external selection rather than inventing a limit. Native Anthropic model selection remains available.
+
+The context picker uses a local authenticated callback while Claude Code retains its normal Anthropic connection. Endpoint mode is not required. The standalone `leverframe server` command does not install the Claude Code picker.
 
 Older `--context-ceiling` preferences stay in the configuration for migration diagnostics. Leverframe ignores them when it builds the startup model configuration. Users choose context modes from Claude Code's `/model` picker after fresh discovery.
 

@@ -24,6 +24,7 @@ import {
 import { rewriteUpstreamAuthHeaders } from './claude-passthrough-auth.js';
 import { copyResponse as copyHttpProxyResponse } from './copy-response.js';
 import { observeResponseUsage, type ResponseUsage } from './response-usage.js';
+import { handleContextSelectionRequest } from '../proxy-context-selection.js';
 
 const ANTHROPIC_HOST = 'api.anthropic.com';
 
@@ -818,7 +819,8 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
   });
 
   const sockets = new Set<Socket>();
-  const proxyServer = http.createServer((req, res) => {
+  const proxyServer = http.createServer(async (req, res) => {
+    if (await handleContextSelectionRequest(req, res, { proxyToken: proxyAuthToken, byAlias: routesById })) return;
     const presented = extractProxyPassword(req.headers);
     if (!presented || !constantTimeEquals(presented, proxyAuthToken)) {
       respondProxyAuthRequired(res);

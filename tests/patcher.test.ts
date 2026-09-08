@@ -243,6 +243,57 @@ describe('buildDesiredPatchConfig', () => {
     expect(Object.keys(desired.config)).toEqual(['leverframe:openai-oauth:gpt-6-astra']);
   });
 
+  it('materializes every fresh external model when proxy launch has no boot selection', () => {
+    writeInputs({
+      id: 'gpt-6-astra',
+      upstreamModelId: 'gpt-6-astra',
+      name: 'GPT-6 Astra',
+      modelFormat: 'openai',
+      contextWindow: 272_000,
+      maxContextWindow: 872_000,
+    });
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ favoriteModels: [] }));
+
+    const freshProviders: LocalProvider[] = [{
+      id: 'openai-oauth',
+      name: 'OpenAI (ChatGPT)',
+      apiKey: 'provider-key',
+      authType: 'oauth',
+      models: [
+        {
+          id: 'gpt-6-astra',
+          name: 'GPT-6 Astra',
+          family: 'gpt',
+          brand: 'OpenAI',
+          modelFormat: 'openai',
+          upstreamModelId: 'gpt-6-astra',
+          contextWindow: 272_000,
+          maxContextWindow: 872_000,
+        },
+        {
+          id: 'gpt-6-luna',
+          name: 'GPT-6 Luna',
+          family: 'gpt',
+          brand: 'OpenAI',
+          modelFormat: 'openai',
+          upstreamModelId: 'gpt-6-luna',
+          contextWindow: 300_000,
+        },
+      ],
+    }];
+
+    const desired = buildDesiredPatchConfig(freshProviders);
+
+    expect(Object.keys(desired.config).sort()).toEqual([
+      'leverframe:openai-oauth:gpt-6-astra',
+      'leverframe:openai-oauth:gpt-6-luna',
+    ]);
+    expect(desired.config['leverframe:openai-oauth:gpt-6-astra']?.contextModes)
+      .toEqual({ default: 272_000, maximum: 872_000 });
+    expect(desired.config['leverframe:openai-oauth:gpt-6-luna']?.contextModes)
+      .toEqual({ default: 300_000 });
+  });
+
 });
 
 describe('computePatchConfigHash', () => {
