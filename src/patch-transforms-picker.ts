@@ -17,6 +17,8 @@ const PATCH_COMMENT_START = '/' + '*';
 const PATCH_COMMENT_END = '*' + '/';
 const PATCH_NAME = 'PATCH 12: context mode picker';
 const PATCH_MARKER = PATCH_COMMENT_START + 'ccpatch:context-mode-picker' + PATCH_COMMENT_END;
+const CONTEXT_ROW_BASE_HELPER =
+  'const __lfcBaseModel=function(value){return typeof value==="string"?value.replace(/(?:\\[(?:default|maximum|1m)\\])+$/i,""):value;};';
 const LEGACY_PICKER_ENV = [
   'const base=typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_BASE_URL:void 0;',
   'const token=typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_API_KEY:void 0;',
@@ -202,6 +204,7 @@ function invalid(detail: string, nativeBundleSource: boolean, source: string): N
 export function applyNativeContextPicker(
   source: string,
   contextModes: NativeContextModes,
+  contextAliases: Record<string, string> = {},
 ): NativeContextPickerOutcome {
   const modelKeys = [...new Set(
     Object.entries(contextModes)
@@ -210,6 +213,11 @@ export function applyNativeContextPicker(
       .filter(Boolean),
   )].sort();
   const modelTable = JSON.stringify(Object.fromEntries(modelKeys.map(key => [key, true])));
+  const aliasTable = JSON.stringify(Object.fromEntries(
+    Object.entries(contextAliases).map(([alias, id]) => [alias.trim().toLowerCase(), String(id).trim().toLowerCase()]),
+  ));
+  const contextAliasDeclaration = 'const __lfcContextAliases=JSON.parse(' + JSON.stringify(aliasTable) + ');';
+  const contextModelDeclaration = 'const __lfcContextModels=JSON.parse(' + JSON.stringify(modelTable) + ');';
   const declaration = PATCH_MARKER + 'var __lfcModels=JSON.parse(' + JSON.stringify(modelTable) + ');';
 
   if (source.includes(PATCH_MARKER)) {
@@ -220,9 +228,31 @@ export function applyNativeContextPicker(
       { noopIsSkip: true },
     );
     if (declarationUpdate.result.status === 'FAIL') return declarationUpdate;
-    if (declarationUpdate.content.includes('LEVERFRAME_CONTEXT_SELECTION_BASE_URL')) return declarationUpdate;
-    const migration = patchOnce(
+    const contextAliasUpdate = patchOnce(
       declarationUpdate.content,
+      /const __lfcContextAliases=JSON\.parse\("(?:[^"\\]|\\.)*"\);/,
+      () => contextAliasDeclaration,
+      { noopIsSkip: true },
+    );
+    const afterContextAlias = contextAliasUpdate.result.status === 'FAIL' && contextAliasUpdate.result.extra === 'anchor not found'
+      ? declarationUpdate.content
+      : contextAliasUpdate.content;
+    if (contextAliasUpdate.result.status === 'FAIL' && contextAliasUpdate.result.extra !== 'anchor not found') return contextAliasUpdate;
+    const contextModelUpdate = patchOnce(
+      afterContextAlias,
+      /const __lfcContextModels=JSON\.parse\("(?:[^"\\]|\\.)*"\);/,
+      () => contextModelDeclaration,
+      { noopIsSkip: true },
+    );
+    const afterContextModels = contextModelUpdate.result.status === 'FAIL' && contextModelUpdate.result.extra === 'anchor not found'
+      ? afterContextAlias
+      : contextModelUpdate.content;
+    if (contextModelUpdate.result.status === 'FAIL' && contextModelUpdate.result.extra !== 'anchor not found') return contextModelUpdate;
+    if (afterContextModels.includes('LEVERFRAME_CONTEXT_SELECTION_BASE_URL')) {
+      return { content: afterContextModels, result: result('OK') };
+    }
+    const migration = patchOnce(
+      afterContextModels,
       new RegExp(escaped(LEGACY_PICKER_ENV)),
       () => CURRENT_PICKER_ENV,
     );
@@ -371,14 +401,89 @@ export function applyNativeContextPicker(
     + 'const selected=' + names.pending + '.options.find(function(option){return option.mode===value});'
     + 'if(selected)' + names.commit + '(' + names.pending + '.model,' + names.pending + '.effort,selected);'
     + '},onCancel:function(){' + names.cancel + '();}});}' ;
-  const sharedState = 'var ' + names.generation + '=0;';
+  const contextOptionHelper = CONTEXT_ROW_BASE_HELPER
+    + contextAliasDeclaration
+    + 'const __lfcContextIdentity=function(value){const base=__lfcBaseModel(value);return typeof base==="string"?(__lfcContextAliases[base.toLowerCase()]??base.toLowerCase()):base;};'
+    + contextModelDeclaration
+    + 'const __lfcNormalizeContextOptions=function(value){'
+    + 'if(!Array.isArray(value))return value;'
+    + 'const result=[];const indexes=Object.create(null);'
+    + 'for(const option of value){'
+    + 'if(!option||typeof option!=="object"||typeof option.value!=="string"){result.push(option);continue;}'
+    + 'const base=__lfcContextIdentity(option.value);'
+    + 'if(typeof base!=="string"||!Object.prototype.hasOwnProperty.call(__lfcContextModels,base)){result.push(option);continue;}'
+    + 'const previous=indexes[base];'
+    + 'if(previous===undefined){indexes[base]=result.length;result.push(option);continue;}'
+    + 'const previousOption=result[previous];'
+    + 'if(previousOption&&typeof previousOption.value==="string"&&__lfcBaseModel(previousOption.value)!==previousOption.value&&__lfcBaseModel(option.value)===option.value)result[previous]=option;'
+    + '}'
+    + 'return result;'
+    + '};';
+  const sharedState = 'var ' + names.generation + '=0;' + contextOptionHelper;
   const withHelper = source.slice(0, picker.functionStart)
     + sharedState
     + source.slice(picker.functionStart, picker.bodyStart)
     + helper
     + source.slice(picker.bodyStart);
-  const patched = patchOnce(
+  const normalizedOptions = patchOnce(
     withHelper,
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\(\)=>(([A-Za-z_$][\w$]*)\?\?([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)),(\[[^\]]*\])\)/,
+    (_match, options, memo, _expression, preferred, fallback, argument, dependencies) =>
+      options! + '=' + memo! + '(()=>__lfcNormalizeContextOptions(' + preferred! + '??' + fallback! + '(' + argument! + ')),' + dependencies! + ')',
+  );
+  const withNormalizedOptions = normalizedOptions.result.status === 'FAIL' && normalizedOptions.result.extra === 'anchor not found'
+    ? withHelper
+    : normalizedOptions.content;
+  if (normalizedOptions.result.status === 'FAIL' && normalizedOptions.result.extra !== 'anchor not found') {
+    return normalizedOptions;
+  }
+  const selectedValue = patchOnce(
+    withNormalizedOptions,
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===null\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),\2\)\?\?\2([,;])/,
+    (_match, selected, current, noPreference, resolveModel, options, terminator) =>
+      selected! + '=' + current! + '===null?' + noPreference! + ':'
+      + options! + '.find((option)=>__lfcContextIdentity(option.value)===__lfcContextIdentity(' + resolveModel! + '(' + options! + ',' + current! + ')))?.value??'
+      + options! + '.find((option)=>__lfcContextIdentity(option.value)===__lfcContextIdentity(' + current! + '))?.value??'
+      + resolveModel! + '(' + options! + ',' + current! + ')??' + current! + terminator!,
+  );
+  const withSelectedValue = selectedValue.result.status === 'FAIL' && selectedValue.result.extra === 'anchor not found'
+    ? withNormalizedOptions
+    : selectedValue.content;
+  if (selectedValue.result.status === 'FAIL' && selectedValue.result.extra !== 'anchor not found') {
+    return selectedValue;
+  }
+  const contextRows = patchOnce(
+    withSelectedValue,
+    /if\(([A-Za-z_$][\w$]*)!==null&&!([A-Za-z_$][\w$]*)\.some\(\(([A-Za-z_$][\w$]*)\)=>\3\.value===([A-Za-z_$][\w$]*)\)&&!([A-Za-z_$][\w$]*)\.some\(\(([A-Za-z_$][\w$]*)\)=>\6\.value===\1\)&&([A-Za-z_$][\w$]*)\(\1\)\)/,
+    (_match, current, options, option, selected, extra, extraOption, isRoutable) =>
+      'if(' + current! + '!==null&&!'+ options! + '.some((' + option! + ')=>' + option! + '.value===' + selected!
+      + '||(__lfcContextIdentity(' + option! + '.value)===__lfcContextIdentity(' + selected! + ')))&&!'
+      + extra! + '.some((' + extraOption! + ')=>' + extraOption! + '.value===' + current!
+      + '||(__lfcContextIdentity(' + extraOption! + '.value)===__lfcContextIdentity(' + current! + ')))&&'
+      + isRoutable! + '(' + current! + '))',
+  );
+  const withContextRows = contextRows.result.status === 'FAIL' && contextRows.result.extra === 'anchor not found'
+    ? withNormalizedOptions
+    : contextRows.content;
+  if (contextRows.result.status === 'FAIL' && contextRows.result.extra !== 'anchor not found') {
+    return contextRows;
+  }
+  const selectedModel = patchOnce(
+    withContextRows,
+    /([A-Za-z_$][\w$]*)\.some\(\(([A-Za-z_$][\w$]*)\)=>\2\.value===([A-Za-z_$][\w$]*)\.value\)\?\3\.value:\1\[0\]\?\.value\?\?\s*void 0/,
+    (_match, options, option, selected) =>
+      options! + '.find((' + option! + ')=>' + option! + '.value===' + selected! + '.value'
+      + '||(__lfcContextIdentity(' + option! + '.value)===__lfcContextIdentity(' + selected! + '.value)))?.value??'
+      + options! + '[0]?.value??void 0',
+  );
+  const withSelectedModel = selectedModel.result.status === 'FAIL' && selectedModel.result.extra === 'anchor not found'
+    ? withContextRows
+    : selectedModel.content;
+  if (selectedModel.result.status === 'FAIL' && selectedModel.result.extra !== 'anchor not found') {
+    return selectedModel;
+  }
+  const patched = patchOnce(
+    withSelectedModel,
     callbackPattern,
     (_match, model, effort) =>
       'if(' + names.begin + '(' + model! + ',' + effort! + '))return;'

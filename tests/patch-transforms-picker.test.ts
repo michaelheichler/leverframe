@@ -11,8 +11,12 @@ const SANITIZED_PICKER_FIXTURE = readFileSync(
 
 function pickerSource(): string {
   return [
+    'function nativeModelOptions(Ct,fo,w){let Ki=[];for(let[As,Ls,va]of[[fo.current,fo.value,"Current model"],[fo.sessionOverride===null?null:w,w===null?Qw:umt(Ct,w)??w,"Base model"]])if(As!==null&&!Ct.some((Bi)=>Bi.value===Ls)&&!Ki.some((Bi)=>Bi.value===As)&&Rr(As))Ki.push({value:As,label:WC(As),description:va});let qi=Ct.findIndex((As)=>As.disabled===!0);if(qi===-1)return[...Ct,...Ki];return[...Ct.slice(0,qi),...Ki,...Ct.slice(qi)]}',
+    'function nativeModelFocus(Fn,fo){return Fn.some((Ki)=>Ki.value===fo.value)?fo.value:Fn[0]?.value??void 0}',
+    'function nativeSelectedValue(Ct,to,umt,Qw){let zt=to===null?Qw:umt(Ct,to)??to;return zt}',
     'function picker({initial:initialModel,sessionModel:session,onSelect:select,onSetDefault:setDefault,onCancel:cancel,isStandaloneCommand:standalone,showFastModeNotice:notice,headerText:header,options:options,skipSettingsWrite:skip}){',
     'let[state,setState]=useState(null);',
+    'if(false){let Oe;let Zt;let Ct=V(()=>Oe??fdn(Zt),[Oe,Zt]);void Ct;}',
     'function choose(model,effort){if(model===null){select(null,effort);return}select(model,effort)}',
     'let result=createElement(Picker,{options:options,onChange:function(value){choose(value,"high")},onCancel:cancel});return result}',
   ].join('');
@@ -70,6 +74,12 @@ describe('native context picker transform', () => {
         'leverframe:provider:model': { default: 272_000, maximum: 872_000 },
       });
       expect(result.result).toEqual({ status: 'OK', name: 'PATCH 12: context mode picker' });
+      expect(result.content).toContain(
+        'Bi.value===Ls||(__lfcContextIdentity(Bi.value)===__lfcContextIdentity(Ls))',
+      );
+      expect(result.content).toContain(
+        'Fn.find((Ki)=>Ki.value===fo.value||(__lfcContextIdentity(Ki.value)===__lfcContextIdentity(fo.value)))',
+      );
       const pickerModule = result.content
         .split('\n//#__leverframe_claude_module__:')
         .find(module => module.includes('function RZ({initial:'));
@@ -155,6 +165,69 @@ describe('native context picker transform', () => {
     ]);
     (ready.props.onChange as (value: string) => void)('maximum');
     expect(selected).toEqual([['leverframe:provider:model[maximum]', 'high']]);
+  });
+
+  it('keeps a session context mode on the base picker row', () => {
+    const result = applyNativeContextPicker(pickerSource(), {
+      'leverframe:provider:model': { default: 272_000, maximum: 872_000 },
+      atlas: { default: 272_000, maximum: 872_000 },
+    }, {
+      atlas: 'leverframe:provider:model',
+    });
+    expect(result.result).toEqual({ status: 'OK', name: 'PATCH 12: context mode picker' });
+    expect(result.content).toContain(
+      '!Ct.some((Bi)=>Bi.value===Ls||(__lfcContextIdentity(Bi.value)===__lfcContextIdentity(Ls)))',
+    );
+    expect(result.content).toContain(
+      '!Ki.some((Bi)=>Bi.value===As||(__lfcContextIdentity(Bi.value)===__lfcContextIdentity(As)))',
+    );
+    expect(result.content).toContain(
+      'Fn.find((Ki)=>Ki.value===fo.value||(__lfcContextIdentity(Ki.value)===__lfcContextIdentity(fo.value)))?.value??Fn[0]?.value??void 0',
+    );
+    expect(result.content).toContain(
+      'zt=to===null?Qw:Ct.find((option)=>__lfcContextIdentity(option.value)===__lfcContextIdentity(umt(Ct,to)))?.value??Ct.find((option)=>__lfcContextIdentity(option.value)===__lfcContextIdentity(to))?.value??umt(Ct,to)??to;',
+    );
+    expect(result.content).toContain(
+      'Ct=V(()=>__lfcNormalizeContextOptions(Oe??fdn(Zt)),[Oe,Zt])',
+    );
+
+    const factory = new Function('Qw', 'umt', 'Rr', 'WC', result.content + ';return {nativeModelOptions,nativeModelFocus,nativeSelectedValue,normalize:__lfcNormalizeContextOptions};') as (
+      noPreference: string,
+      mapModel: (options: Array<{ value: string }>, model: string) => string,
+      isRoutable: (model: string) => boolean,
+      displayModel: (model: string) => string,
+    ) => {
+      nativeModelOptions: (options: Array<{ value: string }>, state: Record<string, unknown>, base: string | null) => Array<{ value: string }>;
+      nativeModelFocus: (options: Array<{ value: string }>, state: { value: string }) => string | undefined;
+      nativeSelectedValue: (options: Array<{ value: string }>, model: string, resolveModel: (options: Array<{ value: string }>, model: string) => string | undefined, noPreference: string) => string;
+      normalize: (options: Array<{ value: string }>) => Array<{ value: string }>;
+    };
+    const native = factory('__no_preference__', (_options, model) => model, () => true, model => model);
+    expect(native.nativeModelOptions(
+      [{ value: 'leverframe:provider:model' }],
+      { current: 'leverframe:provider:model[maximum]', value: 'leverframe:provider:model[maximum]', sessionOverride: 'leverframe:provider:model[maximum]' },
+      null,
+    )).toEqual([{ value: 'leverframe:provider:model' }]);
+    expect(native.nativeModelFocus(
+      [{ value: 'leverframe:provider:model' }],
+      { value: 'leverframe:provider:model[maximum]' },
+    )).toBe('leverframe:provider:model');
+    expect(native.nativeSelectedValue(
+      [{ value: 'leverframe:provider:model' }],
+      'leverframe:provider:model[maximum]',
+      (_options, model) => model,
+      '__no_preference__',
+    )).toBe('leverframe:provider:model');
+    expect(native.normalize([
+      { value: 'leverframe:provider:model[maximum]' },
+      { value: 'atlas' },
+      { value: 'leverframe:provider:future[maximum]' },
+      { value: 'native[maximum]' },
+    ])).toEqual([
+      { value: 'atlas' },
+      { value: 'leverframe:provider:future[maximum]' },
+      { value: 'native[maximum]' },
+    ]);
   });
 
   it('uses the proxy control address without changing the Anthropic origin', async () => {

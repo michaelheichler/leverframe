@@ -99,4 +99,26 @@ describe('proxy context selection callback', () => {
 
     expect(response.status).toBe(401);
   });
+
+  it('contains malformed context-control targets and keeps serving requests', async () => {
+    const proxy = await startHttpProxy({
+      routes: [route],
+      adapterHandle: { port: 1, token: 'adapter-token', close: vi.fn() },
+    });
+    handles.push(proxy);
+
+    const malformed = await getJson(proxy.port, 'http://[::1', proxy.token);
+
+    expect(malformed.status).toBe(500);
+    expect(JSON.parse(malformed.body)).toEqual({
+      error: { type: 'internal_server_error', message: 'Proxy request failed.' },
+    });
+
+    const followup = await getJson(
+      proxy.port,
+      '/v1/leverframe/context-selection?model=' + encodeURIComponent(route.aliasId),
+      proxy.token,
+    );
+    expect(followup.status).toBe(200);
+  });
 });

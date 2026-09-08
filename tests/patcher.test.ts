@@ -294,6 +294,48 @@ describe('buildDesiredPatchConfig', () => {
       .toEqual({ default: 300_000 });
   });
 
+  it('puts configured favorites first while retaining every fresh external model', () => {
+    writeFileSync(join(home, 'config.json'), JSON.stringify({
+      favoriteModels: [
+        { providerId: 'zai', modelId: 'favorite-z' },
+        { providerId: 'openai-oauth', modelId: 'favorite-openai' },
+      ],
+    }));
+
+    const model = (id: string, name: string): LocalProvider['models'][number] => ({
+      id,
+      name,
+      family: 'test',
+      brand: 'Test',
+      modelFormat: 'openai',
+      upstreamModelId: id,
+      contextWindow: 272_000,
+    });
+    const freshProviders: LocalProvider[] = [
+      {
+        id: 'openai-oauth',
+        name: 'OpenAI (ChatGPT)',
+        apiKey: 'openai-key',
+        models: [model('other-openai', 'Other OpenAI'), model('favorite-openai', 'Favorite OpenAI')],
+      },
+      {
+        id: 'zai',
+        name: 'Z.ai',
+        apiKey: 'zai-key',
+        models: [model('other-z', 'Other Z'), model('favorite-z', 'Favorite Z')],
+      },
+    ];
+
+    const desired = buildDesiredPatchConfig(freshProviders);
+
+    expect(Object.keys(desired.config)).toEqual([
+      'leverframe:zai:favorite-z',
+      'leverframe:openai-oauth:favorite-openai',
+      'leverframe:openai-oauth:other-openai',
+      'leverframe:zai:other-z',
+    ]);
+  });
+
 });
 
 describe('computePatchConfigHash', () => {
@@ -397,6 +439,14 @@ function runPatchScript(config: Parameters<typeof applyLeverframePatches>[1], so
   return applyLeverframePatches(source, config).content;
 }
 
+function readModelPickerOptions(source: string): Array<{ value: string; label: string; description: string }> {
+  const encoded = source.match(
+    /\/\*ccpatch:model-picker-options\*\/var __lfcModelPickerOptions=JSON\.parse\(("(?:[^"\\]|\\.)*")\)/,
+  )?.[1];
+  expect(encoded).toBeDefined();
+  return JSON.parse(JSON.parse(encoded!)) as Array<{ value: string; label: string; description: string }>;
+}
+
 describe('patch script identity naming', () => {
   const config = {
     'leverframe:openai-oauth:gpt-5.6-sol': {
@@ -442,16 +492,53 @@ describe('patch script identity naming', () => {
 
   it('uses the real display label in the /model picker and the Agent tool description', () => {
     const out = runPatchScript(config);
-    expect(out).toContain('{value:"sol",label:"Sol",description:"GPT-5.6 Sol (OpenAI (ChatGPT))"}');
+    expect(readModelPickerOptions(out)).toContainEqual({
+      value: 'sol',
+      label: 'Sol',
+      description: 'GPT-5.6 Sol (OpenAI (ChatGPT))',
+    });
+    expect(readModelPickerOptions(out)).toContainEqual({
+      value: 'leverframe:openai:mystery',
+      label: 'Mystery (OpenAI)',
+      description: 'Model ID: leverframe:openai:mystery',
+    });
     expect(out).not.toContain('Custom model (');
     expect(out).toContain('Additional custom models: sol = GPT-5.6 Sol (OpenAI (ChatGPT)); '
       + 'leverframe:openai:mystery = Mystery (OpenAI).');
   });
 
   it('falls back to the old "Custom model (id)" description when no label is known', () => {
-    const out = runPatchScript({ 'leverframe:openai-oauth:gpt-5.6-sol': { alias: 'sol', context: 272_000 } });
-    expect(out).toContain('{value:"sol",label:"Sol",description:"Custom model (leverframe:openai-oauth:gpt-5.6-sol)"}');
-    expect(out).toContain('Additional custom models: sol.');
+    const out = runPatchScript({
+      'leverframe:openai-oauth:gpt-5.6-sol': { alias: 'sol', context: 272_000 },
+      'leverframe:openai-oauth:unknown': { context: 272_000 },
+    });
+    expect(readModelPickerOptions(out)).toContainEqual({
+      value: 'sol',
+      label: 'Sol',
+      description: 'Custom model (leverframe:openai-oauth:gpt-5.6-sol)',
+    });
+    expect(readModelPickerOptions(out)).toContainEqual({
+      value: 'leverframe:openai-oauth:unknown',
+      label: 'leverframe:openai-oauth:unknown',
+      description: 'Custom model (leverframe:openai-oauth:unknown)',
+    });
+    expect(out).toContain('Additional custom models: sol; leverframe:openai-oauth:unknown.');
+  });
+
+  it('adds each direct model identity once when no alias is configured', () => {
+    const out = runPatchScript({
+      'leverframe:openai:model-a': { context: 272_000, display: 'Model A (OpenAI)' },
+      'leverframe:openai:model-b': { context: 128_000, display: 'Model B (OpenAI)' },
+    });
+    const options = readModelPickerOptions(out);
+    expect(options.map(option => option.value)).toEqual([
+      'leverframe:openai:model-a',
+      'leverframe:openai:model-b',
+    ]);
+    expect(options[0]).toMatchObject({
+      label: 'Model A (OpenAI)',
+      description: 'Model ID: leverframe:openai:model-a',
+    });
   });
 
   it('is idempotent when re-running the same patch', () => {

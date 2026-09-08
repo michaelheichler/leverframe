@@ -36,7 +36,7 @@ describe('prototype-name custom model identities', () => {
     const output = applyLeverframePatches(CLAUDE_FIXTURE, config).content;
 
     expect(output).toContain(
-      '{value:"constructor",label:"Constructor",description:"Custom model (leverframe:demo:constructor)"}',
+      '\\"value\\":\\"constructor\\",\\"label\\":\\"Constructor\\",\\"description\\":\\"Custom model (leverframe:demo:constructor)\\"',
     );
     expect(output).toContain('Additional custom models: constructor; __proto__.');
     expect(executeContextLookup(output, 'constructor', 200_000)).toBe(310_000);

@@ -5,7 +5,7 @@ import { applyNativeModelKnowledge } from './patch-transforms-model-knowledge.js
 import { applyNativeContextWindow } from './patch-transforms-context-window.js';
 import { ONE_M_CONTEXT_WINDOW } from './context-model-id.js';
 
-export const PATCH_TRANSFORMS_VERSION = 13;
+export const PATCH_TRANSFORMS_VERSION = 15;
 
 export interface PatchScriptModelEntry {
   alias?: string;
@@ -36,6 +36,9 @@ const BASE_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
 
 const PATCH_COMMENT_START = '/' + '*';
 const PATCH_COMMENT_END = '*' + '/';
+
+const MODEL_PICKER_MARKER = PATCH_COMMENT_START + 'ccpatch:model-picker-options' + PATCH_COMMENT_END;
+const MODEL_PICKER_OPTIONS_VARIABLE = '__lfcModelPickerOptions';
 
 export function projectNativeEffort(effort: PatchScriptEffort | undefined): PatchScriptEffort | undefined {
   if (!effort || !Array.isArray(effort.levels) || typeof effort.defaultLevel !== 'string') return undefined;
@@ -308,25 +311,50 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
   }
 
   {
-    const missing = ALIASES.filter((a) => !new RegExp('value:' + reEsc(q(a))).test(js));
-    const entries = missing
-      .map(
-
-        (a) => '{value:' + q(a) + ',label:' + q(a.charAt(0).toUpperCase() + a.slice(1)) + ',description:' + q(displayFor(a, ALIAS_TO_ID[a]!)) + '}'
-      )
-      .join(',');
-    const inject = missing.length
-      ? '[' + entries + '].forEach(function(_o){if(!e.some(function(_i){return _i.value===_o.value}))e.push(_o)});'
-      : '';
-    if (ALIASES.length === 0) {
-      log('SKIP', 'PATCH 5: model picker options', 'no aliases configured');
+    const pickerIdentities = [...new Set(IDENTITIES)];
+    const pickerOptions = pickerIdentities.map(identity => {
+      const canonicalId = ALIAS_TO_ID[identity] ?? identity;
+      const display = DISPLAY_BY_IDENTITY[identity] ?? DISPLAY_BY_IDENTITY[canonicalId];
+      const isAlias = ALIAS_TO_ID[identity] !== undefined;
+      return {
+        value: identity,
+        label: isAlias
+          ? identity.charAt(0).toUpperCase() + identity.slice(1)
+          : display ?? canonicalId,
+        description: isAlias
+          ? displayFor(identity, canonicalId)
+          : display
+            ? 'Model ID: ' + canonicalId
+            : displayFor(identity, canonicalId),
+      };
+    });
+    const optionsJson = JSON.stringify(JSON.stringify(pickerOptions));
+    const injection = MODEL_PICKER_MARKER
+      + 'var ' + MODEL_PICKER_OPTIONS_VARIABLE + '=JSON.parse(' + optionsJson + ');'
+      + MODEL_PICKER_OPTIONS_VARIABLE + '.forEach(function(_o){if(!e.some(function(_i){return _i.value===_o.value}))e.push(_o)});';
+    const existingInjection = new RegExp(
+      reEsc(MODEL_PICKER_MARKER)
+      + 'var ' + reEsc(MODEL_PICKER_OPTIONS_VARIABLE) + '=JSON\\.parse\\("(?:[^"\\\\]|\\\\.)*"\\);'
+      + reEsc(MODEL_PICKER_OPTIONS_VARIABLE)
+      + '\\.forEach\\(function\\(_o\\)\\{if\\(!e\\.some\\(function\\(_i\\)\\{return _i\\.value===_o\\.value\\}\\)\\)e\\.push\\(_o\\)\\}\\);',
+    );
+    const missing = pickerIdentities.filter(identity => !new RegExp('value:' + reEsc(q(identity))).test(js));
+    if (pickerIdentities.length === 0) {
+      log('SKIP', 'PATCH 5: model picker options', 'no configured model identities');
+    } else if (js.includes(MODEL_PICKER_MARKER)) {
+      applyOnce(
+        'PATCH 5: model picker options',
+        existingInjection,
+        () => injection,
+        { required: true, noopIsSkip: true },
+      );
     } else if (missing.length === 0) {
       log('SKIP', 'PATCH 5: model picker options', 'already integrated');
     } else {
       applyOnce(
         'PATCH 5: model picker options',
         /(function [\w$]+\(e,[\w$]+,[\w$]+\)\{let [^{}]{0,400}?;for\(let [\w$]+ of [\w$]+\)[\w$]+\(e,[\w$]+,[\w$]+\);)(return e\})/,
-        (_m, head, tail) => head! + inject + tail!,
+        (_m, head, tail) => head! + injection + tail!,
         { required: false, noopIsSkip: true }
       );
     }
@@ -368,7 +396,7 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     Object.keys(CONTEXT_MODES_BY_KEY).length > 0
     || js.includes(PATCH_COMMENT_START + 'ccpatch:context-mode-picker' + PATCH_COMMENT_END)
   ) {
-    const picker = applyNativeContextPicker(js, CONTEXT_MODES_BY_KEY);
+    const picker = applyNativeContextPicker(js, CONTEXT_MODES_BY_KEY, ALIAS_TO_ID);
     js = picker.content;
     report.push(picker.result);
     if (picker.result.status === 'FAIL') {

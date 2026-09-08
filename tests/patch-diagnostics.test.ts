@@ -135,9 +135,8 @@ describe('patch diagnostics integration status', () => {
     expect(report.drift.semanticSitesComplete).toBeNull();
     expect(report.integration.status).toBe('integrated');
     expect(report.integration.capabilities).toContainEqual({
-      status: 'FAIL',
+      status: 'OK',
       name: 'model-picker',
-      extra: 'anchor not found',
     });
   });
 

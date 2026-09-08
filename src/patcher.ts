@@ -5,7 +5,7 @@ import { getAppHome } from './paths.js';
 import { loadPreferences } from './config.js';
 import { loadRegistry } from './registry/io.js';
 import { httpProxyDisplayName, httpProxyModelId } from './http-proxy/routes.js';
-import { stripOneMContextSuffix } from './context-model-id.js';
+import { stripContextMarkers, stripOneMContextSuffix } from './context-model-id.js';
 import {
   PATCH_TRANSFORMS_VERSION,
   projectNativeEffort,
@@ -248,11 +248,28 @@ export function buildDesiredPatchConfig(
     }
   }
 
+  const favoriteOrder = new Map<string, number>();
+  favorites.forEach((favorite, index) => {
+    const key = `${favorite.providerId}:${stripContextMarkers(favorite.modelId)}`;
+    if (!favoriteOrder.has(key)) favoriteOrder.set(key, index);
+  });
   const freshModels = freshProviders === undefined
     ? []
     : freshProviders.flatMap(provider => provider.models
       .filter(model => !(provider.id === 'anthropic' && model.modelFormat === 'anthropic'))
-      .map(model => ({ providerId: provider.id, modelId: model.id })));
+      .map(model => ({ providerId: provider.id, modelId: model.id })))
+      .map((model, index) => ({ model, index }))
+      .sort((left, right) => {
+        const leftRank = favoriteOrder.get(`${left.model.providerId}:${stripContextMarkers(left.model.modelId)}`);
+        const rightRank = favoriteOrder.get(`${right.model.providerId}:${stripContextMarkers(right.model.modelId)}`);
+        if (leftRank !== undefined || rightRank !== undefined) {
+          if (leftRank === undefined) return 1;
+          if (rightRank === undefined) return -1;
+          if (leftRank !== rightRank) return leftRank - rightRank;
+        }
+        return left.index - right.index;
+      })
+      .map(({ model }) => model);
   const requestedModels = freshProviders !== undefined && selectedModel === undefined
     ? freshModels
     : selectedModel === undefined
