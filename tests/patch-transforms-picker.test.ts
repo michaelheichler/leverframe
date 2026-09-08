@@ -234,6 +234,10 @@ describe('native context picker transform', () => {
     const result = applyNativeContextPicker(pickerSource(), {
       'leverframe:provider:model': { default: 272_000, maximum: 872_000 },
     });
+    const runtime = globalThis as typeof globalThis & {
+      __lfcContextWindows?: Record<string, number>;
+    };
+    const previous = runtime.__lfcContextWindows;
     let state: unknown = null;
     let requestUrl: string | undefined;
     let requestInit: RequestInit | undefined;
@@ -284,16 +288,22 @@ describe('native context picker transform', () => {
       skipSettingsWrite: false,
     };
 
-    const first = picker(props);
-    (first.props.onChange as (value: string) => void)('leverframe:provider:model');
-    await new Promise(resolve => setTimeout(resolve, 0));
+    try {
+      delete runtime.__lfcContextWindows;
+      const first = picker(props);
+      (first.props.onChange as (value: string) => void)('leverframe:provider:model');
+      await new Promise(resolve => setTimeout(resolve, 0));
 
-    expect(requestUrl).toBe('http://127.0.0.1:17645/v1/leverframe/context-selection?model=leverframe%3Aprovider%3Amodel');
-    const requestHeaders = requestInit?.headers;
-    const authorization = requestHeaders && !Array.isArray(requestHeaders)
-      ? (requestHeaders as Record<string, string>).Authorization
-      : undefined;
-    expect(authorization).toBe('Bearer per-run-control-token');
+      expect(requestUrl).toBe('http://127.0.0.1:17645/v1/leverframe/context-selection?model=leverframe%3Aprovider%3Amodel');
+      const requestHeaders = requestInit?.headers;
+      const authorization = requestHeaders && !Array.isArray(requestHeaders)
+        ? (requestHeaders as Record<string, string>).Authorization
+        : undefined;
+      expect(authorization).toBe('Bearer per-run-control-token');
+    } finally {
+      if (previous === undefined) delete runtime.__lfcContextWindows;
+      else runtime.__lfcContextWindows = previous;
+    }
   });
 
   it('migrates a previous context picker helper to the proxy control environment', () => {
