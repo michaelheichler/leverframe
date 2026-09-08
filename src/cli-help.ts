@@ -78,17 +78,17 @@ ${pc.bold('Providers:')}
   zai            z.ai Coding Plan API key
 
 ${pc.bold('Model switching:')}
-  Run leverframe models to save favorites (max ${MAX_MODEL_CATALOG}).
-  When favorites exist, endpoint mode starts a multi-route proxy and Claude
-  Code /model lists your starting model plus favorites for live switching.
-  With no favorites, launch uses a single model.
+  Proxy mode refreshes provider discovery on every launch and exposes every
+  currently routable provider model in Claude Code's /model menu. Favorites
+  (max ${MAX_MODEL_CATALOG}) affect ordering only; saved aliases add short names.
 
 ${pc.bold('Proxy mode:')}
   leverframe claude --proxy leaves ANTHROPIC_BASE_URL unset and launches
-  Claude Code with its normal Anthropic login. Favorite models from supported
-  OpenAI-compatible providers are available by typing
-  /model leverframe:<provider-id>:<model-id>.
-  Save short names with leverframe models --alias, and run --list to print them.
+  Claude Code with its normal Anthropic login. Freshly discovered, routable
+  models from supported OpenAI-compatible providers are available by typing
+  /model leverframe:<provider-id>:<model-id>; favorites affect their order.
+  Save short names for favorite models with leverframe models --alias, and run
+  --list to print the current routable names.
   Run leverframe patch to make those names first-class inside Claude Code.
 
 ${pc.bold('Note:')}
@@ -214,15 +214,16 @@ ${pc.bold('Behavior:')}
   claude and choose a reported context mode from Claude Code's /model picker.
 
 ${pc.bold('How it works:')}
-  claude and server use the global favorites list.
-  Favorites appear in the /model switch menu (endpoint mode) and are routable
-  by name in proxy mode. leverframe patch bakes favorites + aliases into the
-  Claude Code binary so they pass model validation and report real context.
+  In normal proxy mode, claude and server use the global favorites list to
+  order available routes. Favorites do not limit the freshly discovered proxy
+  catalog. Saved aliases provide short names for favorite routes. leverframe
+  patch bakes favorites + aliases into the Claude Code binary so they pass
+  model validation and report real context.
 
 ${pc.bold('Examples:')}
   leverframe favorites
   leverframe models --alias sol=leverframe:openai-oauth:gpt-5.6-sol
-  leverframe claude    # switch menu active when favorites are set`;
+  leverframe claude    # fresh routable catalog; favorites affect ordering`;
 }
 
 export function patchHelpText(): string {

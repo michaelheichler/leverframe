@@ -213,10 +213,16 @@ export function rebuildBunData(
     let contentsBytes: Buffer;
     let bytecodeBytes: Buffer;
     if (modifiedClaudeJs instanceof Buffer && isClaudeModule(moduleName)) {
-      contentsBytes = modifiedClaudeJs;
-      bytecodeBytes = clearBytecode
+      const originalContents = getStringPointerContent(bunData, module.contents);
+      const originalBytecode = getStringPointerContent(bunData, module.bytecode);
+      const sourceChanged = !originalContents.equals(modifiedClaudeJs);
+      const invalidateBytecode = clearBytecode || sourceChanged;
+      contentsBytes = invalidateBytecode
+        ? sourceForInvalidatedBytecode(modifiedClaudeJs)
+        : modifiedClaudeJs;
+      bytecodeBytes = invalidateBytecode
         ? Buffer.alloc(0)
-        : getStringPointerContent(bunData, module.bytecode);
+        : bytecodeForReplacement(originalContents, modifiedClaudeJs, originalBytecode);
     } else {
       contentsBytes = getStringPointerContent(bunData, module.contents);
       bytecodeBytes = getStringPointerContent(bunData, module.bytecode);

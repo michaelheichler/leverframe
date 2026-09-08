@@ -1,4 +1,3 @@
-import { MAX_MODEL_CATALOG } from '../constants.js';
 import { localModelToRoute } from '../catalog.js';
 import { isSdkMigratedNpm } from '../provider-factory.js';
 import { claudeCodeClientModelId } from '../context-model-id.js';
@@ -22,6 +21,7 @@ export function httpProxyDisplayName(
 
 export interface HttpProxyRouteResult {
   routes: ProxyRoute[];
+  providers: LocalProvider[];
   unavailable: FavoriteModel[];
   unsupported: FavoriteModel[];
   aliases: ResolvedHttpProxyAlias[];
@@ -38,13 +38,53 @@ export function buildHttpProxyRoutes(
   providers: LocalProvider[],
   favorites: FavoriteModel[],
   modelAliases: ModelAlias[] = [],
-  max = MAX_MODEL_CATALOG,
+  max = Number.POSITIVE_INFINITY,
 ): HttpProxyRouteResult {
   const routes: ProxyRoute[] = [];
   const unavailable: FavoriteModel[] = [];
   const unsupported: FavoriteModel[] = [];
   const seen = new Set<string>();
-  const routesByFavorite = new Map<string, ProxyRoute>();
+  const processedModels = new Set<string>();
+  const routesByModel = new Map<string, ProxyRoute>();
+  const routableProviders = new Map<string, LocalProvider>();
+
+  const modelKey = (providerId: string, modelId: string): string => `${providerId}:${modelId}`;
+  const addModel = (provider: LocalProvider, model: LocalProvider['models'][number], favorite?: FavoriteModel): void => {
+    const key = modelKey(provider.id, model.id);
+    if (processedModels.has(key)) return;
+    processedModels.add(key);
+
+    const firstPartyAnthropic = provider.id === 'anthropic' && model.modelFormat === 'anthropic';
+    const unsupportedOpenAi = model.modelFormat === 'openai' && !isSdkMigratedNpm(model.npm);
+    if (firstPartyAnthropic || unsupportedOpenAi) {
+      if (favorite) unsupported.push(favorite);
+      return;
+    }
+    const route = localModelToRoute(provider, model);
+    if (!route || !route.apiKey.trim()) {
+      if (favorite) unavailable.push(favorite);
+      return;
+    }
+    const aliasId = claudeCodeClientModelId(
+      httpProxyModelId(provider.id, model.id),
+      model.contextWindow,
+    );
+    if (seen.has(aliasId)) return;
+    seen.add(aliasId);
+    const proxyRoute = {
+      ...route,
+      aliasId,
+      displayName: httpProxyDisplayName(model, provider.name),
+    };
+    routes.push(proxyRoute);
+    routesByModel.set(key, proxyRoute);
+    const routableProvider = routableProviders.get(provider.id);
+    if (routableProvider) {
+      routableProvider.models.push(model);
+    } else {
+      routableProviders.set(provider.id, { ...provider, models: [model] });
+    }
+  };
 
   for (const favorite of favorites) {
     if (routes.length >= max) break;
@@ -54,37 +94,22 @@ export function buildHttpProxyRoutes(
       unavailable.push(favorite);
       continue;
     }
-    const firstPartyAnthropic = provider.id === 'anthropic' && model.modelFormat === 'anthropic';
-    const unsupportedOpenAi = model.modelFormat === 'openai' && !isSdkMigratedNpm(model.npm);
-    if (firstPartyAnthropic || unsupportedOpenAi) {
-      unsupported.push(favorite);
-      continue;
+    addModel(provider, model, favorite);
+  }
+
+  for (const provider of providers) {
+    for (const model of provider.models) {
+      if (routes.length >= max) break;
+      addModel(provider, model);
     }
-    const route = localModelToRoute(provider, model);
-    if (!route || !route.apiKey.trim()) {
-      unavailable.push(favorite);
-      continue;
-    }
-    const aliasId = claudeCodeClientModelId(
-      httpProxyModelId(provider.id, model.id),
-      model.contextWindow,
-    );
-    if (seen.has(aliasId)) continue;
-    seen.add(aliasId);
-    const proxyRoute = {
-      ...route,
-      aliasId,
-      displayName: httpProxyDisplayName(model, provider.name),
-    };
-    routes.push(proxyRoute);
-    routesByFavorite.set(`${favorite.providerId}:${favorite.modelId}`, proxyRoute);
+    if (routes.length >= max) break;
   }
 
   const aliases: ResolvedHttpProxyAlias[] = [];
   const unavailableAliases: ModelAlias[] = [];
   const seenAliases = new Set<string>();
   for (const alias of modelAliases) {
-    const route = routesByFavorite.get(`${alias.providerId}:${alias.modelId}`);
+    const route = routesByModel.get(`${alias.providerId}:${alias.modelId}`);
     if (!isValidModelAlias(alias.name) || seenAliases.has(alias.name) || !route) {
       unavailableAliases.push(alias);
       continue;
@@ -93,5 +118,12 @@ export function buildHttpProxyRoutes(
     aliases.push({ name: alias.name, routeId: route.aliasId, displayName: route.displayName });
   }
 
-  return { routes, unavailable, unsupported, aliases, unavailableAliases };
+  return {
+    routes,
+    providers: [...routableProviders.values()],
+    unavailable,
+    unsupported,
+    aliases,
+    unavailableAliases,
+  };
 }

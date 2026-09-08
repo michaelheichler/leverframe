@@ -2,7 +2,11 @@ import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { loadPreferences } from '../config.js';
 import { DEFAULT_SERVER_PORT } from '../constants.js';
-import { fetchProviderCatalog, resolveLocalProviderApiKey } from '../provider-catalog.js';
+import {
+  fetchFreshProviderCatalog,
+  resolveLocalProviderApiKey,
+  type FreshCatalogUnavailable,
+} from '../provider-catalog.js';
 import { providersForTarget } from '../target-compatibility.js';
 import type { ProxyRoute } from '../proxy.js';
 import { buildHttpProxyRoutes, type HttpProxyRouteResult } from './routes.js';
@@ -13,22 +17,14 @@ import { getInferenceRequestLogPath, getSessionLogPath } from '../log-paths.js';
 
 export interface LoadedHttpProxyRoutes extends HttpProxyRouteResult {
   favoriteCount: number;
+  freshUnavailable: FreshCatalogUnavailable[];
 }
 
 export async function loadHttpProxyRoutes(): Promise<LoadedHttpProxyRoutes> {
   const prefs = loadPreferences();
   const favorites = prefs.favoriteModels ?? [];
-  if (favorites.length === 0) {
-    return {
-      routes: [],
-      unavailable: [],
-      unsupported: [],
-      aliases: [],
-      unavailableAliases: prefs.modelAliases ?? [],
-      favoriteCount: 0,
-    };
-  }
-  const rawCatalog = providersForTarget(await fetchProviderCatalog({ agent: 'claude' }), 'claude');
+  const freshCatalog = await fetchFreshProviderCatalog({ agent: 'claude' });
+  const rawCatalog = providersForTarget(freshCatalog.providers, 'claude');
   const catalog = await Promise.all(rawCatalog.map(async provider => ({
     ...provider,
     apiKey: (await resolveLocalProviderApiKey(provider)) ?? '',
@@ -36,6 +32,7 @@ export async function loadHttpProxyRoutes(): Promise<LoadedHttpProxyRoutes> {
   return {
     ...buildHttpProxyRoutes(catalog, favorites, prefs.modelAliases ?? []),
     favoriteCount: favorites.length,
+    freshUnavailable: freshCatalog.unavailable,
   };
 }
 
@@ -43,7 +40,7 @@ export function formatHttpProxyModelLines(
   routes: ProxyRoute[],
   aliases: LoadedHttpProxyRoutes['aliases'] = [],
 ): string[] {
-  if (routes.length === 0) return ['  (no routable favorite models)'];
+  if (routes.length === 0) return ['  (no routable external models)'];
   const routesById = new Map(routes.map(route => [route.aliasId, route]));
   const contextLabel = (contextWindow: number | undefined): string => {
     if (!contextWindow || contextWindow <= 0) return '';
@@ -73,18 +70,24 @@ export function printHttpProxyModels(
 
 export function reportSkippedHttpProxyFavorites(loaded: LoadedHttpProxyRoutes): void {
   if (loaded.unavailable.length > 0) {
-    p.log.warn(`${loaded.unavailable.length} favorite${loaded.unavailable.length === 1 ? '' : 's'} unavailable or missing credentials.`);
+    p.log.warn(`${loaded.unavailable.length} saved model${loaded.unavailable.length === 1 ? '' : 's'} unavailable or missing credentials.`);
   }
   if (loaded.unsupported.length > 0) {
     p.log.warn(
-      `${loaded.unsupported.length} favorite${loaded.unsupported.length === 1 ? '' : 's'} skipped — `
+      `${loaded.unsupported.length} saved model${loaded.unsupported.length === 1 ? '' : 's'} skipped — `
       + 'HTTP proxy mode supports non-Anthropic AI SDK routes only.',
+    );
+  }
+  if (loaded.freshUnavailable.length > 0) {
+    p.log.warn(
+      `${loaded.freshUnavailable.length} provider${loaded.freshUnavailable.length === 1 ? '' : 's'} `
+      + 'did not provide a fresh routable model list; stale metadata was not used.',
     );
   }
   if (loaded.unavailableAliases.length > 0) {
     p.log.warn(
       `${loaded.unavailableAliases.length} model alias${loaded.unavailableAliases.length === 1 ? '' : 'es'} skipped — `
-      + 'its target must be an available HTTP-proxy favorite.',
+      + 'its target must be an available HTTP-proxy model.',
     );
   }
 }

@@ -141,4 +141,36 @@ describe('buildPatchModelConfig context provenance', () => {
     );
     expect(config['leverframe:openai:endpointless']).toEqual({ context: 272_000 });
   });
+
+  it('keeps context modes for an external Anthropic-format provider', () => {
+    const { config } = buildPatchModelConfig(
+      [{ providerId: 'custom-anthropic', modelId: 'claude-compatible' }],
+      [],
+      () => ({
+        contextWindow: 272_000,
+        maxContextWindow: 872_000,
+        modelFormat: 'anthropic',
+      }),
+    );
+
+    expect(config['leverframe:custom-anthropic:claude-compatible']).toEqual({
+      context: 272_000,
+      contextModes: { default: 272_000, maximum: 872_000 },
+    });
+  });
+
+  it('keeps native Anthropic passthrough without context modes', () => {
+    const { config } = buildPatchModelConfig(
+      [{ providerId: 'anthropic', modelId: 'claude-sonnet' }],
+      [],
+      () => ({
+        contextWindow: 200_000,
+        maxContextWindow: 1_000_000,
+        modelFormat: 'anthropic',
+        nativeAnthropic: true,
+      }),
+    );
+
+    expect(config['leverframe:anthropic:claude-sonnet']).toEqual({ context: 200_000 });
+  });
 });

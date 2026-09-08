@@ -249,6 +249,6 @@ describe('native context lookup integration', () => {
   });
 
   it('keeps the transform version ahead of older static context patches', () => {
-    expect(PATCH_TRANSFORMS_VERSION).toBe(13);
+    expect(PATCH_TRANSFORMS_VERSION).toBe(15);
   });
 });

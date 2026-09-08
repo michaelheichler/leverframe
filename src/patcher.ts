@@ -5,7 +5,7 @@ import { getAppHome } from './paths.js';
 import { loadPreferences } from './config.js';
 import { loadRegistry } from './registry/io.js';
 import { httpProxyDisplayName, httpProxyModelId } from './http-proxy/routes.js';
-import { stripOneMContextSuffix } from './context-model-id.js';
+import { stripContextMarkers, stripOneMContextSuffix } from './context-model-id.js';
 import {
   PATCH_TRANSFORMS_VERSION,
   projectNativeEffort,
@@ -62,6 +62,8 @@ export interface PatchModelMeta {
 
   modelFormat?: 'anthropic' | 'openai';
 
+  nativeAnthropic?: boolean;
+
   contextCeilingOverride?: number;
   displayName?: string;
 
@@ -88,6 +90,7 @@ function patchModelFormat(model: Pick<PatchMetadataModel, 'modelFormat'>): Patch
 }
 
 function buildPatchModelMeta(
+  providerId: string,
   providerName: string,
   model: PatchMetadataModel,
   effort?: PatchScriptEffort,
@@ -99,6 +102,7 @@ function buildPatchModelMeta(
     maxContextWindow: model.maxContextWindow,
     contextWindowUnconfirmed: model.contextWindowUnconfirmed,
     modelFormat: patchModelFormat(model),
+    nativeAnthropic: providerId === 'anthropic' && model.modelFormat === 'anthropic',
     displayName: httpProxyDisplayName(model, providerName),
     effort,
   };
@@ -159,7 +163,7 @@ export function buildPatchModelConfig(
     if (
       options.includeContextModes !== false
       && meta?.modelFormat !== undefined
-      && meta.modelFormat !== 'anthropic'
+      && meta.nativeAnthropic !== true
       && meta?.contextWindow !== undefined
       && meta.contextWindow > 0
       && meta.contextWindowUnconfirmed !== true
@@ -223,6 +227,7 @@ export function buildDesiredPatchConfig(
         meta.set(
           `${provider.id}:${model.id}`,
           buildPatchModelMeta(
+            provider.id,
             provider.name,
             model,
             registryProvider && cachedModel
@@ -237,15 +242,39 @@ export function buildDesiredPatchConfig(
       for (const model of provider.modelsCache?.models ?? []) {
         meta.set(
           `${provider.id}:${model.id}`,
-          buildPatchModelMeta(provider.name, model, reasoningEffortForPatch(provider, model)),
+          buildPatchModelMeta(provider.id, provider.name, model, reasoningEffortForPatch(provider, model)),
         );
       }
     }
   }
 
-  const requestedModels = selectedModel === undefined
-    ? favorites
-    : [selectedModel, ...favorites];
+  const favoriteOrder = new Map<string, number>();
+  favorites.forEach((favorite, index) => {
+    const key = `${favorite.providerId}:${stripContextMarkers(favorite.modelId)}`;
+    if (!favoriteOrder.has(key)) favoriteOrder.set(key, index);
+  });
+  const freshModels = freshProviders === undefined
+    ? []
+    : freshProviders.flatMap(provider => provider.models
+      .filter(model => !(provider.id === 'anthropic' && model.modelFormat === 'anthropic'))
+      .map(model => ({ providerId: provider.id, modelId: model.id })))
+      .map((model, index) => ({ model, index }))
+      .sort((left, right) => {
+        const leftRank = favoriteOrder.get(`${left.model.providerId}:${stripContextMarkers(left.model.modelId)}`);
+        const rightRank = favoriteOrder.get(`${right.model.providerId}:${stripContextMarkers(right.model.modelId)}`);
+        if (leftRank !== undefined || rightRank !== undefined) {
+          if (leftRank === undefined) return 1;
+          if (rightRank === undefined) return -1;
+          if (leftRank !== rightRank) return leftRank - rightRank;
+        }
+        return left.index - right.index;
+      })
+      .map(({ model }) => model);
+  const requestedModels = freshProviders !== undefined && selectedModel === undefined
+    ? freshModels
+    : selectedModel === undefined
+      ? favorites
+      : [selectedModel, ...favorites];
   const freshSelections = freshProviders === undefined
     ? requestedModels
     : requestedModels.filter(favorite => freshProviders.some(provider =>

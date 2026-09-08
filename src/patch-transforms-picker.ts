@@ -17,6 +17,19 @@ const PATCH_COMMENT_START = '/' + '*';
 const PATCH_COMMENT_END = '*' + '/';
 const PATCH_NAME = 'PATCH 12: context mode picker';
 const PATCH_MARKER = PATCH_COMMENT_START + 'ccpatch:context-mode-picker' + PATCH_COMMENT_END;
+const CONTEXT_ROW_BASE_HELPER =
+  'const __lfcBaseModel=function(value){return typeof value==="string"?value.replace(/(?:\\[(?:default|maximum|1m)\\])+$/i,""):value;};';
+const LEGACY_PICKER_ENV = [
+  'const base=typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_BASE_URL:void 0;',
+  'const token=typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_API_KEY:void 0;',
+].join('');
+const CURRENT_PICKER_ENV = [
+  'const configuredBase=typeof process==="object"&&process&&process.env?process.env.LEVERFRAME_CONTEXT_SELECTION_BASE_URL:void 0;',
+  'const configuredToken=typeof process==="object"&&process&&process.env?process.env.LEVERFRAME_CONTEXT_SELECTION_TOKEN:void 0;',
+  'const baseValue=typeof configuredBase==="string"&&configuredBase.trim()!==""?configuredBase:typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_BASE_URL:void 0;',
+  'const base=typeof baseValue==="string"?baseValue.trim():void 0;',
+  'const token=typeof configuredToken==="string"&&configuredToken.length>0?configuredToken:typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_API_KEY:void 0;',
+].join('');
 
 interface PickerShape {
   functionStart: number;
@@ -57,6 +70,60 @@ function patchOnce(
       result: result(opts.noopIsSkip ? 'SKIP' : 'FAIL', opts.noopIsSkip ? 'already patched' : 'replacement made no change'),
     }
     : { content, result: result('OK') };
+}
+
+interface OptionalPatchOutcome {
+  content: string;
+  result: PatchSiteResult;
+  fatal: boolean;
+}
+
+function patchOptional(
+  source: string,
+  regex: RegExp,
+  replacement: (match: string, ...groups: string[]) => string,
+): OptionalPatchOutcome {
+  const outcome = patchOnce(source, regex, replacement);
+  const missing = outcome.result.status === 'FAIL' && outcome.result.extra === 'anchor not found';
+  return {
+    content: missing ? source : outcome.content,
+    result: outcome.result,
+    fatal: outcome.result.status === 'FAIL' && !missing,
+  };
+}
+
+const NORMALIZE_OPTIONS_PATTERN = /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\(\)=>(([A-Za-z_$][\w$]*)\?\?([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)),(\[[^\]]*\])\)/;
+const SELECTED_VALUE_PATTERN = /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===null\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),\2\)\?\?\2([,;])/;
+const CONTEXT_ROWS_PATTERN = /if\(([A-Za-z_$][\w$]*)!==null&&!([A-Za-z_$][\w$]*)\.some\(\(([A-Za-z_$][\w$]*)\)=>\3\.value===([A-Za-z_$][\w$]*)\)&&!([A-Za-z_$][\w$]*)\.some\(\(([A-Za-z_$][\w$]*)\)=>\6\.value===\1\)&&([A-Za-z_$][\w$]*)\(\1\)\)/;
+const SELECTED_MODEL_PATTERN = /([A-Za-z_$][\w$]*)\.some\(\(([A-Za-z_$][\w$]*)\)=>\2\.value===([A-Za-z_$][\w$]*)\.value\)\?\3\.value:\1\[0\]\?\.value\?\?\s*void 0/;
+
+function replaceNormalizedOptions(_match: string, ...groups: string[]): string {
+  const [options, memo, _expression, preferred, fallback, argument, dependencies] = groups;
+  return options! + '=' + memo! + '(()=>__lfcNormalizeContextOptions(' + preferred! + '??' + fallback! + '(' + argument! + ')),' + dependencies! + ')';
+}
+
+function replaceSelectedValue(_match: string, ...groups: string[]): string {
+  const [selected, current, noPreference, resolveModel, options, terminator] = groups;
+  return selected! + '=' + current! + '===null?' + noPreference! + ':'
+    + options! + '.find((option)=>__lfcContextIdentity(option.value)===__lfcContextIdentity(' + resolveModel! + '(' + options! + ',' + current! + ')))?.value??'
+    + options! + '.find((option)=>__lfcContextIdentity(option.value)===__lfcContextIdentity(' + current! + '))?.value??'
+    + resolveModel! + '(' + options! + ',' + current! + ')??' + current! + terminator!;
+}
+
+function replaceContextRows(_match: string, ...groups: string[]): string {
+  const [current, options, option, selected, extra, extraOption, isRoutable] = groups;
+  return 'if(' + current! + '!==null&&!'+ options! + '.some((' + option! + ')=>' + option! + '.value===' + selected!
+    + '||(__lfcContextIdentity(' + option! + '.value)===__lfcContextIdentity(' + selected! + ')))&&!'
+    + extra! + '.some((' + extraOption! + ')=>' + extraOption! + '.value===' + current!
+    + '||(__lfcContextIdentity(' + extraOption! + '.value)===__lfcContextIdentity(' + current! + ')))&&'
+    + isRoutable! + '(' + current! + '))';
+}
+
+function replaceSelectedModel(_match: string, ...groups: string[]): string {
+  const [options, option, selected] = groups;
+  return options! + '.find((' + option! + ')=>' + option! + '.value===' + selected! + '.value'
+    + '||(__lfcContextIdentity(' + option! + '.value)===__lfcContextIdentity(' + selected! + '.value)))?.value??'
+    + options! + '[0]?.value??void 0';
 }
 
 function findProperty(params: string, property: string): string | undefined {
@@ -191,6 +258,7 @@ function invalid(detail: string, nativeBundleSource: boolean, source: string): N
 export function applyNativeContextPicker(
   source: string,
   contextModes: NativeContextModes,
+  contextAliases: Record<string, string> = {},
 ): NativeContextPickerOutcome {
   const modelKeys = [...new Set(
     Object.entries(contextModes)
@@ -199,15 +267,70 @@ export function applyNativeContextPicker(
       .filter(Boolean),
   )].sort();
   const modelTable = JSON.stringify(Object.fromEntries(modelKeys.map(key => [key, true])));
+  const aliasTable = JSON.stringify(Object.fromEntries(
+    Object.entries(contextAliases).map(([alias, id]) => [alias.trim().toLowerCase(), String(id).trim().toLowerCase()]),
+  ));
+  const contextAliasDeclaration = 'const __lfcContextAliases=JSON.parse(' + JSON.stringify(aliasTable) + ');';
+  const contextModelDeclaration = 'const __lfcContextModels=JSON.parse(' + JSON.stringify(modelTable) + ');';
   const declaration = PATCH_MARKER + 'var __lfcModels=JSON.parse(' + JSON.stringify(modelTable) + ');';
+  const hasCurrentPickerHelpers = (content: string): boolean => [
+    'const __lfcContextAliases=',
+    'const __lfcContextIdentity=function',
+    'const __lfcContextModels=',
+    'const __lfcNormalizeContextOptions=function',
+    '__lfcNormalizeContextOptions(',
+    '__lfcContextIdentity(',
+  ].every(marker => content.includes(marker));
+  const pristineRebuildRequired = (): NativeContextPickerOutcome => ({
+    content: source,
+    result: result('FAIL', 'legacy context picker helper is incomplete; rebuild from a pristine Claude Code binary'),
+  });
 
   if (source.includes(PATCH_MARKER)) {
-    return patchOnce(
+    const declarationUpdate = patchOnce(
       source,
       new RegExp(escaped(PATCH_MARKER) + 'var __lfcModels=JSON\\.parse\\("(?:[^"\\\\]|\\\\.)*"\\);'),
       () => declaration,
       { noopIsSkip: true },
     );
+    if (declarationUpdate.result.status === 'FAIL') return declarationUpdate;
+    const contextAliasUpdate = patchOnce(
+      declarationUpdate.content,
+      /const __lfcContextAliases=JSON\.parse\("(?:[^"\\]|\\.)*"\);/,
+      () => contextAliasDeclaration,
+      { noopIsSkip: true },
+    );
+    const afterContextAlias = contextAliasUpdate.result.status === 'FAIL' && contextAliasUpdate.result.extra === 'anchor not found'
+      ? declarationUpdate.content
+      : contextAliasUpdate.content;
+    if (contextAliasUpdate.result.status === 'FAIL' && contextAliasUpdate.result.extra !== 'anchor not found') return contextAliasUpdate;
+    const contextModelUpdate = patchOnce(
+      afterContextAlias,
+      /const __lfcContextModels=JSON\.parse\("(?:[^"\\]|\\.)*"\);/,
+      () => contextModelDeclaration,
+      { noopIsSkip: true },
+    );
+    const afterContextModels = contextModelUpdate.result.status === 'FAIL' && contextModelUpdate.result.extra === 'anchor not found'
+      ? afterContextAlias
+      : contextModelUpdate.content;
+    if (contextModelUpdate.result.status === 'FAIL' && contextModelUpdate.result.extra !== 'anchor not found') return contextModelUpdate;
+    if (afterContextModels.includes('LEVERFRAME_CONTEXT_SELECTION_BASE_URL')) {
+      if (!hasCurrentPickerHelpers(afterContextModels)) return pristineRebuildRequired();
+      return { content: afterContextModels, result: result('OK') };
+    }
+    const migration = patchOnce(
+      afterContextModels,
+      new RegExp(escaped(LEGACY_PICKER_ENV)),
+      () => CURRENT_PICKER_ENV,
+    );
+    if (migration.result.status === 'FAIL') {
+      return {
+        content: migration.content,
+        result: result('FAIL', 'legacy context picker helper could not be migrated'),
+      };
+    }
+    if (!hasCurrentPickerHelpers(migration.content)) return pristineRebuildRequired();
+    return migration;
   }
 
   if (modelKeys.length === 0) {
@@ -315,8 +438,7 @@ export function applyNativeContextPicker(
     'if(!Object.prototype.hasOwnProperty.call(' + names.models + ',key))return false;',
     'const generation=++' + names.generation + ';',
     names.setPending + '({status:"loading",model:__lfcModelKey,effort:effort});',
-    'const base=typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_BASE_URL:void 0;',
-    'const token=typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_API_KEY:void 0;',
+    CURRENT_PICKER_ENV,
     'if(typeof base!=="string"||!/^http:\\/\\/127\\.0\\.0\\.1(?::\\d+)?(?:\\/|$)/.test(base)||typeof token!=="string"||token.length===0){',
     names.setPending + '({status:"error",model:__lfcModelKey,effort:effort});return true;',
     '}',
@@ -347,14 +469,40 @@ export function applyNativeContextPicker(
     + 'const selected=' + names.pending + '.options.find(function(option){return option.mode===value});'
     + 'if(selected)' + names.commit + '(' + names.pending + '.model,' + names.pending + '.effort,selected);'
     + '},onCancel:function(){' + names.cancel + '();}});}' ;
-  const sharedState = 'var ' + names.generation + '=0;';
+  const contextOptionHelper = CONTEXT_ROW_BASE_HELPER
+    + contextAliasDeclaration
+    + 'const __lfcContextIdentity=function(value){const base=__lfcBaseModel(value);return typeof base==="string"?(__lfcContextAliases[base.toLowerCase()]??base.toLowerCase()):base;};'
+    + contextModelDeclaration
+    + 'const __lfcNormalizeContextOptions=function(value){'
+    + 'if(!Array.isArray(value))return value;'
+    + 'const result=[];const indexes=Object.create(null);'
+    + 'for(const option of value){'
+    + 'if(!option||typeof option!=="object"||typeof option.value!=="string"){result.push(option);continue;}'
+    + 'const base=__lfcContextIdentity(option.value);'
+    + 'if(typeof base!=="string"||!Object.prototype.hasOwnProperty.call(__lfcContextModels,base)){result.push(option);continue;}'
+    + 'const previous=indexes[base];'
+    + 'if(previous===undefined){indexes[base]=result.length;result.push(option);continue;}'
+    + 'const previousOption=result[previous];'
+    + 'if(previousOption&&typeof previousOption.value==="string"&&__lfcBaseModel(previousOption.value)!==previousOption.value&&__lfcBaseModel(option.value)===option.value)result[previous]=option;'
+    + '}'
+    + 'return result;'
+    + '};';
+  const sharedState = 'var ' + names.generation + '=0;' + contextOptionHelper;
   const withHelper = source.slice(0, picker.functionStart)
     + sharedState
     + source.slice(picker.functionStart, picker.bodyStart)
     + helper
     + source.slice(picker.bodyStart);
+  const normalizedOptions = patchOptional(withHelper, NORMALIZE_OPTIONS_PATTERN, replaceNormalizedOptions);
+  if (normalizedOptions.fatal) return normalizedOptions;
+  const selectedValue = patchOptional(normalizedOptions.content, SELECTED_VALUE_PATTERN, replaceSelectedValue);
+  if (selectedValue.fatal) return selectedValue;
+  const contextRows = patchOptional(selectedValue.content, CONTEXT_ROWS_PATTERN, replaceContextRows);
+  if (contextRows.fatal) return contextRows;
+  const selectedModel = patchOptional(contextRows.content, SELECTED_MODEL_PATTERN, replaceSelectedModel);
+  if (selectedModel.fatal) return selectedModel;
   const patched = patchOnce(
-    withHelper,
+    selectedModel.content,
     callbackPattern,
     (_match, model, effort) =>
       'if(' + names.begin + '(' + model! + ',' + effort! + '))return;'
