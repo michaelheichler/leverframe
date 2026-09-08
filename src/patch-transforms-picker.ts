@@ -72,6 +72,60 @@ function patchOnce(
     : { content, result: result('OK') };
 }
 
+interface OptionalPatchOutcome {
+  content: string;
+  result: PatchSiteResult;
+  fatal: boolean;
+}
+
+function patchOptional(
+  source: string,
+  regex: RegExp,
+  replacement: (match: string, ...groups: string[]) => string,
+): OptionalPatchOutcome {
+  const outcome = patchOnce(source, regex, replacement);
+  const missing = outcome.result.status === 'FAIL' && outcome.result.extra === 'anchor not found';
+  return {
+    content: missing ? source : outcome.content,
+    result: outcome.result,
+    fatal: outcome.result.status === 'FAIL' && !missing,
+  };
+}
+
+const NORMALIZE_OPTIONS_PATTERN = /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\(\)=>(([A-Za-z_$][\w$]*)\?\?([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)),(\[[^\]]*\])\)/;
+const SELECTED_VALUE_PATTERN = /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===null\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),\2\)\?\?\2([,;])/;
+const CONTEXT_ROWS_PATTERN = /if\(([A-Za-z_$][\w$]*)!==null&&!([A-Za-z_$][\w$]*)\.some\(\(([A-Za-z_$][\w$]*)\)=>\3\.value===([A-Za-z_$][\w$]*)\)&&!([A-Za-z_$][\w$]*)\.some\(\(([A-Za-z_$][\w$]*)\)=>\6\.value===\1\)&&([A-Za-z_$][\w$]*)\(\1\)\)/;
+const SELECTED_MODEL_PATTERN = /([A-Za-z_$][\w$]*)\.some\(\(([A-Za-z_$][\w$]*)\)=>\2\.value===([A-Za-z_$][\w$]*)\.value\)\?\3\.value:\1\[0\]\?\.value\?\?\s*void 0/;
+
+function replaceNormalizedOptions(_match: string, ...groups: string[]): string {
+  const [options, memo, _expression, preferred, fallback, argument, dependencies] = groups;
+  return options! + '=' + memo! + '(()=>__lfcNormalizeContextOptions(' + preferred! + '??' + fallback! + '(' + argument! + ')),' + dependencies! + ')';
+}
+
+function replaceSelectedValue(_match: string, ...groups: string[]): string {
+  const [selected, current, noPreference, resolveModel, options, terminator] = groups;
+  return selected! + '=' + current! + '===null?' + noPreference! + ':'
+    + options! + '.find((option)=>__lfcContextIdentity(option.value)===__lfcContextIdentity(' + resolveModel! + '(' + options! + ',' + current! + ')))?.value??'
+    + options! + '.find((option)=>__lfcContextIdentity(option.value)===__lfcContextIdentity(' + current! + '))?.value??'
+    + resolveModel! + '(' + options! + ',' + current! + ')??' + current! + terminator!;
+}
+
+function replaceContextRows(_match: string, ...groups: string[]): string {
+  const [current, options, option, selected, extra, extraOption, isRoutable] = groups;
+  return 'if(' + current! + '!==null&&!'+ options! + '.some((' + option! + ')=>' + option! + '.value===' + selected!
+    + '||(__lfcContextIdentity(' + option! + '.value)===__lfcContextIdentity(' + selected! + ')))&&!'
+    + extra! + '.some((' + extraOption! + ')=>' + extraOption! + '.value===' + current!
+    + '||(__lfcContextIdentity(' + extraOption! + '.value)===__lfcContextIdentity(' + current! + ')))&&'
+    + isRoutable! + '(' + current! + '))';
+}
+
+function replaceSelectedModel(_match: string, ...groups: string[]): string {
+  const [options, option, selected] = groups;
+  return options! + '.find((' + option! + ')=>' + option! + '.value===' + selected! + '.value'
+    + '||(__lfcContextIdentity(' + option! + '.value)===__lfcContextIdentity(' + selected! + '.value)))?.value??'
+    + options! + '[0]?.value??void 0';
+}
+
 function findProperty(params: string, property: string): string | undefined {
   const match = new RegExp(
     '(?:^|,)\\s*' + escaped(property) + '\\s*:\\s*([A-Za-z_$][\\w$]*)',
@@ -219,6 +273,18 @@ export function applyNativeContextPicker(
   const contextAliasDeclaration = 'const __lfcContextAliases=JSON.parse(' + JSON.stringify(aliasTable) + ');';
   const contextModelDeclaration = 'const __lfcContextModels=JSON.parse(' + JSON.stringify(modelTable) + ');';
   const declaration = PATCH_MARKER + 'var __lfcModels=JSON.parse(' + JSON.stringify(modelTable) + ');';
+  const hasCurrentPickerHelpers = (content: string): boolean => [
+    'const __lfcContextAliases=',
+    'const __lfcContextIdentity=function',
+    'const __lfcContextModels=',
+    'const __lfcNormalizeContextOptions=function',
+    '__lfcNormalizeContextOptions(',
+    '__lfcContextIdentity(',
+  ].every(marker => content.includes(marker));
+  const pristineRebuildRequired = (): NativeContextPickerOutcome => ({
+    content: source,
+    result: result('FAIL', 'legacy context picker helper is incomplete; rebuild from a pristine Claude Code binary'),
+  });
 
   if (source.includes(PATCH_MARKER)) {
     const declarationUpdate = patchOnce(
@@ -249,6 +315,7 @@ export function applyNativeContextPicker(
       : contextModelUpdate.content;
     if (contextModelUpdate.result.status === 'FAIL' && contextModelUpdate.result.extra !== 'anchor not found') return contextModelUpdate;
     if (afterContextModels.includes('LEVERFRAME_CONTEXT_SELECTION_BASE_URL')) {
+      if (!hasCurrentPickerHelpers(afterContextModels)) return pristineRebuildRequired();
       return { content: afterContextModels, result: result('OK') };
     }
     const migration = patchOnce(
@@ -262,6 +329,7 @@ export function applyNativeContextPicker(
         result: result('FAIL', 'legacy context picker helper could not be migrated'),
       };
     }
+    if (!hasCurrentPickerHelpers(migration.content)) return pristineRebuildRequired();
     return migration;
   }
 
@@ -425,65 +493,16 @@ export function applyNativeContextPicker(
     + source.slice(picker.functionStart, picker.bodyStart)
     + helper
     + source.slice(picker.bodyStart);
-  const normalizedOptions = patchOnce(
-    withHelper,
-    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\(\)=>(([A-Za-z_$][\w$]*)\?\?([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)),(\[[^\]]*\])\)/,
-    (_match, options, memo, _expression, preferred, fallback, argument, dependencies) =>
-      options! + '=' + memo! + '(()=>__lfcNormalizeContextOptions(' + preferred! + '??' + fallback! + '(' + argument! + ')),' + dependencies! + ')',
-  );
-  const withNormalizedOptions = normalizedOptions.result.status === 'FAIL' && normalizedOptions.result.extra === 'anchor not found'
-    ? withHelper
-    : normalizedOptions.content;
-  if (normalizedOptions.result.status === 'FAIL' && normalizedOptions.result.extra !== 'anchor not found') {
-    return normalizedOptions;
-  }
-  const selectedValue = patchOnce(
-    withNormalizedOptions,
-    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===null\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),\2\)\?\?\2([,;])/,
-    (_match, selected, current, noPreference, resolveModel, options, terminator) =>
-      selected! + '=' + current! + '===null?' + noPreference! + ':'
-      + options! + '.find((option)=>__lfcContextIdentity(option.value)===__lfcContextIdentity(' + resolveModel! + '(' + options! + ',' + current! + ')))?.value??'
-      + options! + '.find((option)=>__lfcContextIdentity(option.value)===__lfcContextIdentity(' + current! + '))?.value??'
-      + resolveModel! + '(' + options! + ',' + current! + ')??' + current! + terminator!,
-  );
-  const withSelectedValue = selectedValue.result.status === 'FAIL' && selectedValue.result.extra === 'anchor not found'
-    ? withNormalizedOptions
-    : selectedValue.content;
-  if (selectedValue.result.status === 'FAIL' && selectedValue.result.extra !== 'anchor not found') {
-    return selectedValue;
-  }
-  const contextRows = patchOnce(
-    withSelectedValue,
-    /if\(([A-Za-z_$][\w$]*)!==null&&!([A-Za-z_$][\w$]*)\.some\(\(([A-Za-z_$][\w$]*)\)=>\3\.value===([A-Za-z_$][\w$]*)\)&&!([A-Za-z_$][\w$]*)\.some\(\(([A-Za-z_$][\w$]*)\)=>\6\.value===\1\)&&([A-Za-z_$][\w$]*)\(\1\)\)/,
-    (_match, current, options, option, selected, extra, extraOption, isRoutable) =>
-      'if(' + current! + '!==null&&!'+ options! + '.some((' + option! + ')=>' + option! + '.value===' + selected!
-      + '||(__lfcContextIdentity(' + option! + '.value)===__lfcContextIdentity(' + selected! + ')))&&!'
-      + extra! + '.some((' + extraOption! + ')=>' + extraOption! + '.value===' + current!
-      + '||(__lfcContextIdentity(' + extraOption! + '.value)===__lfcContextIdentity(' + current! + ')))&&'
-      + isRoutable! + '(' + current! + '))',
-  );
-  const withContextRows = contextRows.result.status === 'FAIL' && contextRows.result.extra === 'anchor not found'
-    ? withNormalizedOptions
-    : contextRows.content;
-  if (contextRows.result.status === 'FAIL' && contextRows.result.extra !== 'anchor not found') {
-    return contextRows;
-  }
-  const selectedModel = patchOnce(
-    withContextRows,
-    /([A-Za-z_$][\w$]*)\.some\(\(([A-Za-z_$][\w$]*)\)=>\2\.value===([A-Za-z_$][\w$]*)\.value\)\?\3\.value:\1\[0\]\?\.value\?\?\s*void 0/,
-    (_match, options, option, selected) =>
-      options! + '.find((' + option! + ')=>' + option! + '.value===' + selected! + '.value'
-      + '||(__lfcContextIdentity(' + option! + '.value)===__lfcContextIdentity(' + selected! + '.value)))?.value??'
-      + options! + '[0]?.value??void 0',
-  );
-  const withSelectedModel = selectedModel.result.status === 'FAIL' && selectedModel.result.extra === 'anchor not found'
-    ? withContextRows
-    : selectedModel.content;
-  if (selectedModel.result.status === 'FAIL' && selectedModel.result.extra !== 'anchor not found') {
-    return selectedModel;
-  }
+  const normalizedOptions = patchOptional(withHelper, NORMALIZE_OPTIONS_PATTERN, replaceNormalizedOptions);
+  if (normalizedOptions.fatal) return normalizedOptions;
+  const selectedValue = patchOptional(normalizedOptions.content, SELECTED_VALUE_PATTERN, replaceSelectedValue);
+  if (selectedValue.fatal) return selectedValue;
+  const contextRows = patchOptional(selectedValue.content, CONTEXT_ROWS_PATTERN, replaceContextRows);
+  if (contextRows.fatal) return contextRows;
+  const selectedModel = patchOptional(contextRows.content, SELECTED_MODEL_PATTERN, replaceSelectedModel);
+  if (selectedModel.fatal) return selectedModel;
   const patched = patchOnce(
-    withSelectedModel,
+    selectedModel.content,
     callbackPattern,
     (_match, model, effort) =>
       'if(' + names.begin + '(' + model! + ',' + effort! + '))return;'

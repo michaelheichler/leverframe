@@ -331,6 +331,35 @@ describe('native context picker transform', () => {
     expect(migrated.content).not.toContain(legacyEnvironment);
   });
 
+  it('rejects a marker-bearing helper that cannot be upgraded in place', () => {
+    const currentEnvironment = [
+      'const configuredBase=typeof process==="object"&&process&&process.env?process.env.LEVERFRAME_CONTEXT_SELECTION_BASE_URL:void 0;',
+      'const configuredToken=typeof process==="object"&&process&&process.env?process.env.LEVERFRAME_CONTEXT_SELECTION_TOKEN:void 0;',
+      'const baseValue=typeof configuredBase==="string"&&configuredBase.trim()!==""?configuredBase:typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_BASE_URL:void 0;',
+      'const base=typeof baseValue==="string"?baseValue.trim():void 0;',
+      'const token=typeof configuredToken==="string"&&configuredToken.length>0?configuredToken:typeof process==="object"&&process&&process.env?process.env.ANTHROPIC_API_KEY:void 0;',
+    ].join('');
+    const incomplete = '/*ccpatch:context-mode-picker*/var __lfcModels=JSON.parse("{}");'
+      + currentEnvironment
+      + pickerSource();
+    const outcome = applyNativeContextPicker(incomplete, {
+      'leverframe:provider:model': { default: 272_000, maximum: 872_000 },
+    });
+    expect(outcome.result).toEqual({
+      status: 'FAIL',
+      name: 'PATCH 12: context mode picker',
+      extra: 'legacy context picker helper is incomplete; rebuild from a pristine Claude Code binary',
+    });
+  });
+
+  it('keeps a fully migrated helper idempotent', () => {
+    const modes = { 'leverframe:provider:model': { default: 272_000, maximum: 872_000 } };
+    const first = applyNativeContextPicker(pickerSource(), modes);
+    const second = applyNativeContextPicker(first.content, modes);
+    expect(second.result).toEqual({ status: 'OK', name: 'PATCH 12: context mode picker' });
+    expect(second.content).toBe(first.content);
+  });
+
   it('freshly validates a default-only external model before selecting it', async () => {
     const result = applyNativeContextPicker(pickerSource(), {
       'leverframe:provider:model': { default: 301_000 },

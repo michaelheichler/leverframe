@@ -13,30 +13,36 @@ import {
 } from '../src/claude-bundle-repack.js';
 import { classifyClaudeExecutable } from '../src/claude-bundle.js';
 
-function singleModuleBunData(contents: Buffer, bytecode: Buffer): BunData {
-  const name = Buffer.from('claude');
+function bunDataWithModules(
+  modules: Array<{ name: string; contents: Buffer; bytecode: Buffer }>,
+): BunData {
   let cursor = 0;
   const place = (value: Buffer): { offset: number; length: number } => {
     const result = { offset: cursor, length: value.length };
     cursor += value.length + 1;
     return result;
   };
-  const namePointer = place(name);
-  const contentsPointer = place(contents);
-  const bytecodePointer = place(bytecode);
+  const pointers = modules.map(module => ({
+    name: place(Buffer.from(module.name)),
+    contents: place(module.contents),
+    bytecode: place(module.bytecode),
+  }));
   const modulesOffset = cursor;
-  const offsetsOffset = modulesOffset + SIZEOF_MODULE_NEW;
+  const offsetsOffset = modulesOffset + SIZEOF_MODULE_NEW * modules.length;
   const bunData = Buffer.alloc(offsetsOffset + SIZEOF_OFFSETS + BUN_TRAILER.length);
-  name.copy(bunData, namePointer.offset);
-  contents.copy(bunData, contentsPointer.offset);
-  bytecode.copy(bunData, bytecodePointer.offset);
-
-  bunData.writeUInt32LE(namePointer.offset, modulesOffset);
-  bunData.writeUInt32LE(namePointer.length, modulesOffset + 4);
-  bunData.writeUInt32LE(contentsPointer.offset, modulesOffset + 8);
-  bunData.writeUInt32LE(contentsPointer.length, modulesOffset + 12);
-  bunData.writeUInt32LE(bytecodePointer.offset, modulesOffset + 24);
-  bunData.writeUInt32LE(bytecodePointer.length, modulesOffset + 28);
+  modules.forEach((module, index) => {
+    const pointer = pointers[index]!;
+    const moduleOffset = modulesOffset + index * SIZEOF_MODULE_NEW;
+    Buffer.from(module.name).copy(bunData, pointer.name.offset);
+    module.contents.copy(bunData, pointer.contents.offset);
+    module.bytecode.copy(bunData, pointer.bytecode.offset);
+    bunData.writeUInt32LE(pointer.name.offset, moduleOffset);
+    bunData.writeUInt32LE(pointer.name.length, moduleOffset + 4);
+    bunData.writeUInt32LE(pointer.contents.offset, moduleOffset + 8);
+    bunData.writeUInt32LE(pointer.contents.length, moduleOffset + 12);
+    bunData.writeUInt32LE(pointer.bytecode.offset, moduleOffset + 24);
+    bunData.writeUInt32LE(pointer.bytecode.length, moduleOffset + 28);
+  });
 
   bunData.writeBigUInt64LE(BigInt(offsetsOffset), offsetsOffset);
   bunData.writeUInt32LE(modulesOffset, offsetsOffset + 8);
@@ -47,13 +53,17 @@ function singleModuleBunData(contents: Buffer, bytecode: Buffer): BunData {
     bunData,
     bunOffsets: {
       byteCount: BigInt(offsetsOffset),
-      modulesPtr: { offset: modulesOffset, length: SIZEOF_MODULE_NEW },
+      modulesPtr: { offset: modulesOffset, length: SIZEOF_MODULE_NEW * modules.length },
       entryPointId: 0,
       compileExecArgvPtr: { offset: 0, length: 0 },
       flags: 0,
     },
     moduleStructSize: SIZEOF_MODULE_NEW,
   };
+}
+
+function singleModuleBunData(contents: Buffer, bytecode: Buffer): BunData {
+  return bunDataWithModules([{ name: 'claude', contents, bytecode }]);
 }
 
 describe('native Claude module graph', () => {
@@ -98,6 +108,40 @@ describe('native Claude module graph', () => {
 
     expect(getStringPointerContent(rebuilt, module.contents)).toEqual(Buffer.from('new source'));
     expect(getStringPointerContent(rebuilt, module.bytecode)).toHaveLength(0);
+  });
+
+  it('invalidates bytecode only for changed modules in a module replacement map', () => {
+    const unchangedContents = Buffer.from('// @bun @bytecode\nentry source');
+    const unchangedBytecode = Buffer.from([0xca, 0xfe, 0xba, 0xbe]);
+    const changedName = '/$bunfs/root/chunk-agent.js';
+    const fixture = bunDataWithModules([
+      { name: 'claude', contents: unchangedContents, bytecode: unchangedBytecode },
+      {
+        name: changedName,
+        contents: Buffer.from('// @bun @bytecode\nold chunk source'),
+        bytecode: Buffer.from([0xde, 0xad, 0xbe, 0xef]),
+      },
+    ]);
+    const rebuilt = rebuildBunData(
+      fixture.bunData,
+      fixture.bunOffsets,
+      new Map([[changedName, Buffer.from('// @bun @bytecode\nnew chunk source')]]),
+      fixture.moduleStructSize,
+      false,
+    );
+    const offsetsOffset = rebuilt.length - SIZEOF_OFFSETS - BUN_TRAILER.length;
+    const modulesOffset = rebuilt.readUInt32LE(offsetsOffset + 8);
+    const entry = parseCompiledModuleGraphFile(rebuilt, modulesOffset, fixture.moduleStructSize);
+    const chunk = parseCompiledModuleGraphFile(
+      rebuilt,
+      modulesOffset + fixture.moduleStructSize,
+      fixture.moduleStructSize,
+    );
+
+    expect(getStringPointerContent(rebuilt, entry.contents)).toEqual(unchangedContents);
+    expect(getStringPointerContent(rebuilt, entry.bytecode)).toEqual(unchangedBytecode);
+    expect(getStringPointerContent(rebuilt, chunk.contents)).toEqual(Buffer.from('new chunk source'));
+    expect(getStringPointerContent(rebuilt, chunk.bytecode)).toHaveLength(0);
   });
 
   it('removes Bun bytecode source markers when falling back to source parsing', () => {
