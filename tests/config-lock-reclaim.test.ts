@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _configLockInternals as lock } from '../src/config-lock.js';
@@ -54,6 +54,21 @@ it('recovers an empty guard left by a terminated reclaimer', () => {
   const release = lock.tryAcquire(path, { isAlive: () => false });
   expect(release).toBeTypeOf('function');
   release?.();
+});
+
+it.each(['file', 'symlink'])('treats a %s reclaim path as occupied without changing it', kind => {
+  const home = mkdtempSync(join(tmpdir(), 'leverframe-reclaim-malformed-'));
+  homes.push(home);
+  const path = join(home, 'config.lock');
+  const original = JSON.stringify({ pid: 2147483647, startedAt: 0, nonce: 'stale' });
+  writeFileSync(path, original);
+  const target = join(home, 'untouched');
+  writeFileSync(target, 'preserved');
+  if (kind === 'file') writeFileSync(`${path}.reclaim`, 'preserved');
+  else symlinkSync(target, `${path}.reclaim`);
+  expect(lock.tryAcquire(path, { isAlive: () => false })).toBeNull();
+  expect(readFileSync(path, 'utf8')).toBe(original);
+  expect(readFileSync(`${path}.reclaim`, 'utf8')).toBe('preserved');
 });
 
 it('recovers a dead reclaimer but preserves a live guard owner', () => {

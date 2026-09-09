@@ -11,7 +11,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { getAppHome } from './paths.js';
+import { ensureLegacyAppHomeMigrated, getAppHome } from './paths.js';
 import { acquireConfigReclaimGuard } from './config-reclaim-guard.js';
 
 export const CONFIG_DIR_MODE = 0o700;
@@ -227,6 +227,7 @@ function sleepSync(ms: number): void {
 }
 
 export function withConfigWriteLock<T>(mutate: () => T): T {
+  ensureLegacyAppHomeMigrated();
   const lockPath = getConfigLockPath();
   const release = acquireConfigLockSync(lockPath);
   try {
@@ -249,6 +250,7 @@ function acquireConfigLockSync(lockPath = getConfigLockPath()): () => void {
 }
 
 export async function acquireServerPasswordLock(): Promise<() => void> {
+  ensureLegacyAppHomeMigrated();
   const lockPath = getServerPasswordLockPath();
   const deadline = Date.now() + CONFIG_LOCK_WAIT_MS;
   for (;;) {

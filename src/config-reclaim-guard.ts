@@ -47,6 +47,7 @@ export function acquireConfigReclaimGuard(path: string, isAlive: (pid: number) =
         };
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'ENOTDIR') return null;
         if (code !== 'EEXIST' && code !== 'ENOTEMPTY') throw error;
         if (!reclaimDeadGuard(path, isAlive)) return null;
       }

@@ -135,7 +135,7 @@
 {"complexity":0,"fan_out":0,"file_lines":21,"ignores":0,"max_fn_lines":21,"path":"src/registry/index.ts"},
 {"complexity":29,"fan_out":6,"file_lines":251,"ignores":0,"max_fn_lines":65,"path":"src/registry/io.ts"},
 {"complexity":8,"fan_out":5,"file_lines":52,"ignores":0,"max_fn_lines":52,"path":"src/registry/load.ts"},
-{"complexity":20,"fan_out":4,"file_lines":390,"ignores":0,"max_fn_lines":101,"path":"src/registry/lock.ts"},
+{"complexity":8,"fan_out":4,"file_lines":390,"ignores":0,"max_fn_lines":28,"path":"src/registry/lock.ts"},
 {"complexity":14,"fan_out":11,"file_lines":150,"ignores":0,"max_fn_lines":53,"path":"src/registry/materialize.ts"},
 {"complexity":5,"fan_out":1,"file_lines":23,"ignores":0,"max_fn_lines":23,"path":"src/registry/migrate.ts"},
 {"complexity":8,"fan_out":3,"file_lines":31,"ignores":0,"max_fn_lines":31,"path":"src/registry/model-source.ts"},

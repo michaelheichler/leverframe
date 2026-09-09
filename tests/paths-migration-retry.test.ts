@@ -5,8 +5,10 @@ import { spawnSync } from 'node:child_process';
 import ts from 'typescript';
 import { tmpdir } from 'node:os';
 import { ensureLegacyAppHomeMigrated, resetLegacyMigrationForTests } from '../src/paths.js';
+import { withConfigWriteLock } from '../src/config-lock.js';
+import { withRegistryWriteLockSync } from '../src/registry/lock.js';
 
-const failures = vi.hoisted(() => ({ copy: true, collide: false, merge: false, onMerge: undefined as (() => void) | undefined }));
+const failures = vi.hoisted(() => ({ copy: true, collide: false, merge: false, onMerge: undefined as (() => void) | undefined, onCollision: undefined as (() => void) | undefined }));
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
   return { ...actual, cpSync: (...args: Parameters<typeof actual.cpSync>) => {
@@ -18,10 +20,11 @@ vi.mock('node:fs', async (importOriginal) => {
     if (failures.copy || (failures.merge && String(args[1]).includes('.leverframe/config'))) throw new Error('injected copy failure');
     return actual.cpSync(...args);
   }, renameSync: (...args: Parameters<typeof actual.renameSync>) => {
-    if (failures.collide) {
+    if (failures.collide && String(args[1]).endsWith('/.leverframe')) {
       failures.collide = false;
       actual.mkdirSync(String(args[1]), { recursive: true });
       actual.writeFileSync(join(String(args[1]), 'new-setting.json'), 'preserve');
+      failures.onCollision?.();
     }
     return actual.renameSync(...args);
   } };
@@ -32,6 +35,33 @@ afterEach(() => {
   resetLegacyMigrationForTests();
   failures.collide = false;
   failures.merge = false;
+  failures.onCollision = undefined;
+  failures.onMerge = undefined;
+  vi.unstubAllEnvs();
+});
+
+it.each(['reader', 'config writer', 'registry writer'])('blocks a competing %s before the pending marker exists', kind => {
+  const home = mkdtempSync(join(tmpdir(), 'leverframe-migration-admission-'));
+  homes.push(home);
+  vi.stubEnv('HOME', home);
+  vi.stubEnv('LEVERFRAME_HOME', '');
+  mkdirSync(join(home, '.clodex'));
+  writeFileSync(join(home, '.clodex', 'config.json'), 'legacy');
+  failures.copy = false;
+  failures.collide = true;
+  let competingError: unknown;
+  let ran = false;
+  failures.onCollision = () => {
+    try {
+      if (kind === 'reader') ensureLegacyAppHomeMigrated();
+      else if (kind === 'config writer') withConfigWriteLock(() => { ran = true; });
+      else withRegistryWriteLockSync(() => { ran = true; });
+    } catch (error) { competingError = error; }
+  };
+  ensureLegacyAppHomeMigrated();
+  expect(String(competingError)).toContain('migration is already in progress');
+  expect(ran).toBe(false);
+  expect(readFileSync(join(home, '.leverframe', 'config.json'), 'utf8')).toBe('legacy');
 });
 
 it('recovers a partial merge into a concurrently created destination', () => {

@@ -47,14 +47,24 @@ let legacyMigrationDone = false;
 export function ensureLegacyAppHomeMigrated(env: HomeEnv = process.env): void {
   if (legacyMigrationDone || resolveAppHomeOverride(env)) return;
   const appHome = getAppHome(env);
-  const pendingMerge = join(appHome, '.legacy-migration-pending');
-  if (existsSync(appHome) && !existsSync(pendingMerge)) {
-    legacyMigrationDone = true;
-    return;
-  }
   const legacyHome = [getLegacyAppHome(env), getOlderLegacyAppHome(env)].find(path => existsSync(path));
   if (!legacyHome) return;
+  const release = acquireConfigReclaimGuard(`${appHome}.migration-lock`, pid => {
+    try { process.kill(pid, 0); return true; } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'EPERM';
+    }
+  });
+  if (!release) throw new Error('Legacy home migration is already in progress. Retry after it completes.');
+  try {
+    const pendingMerge = join(appHome, '.legacy-migration-pending');
+    if (!existsSync(appHome) || existsSync(pendingMerge)) migrateLegacyHome(legacyHome, appHome, pendingMerge);
+    legacyMigrationDone = true;
+  } finally {
+    release();
+  }
+}
 
+function migrateLegacyHome(legacyHome: string, appHome: string, pendingMerge: string): void {
   const stagingHome = mkdtempSync(`${appHome}.migration-`);
   try {
     for (const entry of readdirSync(legacyHome)) {
@@ -68,28 +78,17 @@ export function ensureLegacyAppHomeMigrated(env: HomeEnv = process.env): void {
       if ((code !== 'EEXIST' && code !== 'ENOTEMPTY') || !existsSync(appHome)) throw error;
       mergeLegacyStaging(stagingHome, appHome, pendingMerge);
     }
-    legacyMigrationDone = true;
   } finally {
     rmSync(stagingHome, { recursive: true, force: true });
   }
 }
 
 function mergeLegacyStaging(stagingHome: string, appHome: string, pendingMerge: string): void {
-  const release = acquireConfigReclaimGuard(`${appHome}.migration-lock`, pid => {
-    try { process.kill(pid, 0); return true; } catch (error) {
-      return (error as NodeJS.ErrnoException).code === 'EPERM';
-    }
-  });
-  if (!release) throw new Error('Legacy home migration is already in progress. Retry after it completes.');
-  try {
-    writeFileSync(pendingMerge, '', { mode: 0o600 });
-    for (const entry of readdirSync(stagingHome)) {
-      cpSync(join(stagingHome, entry), join(appHome, entry), { recursive: true, force: false });
-    }
-    rmSync(pendingMerge, { force: true });
-  } finally {
-    release();
+  writeFileSync(pendingMerge, '', { mode: 0o600 });
+  for (const entry of readdirSync(stagingHome)) {
+    cpSync(join(stagingHome, entry), join(appHome, entry), { recursive: true, force: false });
   }
+  rmSync(pendingMerge, { force: true });
 }
 
 export function resetLegacyMigrationForTests(): void {

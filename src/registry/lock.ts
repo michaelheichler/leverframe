@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { getAppHome, getProvidersPath } from '../paths.js';
+import { ensureLegacyAppHomeMigrated, getAppHome, getProvidersPath } from '../paths.js';
 
 const DEFAULT_WAIT_MS = 30_000;
 const DEFAULT_CREDENTIAL_WAIT_MS = 150_000;
@@ -304,6 +304,7 @@ export async function withRegistryWriteLock<T>(
   operation: () => Promise<T> | T,
   options: RegistryLockOptions = {},
 ): Promise<T> {
+  if (!options.lockPath) ensureLegacyAppHomeMigrated();
   const lockPath = options.lockPath ?? getRegistryLockPath();
   const inherited = lockContext.getStore()?.leases;
   if (inherited?.get(lockPath)?.active) return operation();
@@ -335,6 +336,7 @@ export function withRegistryWriteLockSync<T>(
   operation: () => T,
   options: RegistryLockOptions = {},
 ): T {
+  if (!options.lockPath) ensureLegacyAppHomeMigrated();
   const lockPath = options.lockPath ?? getRegistryLockPath();
   const inherited = lockContext.getStore()?.leases;
   if (inherited?.get(lockPath)?.active) return operation();
