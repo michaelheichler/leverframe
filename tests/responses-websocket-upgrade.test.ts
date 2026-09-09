@@ -88,15 +88,12 @@ async function startImmediateCloseServer(): Promise<UpgradeServer> {
 async function startHangingUpgradeServer(): Promise<UpgradeServer & { accepted: Promise<void> }> {
   let attempts = 0;
   const server = createServer();
-  const accepted = new Promise<void>(resolve => server.once('upgrade', () => resolve()));
+  const accepted = new Promise<void>(resolve => server.on('upgrade', () => { attempts += 1; resolve(); }));
   openServers.push(server);
   server.on('connection', socket => {
     openSockets.add(socket);
     socket.on('error', () => {});
     socket.once('close', () => openSockets.delete(socket));
-  });
-  server.on('upgrade', () => {
-    attempts += 1;
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
@@ -152,7 +149,6 @@ describe('Responses WebSocket rejected upgrades', () => {
     [529, true],
   ])('preserves HTTP %i as a typed upgrade failure', async (status, retryable) => {
     const server = await startRejectionServer(status);
-
     await expect(request(server)).rejects.toMatchObject({
       name: 'ProviderTransportError',
       phase: 'websocket_upgrade',
@@ -169,7 +165,6 @@ describe('Responses WebSocket rejected upgrades', () => {
     ['with an explanatory body', JSON.stringify({ error: 'permission denied' })],
   ])('treats an HTTP 403 upgrade rejection %s as a retryable throttle', async (_label, body) => {
     const server = await startRejectionServer(403, body);
-
     await expect(request(server)).rejects.toMatchObject({
       name: 'ProviderTransportError',
       phase: 'websocket_upgrade',
@@ -187,7 +182,6 @@ describe('Responses WebSocket rejected upgrades', () => {
       'x-request-id': 'req-delta',
       'set-cookie': ['private-cookie'],
     });
-
     await expect(request(server)).rejects.toMatchObject({
       httpStatus: 429,
       providerRequestId: 'req-delta',
@@ -203,7 +197,6 @@ describe('Responses WebSocket rejected upgrades', () => {
   it('parses HTTP-date Retry-After', async () => {
     const retryDate = new Date(Date.now() + 5_000).toUTCString();
     const server = await startRejectionServer(429, '', { 'retry-after': retryDate });
-
     try {
       await request(server);
       throw new Error('expected rejected upgrade');
@@ -223,9 +216,7 @@ describe('Responses WebSocket rejected upgrades', () => {
   ])('does not expose %s rejected response bodies', async (_label, body) => {
     const diagnostics: ResponsesWebSocketDiagnosticEvent[] = [];
     const server = await startRejectionServer(502, body);
-
     const result = request(server, { onDiagnostic: event => diagnostics.push(event) });
-
     await expect(result).rejects.not.toThrow(/not-json|xxxx|secret-sentinel/);
     await vi.waitFor(() => {
       const bodyDiagnostic = diagnostics.find(event => event.event === 'ws_upgrade_response_body');
@@ -241,7 +232,6 @@ describe('Responses WebSocket rejected upgrades', () => {
     const server = await startRejectionServer(407, 'proxy credentials rejected', {
       'x-request-id': 'proxy-request',
     });
-
     await expect(request(server)).rejects.toMatchObject({
       phase: 'websocket_upgrade',
       httpStatus: 407,
@@ -274,7 +264,6 @@ describe('Responses WebSocket rejected upgrades', () => {
   it('settles an immediate handshake close without waiting for the stream idle timeout', async () => {
     const server = await startImmediateCloseServer();
     const startedAt = performance.now();
-
     await expect(request(server)).rejects.toMatchObject({
       name: 'ProviderTransportError',
       phase: 'connect',
