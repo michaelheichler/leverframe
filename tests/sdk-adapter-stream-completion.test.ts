@@ -58,6 +58,15 @@ describe('Anthropic parallel tool completion', () => {
     expectTools(events);
   });
 
+  it('parses finalized JSON-string tool inputs', async () => {
+    const events = await collect([
+      { type: 'tool-call', toolCallId: 'a', toolName: 'Read', input: '{"path":"a"}' },
+      { type: 'tool-call', toolCallId: 'b', toolName: 'Read', input: '{"path":"b"}' },
+      { type: 'finish', finishReason: 'tool-calls' },
+    ]);
+    expectTools(events);
+  });
+
   it('flushes every unfinished tool at stream termination', async () => {
     const events = await collect([
       { type: 'tool-input-start', id: 'a', toolName: 'Read' },

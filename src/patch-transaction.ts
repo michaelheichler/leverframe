@@ -291,7 +291,12 @@ export async function applyPatchTransactionV2(
     return { ok: false, message: 'The live claude injection marker is ambiguous.' };
   }
 
-  const targetIdentity = lstatSync(canonicalPath);
+  let targetIdentity;
+  try {
+    targetIdentity = lstatSync(canonicalPath);
+  } catch (error) {
+    return { ok: false, message: `Could not inspect the live target: ${error instanceof Error ? error.message : String(error)}` };
+  }
   let baselineSourcePath = canonicalPath;
   let expectedBaselineHash = live.sha256;
   let provenance: BaselineProvenance = 'live';
@@ -465,7 +470,12 @@ export async function restorePatchTransactionV2(
   if (!manifest) return { ok: false, message: 'Injected claude has no patch manifest for this target.' };
   if (!existsSync(manifest.baselinePath)) return { ok: false, message: 'The saved baseline is missing.' };
 
-  const targetIdentity = lstatSync(canonicalPath);
+  let targetIdentity;
+  try {
+    targetIdentity = lstatSync(canonicalPath);
+  } catch (error) {
+    return { ok: false, message: `Could not inspect the live target: ${error instanceof Error ? error.message : String(error)}` };
+  }
   ensureBaselineExecutable(manifest.baselinePath);
   const backup = await runtime.inspect(manifest.baselinePath);
   if (!isVerifiedPristineBaselineInspection(backup, version, manifest.baselineSha256) && !backup.readable) {
@@ -501,7 +511,7 @@ export async function restorePatchTransactionV2(
 
   const stage = sameDirectoryStagePath(canonicalPath, 'restore');
   try {
-    copyImmutableFileSync(manifest.baselinePath, stage, { mode: statSync(canonicalPath).mode & 0o777 });
+    copyImmutableFileSync(manifest.baselinePath, stage, { mode: targetIdentity.mode & 0o777 });
     const candidate = await runtime.inspect(stage);
     if (
       !isVerifiedPristineBaselineInspection(candidate, version, backup.sha256 ?? '')

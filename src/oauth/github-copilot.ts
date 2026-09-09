@@ -292,7 +292,7 @@ export async function pollGitHubCopilotDeviceCodeToken(
         if (response.status === 429 || response.status >= 500) {
           if (transientFailures < MAX_TRANSIENT_RETRIES) {
             transientFailures += 1;
-            await response.body?.cancel();
+            void response.body?.cancel().catch(() => {});
             options.onWarning?.({ endpoint: TOKEN_ENDPOINT, status: response.status });
             return null;
           }

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -77,6 +77,38 @@ afterEach(() => {
   else process.env['LEVERFRAME_HOME'] = previousHome;
 });
 const apply = (selectedRuntime = runtime) => applyPatchTransactionV2({ installation, desiredConfig: CONFIG, configHash: 'cfg', manifest: readManifestV2(installation.identity), trace: false }, selectedRuntime);
+
+it.each(['apply', 'restore'])('returns a failure if the target disappears during %s inspection', async operation => {
+  if (operation === 'restore') expect((await apply()).ok).toBe(true);
+  const selectedRuntime: PatchRuntime = { ...runtime, async inspect(path, knownHash) {
+    const result = await runtime.inspect(path, knownHash);
+    if (path === installation.canonicalPath) rmSync(path);
+    return result;
+  } };
+  const outcome = operation === 'apply' ? apply(selectedRuntime)
+    : restorePatchTransactionV2({ installation, manifest: readManifestV2(installation.identity) }, selectedRuntime);
+  await expect(outcome).resolves.toMatchObject({ ok: false });
+});
+
+it('restores permissions from the captured target identity', async () => {
+  expect((await apply()).ok).toBe(true);
+  chmodSync(installation.canonicalPath, 0o700);
+  const manifest = readManifestV2(installation.identity);
+  const outcome = await restorePatchTransactionV2({ installation, manifest }, { ...runtime, async inspect(path, knownHash) {
+    const result = await runtime.inspect(path, knownHash);
+    if (path === manifest?.baselinePath) chmodSync(installation.canonicalPath, 0o600);
+    return result;
+  } });
+  expect(outcome.ok).toBe(true);
+  expect(statSync(installation.canonicalPath).mode & 0o777).toBe(0o700);
+});
+
+it('reports state inspection errors without blaming a concurrent patcher', async () => {
+  const presenter = { error: vi.fn(), warn: vi.fn(), success: vi.fn(), detail: vi.fn(), notice: vi.fn(), confirm: vi.fn(async () => false) };
+  expect(await runPatchCommandV2({ installation, runtime: { ...runtime, inspect: async () => { throw new Error('fixture inspection failure'); } } }, presenter)).toBe(1);
+  expect(presenter.error).toHaveBeenCalledWith(expect.stringContaining('fixture inspection failure'));
+  expect(presenter.warn).not.toHaveBeenCalled();
+});
 
 it('recovers a restore post-image from the older baseline-only journal phase', async () => {
   expect((await apply()).ok).toBe(true);

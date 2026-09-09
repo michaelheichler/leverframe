@@ -29,6 +29,10 @@ export async function handleOpenAIChatCompletions(
     return;
   }
 
+  if (!Array.isArray(body.messages)) {
+    sendJson(res, 400, { error: { message: 'messages must be an array', type: 'invalid_request_error' } });
+    return;
+  }
   const model = lookupModel(res, options.catalog, body.model);
   if (!model) return;
   const routeValidation = await validateOpenAiChatRoute(model);
@@ -88,128 +92,136 @@ export async function handleOpenAIChatCompletions(
   res.once('close', () => openAiExecution.dispose());
   openAiExecution.startResolving();
 
-  if (supportsDirectOpenAIChatCompletions(model)) {
-    const completionsUrl = model.completionsUrl!;
+  try {
+    if (supportsDirectOpenAIChatCompletions(model)) {
+      const completionsUrl = model.completionsUrl!;
+      const apiKey = model.apiKey ?? options.apiKey;
+      const forwardBody = body.model === upstreamModelId(model) ? body : { ...body, model: upstreamModelId(model) };
+      auditInference(options, {
+        modelId: body.model,
+        effort: openAiEffort(body),
+        provider: inferenceProvider(model),
+        route: 'passthrough',
+        requestPreview: getLatestMessagePreview(body.messages, body.system),
+      });
+      applyExecutionHeaders(res, openAiTracking);
+      const directStream = Boolean(body.stream);
+      await relayAnthropicMessages(res, completionsUrl, forwardBody, apiKey, directStream, {
+        extraHeaders: model.headers,
+        responseModelId: getResponseModelId(body.model, model, options),
+        onObservedText: text => {
+          if (directStream) {
+            openAiTracking.observeOpenAiSseText(text);
+            return;
+          }
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(text);
+          } catch {
+            return;
+          }
+          openAiTracking.observeNonStreamOpenAi(parsed);
+        },
+        onUpstreamError: options.inferenceLogPath
+          ? (statusCode, errorContent) => writeInferenceResponseErrorLog(options.inferenceLogPath!, {
+              modelId: body.model,
+              provider: inferenceProvider(model),
+              route: 'passthrough',
+              statusCode,
+              errorContent,
+            })
+          : undefined,
+        lifecycle: openAiExecution,
+      });
+      if (openAiExecution.finish()) openAiTracking.fail(undefined);
+      return;
+    }
+
+    const npm = model.npm || (model.modelFormat === 'anthropic' ? '@ai-sdk/anthropic' : undefined);
+    if (!npm) {
+      sendJson(res, 400, { error: { message: `No SDK provider for model: ${model.id}` } });
+      return;
+    }
+
     const apiKey = model.apiKey ?? options.apiKey;
-    const forwardBody = body.model === upstreamModelId(model) ? body : { ...body, model: upstreamModelId(model) };
     auditInference(options, {
       modelId: body.model,
       effort: openAiEffort(body),
       provider: inferenceProvider(model),
-      route: 'passthrough',
+      route: 'translated',
       requestPreview: getLatestMessagePreview(body.messages, body.system),
     });
-    applyExecutionHeaders(res, openAiTracking);
-    const directStream = Boolean(body.stream);
-    await relayAnthropicMessages(res, completionsUrl, forwardBody, apiKey, directStream, {
-      extraHeaders: model.headers,
-      onObservedText: text => {
-        if (directStream) {
-          openAiTracking.observeOpenAiSseText(text);
-          return;
-        }
-        let parsed: unknown;
+    const baseURL = model.modelFormat === 'anthropic' ? model.baseUrl : model.apiBaseUrl;
+    const languageModel = await getOrInitLanguageModel(modelCache, model, npm, baseURL, apiKey);
+    const openAiOAuth = npm === '@ai-sdk/openai' && model.authType === 'oauth';
+    const params = translateOpenAiRequest(body as unknown as OpenAiRequest, { openAiOAuth });
+    const clientWantsStream = Boolean(body.stream);
+    const responseModelId = getResponseModelId(body.model, model, options);
+
+    plog(() => `sdk-openai npm=${npm} upstream=${upstreamModelId(model)} responseModel=${responseModelId} stream=${clientWantsStream}`);
+
+    try {
+      if (clientWantsStream) {
+        const sse = createTrackedSseResponse({
+          res,
+          clientAbortSignal: openAiClientAbort.signal,
+          applyHeaders: () => applyExecutionHeaders(res, openAiTracking),
+          observeChunk: openAiTracking.observeOpenAiSseText,
+        });
+        sse.start();
         try {
-          parsed = JSON.parse(text);
-        } catch {
-          return;
+          await streamOpenAiResponse(languageModel, params, responseModelId, sse.writeChunk, {
+            abortSignal: openAiClientAbort.signal,
+            lifecycle: openAiExecution,
+          });
+          openAiExecution.markStreamActivity();
+          openAiExecution.complete();
+          if (!res.headersSent) sse.writeChunk('');
+          res.end();
+        } finally {
+          sse.stop();
         }
-        openAiTracking.observeNonStreamOpenAi(parsed);
-      },
-      onUpstreamError: options.inferenceLogPath
-        ? (statusCode, errorContent) => writeInferenceResponseErrorLog(options.inferenceLogPath!, {
-            modelId: body.model,
-            provider: inferenceProvider(model),
-            route: 'passthrough',
-            statusCode,
-            errorContent,
-          })
-        : undefined,
-      lifecycle: openAiExecution,
-    });
-    return;
-  }
+      } else {
 
-  const npm = model.npm || (model.modelFormat === 'anthropic' ? '@ai-sdk/anthropic' : undefined);
-  if (!npm) {
-    sendJson(res, 400, { error: { message: `No SDK provider for model: ${model.id}` } });
-    return;
-  }
-
-  const apiKey = model.apiKey ?? options.apiKey;
-  auditInference(options, {
-    modelId: body.model,
-    effort: openAiEffort(body),
-    provider: inferenceProvider(model),
-    route: 'translated',
-    requestPreview: getLatestMessagePreview(body.messages, body.system),
-  });
-  const baseURL = model.modelFormat === 'anthropic' ? model.baseUrl : model.apiBaseUrl;
-  const languageModel = await getOrInitLanguageModel(modelCache, model, npm, baseURL, apiKey);
-  const openAiOAuth = npm === '@ai-sdk/openai' && model.authType === 'oauth';
-  const params = translateOpenAiRequest(body as unknown as OpenAiRequest, { openAiOAuth });
-  const clientWantsStream = Boolean(body.stream);
-  const responseModelId = getResponseModelId(body.model, model, options);
-
-  plog(() => `sdk-openai npm=${npm} upstream=${upstreamModelId(model)} responseModel=${responseModelId} stream=${clientWantsStream}`);
-
-  try {
-    if (clientWantsStream) {
-      const sse = createTrackedSseResponse({
-        res,
-        clientAbortSignal: openAiClientAbort.signal,
-        applyHeaders: () => applyExecutionHeaders(res, openAiTracking),
-        observeChunk: openAiTracking.observeOpenAiSseText,
-      });
-      sse.start();
-      try {
-        await streamOpenAiResponse(languageModel, params, responseModelId, sse.writeChunk, {
+        const response = await generateOpenAiResponse(languageModel, params, responseModelId, {
+          forceStream: openAiOAuth,
           abortSignal: openAiClientAbort.signal,
           lifecycle: openAiExecution,
+          onWarning: plog,
         });
         openAiExecution.markStreamActivity();
+        openAiExecution.markOutputEmitted();
         openAiExecution.complete();
-        if (!res.headersSent) sse.writeChunk('');
-        res.end();
-      } finally {
-        sse.stop();
+        openAiTracking.observeNonStreamOpenAi(response);
+        applyExecutionHeaders(res, openAiTracking);
+        sendJson(res, 200, response);
       }
-    } else {
-
-      const response = await generateOpenAiResponse(languageModel, params, responseModelId, {
-        forceStream: openAiOAuth,
-        abortSignal: openAiClientAbort.signal,
-        lifecycle: openAiExecution,
-        onWarning: plog,
-      });
-      openAiExecution.markStreamActivity();
-      openAiExecution.markOutputEmitted();
-      openAiExecution.complete();
-      openAiTracking.observeNonStreamOpenAi(response);
-      applyExecutionHeaders(res, openAiTracking);
-      sendJson(res, 200, response);
+    } catch (err) {
+      if (openAiClientAbort.signal.aborted) return;
+      openAiExecution.fail(err);
+      openAiTracking.fail(undefined);
+      const message = formatUpstreamError(err);
+      const details = sdkUpstreamErrorDetails(err);
+      const status = auditSdkError(options, body.model, model, err, message);
+      plog(() => `sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message}${details?.errorContent ? `, body: ${details.errorContent}` : ''}`);
+      if (!res.headersSent) {
+        sendJson(res, status === 500 ? 502 : status, { error: { message } });
+      } else {
+        res.write(`data: ${JSON.stringify({
+          error: {
+            message,
+            type: 'upstream_error',
+            code: status,
+            ...(details?.retryAfterMs !== undefined ? { retry_after: Math.ceil(details.retryAfterMs / 1_000) } : {}),
+          },
+        })}\n\n`);
+        res.end();
+      }
     }
-  } catch (err) {
-    if (openAiClientAbort.signal.aborted) return;
-    openAiExecution.fail(err);
+  } catch (error) {
+    openAiExecution.fail(error);
     openAiTracking.fail(undefined);
-    const message = formatUpstreamError(err);
-    const details = sdkUpstreamErrorDetails(err);
-    const status = auditSdkError(options, body.model, model, err, message);
-    plog(() => `sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message}${details?.errorContent ? `, body: ${details.errorContent}` : ''}`);
-    if (!res.headersSent) {
-      sendJson(res, status === 500 ? 502 : status, { error: { message } });
-    } else {
-      res.write(`data: ${JSON.stringify({
-        error: {
-          message,
-          type: 'upstream_error',
-          code: status,
-          ...(details?.retryAfterMs !== undefined ? { retry_after: Math.ceil(details.retryAfterMs / 1_000) } : {}),
-        },
-      })}\n\n`);
-      res.end();
-    }
+    throw error;
   } finally {
     req.removeListener('aborted', abortOpenAiClientRequest);
     res.removeListener('close', abortOpenAiClosedResponse);

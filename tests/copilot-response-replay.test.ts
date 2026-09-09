@@ -13,12 +13,19 @@ describe('Copilot replay terminal admission', () => {
     const onComplete = vi.fn();
     const onSettled = vi.fn();
     const cancel = vi.fn();
+    let signalPending = () => {};
+    const pendingStarted = new Promise<void>(resolve => { signalPending = resolve; });
     const stream = recordCopilotResponse({ stream: new ReadableStream({
-      start(controller) { controller.enqueue(finish); }, cancel,
-    }), onComplete, onSettled });
+      start(controller) { controller.enqueue(finish); },
+      pull() { signalPending(); return new Promise<void>(() => {}); },
+      cancel,
+    }, { highWaterMark: 0 }), onComplete, onSettled });
     const reader = stream.getReader();
     expect((await reader.read()).value).toEqual(finish);
+    const pendingRead = reader.read();
+    await pendingStarted;
     await reader.cancel('consumer stopped');
+    await expect(pendingRead).resolves.toMatchObject({ done: true });
     expect(cancel).toHaveBeenCalledWith('consumer stopped');
     expect(onComplete).not.toHaveBeenCalled();
     expect(onSettled).toHaveBeenCalledTimes(1);

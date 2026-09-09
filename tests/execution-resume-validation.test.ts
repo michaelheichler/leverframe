@@ -49,6 +49,17 @@ it('rejects a changed confirmed result before checkpoint publication', () => {
   expect(loadCheckpoint(handle.scopeHash, handle.executionId)).toEqual(before);
 });
 
+it('rejects a changed result length beyond the digest prefix', () => {
+  const handle = beginExecutionTracking(input);
+  handle.observeNonStreamAnthropic({ content: [{ type: 'tool_use', id: 'call', name: 'read', input: {} }] });
+  const content = 'a'.repeat(70_000);
+  reconcileIncomingToolResults({ sessionKey: input.sessionKey, toolResults: [{ toolUseId: 'call', content }] });
+  const before = loadCheckpoint(handle.scopeHash, handle.executionId);
+  expect(() => beginExecutionTracking({ ...input, executionId: handle.executionId,
+    toolResults: [{ toolUseId: 'call', content: content + 'changed' }] })).toThrow(/different result/i);
+  expect(loadCheckpoint(handle.scopeHash, handle.executionId)).toEqual(before);
+});
+
 it.each(['executed', 'not-executed'] as const)('accepts explicit %s confirmation of an emitting call', outcome => {
   const handle = beginExecutionTracking(input);
   const ledger = loadLedger(handle.scopeHash, handle.executionId).value ?? createEmptyLedger(handle.executionId);

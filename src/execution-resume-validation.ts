@@ -15,7 +15,10 @@ export function resumeValidationError(
     if (entry.status !== 'confirmed_executed' && entry.status !== 'result_received') continue;
     const results = toolResults.filter(result => result.toolUseId === entry.toolCallId);
     if (results.length === 0) return `Resent conversation is missing the required result for ${entry.toolCallId}.`;
-    if (entry.resultDigest && results.some(result => boundedDigest(result.content).digest !== entry.resultDigest?.digest)) {
+    if (entry.resultDigest && results.some(result => {
+      const actual = boundedDigest(result.content);
+      return actual.digest !== entry.resultDigest?.digest || actual.byteCount !== entry.resultDigest?.byteCount;
+    })) {
       return `Resent conversation has a different result for ${entry.toolCallId}.`;
     }
   }

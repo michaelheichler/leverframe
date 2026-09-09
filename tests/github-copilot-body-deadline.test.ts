@@ -60,6 +60,19 @@ describe('GitHub OAuth response body deadlines', () => {
 });
 
 describe('GitHub OAuth polling response cleanup', () => {
+  it.each(['reject', 'pending'])('retries without waiting for %s cleanup', async mode => {
+    vi.useFakeTimers();
+    const cancel = vi.fn(() => mode === 'reject' ? Promise.reject(new Error('cleanup failed')) : new Promise<void>(() => {}));
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(new ReadableStream({ cancel }), { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ access_token: 'fixture-access-token', token_type: 'bearer', scope: '' }));
+    vi.stubGlobal('fetch', fetch);
+    const outcome = pollGitHubCopilotDeviceCodeToken(device, { now: Date.now, sleep: async () => {} })
+      .then(value => value, error => error);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    await expect(outcome).resolves.toEqual({ tokens: { access_token: 'fixture-access-token' } });
+  });
   it('cancels a retryable response body before polling again', async () => {
     const cancel = vi.fn();
     const fetch = vi.fn()

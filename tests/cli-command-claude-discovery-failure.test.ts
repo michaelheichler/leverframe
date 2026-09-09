@@ -20,7 +20,7 @@ vi.mock('../src/env.js', () => ({ detectConflicts: () => [] }));
 vi.mock('@clack/prompts', () => ({ intro: vi.fn(), spinner: () => ({ start: vi.fn(), stop: vi.fn() }), log: { error: vi.fn(), info: vi.fn(), warn: vi.fn() } }));
 
 import { runClaudeCommand } from '../src/cli-command-claude.js';
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.clearAllMocks(); vi.restoreAllMocks(); });
 it('fails an explicit launch when every provider fails discovery without patching or spawning', async () => {
   const code = await runClaudeCommand({
     command: 'claude', showHelp: false, showVersion: false, dryRun: true, trace: false,

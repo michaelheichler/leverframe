@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { cpSync, existsSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 
 export const APP_DIR_NAME = 'leverframe';
 
@@ -46,7 +46,8 @@ let legacyMigrationDone = false;
 export function ensureLegacyAppHomeMigrated(env: HomeEnv = process.env): void {
   if (legacyMigrationDone || resolveAppHomeOverride(env)) return;
   const appHome = getAppHome(env);
-  if (existsSync(appHome)) {
+  const pendingMerge = join(appHome, '.legacy-migration-pending');
+  if (existsSync(appHome) && !existsSync(pendingMerge)) {
     legacyMigrationDone = true;
     return;
   }
@@ -64,6 +65,11 @@ export function ensureLegacyAppHomeMigrated(env: HomeEnv = process.env): void {
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if ((code !== 'EEXIST' && code !== 'ENOTEMPTY') || !existsSync(appHome)) throw error;
+      writeFileSync(pendingMerge, '', { mode: 0o600 });
+      for (const entry of readdirSync(stagingHome)) {
+        cpSync(join(stagingHome, entry), join(appHome, entry), { recursive: true, force: false });
+      }
+      rmSync(pendingMerge, { force: true });
     }
     legacyMigrationDone = true;
   } finally {

@@ -3,7 +3,7 @@ import { parseToolArguments } from './proxy-shared.js';
 import type { SdkCallParams } from './sdk-adapter.js';
 
 export interface OpenAiMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool';
+  role: 'system' | 'developer' | 'user' | 'assistant' | 'tool';
   content?: string | null | Array<unknown>;
   name?: string;
   tool_calls?: Array<{
@@ -54,11 +54,19 @@ function translateUserContent(content: OpenAiMessage['content']): UserContent {
   return Array.isArray(content) ? content.map(translateUserPart) : content ?? '';
 }
 
+function translateTextContent(content: OpenAiMessage['content']): Array<{ type: 'text'; text: string }> {
+  if (!Array.isArray(content)) return content ? [{ type: 'text', text: content }] : [];
+  return content.map(part => {
+    if (typeof part !== 'object' || part === null || !('type' in part) || part.type !== 'text'
+      || !('text' in part) || typeof part.text !== 'string') {
+      throw new Error('Unsupported OpenAI instruction or assistant content part');
+    }
+    return { type: 'text', text: part.text };
+  });
+}
+
 function translateAssistantMessage(msg: OpenAiMessage): ModelMessage {
-  const parts: unknown[] = [];
-  if (typeof msg.content === 'string' && msg.content) {
-    parts.push({ type: 'text', text: msg.content });
-  }
+  const parts: unknown[] = translateTextContent(msg.content);
   for (const tc of msg.tool_calls ?? []) {
     parts.push({
       type: 'tool-call', toolCallId: tc.id, toolName: tc.function.name,
@@ -106,14 +114,16 @@ export function translateOpenAiRequest(
   let collectingLeadingSystem = true;
 
   for (const msg of body.messages) {
-    if (msg.role === 'system' && collectingLeadingSystem) {
-      if (typeof msg.content === 'string' && msg.content) systemParts.push(msg.content);
+    if ((msg.role === 'system' || msg.role === 'developer') && collectingLeadingSystem) {
+      const text = translateTextContent(msg.content).map(part => part.text).join('\n');
+      if (text) systemParts.push(text);
       continue;
     }
     collectingLeadingSystem = false;
     switch (msg.role) {
       case 'system':
-        messages.push({ role: 'system', content: msg.content } as unknown as ModelMessage);
+      case 'developer':
+        messages.push({ role: 'system', content: translateTextContent(msg.content).map(part => part.text).join('\n') });
         break;
 
       case 'user':
@@ -139,7 +149,7 @@ export function translateOpenAiRequest(
 
   let tools: SdkCallParams['tools'];
   if (body.tools?.length) {
-    const toolMap: Record<string, ReturnType<typeof tool>> = {};
+    const toolMap: Record<string, ReturnType<typeof tool>> = Object.create(null);
     for (const t of body.tools) {
       if (t.type !== 'function' || !t.function.name) continue;
       const schema = t.function.parameters ? jsonSchema(t.function.parameters) : undefined;

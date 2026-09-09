@@ -94,7 +94,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function rewriteAnthropicResponseModel(value: unknown, responseModelId: string): boolean {
   if (!isRecord(value)) return false;
-  if (value['type'] === 'message' && typeof value['model'] === 'string') {
+  if ((value['type'] === 'message' || value['object'] === 'chat.completion' || value['object'] === 'chat.completion.chunk')
+    && typeof value['model'] === 'string') {
     value['model'] = responseModelId;
     return true;
   }

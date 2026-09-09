@@ -271,7 +271,7 @@ function wrapAbort(input: {
         else controller.enqueue(next.value);
       } catch (error) {
         if (settled) return;
-        cleanup();
+        await cancel(error).catch(() => {});
         controller.error(error);
       }
     },

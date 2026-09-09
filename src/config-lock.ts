@@ -7,12 +7,12 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  rmdirSync,
   unlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { getAppHome } from './paths.js';
+import { acquireConfigReclaimGuard } from './config-reclaim-guard.js';
 
 export const CONFIG_DIR_MODE = 0o700;
 
@@ -178,17 +178,12 @@ function maybeUnlinkStaleLock(
   alive: (pid: number) => boolean,
   opts: { now?: number } = {},
 ): boolean {
-  const reclaimPath = `${lockPath}.reclaim`;
-  try {
-    mkdirSync(reclaimPath, { mode: CONFIG_DIR_MODE });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
-    throw error;
-  }
+  const releaseGuard = acquireConfigReclaimGuard(`${lockPath}.reclaim`, pidIsAlive);
+  if (!releaseGuard) return false;
   try {
     return unlinkStaleLockUnderGuard(lockPath, alive, opts.now ?? Date.now());
   } finally {
-    rmdirSync(reclaimPath);
+    releaseGuard();
   }
 }
 

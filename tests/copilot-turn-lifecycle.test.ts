@@ -146,6 +146,20 @@ describe('Copilot startup ownership', () => {
 });
 
 describe('Copilot turn cancellation and replay', () => {
+  it('aborts provider work and settles tools when the source reader rejects', async () => {
+    const f = fixture();
+    const error = new Error('source reader failed');
+    const pending = f.bridge.copilotTools[0].handler({}, {
+      toolCallId: 'pending', toolName: 'Read', sessionId: 'fake', arguments: {},
+    });
+    const settled = Promise.resolve(pending).catch(reason => reason);
+    f.deps.bridgeSessionEvents = () => new ReadableStream({ start(controller) { controller.error(error); } });
+    await expect(drain(f.model)).rejects.toBe(error);
+    expect(f.session.abort).toHaveBeenCalledTimes(1);
+    expect(f.bridge.pendingToolCallIds()).toEqual([]);
+    await settled;
+    await f.model.dispose();
+  });
   it('holds admission until upstream signal cancellation has completed', async () => {
     const f = fixture();
     const abort = new AbortController();

@@ -430,7 +430,7 @@ export async function writeAnthropicStream(
           emittedToolLengths.set(id, 0);
         }
         const json = part.input !== undefined && part.input !== null
-          ? JSON.stringify(sanitizeToolInput(part.input as Record<string, unknown>, inputRules.get(part.toolName ?? '')))
+          ? JSON.stringify(sanitizeToolInput((typeof part.input === 'string' ? JSON.parse(part.input) : part.input) as Record<string, unknown>, inputRules.get(part.toolName ?? '')))
           : (toolJsonBuffer.get(id) || '{}');
         closeTool(id, json);
         break;

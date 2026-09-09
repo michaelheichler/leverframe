@@ -83,10 +83,12 @@ it('cancels at the secret prompt without writing credentials or contacting an en
 });
 
 it('returns failure without publication when model discovery fails', async () => {
-  vi.mocked(fetch).mockResolvedValue(new Response('unavailable', { status: 503 }));
+  vi.mocked(fetch).mockResolvedValue(new Response('unavailable fixture-secret', { status: 503 }));
   expect(await runProvidersAdd()).toBe(1);
   expect(loadRegistry().providers).toEqual([]);
   expect(prompts.save).not.toHaveBeenCalled();
   expect(prompts.stop).toHaveBeenCalled();
-  expect(JSON.stringify(prompts.error.mock.calls)).not.toContain('fixture-secret');
+  expect(prompts.error).toHaveBeenCalledWith('Provider returned HTTP 503.');
+  expect(prompts.info).toHaveBeenCalledWith(expect.stringContaining('unavailable'));
+  expect(JSON.stringify([prompts.error.mock.calls, prompts.info.mock.calls])).not.toContain('fixture-secret');
 });

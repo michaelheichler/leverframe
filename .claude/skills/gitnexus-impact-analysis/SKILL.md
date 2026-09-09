@@ -155,7 +155,8 @@ Confirm that the tool diffed the checkout you edited before treating an empty ch
 2. READ gitnexus://repo/my-app/processes
    → LoginFlow and TokenRefresh touch validateUser
 
-3. Risk: 2 direct callers, 2 processes = MEDIUM
+3. Size-only estimate: 4 affected symbols, 2 processes = LOW
+   Use impact.risk as the edit gate, including any higher critical-path risk.
    Repository: my-app (/abs/path/my-app)  Worktree: same  Index: current
 ```
 

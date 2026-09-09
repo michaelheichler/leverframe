@@ -32,7 +32,7 @@ export function formatOpenAiResponse(
     usage: {
       prompt_tokens: result.usage?.inputTokens ?? 0,
       completion_tokens: result.usage?.outputTokens ?? 0,
-      total_tokens: result.usage?.totalTokens ?? 0,
+      total_tokens: result.usage?.totalTokens ?? ((result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0)),
     },
   };
 }

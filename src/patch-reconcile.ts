@@ -236,7 +236,9 @@ export async function runPatchCommandV2(
     presenter.error(unsupportedClaudeCodeBinaryPatchingMessage(installation.version));
     return 1;
   }
+  let lockAcquired = false;
   return withPatchTargetLock(installation.identity, async () => {
+    lockAcquired = true;
     const { manifest, state, desired, legacyRecovery } = await checkOwnedPatchState({
       installation,
       runtime,
@@ -287,6 +289,10 @@ export async function runPatchCommandV2(
     }, runtime);
     return reportOutcome(outcome, opts.trace ?? false, presenter);
   }, { waitMs: 500 }).catch((err: unknown) => {
+    if (lockAcquired) {
+      presenter.error(`Could not inspect or patch claude: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
     presenter.warn(`Another leverframe process is patching the claude binary right now. Skipped. (${err instanceof Error ? err.message : String(err)})`);
     return 1;
   });

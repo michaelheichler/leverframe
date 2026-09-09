@@ -44,13 +44,32 @@ it('releases the reclamation guard when owner inspection throws', () => {
   release?.();
 });
 
-it('does not reclaim through an abandoned guard without operator cleanup', () => {
+it('recovers an empty guard left by a terminated reclaimer', () => {
   const home = mkdtempSync(join(tmpdir(), 'leverframe-reclaim-abandoned-'));
   homes.push(home);
   const path = join(home, 'config.lock');
   const stale = JSON.stringify({ pid: 123456, startedAt: 0, nonce: 'stale' });
   writeFileSync(path, stale);
   mkdirSync(`${path}.reclaim`);
+  const release = lock.tryAcquire(path, { isAlive: () => false });
+  expect(release).toBeTypeOf('function');
+  release?.();
+});
+
+it('recovers a dead reclaimer but preserves a live guard owner', () => {
+  const home = mkdtempSync(join(tmpdir(), 'leverframe-reclaim-owner-'));
+  homes.push(home);
+  const path = join(home, 'config.lock');
+  writeFileSync(path, JSON.stringify({ pid: 2147483647, startedAt: 0, nonce: 'stale' }));
+  mkdirSync(`${path}.reclaim`);
+  const nonce = '00000000-0000-4000-8000-000000000001';
+  const liveOwner = join(`${path}.reclaim`, `${process.pid}.${nonce}`);
+  writeFileSync(liveOwner, '');
   expect(lock.tryAcquire(path, { isAlive: () => false })).toBeNull();
-  expect(readFileSync(path, 'utf8')).toBe(stale);
+  expect(existsSync(liveOwner)).toBe(true);
+  rmSync(liveOwner);
+  writeFileSync(join(`${path}.reclaim`, `2147483647.${nonce}`), '');
+  const release = lock.tryAcquire(path, { isAlive: () => false });
+  expect(release).toBeTypeOf('function');
+  release?.();
 });
