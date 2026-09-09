@@ -9,26 +9,41 @@ export function recordCopilotResponse(input: {
 }): ReadableStream<LanguageModelV3StreamPart> {
   const reader = input.stream.getReader();
   const parts: LanguageModelV3StreamPart[] = [];
+  let settled = false;
+  let cancelled = false;
+  const settle = () => {
+    if (settled) return;
+    settled = true;
+    input.onSettled();
+  };
   return new ReadableStream({
     async pull(controller) {
       try {
         const next = await reader.read();
+        if (settled || cancelled) return;
         if (next.done) {
-          input.onComplete(Object.freeze([...parts]));
-          input.onSettled();
+          const terminal = parts.at(-1);
+          if (!parts.some(part => part.type === 'error') && terminal?.type === 'finish'
+            && terminal.finishReason.unified !== 'error'
+            && terminal.finishReason.unified !== 'other') {
+            input.onComplete(Object.freeze([...parts]));
+          }
+          settle();
           controller.close();
           return;
         }
         parts.push(next.value);
         controller.enqueue(next.value);
       } catch (error) {
-        input.onSettled();
+        if (settled || cancelled) return;
+        settle();
         controller.error(error);
       }
     },
     async cancel(reason) {
-      input.onSettled();
-      await reader.cancel(reason);
+      cancelled = true;
+      try { await reader.cancel(reason); }
+      finally { settle(); }
     },
   });
 }

@@ -33,6 +33,7 @@ import {
 } from './ui.js';
 import { providerLabel } from './providers-command-args.js';
 import { runProvidersAuth, runProvidersRefreshModels } from './providers-command-auth.js';
+import { runCustomEndpointAddFlow } from './providers-command-custom.js';
 
 export async function runProvidersList(): Promise<number> {
   const entries = await resolveProvidersForDisplay();
@@ -136,6 +137,7 @@ function buildProvidersAddOptions(configuredIds: Iterable<string>): AddMenuItem[
     });
   }
 
+  options.push({ value: 'custom:openai', label: 'Custom OpenAI-compatible endpoint', hint: 'Your own base URL and authentication' });
   return options;
 }
 
@@ -144,17 +146,13 @@ export async function runProvidersAdd(): Promise<number> {
   const configuredIds = registry.providers.map(p => p.id);
   const options = buildProvidersAddOptions(configuredIds);
 
-  if (options.length === 0) {
-    p.log.info('All builtin providers are already configured.');
-    return 0;
-  }
-
   const choice = await p.select({ message: 'Add a provider', options });
   if (p.isCancel(choice)) {
     p.cancel('Cancelled.');
     return 0;
   }
 
+  if (choice === 'custom:openai') return runCustomEndpointAddFlow();
   if (choice.startsWith('oauth:')) return runProvidersAuth(choice.slice('oauth:'.length));
   if (choice.startsWith('api:')) return runTemplateAddFlow(choice.slice('api:'.length));
   return 0;

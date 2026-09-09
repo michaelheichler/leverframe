@@ -65,9 +65,11 @@ function encode(value: Uint8Array): string {
 }
 
 function decode(value: unknown, expectedBytes?: number): Buffer {
-  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_TEXT_BYTES || !/^[A-Za-z0-9_-]+$/.test(value)) securityError('malformed_record');
+  const maxDecodedBytes = expectedBytes ?? MAX_TEXT_BYTES;
+  const maxEncodedLength = Math.ceil(maxDecodedBytes * 4 / 3);
+  if (typeof value !== 'string' || value.length === 0 || value.length > maxEncodedLength || !/^[A-Za-z0-9_-]+$/.test(value)) securityError('malformed_record');
   const decoded = Buffer.from(value, 'base64url');
-  if (decoded.toString('base64url') !== value || expectedBytes !== undefined && decoded.byteLength !== expectedBytes) securityError('malformed_record');
+  if (decoded.byteLength > maxDecodedBytes || decoded.toString('base64url') !== value || expectedBytes !== undefined && decoded.byteLength !== expectedBytes) securityError('malformed_record');
   return decoded;
 }
 

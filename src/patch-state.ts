@@ -1,10 +1,10 @@
 
 
-import { existsSync, unlinkSync, chmodSync } from 'node:fs';
+import { existsSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { getAppHome, getDefaultAppHome, resolveAppHomeOverride } from './paths.js';
 import { ensurePrivateDirectory, readFileStrict } from './durable-io.js';
-import { atomicWriteJsonSync, copyImmutableFileSync } from './atomic-file.js';
+import { atomicWriteJsonSync, copyImmutableFileSync, removeFileDurableSync } from './atomic-file.js';
 import { PATCH_TRANSFORMS_VERSION } from './patch-transforms.js';
 
 export const PATCH_STATE_SCHEMA_VERSION = 2;
@@ -130,10 +130,7 @@ export function writeManifestV2(identity: string, manifest: PatchManifestV2): vo
 }
 
 export function removeManifestV2(identity: string): void {
-  try {
-    unlinkSync(getPatchManifestPathV2(identity));
-  } catch {
-  }
+  removeFileDurableSync(getPatchManifestPathV2(identity));
 }
 
 export interface StoreBaselineInput {

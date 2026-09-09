@@ -337,6 +337,7 @@ export async function startProxyCatalog(
           model: typeof originalModel === 'string' ? originalModel : route.aliasId,
           route: route.modelFormat === 'anthropic' ? 'passthrough' : 'translated',
           messages: proxyExecutionMessages(anthropicBody),
+          toolResults: proxyToolResults(anthropicBody),
           capabilities: providerCapabilities,
         });
       } catch (error) {
@@ -399,11 +400,13 @@ export async function startProxyCatalog(
                 tracking.observeAnthropicSseText(text);
                 return;
               }
+              let parsed: unknown;
               try {
-                tracking.observeNonStreamAnthropic(JSON.parse(text));
+                parsed = JSON.parse(text);
               } catch {
-
+                return;
               }
+              tracking.observeNonStreamAnthropic(parsed);
             },
             onUpstreamError: inferenceLogPath
               ? (statusCode, errorContent) => writeInferenceResponseErrorLog(inferenceLogPath, {

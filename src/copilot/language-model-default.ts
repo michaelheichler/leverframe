@@ -35,6 +35,7 @@ function runtimeAdapter(runtime: CopilotRuntimeHandle): CopilotLanguageRuntime {
     async createSession(config: CopilotSessionConfig, onEvent: (event: unknown) => void) {
       return await runtime.createSession({
         ...config,
+        streaming: true,
         onEvent,
         createSessionFsProvider: createMemorySessionFsProvider,
       }) as RuntimeSessionClient;
@@ -67,6 +68,16 @@ function connectorDependencies(input: {
         environment: input.environment,
       });
       return runtimeAdapter(runtime);
+    },
+    async dispose() {
+      if (runtime === undefined) return;
+      try {
+        const errors = await runtime.stop();
+        if (errors.length > 0) throw new AggregateError(errors, 'GitHub Copilot runtime shutdown failed');
+      } catch (error) {
+        await runtime.forceStop();
+        throw error;
+      }
     },
     createToolBridge(tools: readonly LanguageModelV3FunctionTool[]) {
       return toolBridgeAdapter(createToolBridge(tools));

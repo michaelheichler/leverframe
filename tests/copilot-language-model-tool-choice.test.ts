@@ -6,7 +6,6 @@ import {
   createFakeSession,
   functionTool,
   loadCopilotLanguageModelModule,
-  readableStreamFromParts,
 } from './fixtures/copilot-connector-contract.js';
 
 const CLAUDE_SESSION_ID = '22222222-2222-4222-8222-222222222222';
@@ -121,7 +120,7 @@ describe('createCopilotLanguageModel cancellation', () => {
   it('aborts the live Copilot session when the AI SDK abort signal fires mid-stream', async () => {
     const { createCopilotLanguageModel } = await loadCopilotLanguageModelModule();
     const session = createFakeSession();
-    const { deps } = buildDeps({ session, bridgeSessionEvents: () => readableStreamFromParts([]) });
+    const { deps } = buildDeps({ session, bridgeSessionEvents: () => new ReadableStream() });
     const model = createCopilotLanguageModel({ modelId: 'claude-sonnet-4-6' }, deps);
     const controller = new AbortController();
 
@@ -130,9 +129,10 @@ describe('createCopilotLanguageModel cancellation', () => {
       abortSignal: controller.signal,
     }));
     controller.abort();
-    await collectStreamParts(result.stream);
+    await expect(collectStreamParts(result.stream)).rejects.toThrow('aborted');
 
     expect(session.abort).toHaveBeenCalledTimes(1);
+    await model.dispose();
   });
 
   it('never starts the runtime when the request arrives already aborted', async () => {

@@ -175,6 +175,9 @@ export interface ReconcileExecutionInput {
 }
 
 export function reconcileExecution(input: ReconcileExecutionInput): ReconcileResult {
+  if (input.outcome !== 'executed' && input.outcome !== 'not-executed') {
+    return { ok: false, error: 'Reconciliation outcome must be executed or not-executed' };
+  }
   const now = input.now ?? Date.now;
   const loaded = loadLedger(input.scopeHash, input.executionId);
   if (loaded.state !== 'ok' || !loaded.value) {

@@ -168,11 +168,13 @@ export function attachAnthropicObserver(tracking: ExecutionTrackingHandle, clien
   return clientWantsStream
     ? text => tracking.observeAnthropicSseText(text)
     : text => {
+        let parsed: unknown;
         try {
-          tracking.observeNonStreamAnthropic(JSON.parse(text));
+          parsed = JSON.parse(text);
         } catch {
-
+          return;
         }
+        tracking.observeNonStreamAnthropic(parsed);
       };
 }
 

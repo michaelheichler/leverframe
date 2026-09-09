@@ -24,6 +24,7 @@ export interface AtomicWriteOptions {
 
 export interface CommitStageOptions {
   mode?: number;
+  beforeRename?: () => void;
 }
 
 function directoryFsyncIsUnsupported(err: unknown): boolean {
@@ -96,6 +97,7 @@ export function commitSameDirectoryStageSync(
 
   if (options.mode !== undefined) chmodSync(stagePath, options.mode);
   fsyncFileSync(stagePath);
+  options.beforeRename?.();
   renameSync(stagePath, targetPath);
   fsyncFileSync(targetPath);
   fsyncDirectorySync(dirname(resolve(targetPath)));

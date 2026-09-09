@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { cpSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs';
 
 export const APP_DIR_NAME = 'leverframe';
 
@@ -44,24 +44,30 @@ export function getOlderLegacyAppHome(env: HomeEnv = process.env): string {
 let legacyMigrationDone = false;
 
 export function ensureLegacyAppHomeMigrated(env: HomeEnv = process.env): void {
-  if (legacyMigrationDone) return;
-  legacyMigrationDone = true;
-  if (resolveAppHomeOverride(env)) return;
+  if (legacyMigrationDone || resolveAppHomeOverride(env)) return;
+  const appHome = getAppHome(env);
+  if (existsSync(appHome)) {
+    legacyMigrationDone = true;
+    return;
+  }
+  const legacyHome = [getLegacyAppHome(env), getOlderLegacyAppHome(env)].find(path => existsSync(path));
+  if (!legacyHome) return;
+
+  const stagingHome = mkdtempSync(`${appHome}.migration-`);
   try {
-    const appHome = getAppHome(env);
-    if (existsSync(appHome)) return;
-    const legacyHome = [getLegacyAppHome(env), getOlderLegacyAppHome(env)].find(path => existsSync(path));
-    if (!legacyHome) return;
-
-    mkdirSync(appHome, { recursive: true, mode: 0o700 });
-    const entries = readdirSync(legacyHome);
-
-    for (const entry of entries) {
-      if (entry === 'logs') continue; // session logs are not config/auth state
-      cpSync(join(legacyHome, entry), join(appHome, entry), { recursive: true });
+    for (const entry of readdirSync(legacyHome)) {
+      if (entry === 'logs') continue;
+      cpSync(join(legacyHome, entry), join(stagingHome, entry), { recursive: true });
     }
-  } catch {
-
+    try {
+      renameSync(stagingHome, appHome);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if ((code !== 'EEXIST' && code !== 'ENOTEMPTY') || !existsSync(appHome)) throw error;
+    }
+    legacyMigrationDone = true;
+  } finally {
+    rmSync(stagingHome, { recursive: true, force: true });
   }
 }
 

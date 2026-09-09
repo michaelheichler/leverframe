@@ -2,35 +2,35 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as zlib from 'node:zlib';
 
-function decodeRequestBody(raw: Buffer, encoding?: string | string[]): string {
+function decodeRequestBody(raw: Buffer, encoding: string | string[] | undefined, maxOutputLength: number): string {
   const enc = (Array.isArray(encoding) ? encoding.join(',') : encoding ?? '').toLowerCase().trim();
   if (!enc || enc === 'identity') return raw.toString();
   switch (enc) {
     case 'gzip':
     case 'x-gzip':
-      return zlib.gunzipSync(raw).toString();
+      return zlib.gunzipSync(raw, { maxOutputLength }).toString();
     case 'deflate':
-      return zlib.inflateSync(raw).toString();
+      return zlib.inflateSync(raw, { maxOutputLength }).toString();
     case 'br':
-      return zlib.brotliDecompressSync(raw).toString();
+      return zlib.brotliDecompressSync(raw, { maxOutputLength }).toString();
     case 'zstd':
       if (typeof zlib.zstdDecompressSync !== 'function') {
         throw new Error('zstd request encoding requires Node >= 22.15');
       }
-      return zlib.zstdDecompressSync(raw).toString();
+      return zlib.zstdDecompressSync(raw, { maxOutputLength }).toString();
     default:
 
       return raw.toString();
   }
 }
 
-export function readBody(req: IncomingMessage): Promise<string> {
+export function readBody(req: IncomingMessage, maxBodyBytes = 50 * 1024 * 1024): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let totalSize = 0;
     req.on('data', (c: Buffer) => {
       totalSize += c.length;
-      if (totalSize > 50 * 1024 * 1024) {
+      if (totalSize > maxBodyBytes) {
         reject(new Error('Request body too large'));
         req.destroy();
         return;
@@ -39,7 +39,7 @@ export function readBody(req: IncomingMessage): Promise<string> {
     });
     req.on('end', () => {
       try {
-        resolve(decodeRequestBody(Buffer.concat(chunks), req.headers['content-encoding']));
+        resolve(decodeRequestBody(Buffer.concat(chunks), req.headers['content-encoding'], maxBodyBytes));
       } catch (err) {
         reject(err);
       }

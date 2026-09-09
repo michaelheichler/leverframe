@@ -210,6 +210,7 @@ export async function fetchTemplateModels(
   apiKey: string,
   baseUrlOverride?: string,
   extraHeaders?: Record<string, string>,
+  urlPolicy?: { allowInsecureLocal?: boolean },
 ): Promise<FetchTemplateModelsResult> {
   const trimmedOverride = baseUrlOverride?.trim();
   const baseUrl = (trimmedOverride || template.defaultBaseUrl)?.replace(/\/$/, '');
@@ -223,7 +224,7 @@ export async function fetchTemplateModels(
 
   if (trimmedOverride) {
     const revalidation = await revalidateCustomEndpointUrl(baseUrl, {
-      allowInsecureLocal: template.apiKeyOptional === true,
+      allowInsecureLocal: urlPolicy?.allowInsecureLocal ?? template.apiKeyOptional === true,
     });
     if (!revalidation.ok) {
       return {

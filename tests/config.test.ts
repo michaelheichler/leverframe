@@ -29,11 +29,29 @@ import {
 } from '../src/paths.js';
 import { ModelAliasCollisionError } from '../src/model-aliases.js';
 
+const keyring = vi.hoisted(() => ({ values: new Map<string, string>(), fail: false }));
+
+vi.mock('../src/keyring-operations.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/keyring-operations.js')>();
+  return {
+    ...actual,
+    runIsolatedKeyringOperation: vi.fn(async (operation: import('../src/keyring-operations.js').KeyringOperation) => {
+      if (keyring.fail) return { ok: false, error: 'keyring unavailable' };
+      const key = `${operation.service}:${operation.account}`;
+      if (operation.operation === 'write') keyring.values.set(key, operation.value);
+      if (operation.operation === 'delete') keyring.values.delete(key);
+      return { ok: true, value: keyring.values.get(key) ?? null };
+    }),
+  };
+});
+
 let tempHome: string;
 let previousHome: string | undefined;
 let previousDbus: string | undefined;
 
 beforeEach(() => {
+  keyring.values.clear();
+  keyring.fail = false;
   tempHome = mkdtempSync(join(tmpdir(), 'leverframe-test-'));
   previousHome = process.env['HOME'];
   process.env['HOME'] = tempHome;
@@ -209,40 +227,31 @@ describe('dotfolder config', () => {
   });
 
   it('returns absent status when no server password is saved', async () => {
-    delete process.env['DBUS_SESSION_BUS_ADDRESS'];
-    const result = await getSavedServerPassword();
-    if (result.status === 'migration-failed') {
-      expect(result.error).toMatch(/Secret Service|keyring|D-Bus|dbus/i);
-    } else {
-      expect(result.status).toBe('absent');
-    }
+    expect(await getSavedServerPassword()).toEqual({ status: 'absent' });
   });
 
-  it('saves and clears a server password, surfacing keyring failures rather than writing plaintext', async () => {
-    delete process.env['DBUS_SESSION_BUS_ADDRESS'];
+  it('saves and clears a server password through the isolated keyring mock', async () => {
+    expect(await setSavedServerPassword('my-lan-password')).toEqual({ ok: true });
+    expect(keyring.values.size).toBe(1);
+    expect(await getSavedServerPassword()).toEqual({ status: 'ok', password: 'my-lan-password' });
+    await clearSavedServerPassword();
+    expect(keyring.values.size).toBe(0);
+    expect(await getSavedServerPassword()).toEqual({ status: 'absent' });
+  });
 
-    const saved = await setSavedServerPassword('my-lan-password');
-    if (saved.ok) {
-      expect(await getSavedServerPassword()).toEqual({ status: 'ok', password: 'my-lan-password' });
-      await clearSavedServerPassword();
-      expect(await getSavedServerPassword()).toEqual({ status: 'absent' });
-    } else {
-      expect(saved.ok).toBe(false);
-      expect(saved.error).toMatch(/Secret Service|keyring|D-Bus|dbus/i);
-      const lookup = await getSavedServerPassword();
-      if (lookup.status === 'migration-failed') {
-        expect(lookup.error).toMatch(/Secret Service|keyring|D-Bus|dbus/i);
-      } else {
-        expect(lookup.status).toBe('absent');
-      }
-      const cfgPath = getConfigPath();
-      if (existsSync(cfgPath)) {
-        const cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as {
-          server?: { savedPassword?: unknown };
-        };
-        expect(cfg.server?.savedPassword ?? null).toBeNull();
-      }
-    }
+  it('surfaces keyring failures without writing a plaintext password', async () => {
+    savePreferences({ lastModel: 'fixture-model' });
+    keyring.fail = true;
+    expect(await setSavedServerPassword('my-lan-password')).toEqual({
+      ok: false, error: expect.stringMatching(/keyring/i),
+    });
+    expect(await getSavedServerPassword()).toEqual({
+      status: 'migration-failed', plaintextPresent: false, error: expect.stringMatching(/keyring/i),
+    });
+    expect(keyring.values.size).toBe(0);
+    const saved = readFileSync(getConfigPath(), 'utf8');
+    expect(saved).not.toContain('my-lan-password');
+    expect(JSON.parse(saved).server?.savedPassword).toBeUndefined();
   });
 
   it('saves server listen-mode preference', () => {

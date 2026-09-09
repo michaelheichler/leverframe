@@ -7,6 +7,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  rmdirSync,
   unlinkSync,
   utimesSync,
   writeFileSync,
@@ -53,7 +54,7 @@ export class ConfigLockBusyError extends Error {
     super(
       `Could not acquire the config lock at ${lockPath} after ${waitedMs}ms. `
         + 'Another leverframe process is likely writing preferences or migrating a server password. '
-        + 'If no leverframe process is running, remove the lock file and re-run.',
+        + `If no leverframe process is running, remove the lock file and any ${lockPath}.reclaim directory, then re-run.`,
     );
     this.name = CONFIG_LOCK_BUSY_ERROR;
     this.lockPath = lockPath;
@@ -177,7 +178,21 @@ function maybeUnlinkStaleLock(
   alive: (pid: number) => boolean,
   opts: { now?: number } = {},
 ): boolean {
-  const now = opts.now ?? Date.now();
+  const reclaimPath = `${lockPath}.reclaim`;
+  try {
+    mkdirSync(reclaimPath, { mode: CONFIG_DIR_MODE });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw error;
+  }
+  try {
+    return unlinkStaleLockUnderGuard(lockPath, alive, opts.now ?? Date.now());
+  } finally {
+    rmdirSync(reclaimPath);
+  }
+}
+
+function unlinkStaleLockUnderGuard(lockPath: string, alive: (pid: number) => boolean, now: number): boolean {
   const meta = readLockMetadata(lockPath);
   if (meta === null) {
     const mtime = readLockMtimeMs(lockPath);

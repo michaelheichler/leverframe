@@ -40,7 +40,11 @@ describe('createCopilotLanguageModel transcript classification', () => {
     const { deps, runtime } = buildDeps({
       session,
       classifyTranscript,
-      bridgeSessionEvents: () => readableStreamFromParts([]),
+      bridgeSessionEvents: () => readableStreamFromParts([{
+        type: 'finish', finishReason: { unified: 'stop', raw: 'stop' },
+        usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 1, text: 1, reasoning: 0 } },
+      }]),
     });
     const model = createCopilotLanguageModel({ modelId: 'claude-sonnet-4-6' }, deps);
     const options = callOptions({ claudeSessionId: CLAUDE_SESSION_ID });

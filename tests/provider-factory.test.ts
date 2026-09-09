@@ -284,7 +284,7 @@ describe('effortProviderOptions + deepMergeProviderOptions', () => {
 
   it('maps Vertex Claude effort to Anthropic thinking options', () => {
     expect(effortProviderOptions(VERTEX_ANTHROPIC_NPM, 'medium', 'claude-sonnet-4-6')).toEqual({
-      anthropic: { thinking: { type: 'adaptive', effort: 'medium' } },
+      anthropic: { thinking: { type: 'adaptive' }, effort: 'medium' },
     });
   });
 });

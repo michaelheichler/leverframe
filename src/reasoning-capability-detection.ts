@@ -331,7 +331,7 @@ export function effortProviderOptions(
     if (!modelId || !isClaudeReasoningModel(modelId)) return undefined;
     const mapped = mapCodexEffortToAnthropic(effort);
     return mapped
-      ? { anthropic: { thinking: { type: 'adaptive', effort: mapped } } }
+      ? { anthropic: { thinking: { type: 'adaptive' }, effort: mapped } }
       : undefined;
   }
 

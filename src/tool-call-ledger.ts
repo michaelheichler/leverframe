@@ -22,7 +22,7 @@ export type ToolCallLedgerStatus =
 
 const LEGAL_LEDGER_TRANSITIONS: Record<ToolCallLedgerStatus, ReadonlySet<ToolCallLedgerStatus>> = {
   planned: new Set(['emitting', 'confirmed_not_executed']),
-  emitting: new Set(['emitted', 'confirmed_not_executed']),
+  emitting: new Set(['emitted', 'confirmed_executed', 'confirmed_not_executed']),
   emitted: new Set(['result_received', 'confirmed_executed', 'confirmed_not_executed']),
   result_received: new Set(['confirmed_executed', 'confirmed_not_executed']),
   confirmed_executed: new Set([]),

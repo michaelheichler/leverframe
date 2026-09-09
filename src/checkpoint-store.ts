@@ -5,7 +5,7 @@ import { existsSync, lstatSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { getAppHome } from './paths.js';
 import { durableAtomicWrite, ensurePrivateDirectory, readFileStrict, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE } from './durable-io.js';
-import { tryAcquireRegistryLock, withRegistryWriteLock, type RegistryLockLease, type RegistryLockOptions } from './registry/lock.js';
+import { tryAcquireRegistryLock, withRegistryWriteLock, withRegistryWriteLockSync, type RegistryLockLease, type RegistryLockOptions } from './registry/lock.js';
 
 const MAX_DOCUMENT_BYTES = 512 * 1024;
 
@@ -132,22 +132,24 @@ export function writeDocumentCAS<T extends HasSchemaAndGeneration>(
   nextValue: T,
   description = 'execution document',
 ): CasWriteResult {
-  const current = readDocument<T>(path, expectedSchemaVersion, validate, description);
-  if (current.state === 'corrupt' || current.state === 'unsupported-version' || current.state === 'invalid-storage') {
-    return { ok: false, reason: current.state, currentGeneration: current.generation, error: current.error };
-  }
-  if (current.generation !== expectedCurrentGeneration) {
-    return { ok: false, reason: 'conflict', currentGeneration: current.generation };
-  }
-  if (nextValue.generation !== expectedCurrentGeneration + 1) {
-    throw new Error(`writeDocumentCAS: nextValue.generation must be ${expectedCurrentGeneration + 1}, got ${nextValue.generation}`);
-  }
-  durableAtomicWrite(path, `${JSON.stringify(nextValue, null, 2)}\n`, {
-    mode: PRIVATE_FILE_MODE,
-    directoryMode: PRIVATE_DIRECTORY_MODE,
-    validateExisting: true,
-  });
-  return { ok: true, generation: nextValue.generation };
+  return withRegistryWriteLockSync(() => {
+    const current = readDocument<T>(path, expectedSchemaVersion, validate, description);
+    if (current.state === 'corrupt' || current.state === 'unsupported-version' || current.state === 'invalid-storage') {
+      return { ok: false, reason: current.state, currentGeneration: current.generation, error: current.error };
+    }
+    if (current.generation !== expectedCurrentGeneration) {
+      return { ok: false, reason: 'conflict', currentGeneration: current.generation };
+    }
+    if (nextValue.generation !== expectedCurrentGeneration + 1) {
+      throw new Error(`writeDocumentCAS: nextValue.generation must be ${expectedCurrentGeneration + 1}, got ${nextValue.generation}`);
+    }
+    durableAtomicWrite(path, `${JSON.stringify(nextValue, null, 2)}\n`, {
+      mode: PRIVATE_FILE_MODE,
+      directoryMode: PRIVATE_DIRECTORY_MODE,
+      validateExisting: true,
+    });
+    return { ok: true, generation: nextValue.generation };
+  }, { lockPath: `${path}.lock` });
 }
 
 export function ensureExecutionDir(scopeHash: string, executionId: string): void {
