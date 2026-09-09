@@ -229,6 +229,7 @@
 {"complexity":0,"fan_out":5,"file_lines":36,"ignores":0,"max_fn_lines":1,"path":"tests/paths-migration-retry.test.ts"},
 {"complexity":0,"fan_out":6,"file_lines":93,"ignores":0,"max_fn_lines":4,"path":"tests/providers-custom-add.test.ts"},
 {"complexity":0,"fan_out":10,"file_lines":1344,"ignores":0,"max_fn_lines":22,"path":"tests/proxy.test.ts"},
+{"complexity":2,"fan_out":3,"file_lines":276,"ignores":0,"max_fn_lines":21,"path":"tests/responses-websocket-upgrade.test.ts"},
 {"complexity":2,"fan_out":3,"file_lines":1621,"ignores":0,"max_fn_lines":19,"path":"tests/responses-websocket.test.ts"},
 {"complexity":1,"fan_out":2,"file_lines":47,"ignores":0,"max_fn_lines":47,"path":"tests/routing-notice.test.ts"},
 {"complexity":1,"fan_out":3,"file_lines":110,"ignores":0,"max_fn_lines":7,"path":"tests/sdk-adapter-stream-completion.test.ts"},

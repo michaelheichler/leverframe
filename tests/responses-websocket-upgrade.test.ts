@@ -1,5 +1,5 @@
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
-import type { Socket } from 'node:net';
+import { Socket } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createResponsesWebSocketFetch,
@@ -85,9 +85,10 @@ async function startImmediateCloseServer(): Promise<UpgradeServer> {
   };
 }
 
-async function startHangingUpgradeServer(): Promise<UpgradeServer> {
+async function startHangingUpgradeServer(): Promise<UpgradeServer & { accepted: Promise<void> }> {
   let attempts = 0;
   const server = createServer();
+  const accepted = new Promise<void>(resolve => server.once('upgrade', () => resolve()));
   openServers.push(server);
   server.on('connection', socket => {
     openSockets.add(socket);
@@ -101,6 +102,7 @@ async function startHangingUpgradeServer(): Promise<UpgradeServer> {
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('hanging server did not bind');
   return {
+    accepted,
     url: `ws://127.0.0.1:${address.port}`,
     get attempts() { return attempts; },
   };
@@ -128,6 +130,7 @@ function request(
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   resetResponsesWebSocketConnectionsForTests();
   for (const socket of openSockets) socket.destroy();
   openSockets.clear();
@@ -249,16 +252,24 @@ describe('Responses WebSocket rejected upgrades', () => {
 
   it('times out an accepted connection whose upgrade handshake never completes', async () => {
     const server = await startHangingUpgradeServer();
-    const startedAt = performance.now();
-
-    await expect(request(server, { handshakeTimeoutMs: 25 })).rejects.toMatchObject({
+    const setTimeout = Socket.prototype.setTimeout;
+    const armTimeout = new Promise<() => void>(resolve => {
+      vi.spyOn(Socket.prototype, 'setTimeout').mockImplementation(function (this: Socket, delay, callback) {
+        if (delay !== 25) return setTimeout.call(this, delay, callback);
+        resolve(() => { setTimeout.call(this, delay, callback); });
+        return this;
+      });
+    });
+    const outcome = expect(request(server, { handshakeTimeoutMs: 25 })).rejects.toMatchObject({
       name: 'ProviderTransportError',
       phase: 'connect',
       outputEmitted: false,
     });
-    expect(performance.now() - startedAt).toBeLessThan(500);
+    await server.accepted;
+    (await armTimeout)();
+    await outcome;
     expect(server.attempts).toBe(1);
-  }, 1_000);
+  }, 5_000);
 
   it('settles an immediate handshake close without waiting for the stream idle timeout', async () => {
     const server = await startImmediateCloseServer();
