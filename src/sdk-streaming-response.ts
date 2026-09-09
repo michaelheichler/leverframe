@@ -6,6 +6,7 @@ import {
   encodeToolUseId,
   type FullStreamPart,
   grabRoundTripSignature,
+  parseToolArguments,
 } from './proxy-shared.js';
 import { anthropicErrorType, upstreamHttpStatus } from './upstream-error.js';
 import { ProviderTransportError } from './provider-error.js';
@@ -430,7 +431,7 @@ export async function writeAnthropicStream(
           emittedToolLengths.set(id, 0);
         }
         const json = part.input !== undefined && part.input !== null
-          ? JSON.stringify(sanitizeToolInput((typeof part.input === 'string' ? JSON.parse(part.input) : part.input) as Record<string, unknown>, inputRules.get(part.toolName ?? '')))
+          ? JSON.stringify(sanitizeToolInput(parseToolArguments(part.input), inputRules.get(part.toolName ?? '')))
           : (toolJsonBuffer.get(id) || '{}');
         closeTool(id, json);
         break;

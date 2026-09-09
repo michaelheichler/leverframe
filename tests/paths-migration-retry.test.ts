@@ -6,10 +6,15 @@ import ts from 'typescript';
 import { tmpdir } from 'node:os';
 import { ensureLegacyAppHomeMigrated, resetLegacyMigrationForTests } from '../src/paths.js';
 
-const failures = vi.hoisted(() => ({ copy: true, collide: false, merge: false }));
+const failures = vi.hoisted(() => ({ copy: true, collide: false, merge: false, onMerge: undefined as (() => void) | undefined }));
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
   return { ...actual, cpSync: (...args: Parameters<typeof actual.cpSync>) => {
+    if (String(args[1]).includes('.leverframe/config')) {
+      const onMerge = failures.onMerge;
+      failures.onMerge = undefined;
+      onMerge?.();
+    }
     if (failures.copy || (failures.merge && String(args[1]).includes('.leverframe/config'))) throw new Error('injected copy failure');
     return actual.cpSync(...args);
   }, renameSync: (...args: Parameters<typeof actual.renameSync>) => {
@@ -46,6 +51,24 @@ it('recovers a partial merge into a concurrently created destination', () => {
   expect(readFileSync(join(home, '.leverframe', 'new-setting.json'), 'utf8')).toBe('preserve');
 });
 
+it('prevents a competing merge from removing the active pending marker', () => {
+  const home = mkdtempSync(join(tmpdir(), 'leverframe-migration-owner-'));
+  homes.push(home);
+  mkdirSync(join(home, '.clodex'));
+  writeFileSync(join(home, '.clodex', 'config.json'), 'legacy');
+  failures.copy = false;
+  failures.collide = true;
+  let competingError: unknown;
+  failures.onMerge = () => {
+    try { ensureLegacyAppHomeMigrated({ HOME: home }); } catch (error) { competingError = error; }
+    expect(existsSync(join(home, '.leverframe', '.legacy-migration-pending'))).toBe(true);
+  };
+  ensureLegacyAppHomeMigrated({ HOME: home });
+  expect(String(competingError)).toContain('migration is already in progress');
+  expect(readFileSync(join(home, '.leverframe', 'config.json'), 'utf8')).toBe('legacy');
+  expect(existsSync(join(home, '.leverframe', '.legacy-migration-pending'))).toBe(false);
+});
+
 it('publishes only a complete migration and retries after a copy failure', () => {
   const home = mkdtempSync(join(tmpdir(), 'leverframe-migration-'));
   homes.push(home);
@@ -68,8 +91,13 @@ it('lets a later process retry after an earlier migration copy failed', () => {
   const legacy = join(home, '.clodex');
   mkdirSync(legacy);
   writeFileSync(join(legacy, 'config.json'), '{"lastModel":"preserved"}');
+  const compile = (source: string) => ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const guard = compile(readFileSync(new URL('../src/config-reclaim-guard.ts', import.meta.url), 'utf8'));
+  const guardUrl = `data:text/javascript;base64,${Buffer.from(guard).toString('base64')}`;
   const source = readFileSync(new URL('../src/paths.ts', import.meta.url), 'utf8');
-  const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const compiled = compile(source).replace('./config-reclaim-guard.js', guardUrl);
   const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`;
   const run = (fail: boolean) => spawnSync(process.execPath, ['--input-type=module', '-e', `
     import fs from 'node:fs';

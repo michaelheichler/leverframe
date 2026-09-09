@@ -82,6 +82,17 @@ it('cancels at the secret prompt without writing credentials or contacting an en
   expect(fetch).not.toHaveBeenCalled();
 });
 
+it.each(['encoded', 'escaped', 'controls'])('does not display untrusted %s endpoint error bodies', async variant => {
+  const secret = 'fixture/key"value';
+  prompts.password.mockReset().mockResolvedValueOnce('https://8.8.8.8/v1').mockResolvedValueOnce(secret);
+  const body = variant === 'encoded' ? encodeURIComponent(secret)
+    : variant === 'escaped' ? JSON.stringify(secret) : `${String.fromCharCode(27)}[2J\rFORGED STATUS`;
+  vi.mocked(fetch).mockResolvedValue(new Response(body, { status: 503 }));
+  expect(await runProvidersAdd()).toBe(1);
+  expect(prompts.error.mock.calls).toEqual([['Provider returned HTTP 503.']]);
+  expect(prompts.info.mock.calls).toEqual([['Check the endpoint URL, API key, and model discovery support.']]);
+});
+
 it('returns failure without publication when model discovery fails', async () => {
   vi.mocked(fetch).mockResolvedValue(new Response('unavailable fixture-secret', { status: 503 }));
   expect(await runProvidersAdd()).toBe(1);
@@ -89,6 +100,6 @@ it('returns failure without publication when model discovery fails', async () =>
   expect(prompts.save).not.toHaveBeenCalled();
   expect(prompts.stop).toHaveBeenCalled();
   expect(prompts.error).toHaveBeenCalledWith('Provider returned HTTP 503.');
-  expect(prompts.info).toHaveBeenCalledWith(expect.stringContaining('unavailable'));
+  expect(prompts.info).toHaveBeenCalledWith('Check the endpoint URL, API key, and model discovery support.');
   expect(JSON.stringify([prompts.error.mock.calls, prompts.info.mock.calls])).not.toContain('fixture-secret');
 });

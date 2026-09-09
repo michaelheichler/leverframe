@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import { acquireConfigReclaimGuard } from './config-reclaim-guard.js';
 import { join } from 'node:path';
 import { cpSync, existsSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 
@@ -65,15 +66,29 @@ export function ensureLegacyAppHomeMigrated(env: HomeEnv = process.env): void {
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if ((code !== 'EEXIST' && code !== 'ENOTEMPTY') || !existsSync(appHome)) throw error;
-      writeFileSync(pendingMerge, '', { mode: 0o600 });
-      for (const entry of readdirSync(stagingHome)) {
-        cpSync(join(stagingHome, entry), join(appHome, entry), { recursive: true, force: false });
-      }
-      rmSync(pendingMerge, { force: true });
+      mergeLegacyStaging(stagingHome, appHome, pendingMerge);
     }
     legacyMigrationDone = true;
   } finally {
     rmSync(stagingHome, { recursive: true, force: true });
+  }
+}
+
+function mergeLegacyStaging(stagingHome: string, appHome: string, pendingMerge: string): void {
+  const release = acquireConfigReclaimGuard(`${appHome}.migration-lock`, pid => {
+    try { process.kill(pid, 0); return true; } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'EPERM';
+    }
+  });
+  if (!release) throw new Error('Legacy home migration is already in progress. Retry after it completes.');
+  try {
+    writeFileSync(pendingMerge, '', { mode: 0o600 });
+    for (const entry of readdirSync(stagingHome)) {
+      cpSync(join(stagingHome, entry), join(appHome, entry), { recursive: true, force: false });
+    }
+    rmSync(pendingMerge, { force: true });
+  } finally {
+    release();
   }
 }
 

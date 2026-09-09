@@ -75,7 +75,7 @@ export async function runCustomEndpointAddFlow(): Promise<number> {
   if (!result.added) {
     const redact = (text: string) => apiKey ? text.split(apiKey).join('[redacted]') : text;
     p.log.error(redact(result.error ?? 'Could not add endpoint. Check the base URL, API key, and model discovery support.'));
-    if (result.hint) p.log.info(redact(result.hint));
+    if (result.hint) p.log.info('Check the endpoint URL, API key, and model discovery support.');
     return 1;
   }
   logConnected(displayName.trim(), result.modelCount ?? 0);

@@ -67,6 +67,17 @@ describe('Anthropic parallel tool completion', () => {
     expectTools(events);
   });
 
+  it.each(['{broken', 'null', '[]', '"text"'])('normalizes invalid object input %s through the shared boundary', async input => {
+    const events = await collect([
+      { type: 'tool-call', toolCallId: 'a', toolName: 'Read', input },
+      { type: 'finish', finishReason: 'tool-calls' },
+    ]);
+    const json = events.filter(event => event.delta?.type === 'input_json_delta')
+      .map(event => event.delta?.partial_json).join('');
+    expect(JSON.parse(json)).toEqual({});
+    expect(events.at(-1)?.type).toBe('message_stop');
+  });
+
   it('flushes every unfinished tool at stream termination', async () => {
     const events = await collect([
       { type: 'tool-input-start', id: 'a', toolName: 'Read' },
