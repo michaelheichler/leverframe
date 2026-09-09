@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import ts from 'typescript';
 import { tmpdir } from 'node:os';
@@ -12,15 +12,15 @@ const failures = vi.hoisted(() => ({ copy: true, collide: false, merge: false, o
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
   return { ...actual, cpSync: (...args: Parameters<typeof actual.cpSync>) => {
-    if (String(args[1]).includes('.leverframe/config')) {
+    if ((basename(String(args[1])) === 'config.json' && basename(dirname(String(args[1]))) === '.leverframe')) {
       const onMerge = failures.onMerge;
       failures.onMerge = undefined;
       onMerge?.();
     }
-    if (failures.copy || (failures.merge && String(args[1]).includes('.leverframe/config'))) throw new Error('injected copy failure');
+    if (failures.copy || (failures.merge && (basename(String(args[1])) === 'config.json' && basename(dirname(String(args[1]))) === '.leverframe'))) throw new Error('injected copy failure');
     return actual.cpSync(...args);
   }, renameSync: (...args: Parameters<typeof actual.renameSync>) => {
-    if (failures.collide && String(args[1]).endsWith('/.leverframe')) {
+    if (failures.collide && basename(String(args[1])) === '.leverframe') {
       failures.collide = false;
       actual.mkdirSync(String(args[1]), { recursive: true });
       actual.writeFileSync(join(String(args[1]), 'new-setting.json'), 'preserve');

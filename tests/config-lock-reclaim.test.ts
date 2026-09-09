@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _configLockInternals as lock } from '../src/config-lock.js';
@@ -69,6 +69,8 @@ it.each(['file', 'symlink'])('treats a %s reclaim path as occupied without chang
   expect(lock.tryAcquire(path, { isAlive: () => false })).toBeNull();
   expect(readFileSync(path, 'utf8')).toBe(original);
   expect(readFileSync(`${path}.reclaim`, 'utf8')).toBe('preserved');
+  expect(lstatSync(`${path}.reclaim`).isSymbolicLink()).toBe(kind === 'symlink');
+  expect(readFileSync(target, 'utf8')).toBe('preserved');
 });
 
 it('recovers a dead reclaimer but preserves a live guard owner', () => {
