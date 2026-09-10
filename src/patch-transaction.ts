@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, statSync, unlinkSync } from 'node:fs';
+import { assertPatchFileHash, validatePatchPublication } from './patch-publication.js';
 import { ensurePrivateDirectory, readFileStrict } from './durable-io.js';
 import {
   atomicWriteJsonSync,
   commitSameDirectoryStageSync,
   copyImmutableFileSync,
+  removeFileDurableSync,
   sameDirectoryStagePath,
 } from './atomic-file.js';
 import {
@@ -89,10 +91,7 @@ function writeJournal(journal: PatchTransactionJournal): void {
 }
 
 export function clearPatchJournal(identity: string): void {
-  try {
-    unlinkSync(getPatchJournalPath(identity));
-  } catch {
-  }
+  removeFileDurableSync(getPatchJournalPath(identity));
 }
 
 function sha256File(path: string): string {
@@ -292,7 +291,14 @@ export async function applyPatchTransactionV2(
     return { ok: false, message: 'The live claude injection marker is ambiguous.' };
   }
 
+  let targetIdentity;
+  try {
+    targetIdentity = lstatSync(canonicalPath);
+  } catch (error) {
+    return { ok: false, message: `Could not inspect the live target: ${error instanceof Error ? error.message : String(error)}` };
+  }
   let baselineSourcePath = canonicalPath;
+  let expectedBaselineHash = live.sha256;
   let provenance: BaselineProvenance = 'live';
   if (live.injection.state === 'present') {
     const candidate: BaselineCandidate | null = manifest
@@ -320,6 +326,7 @@ export async function applyPatchTransactionV2(
     const baselineError = await validatePristineBaseline({ candidate, version, runtime });
     if (baselineError) return { ok: false, message: baselineError };
     baselineSourcePath = candidate.sourcePath;
+    expectedBaselineHash = candidate.sha256;
     provenance = candidate.provenance;
   }
 
@@ -343,8 +350,10 @@ export async function applyPatchTransactionV2(
   let baselineSha256: string;
   let baselinePath: string;
   try {
-    baselineSha256 = sha256File(baselineSourcePath);
+    baselineSha256 = expectedBaselineHash;
+    assertPatchFileHash(baselineSourcePath, baselineSha256);
     baselinePath = ensureBaselineStored({ identity, version, baselineSha256, sourcePath: baselineSourcePath });
+    assertPatchFileHash(baselinePath, baselineSha256);
   } catch (err) {
     clearPatchJournal(identity);
     return { ok: false, message: `Could not store the pristine baseline: ${err instanceof Error ? err.message : String(err)}` };
@@ -354,7 +363,8 @@ export async function applyPatchTransactionV2(
   const stage = sameDirectoryStagePath(canonicalPath, 'patch');
   let results: PatchSiteResult[] = [];
   try {
-    copyImmutableFileSync(baselinePath, stage, { mode: statSync(canonicalPath).mode & 0o777 });
+    copyImmutableFileSync(baselinePath, stage, { mode: targetIdentity.mode & 0o777 });
+    assertPatchFileHash(stage, baselineSha256);
     results = await runtime.patch(stage, desiredConfig, version);
     const stagedPatched = await runtime.inspect(stage);
     if (
@@ -375,7 +385,13 @@ export async function applyPatchTransactionV2(
       patchedSize,
       updatedAt: now(),
     });
-    commitSameDirectoryStageSync(stage, canonicalPath);
+    const expectedPostHash = stagedPatched.sha256;
+    commitSameDirectoryStageSync(stage, canonicalPath, {
+      beforeRename: () => validatePatchPublication({
+        target: canonicalPath, targetIdentity, expectedPreHash: journalBase.expectedPreHash,
+        stage, expectedPostHash, baseline: baselinePath, baselineSha256,
+      }),
+    });
 
     const manifestV2: PatchManifestV2 = {
       schemaVersion: 2,
@@ -454,6 +470,12 @@ export async function restorePatchTransactionV2(
   if (!manifest) return { ok: false, message: 'Injected claude has no patch manifest for this target.' };
   if (!existsSync(manifest.baselinePath)) return { ok: false, message: 'The saved baseline is missing.' };
 
+  let targetIdentity;
+  try {
+    targetIdentity = lstatSync(canonicalPath);
+  } catch (error) {
+    return { ok: false, message: `Could not inspect the live target: ${error instanceof Error ? error.message : String(error)}` };
+  }
   ensureBaselineExecutable(manifest.baselinePath);
   const backup = await runtime.inspect(manifest.baselinePath);
   if (!isVerifiedPristineBaselineInspection(backup, version, manifest.baselineSha256) && !backup.readable) {
@@ -489,20 +511,26 @@ export async function restorePatchTransactionV2(
 
   const stage = sameDirectoryStagePath(canonicalPath, 'restore');
   try {
-    copyImmutableFileSync(manifest.baselinePath, stage, { mode: statSync(canonicalPath).mode & 0o777 });
+    copyImmutableFileSync(manifest.baselinePath, stage, { mode: targetIdentity.mode & 0o777 });
     const candidate = await runtime.inspect(stage);
     if (
       !isVerifiedPristineBaselineInspection(candidate, version, backup.sha256 ?? '')
     ) {
       return { ok: false, message: 'Restore candidate failed staged validation.' };
     }
-    commitSameDirectoryStageSync(stage, canonicalPath);
     writeJournal({
       ...journalBase,
       phase: 'binary_committed',
-      patchedSha256: candidate.sha256 ?? undefined,
-      patchedSize: statSync(canonicalPath).size,
+      patchedSha256: manifest.baselineSha256,
+      patchedSize: statSync(stage).size,
       updatedAt: now(),
+    });
+    commitSameDirectoryStageSync(stage, canonicalPath, {
+      beforeRename: () => validatePatchPublication({
+        target: canonicalPath, targetIdentity, expectedPreHash: journalBase.expectedPreHash,
+        stage, expectedPostHash: manifest.baselineSha256,
+        baseline: manifest.baselinePath, baselineSha256: manifest.baselineSha256,
+      }),
     });
 
     removeManifestV2(identity);

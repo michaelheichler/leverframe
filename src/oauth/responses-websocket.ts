@@ -53,6 +53,7 @@ import {
   handleTransportFailure,
   numericRetryAfterMs,
   responseRetryAfterMs,
+  RETRYABLE_CLOSE_CODES,
   RETRYABLE_UPGRADE_STATUSES,
   socketFailureIsRetryable,
 } from './responses-websocket-retry-backoff.js';
@@ -479,7 +480,7 @@ function createConnection(
         provider: ctx.provider,
         model: ctx.model,
         phase: ctx.frameCount === 0 ? 'connect' : 'stream',
-        retryable: RETRYABLE_UPGRADE_STATUSES.has(code) || false,
+        retryable: RETRYABLE_CLOSE_CODES.has(code),
         outputEmitted: ctx.emittedModelData,
         cause: new Error(`WebSocket closed with code ${code}`),
         safeMessage: 'Provider WebSocket closed before completion.',

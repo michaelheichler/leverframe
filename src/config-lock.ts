@@ -11,7 +11,8 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { getAppHome } from './paths.js';
+import { ensureLegacyAppHomeMigrated, getAppHome } from './paths.js';
+import { acquireConfigReclaimGuard } from './config-reclaim-guard.js';
 
 export const CONFIG_DIR_MODE = 0o700;
 
@@ -53,7 +54,7 @@ export class ConfigLockBusyError extends Error {
     super(
       `Could not acquire the config lock at ${lockPath} after ${waitedMs}ms. `
         + 'Another leverframe process is likely writing preferences or migrating a server password. '
-        + 'If no leverframe process is running, remove the lock file and re-run.',
+        + `If no leverframe process is running, remove the lock file and any ${lockPath}.reclaim directory, then re-run.`,
     );
     this.name = CONFIG_LOCK_BUSY_ERROR;
     this.lockPath = lockPath;
@@ -177,7 +178,16 @@ function maybeUnlinkStaleLock(
   alive: (pid: number) => boolean,
   opts: { now?: number } = {},
 ): boolean {
-  const now = opts.now ?? Date.now();
+  const releaseGuard = acquireConfigReclaimGuard(`${lockPath}.reclaim`, pidIsAlive);
+  if (!releaseGuard) return false;
+  try {
+    return unlinkStaleLockUnderGuard(lockPath, alive, opts.now ?? Date.now());
+  } finally {
+    releaseGuard();
+  }
+}
+
+function unlinkStaleLockUnderGuard(lockPath: string, alive: (pid: number) => boolean, now: number): boolean {
   const meta = readLockMetadata(lockPath);
   if (meta === null) {
     const mtime = readLockMtimeMs(lockPath);
@@ -217,6 +227,7 @@ function sleepSync(ms: number): void {
 }
 
 export function withConfigWriteLock<T>(mutate: () => T): T {
+  ensureLegacyAppHomeMigrated();
   const lockPath = getConfigLockPath();
   const release = acquireConfigLockSync(lockPath);
   try {
@@ -239,6 +250,7 @@ function acquireConfigLockSync(lockPath = getConfigLockPath()): () => void {
 }
 
 export async function acquireServerPasswordLock(): Promise<() => void> {
+  ensureLegacyAppHomeMigrated();
   const lockPath = getServerPasswordLockPath();
   const deadline = Date.now() + CONFIG_LOCK_WAIT_MS;
   for (;;) {

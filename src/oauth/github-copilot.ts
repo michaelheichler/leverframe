@@ -232,25 +232,24 @@ function tokenPollingFailure(error: string): Error {
 export async function requestGitHubCopilotDeviceCode(
   signal: AbortSignal | undefined,
 ): Promise<GitHubCopilotDeviceCodeData> {
-  const response = await runAbortableRequest({
-    operation: requestSignal => fetch(DEVICE_CODE_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({ client_id: CLIENT_ID }).toString(),
-      signal: requestSignal,
-    }),
+  const record = await runAbortableRequest({
+    operation: async requestSignal => {
+      const response = await fetch(DEVICE_CODE_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({ client_id: CLIENT_ID }).toString(),
+        signal: requestSignal,
+      });
+      return readSuccessfulJson({ response, endpoint: DEVICE_CODE_ENDPOINT, secrets: [] });
+    },
     signal,
     timeoutMessage: 'GitHub Copilot device-code request timed out',
     timeoutMs: OAUTH_REQUEST_TIMEOUT_MS,
   });
-  return parseDeviceCodeData(await readSuccessfulJson({
-    response,
-    endpoint: DEVICE_CODE_ENDPOINT,
-    secrets: [],
-  }));
+  return parseDeviceCodeData(record);
 }
 
 export function githubCopilotDeviceCodeUrl(deviceData: GitHubCopilotDeviceCodeData): string {
@@ -275,38 +274,42 @@ export async function pollGitHubCopilotDeviceCodeToken(
     if (options.now() >= deadline) break;
 
     const remainingMs = Math.max(0, deadline - options.now());
-    const response = await runAbortableRequest({
-      operation: requestSignal => fetch(TOKEN_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: new URLSearchParams({
-          client_id: CLIENT_ID,
-          device_code: deviceData.device_code,
-          grant_type: DEVICE_GRANT_TYPE,
-        }).toString(),
-        signal: requestSignal,
-      }),
+    const record = await runAbortableRequest({
+      operation: async requestSignal => {
+        const response = await fetch(TOKEN_ENDPOINT, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            client_id: CLIENT_ID,
+            device_code: deviceData.device_code,
+            grant_type: DEVICE_GRANT_TYPE,
+          }).toString(),
+          signal: requestSignal,
+        });
+        if (response.status === 429 || response.status >= 500) {
+          if (transientFailures < MAX_TRANSIENT_RETRIES) {
+            transientFailures += 1;
+            void response.body?.cancel().catch(() => {});
+            options.onWarning?.({ endpoint: TOKEN_ENDPOINT, status: response.status });
+            return null;
+          }
+        } else {
+          transientFailures = 0;
+        }
+        return readSuccessfulJson({
+          response,
+          endpoint: TOKEN_ENDPOINT,
+          secrets: [deviceData.device_code, deviceData.user_code],
+        });
+      },
       signal: options.signal,
       timeoutMessage: 'GitHub Copilot device token request timed out',
       timeoutMs: Math.min(OAUTH_REQUEST_TIMEOUT_MS, remainingMs),
     });
-    if (response.status === 429 || response.status >= 500) {
-      if (transientFailures < MAX_TRANSIENT_RETRIES) {
-        transientFailures += 1;
-        options.onWarning?.({ endpoint: TOKEN_ENDPOINT, status: response.status });
-        continue;
-      }
-    } else {
-      transientFailures = 0;
-    }
-    const record = await readSuccessfulJson({
-      response,
-      endpoint: TOKEN_ENDPOINT,
-      secrets: [deviceData.device_code, deviceData.user_code],
-    });
+    if (record === null) continue;
     const result = parseTokenData(record);
     if ('access_token' in result) {
       return { tokens: { access_token: result.access_token } };

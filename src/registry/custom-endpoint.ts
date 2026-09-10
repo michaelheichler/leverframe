@@ -184,6 +184,7 @@ async function addCustomEndpointProviderLocked(input: AddCustomEndpointInput): P
       apiKey,
       urlCheck.normalizedUrl,
       headers,
+      { allowInsecureLocal: input.allowInsecureLocal === true },
     );
   }
 

@@ -365,7 +365,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       p.log.warn('No providers available.');
     }
     p.log.info(pc.dim('Run leverframe providers to get started.'));
-    return 0;
+    return launchPlan.target || freshCatalog.unavailable.length > 0 ? 1 : 0;
   }
 
   const providerOptions = allProviders.map(lp => providerSelectOption(lp));

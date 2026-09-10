@@ -497,19 +497,19 @@ const COMPACT_TEXT_ONLY_START = 'CRITICAL: Respond with TEXT ONLY. Do NOT call a
 const COMPACT_TEXT_ONLY_END = 'REMINDER: Do NOT call any tools. Respond with plain text only';
 const COMPACT_OAUTH_INSTRUCTION = 'Keep this compaction summary under 16,000 output tokens. Preserve concrete decisions, file paths, errors, pending tasks, and user instructions without repetition.';
 
+/** Use prompts because StructuredOutput can be absent. */
 function isClaudeCodeStructuredOutputCompactRequest(body: AnthropicRequest): boolean {
   if (body.diagnostics !== undefined) return false;
-  if (!body.tools?.some(candidate => candidate.name === 'StructuredOutput')) return false;
 
   const finalMessage = body.messages.at(-1);
   if (!finalMessage || finalMessage.role !== 'user') return false;
-  const text = typeof finalMessage.content === 'string'
-    ? finalMessage.content
+  const texts = typeof finalMessage.content === 'string'
+    ? [finalMessage.content]
     : finalMessage.content
       .filter(block => block.type === 'text')
-      .map(block => block.text ?? '')
-      .join('\n');
-  return text.includes(COMPACT_TEXT_ONLY_START) && text.includes(COMPACT_TEXT_ONLY_END);
+      .map(block => block.text ?? '');
+  return texts.some(text => text.startsWith(COMPACT_TEXT_ONLY_START)
+    && text.includes(COMPACT_TEXT_ONLY_END));
 }
 
 const OPENAI_OAUTH_SDK_MAX_RETRIES = 0;

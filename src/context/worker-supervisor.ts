@@ -114,10 +114,18 @@ export class WorkerSupervisor {
     const child = this.spawnWorker(this.executable, this.args);
     this.child = child;
     this.decoder = new WorkerFrameDecoder();
-    child.stdout?.on('data', chunk => this.receive(chunk));
-    child.stderr?.on('data', chunk => this.receiveStderr(chunk));
-    child.on('error', error => this.failChild(new WorkerSupervisorError('worker_error', error.message)));
-    child.on('exit', () => this.failChild(new WorkerSupervisorError('worker_crash', 'worker exited')));
+    child.stdout?.on('data', chunk => {
+      if (this.child === child) this.receive(chunk);
+    });
+    child.stderr?.on('data', chunk => {
+      if (this.child === child) this.receiveStderr(chunk);
+    });
+    child.on('error', error => {
+      if (this.child === child) this.failChild(new WorkerSupervisorError('worker_error', error.message));
+    });
+    child.on('exit', () => {
+      if (this.child === child) this.failChild(new WorkerSupervisorError('worker_crash', 'worker exited'));
+    });
     return child;
   }
 

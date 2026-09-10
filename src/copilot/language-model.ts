@@ -8,6 +8,7 @@ import type {
   LanguageModelV3StreamResult,
 } from '@ai-sdk/provider';
 import { collectCopilotGenerateResult } from './generate-result.js';
+import { comparisonWithResponse } from './response-history.js';
 import { createSessionEventSource } from './session-events.js';
 import { renderCopilotHistory } from './serialized-history.js';
 import type {
@@ -73,6 +74,7 @@ export interface CopilotLanguageToolBridge {
 export interface CopilotLanguageModelDependencies {
   readonly workingDirectory: string;
   getRuntime(): Promise<CopilotLanguageRuntime>;
+  dispose?(): Promise<void>;
   createToolBridge(tools: readonly LanguageModelV3FunctionTool[]): CopilotLanguageToolBridge;
   bridgeSessionEvents(events: AsyncIterable<unknown>): ReadableStream<LanguageModelV3StreamPart>;
   deriveSessionKey(input: {
@@ -103,6 +105,8 @@ interface SessionState {
   toolBridge: CopilotLanguageToolBridge;
   comparison: TranscriptComparisonState;
   subscribeEvents(handler: (event: unknown) => void): () => void;
+  turnAbort?: AbortController;
+  requestComparison?: TranscriptComparisonState;
   completedResponse?: readonly LanguageModelV3StreamPart[];
 }
 
@@ -200,6 +204,7 @@ function sessionConfig(input: {
   reasoningEffort: string | null;
   systemPrompt: string;
   tools: readonly LanguageModelV3FunctionTool[];
+  copilotTools: readonly unknown[];
   toolChoice: 'auto' | 'none';
   workingDirectory: string;
 }): CopilotSessionConfig {
@@ -209,7 +214,7 @@ function sessionConfig(input: {
     ...(input.reasoningEffort === null ? {} : { reasoningEffort: input.reasoningEffort }),
     systemMessage: { mode: 'replace', content: input.systemPrompt },
     availableTools: enabledTools.map(tool => tool.name),
-    tools: enabledTools as unknown[],
+    tools: input.toolChoice === 'none' ? [] : [...input.copilotTools],
     toolSearch: { enabled: false },
     memory: { enabled: false },
     infiniteSessions: { enabled: false },
@@ -229,18 +234,49 @@ function wrapAbort(input: {
   toolBridge: CopilotLanguageToolBridge;
   source: { close(): void };
 }): ReadableStream<LanguageModelV3StreamPart> {
-  if (input.signal === undefined) return input.stream;
-  return input.stream.pipeThrough(new TransformStream({
+  const reader = input.stream.getReader();
+  let settled = false;
+  let abortListener: () => void;
+  const cleanup = () => {
+    settled = true;
+    input.signal?.removeEventListener('abort', abortListener);
+    input.source.close();
+  };
+  let cancellation: Promise<void> | undefined;
+  const cancel = (reason: unknown): Promise<void> => {
+    if (cancellation !== undefined) return cancellation;
+    if (settled) return Promise.resolve();
+    cleanup();
+    input.toolBridge.settleAllPending('abort');
+    cancellation = Promise.all([input.session.abort(), reader.cancel(reason)]).then(() => {});
+    return cancellation;
+  };
+  return new ReadableStream({
     start(controller) {
-      input.signal?.addEventListener('abort', () => {
-        input.toolBridge.settleAllPending('abort');
-        input.source.close();
-        void input.session.abort();
-        controller.terminate();
-      }, { once: true });
+      abortListener = () => {
+        const error = new Error('GitHub Copilot request aborted');
+        void cancel(error).then(
+          () => controller.error(error),
+          failure => controller.error(failure),
+        );
+      };
+      input.signal?.addEventListener('abort', abortListener, { once: true });
+      if (input.signal?.aborted) abortListener();
     },
-    transform(part, controller) { controller.enqueue(part); },
-  }));
+    async pull(controller) {
+      try {
+        const next = await reader.read();
+        if (settled) return;
+        if (next.done) { cleanup(); controller.close(); }
+        else controller.enqueue(next.value);
+      } catch (error) {
+        if (settled) return;
+        await cancel(error).catch(() => {});
+        controller.error(error);
+      }
+    },
+    cancel,
+  });
 }
 
 async function startTurn(input: {
@@ -253,28 +289,35 @@ async function startTurn(input: {
   const source = createSessionEventSource<unknown>({
     subscribe: handler => input.active.subscribeEvents(handler),
   });
+  const turnAbort = new AbortController();
+  input.active.turnAbort = turnAbort;
+  const signal = input.context.options.abortSignal;
   const stream = wrapAbort({
     stream: input.deps.bridgeSessionEvents(source),
-    signal: input.context.options.abortSignal,
+    signal: signal === undefined ? turnAbort.signal : AbortSignal.any([signal, turnAbort.signal]),
     session: input.active.session,
     toolBridge: input.active.toolBridge,
     source,
   });
   try {
     if (input.decision.kind === 'tool-result-continuation' && !input.recreating) {
-      input.active.toolBridge.resolveToolResults(v3ToolResults(input.context.options.prompt));
+      const ids = new Set(input.decision.resolvedToolCallIds);
+      input.active.toolBridge.resolveToolResults(v3ToolResults(input.context.options.prompt)
+        .filter(result => ids.has(result.toolCallId)));
     } else if (input.decision.kind !== 'exact-retry' || input.recreating) {
-      const promptText = input.recreating
+      const fullHistory = input.recreating || (input.decision.kind === 'resync'
+        && input.context.comparison.history.entries.length > 1);
+      const promptText = fullHistory
         ? renderCopilotHistory(input.context.options.prompt)
         : v3LatestUserPrompt(input.context.options.prompt);
-      const attachments = input.recreating
+      const attachments = fullHistory
         ? v3ImageAttachments(input.context.options.prompt)
         : v3LatestUserImageAttachments(input.context.options.prompt);
       await input.active.session.send(copilotMessage(promptText, attachments));
     }
     return stream;
   } catch (error) {
-    source.close();
+    await stream.cancel(error).catch(() => {});
     throw error;
   }
 }
@@ -283,7 +326,7 @@ function withComparison(
   state: SessionState,
   comparison: TranscriptComparisonState,
 ): SessionState {
-  return { ...state, comparison };
+  return { ...state, comparison, requestComparison: comparison, completedResponse: undefined };
 }
 
 function streamResult(
@@ -329,9 +372,9 @@ async function resolveTurnSession(input: {
   const decision = previous === undefined
     ? { kind: 'resync', reason: 'cold-restart' } as const
     : input.deps.classifyTranscript(previous.comparison, input.comparison);
-  const replay = decision.kind === 'exact-retry' && previous?.key === input.key
-    ? previous.completedResponse
-    : undefined;
+  const retry = previous?.requestComparison !== undefined
+    && input.deps.classifyTranscript(previous.requestComparison, input.comparison).kind === 'exact-retry';
+  const replay = retry && previous?.key === input.key ? previous.completedResponse : undefined;
   if (replay !== undefined) return { kind: 'replay', parts: replay };
   const missingRetryReplay = decision.kind === 'exact-retry';
   const recreating = previous !== undefined
@@ -361,7 +404,9 @@ export function createCopilotLanguageModel(
 ): CopilotLanguageModel {
   const sessions = new Map<string, SessionState>();
   const activeResponses = new Set<string>();
+  const pendingStarts = new Set<Promise<TurnResolution>>();
   let disposed = false;
+  let disposal: Promise<void> | undefined;
 
   const createState = async (input: {
     options: LanguageModelV3CallOptions;
@@ -372,6 +417,8 @@ export function createCopilotLanguageModel(
   }): Promise<SessionState> => {
     const runtime = await deps.getRuntime();
     await runtime.start();
+    if (disposed) throw new Error('GitHub Copilot model has been disposed');
+    if (input.options.abortSignal?.aborted) throw new Error('GitHub Copilot request aborted');
     const toolBridge = deps.createToolBridge(input.toolChoice === 'none' ? [] : input.tools);
     const earlyEvents: unknown[] = [];
     let sessionEventHandler: ((event: unknown) => void) | undefined;
@@ -380,12 +427,18 @@ export function createCopilotLanguageModel(
       reasoningEffort: input.comparison.reasoningEffort,
       systemPrompt: v3SystemPrompt(input.options.prompt),
       tools: input.tools,
+      copilotTools: toolBridge.copilotTools,
       toolChoice: input.toolChoice,
       workingDirectory: deps.workingDirectory,
     }), event => {
       if (sessionEventHandler === undefined) earlyEvents.push(event);
       else sessionEventHandler(event);
     });
+    if (disposed || input.options.abortSignal?.aborted) {
+      toolBridge.settleAllPending(disposed ? 'disposal' : 'abort');
+      await session.disconnect();
+      throw new Error(disposed ? 'GitHub Copilot model has been disposed' : 'GitHub Copilot request aborted');
+    }
     return {
       key: input.key,
       session,
@@ -407,28 +460,47 @@ export function createCopilotLanguageModel(
     if (activeResponses.has(slotKey)) {
       throw new Error('A GitHub Copilot response is already active for this Claude session');
     }
+    activeResponses.add(slotKey);
     const { comparison, key } = context;
-    const resolved = await resolveTurnSession({
+    const pending = resolveTurnSession({
       slotKey, key, comparison, options, context, sessions, createState, deps,
     });
-    if (resolved.kind === 'replay') return streamResult(replayCopilotResponse(resolved.parts));
-    const { active, decision, recreating } = resolved;
-    const stream = await startTurn({ active, deps, context, decision, recreating });
-    sessions.set(slotKey, withComparison(active, comparison));
-    activeResponses.add(slotKey);
-    const recorded = recordCopilotResponse({
-      stream,
-      onComplete(parts) {
-        const latest = sessions.get(slotKey);
-        if (latest?.key === key && latest.comparison === comparison) {
-          sessions.set(slotKey, { ...latest, completedResponse: parts });
-        }
-      },
-      onSettled() {
+    pendingStarts.add(pending);
+    try {
+      const resolved = await pending;
+      if (disposed) throw new Error('GitHub Copilot model has been disposed');
+      if (options.abortSignal?.aborted) throw new Error('GitHub Copilot request aborted');
+      if (resolved.kind === 'replay') {
         activeResponses.delete(slotKey);
-      },
-    });
-    return streamResult(recorded);
+        return streamResult(replayCopilotResponse(resolved.parts));
+      }
+      const { active, decision, recreating } = resolved;
+      const stream = await startTurn({ active, deps, context, decision, recreating });
+      if (disposed || options.abortSignal?.aborted) {
+        await stream.cancel().catch(() => {});
+        throw new Error(disposed ? 'GitHub Copilot model has been disposed' : 'GitHub Copilot request aborted');
+      }
+      sessions.set(slotKey, withComparison(active, comparison));
+      const recorded = recordCopilotResponse({
+        stream,
+        onComplete(parts) {
+          const latest = sessions.get(slotKey);
+          if (latest?.key === key && latest.comparison === comparison) {
+            sessions.set(slotKey, { ...latest, requestComparison: comparison,
+              comparison: comparisonWithResponse(comparison, parts), completedResponse: parts });
+          }
+        },
+        onSettled() {
+          activeResponses.delete(slotKey);
+        },
+      });
+      return streamResult(recorded);
+    } catch (error) {
+      activeResponses.delete(slotKey);
+      throw error;
+    } finally {
+      pendingStarts.delete(pending);
+    }
   };
 
   const model: CopilotLanguageModel = {
@@ -441,13 +513,21 @@ export function createCopilotLanguageModel(
       return collectCopilotGenerateResult((await doStream(options)).stream);
     },
     async dispose() {
-      if (disposed) return;
+      if (disposal !== undefined) return disposal;
       disposed = true;
-      const active = [...sessions.values()];
-      sessions.clear();
-      activeResponses.clear();
-      for (const state of active) state.toolBridge.settleAllPending('disposal');
-      await Promise.all(active.map(state => state.session.disconnect()));
+      disposal = (async () => {
+        await Promise.allSettled(pendingStarts);
+        const active = [...sessions.values()];
+        sessions.clear();
+        activeResponses.clear();
+        for (const state of active) {
+          state.toolBridge.settleAllPending('disposal');
+          state.turnAbort?.abort();
+        }
+        try { await Promise.all(active.map(state => state.session.disconnect())); }
+        finally { await deps.dispose?.(); }
+      })();
+      return disposal;
     },
   };
   return model;

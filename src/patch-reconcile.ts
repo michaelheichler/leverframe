@@ -21,6 +21,7 @@ import {
 import {
   defaultHomeOwnsPatchedBinary,
   readManifestV2,
+  removeManifestV2,
   writeManifestV2,
   type PatchManifestV2,
 } from './patch-state.js';
@@ -44,6 +45,13 @@ export async function reconcilePatchTransaction(
   installation: ClaudeInstallation,
   runtime: PatchRuntime = defaultPatchRuntime,
 ): Promise<{ action: 'none' | 'discarded' | 'completed' | 'left-in-place'; detail?: string }> {
+  return withPatchTargetLock(installation.identity, () => reconcileOwnedPatchTransaction(installation, runtime), { waitMs: 500 });
+}
+
+async function reconcileOwnedPatchTransaction(
+  installation: ClaudeInstallation,
+  runtime: PatchRuntime,
+): Promise<{ action: 'none' | 'discarded' | 'completed' | 'left-in-place'; detail?: string }> {
   const journal = readPatchJournal(installation.identity);
   if (!journal || journal.phase === 'completed') return { action: 'none' };
 
@@ -52,6 +60,12 @@ export async function reconcilePatchTransaction(
     return { action: 'left-in-place', detail: 'Live binary is unreadable during reconciliation.' };
   }
   const liveSha256 = liveInspection.sha256;
+
+  if (journal.operation === 'restore' && liveSha256 === journal.baselineSha256) {
+    removeManifestV2(installation.identity);
+    clearPatchJournal(installation.identity);
+    return { action: 'completed', detail: 'Completed an interrupted restore by removing its manifest.' };
+  }
 
   if (journal.phase === 'prepared' || journal.phase === 'baseline_committed') {
     clearPatchJournal(installation.identity);
@@ -78,8 +92,9 @@ export async function reconcilePatchTransaction(
         completedAt: new Date().toISOString(),
       };
       if (journal.operation === 'restore') {
+        removeManifestV2(installation.identity);
         clearPatchJournal(installation.identity);
-        return { action: 'completed', detail: 'Completed an interrupted restore (manifest already absent).' };
+        return { action: 'completed', detail: 'Completed an interrupted restore by removing its manifest.' };
       }
       writeManifestV2(installation.identity, manifest);
       clearPatchJournal(installation.identity);
@@ -116,12 +131,25 @@ export async function checkResolvedPatchState(
   selectedModel?: FavoriteModel,
   contextSelectionAvailable = true,
 ): Promise<CheckResult> {
+  return withPatchTargetLock(installation.identity, () => checkOwnedPatchState({
+    installation, runtime, freshProviders, selectedModel, contextSelectionAvailable,
+  }), { waitMs: 500 });
+}
+
+async function checkOwnedPatchState(options: {
+  installation: ClaudeInstallation;
+  runtime: PatchRuntime;
+  freshProviders?: LocalProvider[];
+  selectedModel?: FavoriteModel;
+  contextSelectionAvailable: boolean;
+}): Promise<CheckResult> {
+  const { installation, runtime, freshProviders, selectedModel, contextSelectionAvailable } = options;
   const desired = buildDesiredPatchConfig(freshProviders, selectedModel, {
     includeContextModes: contextSelectionAvailable,
   });
   const configHash = computePatchConfigHash(desired.config);
 
-  await reconcilePatchTransaction(installation, runtime);
+  await reconcileOwnedPatchTransaction(installation, runtime);
   const legacyInspection = await inspectLegacyPatchRecovery({ installation, runtime });
   if (legacyInspection.kind === 'exact-adoption') {
     await migrateLegacyStateIfVerified({
@@ -208,15 +236,16 @@ export async function runPatchCommandV2(
     presenter.error(unsupportedClaudeCodeBinaryPatchingMessage(installation.version));
     return 1;
   }
-  const { manifest, state, desired, legacyRecovery } = await checkResolvedPatchState(
-    installation,
-    runtime,
-    opts.freshProviders,
-    opts.selectedModel,
-    opts.contextSelectionAvailable !== false,
-  );
-
+  let lockAcquired = false;
   return withPatchTargetLock(installation.identity, async () => {
+    lockAcquired = true;
+    const { manifest, state, desired, legacyRecovery } = await checkOwnedPatchState({
+      installation,
+      runtime,
+      freshProviders: opts.freshProviders,
+      selectedModel: opts.selectedModel,
+      contextSelectionAvailable: opts.contextSelectionAvailable !== false,
+    });
     if (opts.restore) {
       const outcome = await restorePatchTransactionV2({ installation, manifest }, runtime);
       return reportOutcome(outcome, false, presenter);
@@ -260,6 +289,10 @@ export async function runPatchCommandV2(
     }, runtime);
     return reportOutcome(outcome, opts.trace ?? false, presenter);
   }, { waitMs: 500 }).catch((err: unknown) => {
+    if (lockAcquired) {
+      presenter.error(`Could not inspect or patch claude: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
     presenter.warn(`Another leverframe process is patching the claude binary right now. Skipped. (${err instanceof Error ? err.message : String(err)})`);
     return 1;
   });
@@ -327,7 +360,17 @@ export async function runLaunchPatchCheckV2(
       ) {
         const outcome = await withPatchTargetLock(
           installation.identity,
-          () => restorePatchTransactionV2({ installation, manifest }, runtime),
+          async () => {
+            const current = await checkOwnedPatchState({
+              installation, runtime, freshProviders: opts.freshProviders,
+              selectedModel: opts.selectedModel,
+              contextSelectionAvailable: opts.contextSelectionAvailable !== false,
+            });
+            if (!current.manifest || (current.state !== 'patched' && current.state !== 'config_stale')) {
+              return { ok: true, message: 'No stale integration remains to restore.' };
+            }
+            return restorePatchTransactionV2({ installation, manifest: current.manifest }, runtime);
+          },
           { waitMs: 500 },
         );
         if (!outcome.ok) throw new Error(outcome.message);

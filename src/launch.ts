@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, appendFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { constants as osConstants, homedir } from 'node:os';
 import { join } from 'node:path';
 import { getAppPathOverride, loadPreferences } from './config.js';
 import { findBinaryOnPath } from './binary-lookup.js';
@@ -147,17 +147,19 @@ export function launchClaude(options: LaunchClaudeOptions): Promise<number> {
       child.kill(signal);
     };
 
-    process.once('SIGINT', () => forward('SIGINT'));
-    process.once('SIGTERM', () => forward('SIGTERM'));
-
-    child.on('exit', (code) => {
+    const onInterrupt = () => forward('SIGINT');
+    const onTerminate = () => forward('SIGTERM');
+    process.once('SIGINT', onInterrupt);
+    process.once('SIGTERM', onTerminate);
+    const finish = (code: number) => {
+      process.removeListener('SIGINT', onInterrupt);
+      process.removeListener('SIGTERM', onTerminate);
       restore();
-      resolve(code ?? 0);
+      resolve(code);
+    };
+    child.on('exit', (code, signal) => {
+      finish(code ?? (signal ? 128 + (osConstants.signals[signal] ?? 1) : 1));
     });
-
-    child.on('error', () => {
-      restore();
-      resolve(1);
-    });
+    child.on('error', () => finish(1));
   });
 }

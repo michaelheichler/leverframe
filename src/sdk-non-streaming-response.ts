@@ -167,7 +167,8 @@ export async function generateAnthropicResponse(
         input: sanitizeToolInput(tc.input as Record<string, unknown> ?? {}, inputRules.get(tc.toolName)),
       })),
     ],
-    stop_reason: finishReason === 'tool-calls' ? 'tool_use' : 'end_turn',
+    stop_reason: finishReason === 'length' ? 'max_tokens'
+      : finishReason === 'tool-calls' || toolCalls.length > 0 ? 'tool_use' : 'end_turn',
     usage: resolvedUsage,
   };
 }

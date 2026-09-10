@@ -1,5 +1,3 @@
-
-
 export interface ToolCallTapCallbacks {
   onToolUse?: (toolCallId: string, toolName: string) => void;
   onTextBytes?: (byteCount: number) => void;
@@ -71,16 +69,29 @@ function processOpenAiEvent(parsed: unknown, callbacks: ToolCallTapCallbacks): v
 }
 
 function createLineBufferedTap(processEvent: (parsed: unknown, callbacks: ToolCallTapCallbacks) => void, callbacks: ToolCallTapCallbacks): ToolCallTap {
-  let buffer = '';
+  let line = '';
+  let event = '';
+  let skipLf = false;
   return {
     feed(chunk: string): void {
-      buffer += chunk;
-      let boundary: number;
-      while ((boundary = buffer.indexOf('\n\n')) !== -1) {
-        const raw = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        const parsed = parseSseDataLine(raw);
-        if (parsed !== undefined) processEvent(parsed, callbacks);
+      for (const character of chunk) {
+        if (skipLf && character === '\n') {
+          skipLf = false;
+          continue;
+        }
+        skipLf = character === '\r';
+        if (character !== '\r' && character !== '\n') {
+          line += character;
+          continue;
+        }
+        if (line) {
+          event += `${line}\n`;
+          line = '';
+        } else {
+          const parsed = parseSseDataLine(event);
+          event = '';
+          if (parsed !== undefined) processEvent(parsed, callbacks);
+        }
       }
     },
   };

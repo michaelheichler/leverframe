@@ -1,12 +1,15 @@
 
 
 import { randomUUID } from 'node:crypto';
+import { resumeValidationError } from './execution-resume-validation.js';
 import { isExpired, listExecutions, workspaceOrSessionHash } from './checkpoint-store.js';
 import { classifyRecovery, type RecoveryDecision } from './execution-recovery.js';
 import { buildProviderCapabilities, type ProviderCapabilityMatrix } from './provider-capabilities.js';
 import {
   advanceCheckpoint,
   createInitialCheckpoint,
+  conversationFingerprint,
+  digestMessages,
   loadCheckpoint,
   saveCheckpointCAS,
   type DigestableMessage,
@@ -62,6 +65,7 @@ export interface BeginExecutionTrackingInput {
   model: string;
   route: ExecutionRoute;
   messages: DigestableMessage[];
+  toolResults?: ToolResultObservation[];
   capabilities?: ProviderCapabilityMatrix;
 }
 
@@ -172,6 +176,10 @@ function openPublishers(input: BeginExecutionTrackingInput, scopeHash: string): 
     throw new Error(ledgerRead.error ?? `Execution ${input.executionId} ledger was not found`);
   }
 
+  const validationError = resumeValidationError(checkpointRead.value, ledgerRead.value, input.messages, input.toolResults ?? []);
+  if (validationError) {
+    throw new ExecutionRecoveryBlockedError({ kind: 'unrecoverable', reason: validationError, ambiguousToolCallIds: [], isReconstruction: false });
+  }
   const checkpoints = new CheckpointPublisher(scopeHash, checkpointRead.value, checkpointRead.generation);
   const ledgers = new LedgerPublisher(scopeHash, ledgerRead.value, ledgerRead.generation);
   const providerSwitched = checkpointRead.value.provider !== input.provider || checkpointRead.value.model !== input.model;
@@ -195,6 +203,8 @@ function openPublishers(input: BeginExecutionTrackingInput, scopeHash: string): 
     model: input.model,
     route: input.route,
     recoveryDecision: decision.kind,
+    conversationFingerprint: conversationFingerprint(input.messages),
+    messageDigests: digestMessages(input.messages),
     ...(providerSwitched ? { providerConversationId: undefined, providerResponseId: undefined } : {}),
   });
   return { executionId: input.executionId, checkpoints, ledgers };

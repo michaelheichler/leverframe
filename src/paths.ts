@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
+import { acquireConfigReclaimGuard } from './config-reclaim-guard.js';
 import { join } from 'node:path';
-import { cpSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 
 export const APP_DIR_NAME = 'leverframe';
 
@@ -44,25 +45,50 @@ export function getOlderLegacyAppHome(env: HomeEnv = process.env): string {
 let legacyMigrationDone = false;
 
 export function ensureLegacyAppHomeMigrated(env: HomeEnv = process.env): void {
-  if (legacyMigrationDone) return;
-  legacyMigrationDone = true;
-  if (resolveAppHomeOverride(env)) return;
-  try {
-    const appHome = getAppHome(env);
-    if (existsSync(appHome)) return;
-    const legacyHome = [getLegacyAppHome(env), getOlderLegacyAppHome(env)].find(path => existsSync(path));
-    if (!legacyHome) return;
-
-    mkdirSync(appHome, { recursive: true, mode: 0o700 });
-    const entries = readdirSync(legacyHome);
-
-    for (const entry of entries) {
-      if (entry === 'logs') continue; // session logs are not config/auth state
-      cpSync(join(legacyHome, entry), join(appHome, entry), { recursive: true });
+  if (legacyMigrationDone || resolveAppHomeOverride(env)) return;
+  const appHome = getAppHome(env);
+  const legacyHome = [getLegacyAppHome(env), getOlderLegacyAppHome(env)].find(path => existsSync(path));
+  if (!legacyHome) return;
+  const release = acquireConfigReclaimGuard(`${appHome}.migration-lock`, pid => {
+    try { process.kill(pid, 0); return true; } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'EPERM';
     }
-  } catch {
-
+  });
+  if (!release) throw new Error('Legacy home migration is already in progress. Retry after it completes.');
+  try {
+    const pendingMerge = join(appHome, '.legacy-migration-pending');
+    if (!existsSync(appHome) || existsSync(pendingMerge)) migrateLegacyHome(legacyHome, appHome, pendingMerge);
+    legacyMigrationDone = true;
+  } finally {
+    release();
   }
+}
+
+function migrateLegacyHome(legacyHome: string, appHome: string, pendingMerge: string): void {
+  const stagingHome = mkdtempSync(`${appHome}.migration-`);
+  try {
+    for (const entry of readdirSync(legacyHome)) {
+      if (entry === 'logs') continue;
+      cpSync(join(legacyHome, entry), join(stagingHome, entry), { recursive: true });
+    }
+    try {
+      renameSync(stagingHome, appHome);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if ((code !== 'EEXIST' && code !== 'ENOTEMPTY') || !existsSync(appHome)) throw error;
+      mergeLegacyStaging(stagingHome, appHome, pendingMerge);
+    }
+  } finally {
+    rmSync(stagingHome, { recursive: true, force: true });
+  }
+}
+
+function mergeLegacyStaging(stagingHome: string, appHome: string, pendingMerge: string): void {
+  writeFileSync(pendingMerge, '', { mode: 0o600 });
+  for (const entry of readdirSync(stagingHome)) {
+    cpSync(join(stagingHome, entry), join(appHome, entry), { recursive: true, force: false });
+  }
+  rmSync(pendingMerge, { force: true });
 }
 
 export function resetLegacyMigrationForTests(): void {

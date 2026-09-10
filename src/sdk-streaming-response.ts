@@ -6,6 +6,7 @@ import {
   encodeToolUseId,
   type FullStreamPart,
   grabRoundTripSignature,
+  parseToolArguments,
 } from './proxy-shared.js';
 import { anthropicErrorType, upstreamHttpStatus } from './upstream-error.js';
 import { ProviderTransportError } from './provider-error.js';
@@ -204,7 +205,6 @@ export async function writeAnthropicStream(
   const toolFlushTimers = new Map<string, ReturnType<typeof setInterval>>();
   const toolOpenedAt = new Map<string, number>();
   const flushedTools = new Set<string>();
-  let openToolId: string | null = null;
   let finishReason = 'end_turn';
   let rawFinishReason: string | undefined;
   const seenPartTypes: string[] = [];
@@ -303,18 +303,24 @@ export async function writeAnthropicStream(
       });
       pendingThinkingSig = undefined;
     }
-    if (openType === 'tool' && openToolId !== null && !flushedTools.has(openToolId)) {
-      clearToolTimer(openToolId);
-      emitToolJson(openToolId, toolJsonBuffer.get(openToolId) ?? '');
-      flushedTools.add(openToolId);
-    }
     if (openType) emit('content_block_stop', { type: 'content_block_stop', index: blockIndex });
     openType = null;
-    openToolId = null;
   };
   const openBlock = (type: 'text' | 'thinking' | 'tool', contentBlock: unknown) => {
-    ensureStart(); closeOpen(); blockIndex++; openType = type;
+    ensureStart(); closeOpen(); blockIndex++; openType = type === 'tool' ? null : type;
     emit('content_block_start', { type: 'content_block_start', index: blockIndex, content_block: contentBlock });
+  };
+
+  const closeTool = (id: string, json = toolJsonBuffer.get(id) ?? '') => {
+    if (flushedTools.has(id)) return;
+    clearToolTimer(id);
+    emitToolJson(id, json);
+    flushedTools.add(id);
+    emit('content_block_stop', { type: 'content_block_stop', index: idToBlock.get(id) });
+  };
+  const closeAll = () => {
+    closeOpen();
+    for (const id of idToBlock.keys()) closeTool(id);
   };
 
   const clientStillListening = () =>
@@ -322,7 +328,7 @@ export async function writeAnthropicStream(
 
   const deliverTruncated = (): boolean => {
     if (!clientStillListening()) return false;
-    closeOpen();
+    closeAll();
     emit('message_delta', {
       type: 'message_delta',
       delta: { stop_reason: 'max_tokens', stop_sequence: null },
@@ -390,7 +396,6 @@ export async function writeAnthropicStream(
         toolNameById.set(id, part.toolName ?? '');
         toolJsonBuffer.set(id, '');
         emittedToolLengths.set(id, 0);
-        openToolId = id;
         toolOpenedAt.set(id, Date.now());
         const timer = setInterval(() => flushToolJson(id), 2_000);
         timer.unref?.();
@@ -415,17 +420,7 @@ export async function writeAnthropicStream(
         finishReason = 'tool_use';
         observer?.lifecycle?.markToolCallEmitted();
         const id = part.toolCallId ?? '';
-        if (idToBlock.has(id)) {
-          if (!flushedTools.has(id)) {
-            clearToolTimer(id);
-            const json = part.input !== undefined && part.input !== null
-              ? JSON.stringify(sanitizeToolInput(part.input as Record<string, unknown>, inputRules.get(part.toolName ?? '')))
-              : (toolJsonBuffer.get(id) ?? '');
-            emitToolJson(id, json);
-            flushedTools.add(id);
-          }
-        } else if (openType !== 'tool') {
-
+        if (!idToBlock.has(id)) {
           const sig = grabRoundTripSignature(part);
           openBlock('tool', {
             type: 'tool_use', id: encodeToolUseId(id, sig), name: part.toolName, input: {},
@@ -434,12 +429,11 @@ export async function writeAnthropicStream(
           toolNameById.set(id, part.toolName ?? '');
           toolJsonBuffer.set(id, '');
           emittedToolLengths.set(id, 0);
-          emitToolJson(
-            id,
-            JSON.stringify(sanitizeToolInput(part.input as Record<string, unknown> ?? {}, inputRules.get(part.toolName ?? ''))),
-          );
-          flushedTools.add(id);
         }
+        const json = part.input !== undefined && part.input !== null
+          ? JSON.stringify(sanitizeToolInput(parseToolArguments(part.input), inputRules.get(part.toolName ?? '')))
+          : (toolJsonBuffer.get(id) || '{}');
+        closeTool(id, json);
         break;
       }
 
@@ -467,7 +461,8 @@ export async function writeAnthropicStream(
           ...usage,
           ...(observer.promptCacheKeyHash ? { promptCacheKeyHash: observer.promptCacheKeyHash } : {}),
         });
-        if (part.finishReason === 'tool-calls') finishReason = 'tool_use';
+        if (part.finishReason === 'length') finishReason = 'max_tokens';
+        else if (part.finishReason === 'tool-calls') finishReason = 'tool_use';
         else if (part.finishReason === 'stop' && finishReason !== 'tool_use') finishReason = 'end_turn';
         rawFinishReason = part.finishReason;
         break;
@@ -478,8 +473,7 @@ export async function writeAnthropicStream(
         const errMsg = e?.message || (typeof part.error === 'string' ? part.error : JSON.stringify(e?.data ?? part.error));
         const errorType = anthropicErrorType(upstreamHttpStatus(part.error, errMsg));
         log?.(() => `sdk stream error (${errorType}): ${errMsg}`);
-        if (deliverTruncated()) return;
-        closeOpen();
+        closeAll();
         throw part.error instanceof Error || (part.error && typeof part.error === 'object')
           ? part.error
           : new Error(errMsg);
@@ -500,7 +494,7 @@ export async function writeAnthropicStream(
     throw emptyCompletionError(modelId, usage.input_tokens, observer?.contextWindow, rawFinishReason);
   }
 
-  closeOpen();
+  closeAll();
   ensureStart();
   emit('message_delta', { type: 'message_delta', delta: { stop_reason: finishReason, stop_sequence: null }, usage });
   emit('message_stop', { type: 'message_stop' });
