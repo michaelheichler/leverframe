@@ -64,7 +64,7 @@ function capabilityResults(results: PatchSiteResult[]): PatchSiteResult[] {
 }
 
 export function applyLeverframeIntegration(source: string, config: PatchScriptModelConfig): ApplyPatchesOutcome {
-  const routingRequired = source.includes('async call({prompt:') && source.includes('agentLifecycle.markTypeInvoked');
+  const routingRequired = source.includes('async call(') && source.includes('agentLifecycle.markTypeInvoked');
   let patched: ApplyPatchesOutcome;
   try {
     patched = applyLeverframePatches(source, config);

@@ -1,6 +1,7 @@
 
 
 import type { PatchScriptModelConfig, PatchSiteResult } from './patch-transforms.js';
+import { applyModernRoutingNotice } from './patch-transforms-routing-modern.js';
 
 export const ROUTING_NOTICE_MARKER = '/*ccpatch:routing-notice*/';
 export const ROUTING_NOTICE_HANDOFF_MARKER = '/*ccpatch:routing-notice-handoff*/';
@@ -373,6 +374,8 @@ export function applyRoutingNoticeTransform(
   source: string,
   config: PatchScriptModelConfig,
 ): RoutingNoticePatchOutcome {
+  const modern = applyModernRoutingNotice(source, buildRoutingDisplayTable(config));
+  if (modern) return modern;
   if (source.includes(CURRENT_ROUTING_MARKER)) return applyCurrentRoutingSite(source, config)!;
   const base = existingRoutingNoticeOutcome(source, config) ?? patchFreshRoutingNotice(source, config);
   const described = applyAgentDescriptionSite(base.content, config);
