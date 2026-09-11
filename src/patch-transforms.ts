@@ -5,7 +5,7 @@ import { applyNativeModelKnowledge } from './patch-transforms-model-knowledge.js
 import { applyNativeContextWindow } from './patch-transforms-context-window.js';
 import { ONE_M_CONTEXT_WINDOW } from './context-model-id.js';
 
-export const PATCH_TRANSFORMS_VERSION = 15;
+export const PATCH_TRANSFORMS_VERSION = 17;
 
 export interface PatchScriptModelEntry {
   alias?: string;
@@ -110,8 +110,8 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
 
   const capabilityKeys = (value: string): string[] => {
     const normalized = String(value).trim().toLowerCase();
-    const bare = normalized.replace(/\[1m\]$/i, '');
-    return [...new Set([bare, bare + '[1m]'])];
+    const bare = normalized.replace(/(?:\[(?:default|maximum|1m)\])+$/i, '');
+    return [bare, bare + '[default]', bare + '[maximum]', bare + '[1m]'];
   };
 
   for (const [id, value] of Object.entries(MODEL_CONFIG)) {

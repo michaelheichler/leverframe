@@ -200,7 +200,7 @@ function* scanCodeCharacters(source: string, start = 0): Generator<CodeCharacter
   }
 }
 
-function findBalancedBlockEnd(source: string, bodyStart: number): number | undefined {
+export function findBalancedBlockEnd(source: string, bodyStart: number): number | undefined {
   let depth = 1;
   for (const { char, index } of scanCodeCharacters(source, bodyStart)) {
     if (char === '{') depth++;
@@ -372,7 +372,7 @@ export function applyNativeContextPicker(
 
   const callbackPattern = new RegExp(
     '\\b' + escaped(picker.select)
-    + '\\(([A-Za-z_$][\\w$]*),([A-Za-z_$][\\w$]*)\\)\\}(?=\\s*(?:let|var|const)\\s+[A-Za-z_$][\\w$]*\\s*=)',
+    + '\\(([A-Za-z_$][\\w$]*),([A-Za-z_$][\\w$]*)\\)\\}(?=\\s*(?:(?:let|var|const)\\s+[A-Za-z_$][\\w$]*\\s*=|function\\s+[A-Za-z_$][\\w$]*\\s*\\())',
   );
   if (!callbackPattern.test(body)) return invalid('picker selection callback anchor not found', nativeBundleSource, source);
 

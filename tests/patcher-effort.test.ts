@@ -221,10 +221,14 @@ describe('PATCH 8/9 effort capability gates', () => {
     )?.[1];
     expect(JSON.parse(xhighVerdicts!)).toEqual({
       'leverframe:openai:reasoning-model': false,
+      'leverframe:openai:reasoning-model[default]': false,
+      'leverframe:openai:reasoning-model[maximum]': false,
       'leverframe:openai:reasoning-model[1m]': false,
     });
     expect(JSON.parse(maxVerdicts!)).toEqual({
       'leverframe:openai:reasoning-model': false,
+      'leverframe:openai:reasoning-model[default]': false,
+      'leverframe:openai:reasoning-model[maximum]': false,
       'leverframe:openai:reasoning-model[1m]': false,
     });
   });

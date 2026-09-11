@@ -126,6 +126,21 @@ async function prepareFixture(): Promise<{
 }
 
 describe('patch diagnostics integration status', () => {
+  it('reports incompatible native code when a required patch anchor is absent', async () => {
+    const fixture = await prepareFixture();
+    writeFileSync(fixture.path, BASELINE.replace(/function RS[^\n]+/, ''));
+
+    const report = await diagnosePatchV2(fixture.path, runtime());
+
+    expect(report.drift.injectionState).toBe('absent');
+    expect(report.integration.capabilities).toContainEqual({
+      status: 'FAIL',
+      name: 'context-window',
+      extra: 'anchor not found',
+    });
+    expect(report.integration.status).toBe('incompatible');
+  });
+
   it('keeps an exact-hash installation integrated when only the desired cache is stale', async () => {
     const fixture = await prepareFixture();
     const report = await diagnosePatchV2(fixture.path, runtime());

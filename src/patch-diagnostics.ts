@@ -265,7 +265,7 @@ export async function diagnosePatchV2(
     integration: {
       status: !live.readable
         ? 'unavailable'
-        : semanticSitesComplete === false && wantsSemanticVerdict
+        : patchSites.some(site => site.status === 'FAIL') || (semanticSitesComplete === false && wantsSemanticVerdict)
           ? 'incompatible'
           : live.injection.state === 'present' && semanticSitesComplete !== false
             ? 'integrated'

@@ -193,8 +193,7 @@ describe('Claude Code binary patch version policy', () => {
 
   it('marks an unchanged model config stale when the transform version advances', () => {
     const current = currentTransformVersion();
-    expect(current).toBe(15);
-    // Version 13 predates the full-catalog native model-picker options.
+    expect(current).toBe(17);
     expect(evaluatePatchStateV2({
       installationVersion: '2.1.263',
       manifest: {
