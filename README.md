@@ -44,8 +44,12 @@ leverframe claude
 
 ChatGPT/Codex model context limits come from positive finite `context_window` values reported by the authenticated provider. Missing or invalid values remain unconfirmed. Leverframe does not present a seed or heuristic as a provider limit. An unconfirmed limit omits the `[1m]` suffix and the `CLAUDE_CODE_MAX_CONTEXT_TOKENS` override.
 
-The provider can also report `max_context_window`. In a normal `leverframe claude` proxy session, choose an external model through `/model`, then choose its default or maximum context when both are available and distinct. Limits come from fresh account metadata. See [context selection](docs/CONTEXT-SELECTION.md) for selection and cancellation behavior.
+The same provider metadata can also report `max_context_window`.
+
+In a normal `leverframe claude` proxy session, choose an external model through `/model`, then choose its default or maximum context when both are available and distinct. Limits come from fresh account metadata. See [context selection](docs/CONTEXT-SELECTION.md) for selection and cancellation behavior.
+
 ### GitHub Copilot subscription
+
 ```bash
 leverframe providers auth github-copilot
 leverframe models
@@ -205,7 +209,7 @@ It starts `leverframe server --proxy --prepare-claude` to prepare Claude and pro
 
 Headroom runs in cache mode, which freezes prior turns to preserve prefix caching, with MCP retrieval available for compressed content. Both proxies allow 600 seconds between output chunks. Native Anthropic server-side search remains available, while external requests expand deferred tools if no executable client search tool exists. Actual savings depend on the workload and provider cache behavior. See the [Headroom proxy documentation](https://github.com/headroomlabs-ai/headroom/blob/main/docs/content/docs/proxy.mdx).
 
-The launcher uses Headroom's Python environment. Its adapter preserves confirmed maximum-context selections when Headroom normalizes an external model's legacy `[1m]` suffix.
+The launcher uses Headroom's Python environment. The launcher's Headroom adapter preserves confirmed maximum-context selections when Headroom normalizes an external model's legacy `[1m]` suffix.
 
 ## Configuration and compatibility
 
