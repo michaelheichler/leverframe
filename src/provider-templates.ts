@@ -95,6 +95,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     authType: 'api',
     npm: '@ai-sdk/openai-compatible',
     defaultBaseUrl: 'https://api.z.ai/api/coding/paas/v4',
+    modelsDevProviderId: 'zai-coding-plan',
     signupUrl: 'https://z.ai/manage-apikey/apikey-management',
     modelSource: 'api-list',
     supported: true,

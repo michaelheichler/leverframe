@@ -75,6 +75,7 @@ export interface ServerCommandOptions {
   port?: number;
 
   noDiscovery?: boolean;
+  prepareClaude?: boolean;
 }
 
 export function getLocalIps(): Array<{ name: string; address: string }> {
@@ -301,7 +302,11 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
       p.log.error('--proxy is a local-only server mode and cannot be combined with endpoint-mode server options.');
       return 1;
     }
-    return runHttpProxyServerCommand(false, options.wsDiagnostics, options.port, noDiscovery);
+    return runHttpProxyServerCommand(false, options.wsDiagnostics, options.port, noDiscovery, options.prepareClaude);
+  }
+  if (options.prepareClaude) {
+    p.log.error('--prepare-claude requires proxy mode.');
+    return 1;
   }
   const apiKey = await resolveServerUpstreamApiKey();
   if (!apiKey) {

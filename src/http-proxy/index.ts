@@ -14,6 +14,8 @@ import { startHttpProxy, type HttpProxyHandle } from './server.js';
 import { ensureHttpProxyCaBundle } from './ca.js';
 import { registerServerRuntimeState, unregisterServerRuntimeState } from '../server-runtime.js';
 import { getInferenceRequestLogPath, getSessionLogPath } from '../log-paths.js';
+import { resolveClaudeInstallation } from '../claude-installation.js';
+import { runLaunchPatchCheck } from '../patcher.js';
 
 export interface LoadedHttpProxyRoutes extends HttpProxyRouteResult {
   favoriteCount: number;
@@ -98,8 +100,19 @@ export async function startConfiguredHttpProxy(
   inferenceLogPath = getInferenceRequestLogPath(),
   debugLogPath?: string,
   webSocketDiagnosticsLogPath?: string,
+  prepareClaude = false,
 ): Promise<{ handle: HttpProxyHandle; loaded: LoadedHttpProxyRoutes }> {
   const loaded = await loadHttpProxyRoutes();
+  if (prepareClaude) {
+    const installation = resolveClaudeInstallation();
+    if (!installation) throw new Error('Claude Code installation not found for proxy preparation.');
+    await runLaunchPatchCheck({
+      agentStdout: true,
+      installation,
+      freshProviders: loaded.providers,
+      contextSelectionAvailable: true,
+    });
+  }
   const handle = await startHttpProxy({
     host: '127.0.0.1',
     port,
@@ -134,6 +147,7 @@ export async function runHttpProxyServerCommand(
   webSocketDiagnostics = false,
   port?: number,
   noDiscovery = false,
+  prepareClaude = false,
 ): Promise<number> {
   const webSocketDiagnosticsLogPath = webSocketDiagnostics
     ? getSessionLogPath('server-websocket-diagnostics', 'jsonl')
@@ -146,6 +160,7 @@ export async function runHttpProxyServerCommand(
       getInferenceRequestLogPath(),
       undefined,
       webSocketDiagnosticsLogPath,
+      prepareClaude,
     );
   } catch (err) {
     p.log.error(`Failed to start HTTP proxy: ${err instanceof Error ? err.message : String(err)}`);

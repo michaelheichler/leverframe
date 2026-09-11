@@ -654,6 +654,7 @@ export function buildProxyRoutesById(
     for (const id of routeLookupIds(alias.name)) routesById.set(id, route);
   }
   for (const route of routes) {
+    if (route.realModelId.toLowerCase().startsWith('claude-')) continue;
     for (const id of routeLookupIds(route.realModelId)) {
       if (!routesById.has(id)) routesById.set(id, route);
     }

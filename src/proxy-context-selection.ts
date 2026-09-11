@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { contextSelectionOptions, type ContextSelectionOption } from './context-selection.js';
-import { stripContextMarkers } from './context-model-id.js';
+import { ONE_M_CONTEXT_WINDOW, stripContextMarkers } from './context-model-id.js';
 import { fetchFreshProviderCatalog } from './provider-catalog.js';
 import { extractApiKey, sendJson } from './http-utils.js';
 import { anthropicError } from './proxy-response.js';
@@ -57,19 +57,39 @@ function matchesModelId(wantedIds: ReadonlySet<string>, id: string | undefined):
   return id !== undefined && contextModelIdCandidates(id).some(candidate => wantedIds.has(candidate));
 }
 
+function confirmedContextWindows(routes: ReadonlyMap<string, ProxyRoute>): Record<string, number> {
+  const windows: Record<string, number> = Object.create(null);
+  for (const [identity, route] of routes) {
+    const base = stripContextMarkers(identity);
+    for (const option of contextSelectionOptions(route)) {
+      windows[base + '[' + option.mode + ']'] = option.contextWindow;
+      if (option.mode === 'default') windows[base] = option.contextWindow;
+      if (option.contextWindow >= ONE_M_CONTEXT_WINDOW && windows[base + '[1m]'] === undefined) {
+        windows[base + '[1m]'] = option.contextWindow;
+      }
+    }
+  }
+  return windows;
+}
+
 export async function handleContextSelectionRequest(
   req: IncomingMessage,
   res: ServerResponse,
   options: ContextSelectionHandlerOptions,
 ): Promise<boolean> {
   const requestUrl = new URL(req.url ?? '/', 'http://127.0.0.1');
-  if (requestUrl.pathname !== '/v1/leverframe/context-selection') return false;
+  const metadataRequest = requestUrl.pathname === '/v1/leverframe/context-metadata';
+  if (!metadataRequest && requestUrl.pathname !== '/v1/leverframe/context-selection') return false;
   if (req.method !== 'GET') {
     sendJson(res, 405, { error: { type: 'invalid_request_error', message: 'Only GET is supported.' } });
     return true;
   }
   if (extractApiKey(req) !== options.proxyToken) {
     anthropicError(res, 401, 'Invalid proxy token');
+    return true;
+  }
+  if (metadataRequest) {
+    sendJson(res, 200, { contextWindows: confirmedContextWindows(options.byAlias) });
     return true;
   }
   const requestedModel = requestUrl.searchParams.get('model')?.trim();

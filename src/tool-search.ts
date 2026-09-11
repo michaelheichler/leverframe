@@ -56,16 +56,21 @@ export function resolveUpstreamTools(
 ): AnthropicToolDefinition[] {
   if (!tools?.length) return [];
 
+  const hasServerSearch = tools.some(tool =>
+    typeof tool.type === 'string' && tool.type.startsWith(TOOL_SEARCH_TYPE_PREFIX) && !tool.input_schema,
+  );
+  const hasClientSearch = tools.some(tool => isToolSearchTool(tool) && tool.input_schema);
+  const expandDeferred = hasServerSearch && !hasClientSearch;
   const referenced = extractReferencedToolNames(messages);
   const upstream: AnthropicToolDefinition[] = [];
 
   for (const tool of tools) {
     if (isToolSearchTool(tool)) {
-      upstream.push(tool);
+      if (tool.input_schema) upstream.push(tool);
       continue;
     }
     if (tool.defer_loading === true) {
-      if (referenced.has(tool.name)) upstream.push(tool);
+      if (expandDeferred || referenced.has(tool.name)) upstream.push(tool);
       continue;
     }
     upstream.push(tool);

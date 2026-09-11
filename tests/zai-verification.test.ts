@@ -38,15 +38,36 @@ vi.mock('../src/registry/io.js', () => ({
     return mutate(registry);
   }),
 }));
-vi.mock('../src/registry/pricing.js', () => ({
-  loadPricingCache: vi.fn(),
-  enrichModelsWithPricing: vi.fn(),
-  enrichPricingAsync: vi.fn(),
-  pricingPlatformForProvider: vi.fn(),
-  buildPricingIndex: vi.fn(),
-}));
+vi.mock('../src/registry/pricing.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/registry/pricing.js')>();
+  return {
+    ...actual,
+    loadPricingCache: vi.fn(),
+    enrichModelsWithPricing: vi.fn(),
+    enrichPricingAsync: vi.fn(),
+    pricingPlatformForProvider: vi.fn(),
+    buildPricingIndex: vi.fn(),
+  };
+});
 
 const zai = () => getTemplateById('zai')!;
+
+function mockZaiDiscovery(
+  models: Array<Record<string, unknown>>,
+  supplierModels: Record<string, unknown> = {},
+) {
+  const fetchMock = vi.fn(async (input: string | URL | Request) => {
+    if (String(input) === 'https://api.z.ai/api/coding/paas/v4/models') {
+      return Response.json({ data: models });
+    }
+    if (String(input) === 'https://models.dev/api.json') {
+      return Response.json({ 'zai-coding-plan': { models: supplierModels } });
+    }
+    throw new Error('Unexpected provider discovery request');
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
 
 process.env['LEVERFRAME_HOME'] = join(mkdtempSync(join(tmpdir(), 'leverframe-zai-')), 'home');
 
@@ -68,18 +89,11 @@ describe('z.ai Coding Plan live key verification', () => {
   });
 
   it('validates the key against the live Coding Plan models endpoint and caches its models', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({
-        data: [
-          { id: 'glm-4.7' },
-          { id: 'glm-5-turbo' },
-          { id: 'glm-5.2' },
-        ],
-      }),
-    } as Response);
-    vi.stubGlobal('fetch', fetchMock);
+    const fetchMock = mockZaiDiscovery([
+      { id: 'glm-4.7' },
+      { id: 'glm-5-turbo' },
+      { id: 'glm-5.2' },
+    ]);
 
     const result = await addProviderFromTemplate(zai(), 'test-key');
 
@@ -96,14 +110,11 @@ describe('z.ai Coding Plan live key verification', () => {
     ]);
   });
 
-  it('keeps the live GLM-5.2 context window over the declared template constant', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({
-        data: [{ id: 'glm-5.2', name: 'GLM-5.2 live', context_length: 128_000 }],
-      }),
-    } as Response));
+  it('keeps the live GLM-5.2 context window over fresh supplier metadata', async () => {
+    mockZaiDiscovery(
+      [{ id: 'glm-5.2', name: 'GLM-5.2 live', context_length: 128_000 }],
+      { 'glm-5.2': { limit: { context: 1_000_000 } } },
+    );
 
     const result = await addProviderFromTemplate(zai(), 'test-key');
 
@@ -116,13 +127,7 @@ describe('z.ai Coding Plan live key verification', () => {
   });
 
   it('keeps an omitted context window unconfirmed instead of using a template constant', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({
-        data: [{ id: 'glm-5.2', name: 'GLM-5.2 live' }],
-      }),
-    } as Response));
+    mockZaiDiscovery([{ id: 'glm-5.2', name: 'GLM-5.2 live' }]);
 
     const result = await addProviderFromTemplate(zai(), 'test-key');
 
@@ -165,11 +170,7 @@ describe('z.ai Coding Plan live key verification', () => {
   });
 
   it('holds the credential lock through template registry publication', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({ data: [{ id: 'glm-5.2' }] }),
-    } as Response));
+    mockZaiDiscovery([{ id: 'glm-5.2' }]);
     let releaseSave: (() => void) | undefined;
     let saveStarted: (() => void) | undefined;
     const saveGate = new Promise<void>(resolve => { releaseSave = resolve; });

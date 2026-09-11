@@ -148,7 +148,8 @@ ${pc.bold('Endpoint mode only')} ${pc.dim('(error if combined with --proxy)')}:
                                interactively to enter one hidden
 
 ${pc.bold('Proxy mode only:')}
-  (no extra options. Proxy mode takes only the common options above.)
+  --prepare-claude             Prepare Claude Code for the fresh model catalog
+                               before accepting proxy connections
 
 ${pc.bold('Bare leverframe server:')}
   Uses the saved default mode (proxy if none saved). Proxy mode starts

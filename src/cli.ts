@@ -69,6 +69,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
       wsDiagnostics: parsed.serverWsDiagnostics,
       port: parsed.serverPort,
       noDiscovery: parsed.serverNoDiscovery,
+      prepareClaude: parsed.serverPrepareClaude,
     });
   }
 

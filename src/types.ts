@@ -152,6 +152,8 @@ export interface ParsedArgs {
 
   serverNoDiscovery?: boolean;
 
+  serverPrepareClaude?: boolean;
+
   favoritesList?: boolean;
 
   favoritesAlias?: string;

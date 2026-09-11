@@ -112,7 +112,7 @@ function consumeBridgeModeFlag(arg: string, parsed: ParsedArgs): boolean {
 
 function validateSaveModeFlag(parsed: ParsedArgs): void {
   if (parsed.saveBridgeMode && !parsed.bridgeMode && !parsed.error) {
-    parsed.error = '--save-mode saves a bridge mode as this command\'s default — combine it with --endpoint or --proxy (e.g. `leverframe claude --proxy --save-mode`)';
+    parsed.error = '--save-mode saves a bridge mode as this command\'s default. Combine it with --endpoint or --proxy (e.g. `leverframe claude --proxy --save-mode`)';
   }
 }
 
@@ -138,6 +138,7 @@ export function parseArgs(args: string[]): ParsedArgs {
       else if (arg === '--save-mode') parsed.saveBridgeMode = true;
       else if (arg === '--ws-diagnostics') parsed.serverWsDiagnostics = true;
       else if (arg === '--no-discovery') parsed.serverNoDiscovery = true;
+      else if (arg === '--prepare-claude') parsed.serverPrepareClaude = true;
       else if (arg === '--quick' || arg === '--saved') parsed.serverQuick = true;
       else if (arg === '--mask-gateway-ids') parsed.serverMaskGatewayIds = true;
       else if (arg === '--no-mask-gateway-ids') parsed.serverMaskGatewayIds = false;

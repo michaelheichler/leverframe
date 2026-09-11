@@ -1,6 +1,6 @@
 {
   "name": "@michaelheichler/leverframe",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Bridge Claude Code to OpenAI-compatible providers, including OpenAI, ChatGPT/Codex OAuth, Kimi, Moonshot, and z.ai",
   "author": "Michael Heichler",
   "license": "MIT",
@@ -27,6 +27,7 @@
     "dist/*.mjs",
     "docs/background-agents.md",
     "docs/model-picker.png",
+    "scripts/claudeplus.py",
     "THIRD_PARTY_NOTICES.md",
     "README.md"
   ],

@@ -28,6 +28,7 @@ try {
     'docs/background-agents.md',
     'docs/model-picker.png',
     'package.json',
+    'scripts/claudeplus.py',
   ].sort();
   const actual = records[0].files.map(file => file.path).sort();
   const chunks = actual.filter(path => /^dist\/chunk-[A-Z0-9]+\.js$/.test(path));
