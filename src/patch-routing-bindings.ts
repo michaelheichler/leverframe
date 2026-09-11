@@ -1,4 +1,4 @@
-const MODULE_BOUNDARY = '\n//#__leverframe_claude_module__:';
+const MODULE_BOUNDARY = ['\n', '//#__leverframe_claude_module__:'].join('');
 
 export function escapePattern(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

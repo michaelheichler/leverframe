@@ -8,7 +8,7 @@ export interface NativeModelKnowledgeOutcome {
 
 const PATCH_NAME = 'PATCH 13: native model knowledge';
 const PATCH_MARKER = '/*ccpatch:model-knowledge*/';
-const MODULE_BOUNDARY = '\n//#__leverframe_claude_module__:';
+const MODULE_BOUNDARY = ['\n', '//#__leverframe_claude_module__:'].join('');
 
 function escaped(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

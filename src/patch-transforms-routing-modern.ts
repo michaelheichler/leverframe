@@ -34,7 +34,7 @@ function property(params: string, name: string): string | undefined {
 function bodyContains(source: string, start: number, match: RegExpMatchArray): boolean {
   const end = findBalancedBlockEnd(source, start);
   return end !== undefined && match.index! >= start && match.index! + match[0].length <= end
-    && !source.slice(start, end).includes('\n//#__leverframe_claude_module__:');
+    && !source.slice(start, end).includes(['\n', '//#__leverframe_claude_module__:'].join(''));
 }
 
 interface RoutingSite {

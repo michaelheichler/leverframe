@@ -4,6 +4,22 @@
 
 This changelog records notable changes to Leverframe.
 
+## [0.4.1] - 2026-09-11
+
+### Fixed
+
+- Claude Code 2.1.266 launches in proxy mode with confirmed context limits and working default/maximum selection. Patch transform version 17 refreshes existing installations.
+- Agent launch notices display the agent type, resolved model, and effective child effort, including inherited and environment-selected effort. Native subscription models retain their display names.
+- Bare Claude model IDs keep Anthropic subscription routing when a third-party provider offers the same model. Scoped Leverframe IDs and configured aliases still select the provider.
+- Third-party requests retain callable tools when Headroom injects Anthropic server-side tool search. Client-side ToolSearch continues to load tools on demand.
+- Patch diagnostics report incompatible required anchors on unpatched installations.
+- z.ai Coding Plan discovery uses fresh supplier context metadata when its model list omits limits, keeping confirmed models available in proxy mode.
+
+### Added
+
+- A packaged claudeplus launcher prepares Claude and the proxy from one fresh model catalog, preserves subscription authentication and user settings, and passes confirmed context limits to Headroom. Headroom uses one worker, cache mode, aligned stream timeouts, and its MCP retrieval server.
+- Authenticated `GET /v1/leverframe/context-metadata` exposes confirmed limits from active proxy routes for wrapper integrations.
+
 ## [0.4.0] - 2026-09-07
 
 ### Added
