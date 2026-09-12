@@ -12,23 +12,23 @@ A custom `ANTHROPIC_BASE_URL` can disable native MCP tool search and cause Claud
 
 `src/env.ts` shares an in-flight refresh for the same account and rejected access token. It also acquires the account credential mutation file lock, rereads the keyring, and checks that the stored credential has not changed before writing a replacement. This protects refresh-token rotation across concurrent requests and processes.
 
-A concurrent credential change causes a bounded retry. A rejected token must not become the result of a later refresh. Completion and failure both remove the in-flight entry so future requests can retry. `src/registry/lock.ts` owns the account file lock.
+If credentials change concurrently, the refresh operation retries within its limit and refuses to return a token the provider already rejected. Each completed or failed refresh removes the in-flight entry, allowing a later request to try again. The account file lock lives in `src/registry/lock.ts`.
 
 ## Subscription WebSocket upgrade failures
 
-The subscription Responses transport treats an HTTP 403 during WebSocket upgrade as a retryable rate limit. The OpenAI edge can return that status before the request reaches the application. Applying the general HTTP classifier would instead report a terminal permission failure and prevent retry.
+The subscription Responses transport treats an HTTP 403 during WebSocket upgrade as a retryable rate limit. The OpenAI edge can return that status before the request reaches the application. The general HTTP classifier would instead report a terminal permission failure and prevent retry.
 
 `src/oauth/responses-websocket.ts` maps this upgrade failure to internal status 429 and the `rate_limit` category. This exception belongs to the subscription upgrade path, not every provider HTTP 403. The backoff helper bounds valid `Retry-After` values and supplies a delay when the header is absent or invalid. The pending-upgrade state prevents `error` and `close` events from processing the same failure twice.
 
-`tests/responses-websocket.test.ts` and `tests/responses-websocket-upgrade.test.ts` cover upgrade responses with and without explanatory bodies.
+Regression fixtures include upgrade responses with explanatory bodies and responses without them (`tests/responses-websocket.test.ts` and `tests/responses-websocket-upgrade.test.ts`).
 
 ## Provider completion validation
 
 The adapters reject empty completions even when the provider reports output-token usage. Failed or missing terminal events produce errors. A streaming reasoning signature preserves round-trip state without summary text, and meaningful partial output retains `max_tokens` when the provider stops at its output limit.
 
-Empty upstream completions produce HTTP 502. The proxy's existing retry cap applies only before the adapter emits response content or a tool call. Confirmed context overflow produces non-retryable HTTP 400. Context comparisons include uncached input, cache reads, and cache writes. Missing or unconfirmed route limits remain unknown.
+Empty upstream completions produce HTTP 502. The proxy's existing retry cap applies only before the adapter emits response content or a tool call. Confirmed context overflow produces non-retryable HTTP 400. Context comparisons add cache reads and writes to uncached input. Missing or unconfirmed route limits remain unknown.
 
-Completion diagnostics record normalized and raw finish reasons separately, along with total input, uncached input, cached input, and output tokens. WebSocket terminal diagnostics also record the upstream event, response status, incomplete reason, output-item count, and reasoning-token count. They exclude response text, encrypted reasoning, and raw response identifiers.
+Completion diagnostics record normalized and raw finish reasons separately, along with total input, uncached input, cached input, and output tokens. WebSocket terminal diagnostics also record the upstream event, response status, incomplete reason, output-item count, and reasoning-token count. Neither response text nor encrypted reasoning enters these records. Raw response identifiers also stay out.
 
 ## Conversation heads and connection generations
 

@@ -19,7 +19,7 @@ This changelog records notable changes to Leverframe.
 - Claude Code 2.1.266 launches in proxy mode with confirmed context limits and working default/maximum selection. Patch transform version 17 refreshes existing installations.
 - Agent launch notices display the agent type, resolved model, and effective child effort. Effort reflects inherited settings and environment overrides. Native subscription models retain their display names.
 - Bare Claude model IDs keep Anthropic subscription routing when a third-party provider offers the same model. Scoped Leverframe IDs and configured aliases still select the provider.
-- Third-party requests retain callable tools when Headroom injects Anthropic server-side tool search. Client-side ToolSearch continues to load tools on demand.
+- Third-party requests retain callable tools when Headroom, a separate proxy, injects Anthropic server-side tool search. Client-side ToolSearch continues to load tools on demand.
 - Patch diagnostics report incompatible required anchors on unpatched installations.
 - z.ai Coding Plan discovery uses fresh supplier context metadata when its model list omits limits, keeping confirmed models available in proxy mode.
 
@@ -32,7 +32,7 @@ This changelog records notable changes to Leverframe.
 
 ### Added
 
-- Claude Code shows one external model row followed by a choice between the default and maximum context limits that fresh provider metadata reports. Picker labels, native context calculations, and proxy enforcement use the same selected limit.
+- Claude Code shows one external model row, then offers a choice between the default and maximum context limits from fresh provider metadata. Picker labels, native context calculations, and proxy enforcement use the same selected limit.
 
 - Supported Claude Code Agent launches show a colored routing confirmation with the resolved model and effective reasoning level through Claude Code's notification UI. The notice leaves process output untouched.
 - Context infrastructure for budgeting, compaction planning, summaries, trusted metadata, encrypted memory, local inference profiling, retention, vector memory, and worker supervision.
