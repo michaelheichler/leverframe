@@ -4,6 +4,14 @@
 
 This changelog records notable changes to Leverframe.
 
+## [Unreleased]
+
+### Fixed
+
+- Empty or failed provider completions report an upstream error instead of successful empty content. Streaming requests can use the existing bounded retry policy before output. Partial output and tool calls prevent replay.
+- Completion context checks include cached input and use the confirmed route limit in proxy mode. Diagnostics distinguish total and uncached input, normalized finish reasons, and raw provider reasons.
+- Streams require a terminal completion event. Signed reasoning blocks remain available for subsequent turns even when the provider omits summary text.
+
 ## [0.4.1] - 2026-09-11
 
 ### Fixed

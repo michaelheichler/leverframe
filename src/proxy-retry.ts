@@ -1,6 +1,7 @@
 
 import { sdkTranslationErrorSignature } from './sdk-adapter.js';
 import { sdkUpstreamErrorDetails } from './upstream-error.js';
+import { ProviderTransportError } from './provider-error.js';
 
 const TRANSIENT_CONNECTION_CODES = new Set([
   'ECONNABORTED',
@@ -13,6 +14,9 @@ const TRANSIENT_CONNECTION_CODES = new Set([
 ]);
 
 export function isTransientSdkStreamFailure(error: unknown): boolean {
+  if (ProviderTransportError.isInstance(error)) {
+    return error.retryable && !error.outputEmitted && !error.retriesExhausted;
+  }
   if (sdkTranslationErrorSignature(error) === 'reasoning_part_not_found') return true;
 
   const sdkStatusCode = sdkUpstreamErrorDetails(error)?.statusCode;

@@ -10,6 +10,7 @@ import {
 } from './proxy-shared.js';
 import { anthropicErrorType, upstreamHttpStatus } from './upstream-error.js';
 import { ProviderTransportError } from './provider-error.js';
+import { emptyCompletionError } from './sdk-completion.js';
 import type { RequestExecutionObserver } from './request-execution-context.js';
 import { estimateAnthropicOutputTokens } from './anthropic-endpoints.js';
 import { sanitizeToolInput, toolInputRules, type SdkCallParams } from './sdk-request-translation.js';
@@ -66,28 +67,6 @@ function safeJson(value: unknown): string {
   } catch {
     return String(value);
   }
-}
-
-function emptyCompletionError(
-  modelId: string,
-  inputTokens: number,
-  contextWindow?: number,
-  rawFinishReason?: string,
-): ProviderTransportError {
-  const overLimit = contextWindow !== undefined && inputTokens > contextWindow;
-  const safeMessage = overLimit
-    ? `prompt is too long for model ${modelId} (${inputTokens} > ${contextWindow} context)`
-    : `Upstream returned no content for model ${modelId} (input_tokens=${inputTokens}, finishReason=${rawFinishReason ?? 'unknown'})`;
-  return new ProviderTransportError({
-    provider: 'openai-oauth',
-    model: modelId,
-    phase: 'completion',
-    category: overLimit ? 'context_length' : 'upstream',
-    httpStatus: 400,
-    retryable: false,
-    outputEmitted: false,
-    safeMessage,
-  });
 }
 
 function toolJsonRunawayError(options: {
@@ -206,6 +185,7 @@ export async function writeAnthropicStream(
   const toolOpenedAt = new Map<string, number>();
   const flushedTools = new Set<string>();
   let finishReason = 'end_turn';
+  let sdkFinishReason: string | undefined;
   let rawFinishReason: string | undefined;
   const seenPartTypes: string[] = [];
   let usage: AnthropicUsage = {
@@ -354,9 +334,10 @@ export async function writeAnthropicStream(
         throw streamAbortError(observer?.abortSignal);
 
       case 'reasoning-start':
-        openBlock('thinking', { type: 'thinking', thinking: '', signature: '' });
+        closeOpen();
         break;
       case 'reasoning-delta':
+        if (!part.text) break;
         if (openType !== 'thinking') openBlock('thinking', { type: 'thinking', thinking: '', signature: '' });
         outputContentBytes += Buffer.byteLength(part.text ?? '', 'utf8');
         emit('content_block_delta', {
@@ -367,14 +348,18 @@ export async function writeAnthropicStream(
         break;
       case 'reasoning-end': {
         const sig = grabRoundTripSignature(part);
-        if (sig) pendingThinkingSig = sig;
+        if (sig) {
+          if (openType !== 'thinking') openBlock('thinking', { type: 'thinking', thinking: '', signature: '' });
+          pendingThinkingSig = sig;
+        }
         break;
       }
 
       case 'text-start':
-        openBlock('text', { type: 'text', text: '' });
+        closeOpen();
         break;
       case 'text-delta':
+        if (!part.text) break;
         if (openType !== 'text') openBlock('text', { type: 'text', text: '' });
         outputContentBytes += Buffer.byteLength(part.text ?? '', 'utf8');
         emit('content_block_delta', {
@@ -464,7 +449,8 @@ export async function writeAnthropicStream(
         if (part.finishReason === 'length') finishReason = 'max_tokens';
         else if (part.finishReason === 'tool-calls') finishReason = 'tool_use';
         else if (part.finishReason === 'stop' && finishReason !== 'tool_use') finishReason = 'end_turn';
-        rawFinishReason = part.finishReason;
+        sdkFinishReason = part.finishReason;
+        rawFinishReason = part.rawFinishReason;
         break;
       }
 
@@ -489,9 +475,9 @@ export async function writeAnthropicStream(
     throw streamAbortError(observer.abortSignal);
   }
 
-  if (!started && blockIndex === -1 && finishReason === 'end_turn' && usage.output_tokens === 0) {
+  if (sdkFinishReason === undefined || sdkFinishReason === 'error' || !started) {
     log?.(() => `sdk stream produced no content: seen part types=${seenPartTypes.join(',')} rawFinishReason=${rawFinishReason}`);
-    throw emptyCompletionError(modelId, usage.input_tokens, observer?.contextWindow, rawFinishReason);
+    throw emptyCompletionError(modelId, usage, observer?.contextWindow, sdkFinishReason, started, rawFinishReason);
   }
 
   closeAll();
@@ -576,7 +562,6 @@ export async function streamAnthropicResponse(
 
 export {
   safeJson,
-  emptyCompletionError,
   streamAbortError,
   forwardAbortSignal,
   sdkStreamIdleTimeoutMs,

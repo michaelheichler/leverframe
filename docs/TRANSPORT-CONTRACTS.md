@@ -22,6 +22,14 @@ The subscription Responses transport treats an HTTP 403 during WebSocket upgrade
 
 `tests/responses-websocket.test.ts` and `tests/responses-websocket-upgrade.test.ts` cover upgrade responses with and without explanatory bodies.
 
+## Provider completion validation
+
+The adapters reject empty completions even when the provider reports output-token usage. Failed or missing terminal events produce errors. A streaming reasoning signature preserves round-trip state without summary text, and meaningful partial output retains `max_tokens` when the provider stops at its output limit.
+
+Empty upstream completions produce HTTP 502. The proxy's existing retry cap applies only before the adapter emits response content or a tool call. Confirmed context overflow produces non-retryable HTTP 400. Context comparisons include uncached input, cache reads, and cache writes. Missing or unconfirmed route limits remain unknown.
+
+Completion diagnostics record normalized and raw finish reasons separately, along with total input, uncached input, cached input, and output tokens. WebSocket terminal diagnostics also record the upstream event, response status, incomplete reason, output-item count, and reasoning-token count. They exclude response text, encrypted reasoning, and raw response identifiers.
+
 ## Conversation heads and connection generations
 
 A session partition can have several valid conversation heads after a rewind, branch, title request, or stop hook. A single latest-head slot would discard connections that a later request can still continue. The pool therefore keeps a set of entries per partition, and the transport proves a conversation-prefix match before continuing a head.

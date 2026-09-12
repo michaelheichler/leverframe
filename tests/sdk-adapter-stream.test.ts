@@ -67,6 +67,7 @@ describe('writeAnthropicStream', () => {
   it('does not double-count the local estimate when final input is fully cached', async () => {
     const { events } = await collect([
       { type: 'start' },
+      { type: 'text-delta', text: 'ok' },
       {
         type: 'finish',
         finishReason: 'stop',
@@ -100,6 +101,7 @@ describe('writeAnthropicStream', () => {
   it('uses the local input estimate when final usage omits input tokens', async () => {
     const { events } = await collect([
       { type: 'start' },
+      { type: 'text-delta', text: 'ok' },
       {
         type: 'finish',
         finishReason: 'stop',
@@ -139,6 +141,7 @@ describe('writeAnthropicStream', () => {
   it('preserves cache usage reported separately from uncached input', async () => {
     const { events } = await collect([
       { type: 'start' },
+      { type: 'text-delta', text: 'ok' },
       {
         type: 'finish',
         finishReason: 'stop',
@@ -162,6 +165,7 @@ describe('writeAnthropicStream', () => {
     const onUsage = vi.fn();
     const { events } = await collect([
       { type: 'start' },
+      { type: 'text-delta', text: 'ok' },
       {
         type: 'finish',
         finishReason: 'stop',
@@ -224,6 +228,7 @@ describe('writeAnthropicStream', () => {
   it('uses legacy cached input only when detailed cache usage is absent', async () => {
     const legacy = await collect([
       { type: 'start' },
+      { type: 'text-delta', text: 'ok' },
       {
         type: 'finish',
         finishReason: 'stop',
@@ -232,6 +237,7 @@ describe('writeAnthropicStream', () => {
     ], 'm', { inputTokensIncludeCache: true });
     const detailedZero = await collect([
       { type: 'start' },
+      { type: 'text-delta', text: 'ok' },
       {
         type: 'finish',
         finishReason: 'stop',
@@ -257,6 +263,7 @@ describe('writeAnthropicStream', () => {
   it('reports GPT-5.6 cache writes as Anthropic cache creation tokens', async () => {
     const { events } = await collect([
       { type: 'start' },
+      { type: 'text-delta', text: 'ok' },
       {
         type: 'finish',
         finishReason: 'stop',

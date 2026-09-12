@@ -9,6 +9,7 @@ import {
 import { createHash } from 'node:crypto';
 import pc from 'picocolors';
 import { ensureLogsDir, resetTraceLog } from './log-paths.js';
+import type { SdkCompletionDiagnostic } from './upstream-error.js';
 
 const FILE_MODE = 0o600;
 
@@ -123,6 +124,7 @@ export interface InferenceResponseErrorLogEntry {
   errorContent?: string;
   isRetryable?: boolean;
   attemptCount?: number;
+  completion?: SdkCompletionDiagnostic;
 }
 
 export type InferenceResponseLifecycleEvent =
@@ -319,6 +321,29 @@ function nonNegativeInteger(value: number | undefined): number | undefined {
     : undefined;
 }
 
+const COMPLETION_REASON = /^[a-zA-Z0-9_.:/-]{1,128}$/;
+
+function completionDiagnosticForLog(value: SdkCompletionDiagnostic | undefined): SdkCompletionDiagnostic | undefined {
+  if (!value) return undefined;
+  const finishReason = typeof value.finishReason === 'string' && COMPLETION_REASON.test(value.finishReason)
+    ? value.finishReason : undefined;
+  const rawFinishReason = typeof value.rawFinishReason === 'string' && COMPLETION_REASON.test(value.rawFinishReason)
+    ? value.rawFinishReason : undefined;
+  const totalInputTokens = nonNegativeInteger(value.totalInputTokens);
+  const uncachedInputTokens = nonNegativeInteger(value.uncachedInputTokens);
+  const cachedInputTokens = nonNegativeInteger(value.cachedInputTokens);
+  const outputTokens = nonNegativeInteger(value.outputTokens);
+  const diagnostic: SdkCompletionDiagnostic = {
+    ...(finishReason ? { finishReason } : {}),
+    ...(rawFinishReason ? { rawFinishReason } : {}),
+    ...(totalInputTokens !== undefined ? { totalInputTokens } : {}),
+    ...(uncachedInputTokens !== undefined ? { uncachedInputTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+  };
+  return Object.keys(diagnostic).length > 0 ? diagnostic : undefined;
+}
+
 export function writeInferenceResponseLifecycleLog(
   path: string,
   entry: InferenceResponseLifecycleLogEntry,
@@ -417,6 +442,7 @@ export function writeInferenceResponseErrorLog(
   path: string,
   entry: InferenceResponseErrorLogEntry,
 ): void {
+  const completion = completionDiagnosticForLog(entry.completion);
   writeSecureLogLine(path, JSON.stringify({
     timestamp: new Date().toISOString(),
     event: 'upstream_error',
@@ -428,6 +454,7 @@ export function writeInferenceResponseErrorLog(
     ...(entry.isRetryable !== undefined ? { isRetryable: entry.isRetryable } : {}),
     ...(entry.attemptCount !== undefined ? { attemptCount: entry.attemptCount } : {}),
     ...(entry.errorContent ? { errorContent: compactLogValueWithMarker(entry.errorContent, RESPONSE_ERROR_MAX) } : {}),
+    ...(completion ? { completion } : {}),
   }));
 }
 
