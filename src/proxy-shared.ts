@@ -9,10 +9,11 @@ export type FullStreamPart = {
   toolCallId?: string;
   input?: unknown;
   finishReason?: string;
+  rawFinishReason?: string;
   totalUsage?: {
     inputTokens?: number;
     outputTokens?: number;
-    inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
+    inputTokenDetails?: { noCacheTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number };
 
     cachedInputTokens?: number;
   };

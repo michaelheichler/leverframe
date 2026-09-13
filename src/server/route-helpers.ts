@@ -78,6 +78,7 @@ export function auditSdkError(
       errorContent: details?.errorContent ?? message,
       isRetryable: details?.isRetryable,
       attemptCount: details?.attemptCount,
+      completion: details?.completion,
     });
   }
   return statusCode;

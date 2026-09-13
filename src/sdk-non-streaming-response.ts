@@ -7,13 +7,13 @@ import { estimateAnthropicInputTokens, estimateAnthropicOutputTokens } from './a
 import { sanitizeToolInput, toolInputRules, type SdkCallParams } from './sdk-request-translation.js';
 import { type AnthropicUsage, type SdkUsage, type AnthropicUsageTrace, toAnthropicUsage, sdkPromptCacheKeyHash } from './sdk-usage.js';
 import {
-  emptyCompletionError,
   streamAbortError,
   forwardAbortSignal,
   nonStreamRequestTimeoutMs,
   sdkStreamIdleTimeoutMs,
   safeJson,
 } from './sdk-streaming-response.js';
+import { emptyCompletionError } from './sdk-completion.js';
 
 type LogFn = (msg: () => string) => void;
 
@@ -35,7 +35,8 @@ export async function generateAnthropicResponse(
 ): Promise<Record<string, unknown>> {
   let text: string;
   let toolCalls: Array<{ toolCallId: string; toolName: string; input: unknown }>;
-  let finishReason: string;
+  let finishReason: string | undefined;
+  let rawFinishReason: string | undefined;
   let usage: SdkUsage | undefined;
   const seenPartTypes: string[] = [];
   const { inputTokensIncludeCache = false, ...sdkParams } = params;
@@ -58,7 +59,7 @@ export async function generateAnthropicResponse(
     } as Parameters<typeof streamText>[0]);
     const streamedText: string[] = [];
     const streamedToolCalls: Array<{ toolCallId: string; toolName: string; input: unknown }> = [];
-    let streamedFinishReason = 'stop';
+    let streamedFinishReason: string | undefined;
     let streamedUsage: SdkUsage | undefined;
     try {
       for await (const part of r.stream as AsyncIterable<FullStreamPart>) {
@@ -90,6 +91,7 @@ export async function generateAnthropicResponse(
           options.lifecycle?.markToolCallEmitted();
         } else if (part.type === 'finish') {
           streamedFinishReason = part.finishReason ?? streamedFinishReason;
+          rawFinishReason = part.rawFinishReason;
           streamedUsage = part.totalUsage;
         } else if (part.type !== 'start') {
           options.log?.(() => `sdk generate unrecognized part type=${part.type} keys=${Object.keys(part).join(',')} sample=${safeJson(part)}`);
@@ -123,7 +125,7 @@ export async function generateAnthropicResponse(
       options?.lifecycle?.markHeadersReceived();
       if (r.text) options?.lifecycle?.markOutputEmitted();
       if (r.toolCalls?.length) options?.lifecycle?.markToolCallEmitted();
-      ({ text, toolCalls, finishReason, usage } = r);
+      ({ text, toolCalls, finishReason, rawFinishReason, usage } = r);
     } finally {
       stopForwardingAbort();
       clearTimeout(totalTimer);
@@ -131,13 +133,14 @@ export async function generateAnthropicResponse(
     }
   }
 
-  if (!text && toolCalls.length === 0 && finishReason !== 'tool-calls' && !usage?.outputTokens) {
-    options?.log?.(() => `sdk generate produced no content: seen part types=${seenPartTypes.join(',')} rawFinishReason=${finishReason}`);
-    throw emptyCompletionError(modelId, usage?.inputTokens ?? 0, options?.contextWindow, finishReason);
+  const finalUsage = toAnthropicUsage(usage, inputTokensIncludeCache);
+  if (finishReason === undefined || finishReason === 'error' || (!text && toolCalls.length === 0)) {
+    options?.log?.(() => `sdk generate completion failed: seen part types=${seenPartTypes.join(',')} finishReason=${finishReason} rawFinishReason=${rawFinishReason}`);
+    throw emptyCompletionError(modelId, finalUsage, options?.contextWindow, finishReason,
+      !!text || toolCalls.length > 0, rawFinishReason);
   }
 
   const inputRules = toolInputRules(params.tools);
-  const finalUsage = toAnthropicUsage(usage, inputTokensIncludeCache);
   const hasContent = !!text || toolCalls.length > 0;
   const resolvedUsage: AnthropicUsage = {
     ...finalUsage,

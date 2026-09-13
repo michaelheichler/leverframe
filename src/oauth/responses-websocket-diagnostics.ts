@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { responseUsage } from './responses-websocket-response-output.js';
 import type {
   ConnectionEntry,
   JsonObject,
@@ -107,6 +108,23 @@ export function emitContextDiagnostic(
       : Math.max(0, entry.options.now() - entry.inFlightStartedAt),
     ...details,
   });
+}
+
+export function responseTerminalDetails(event: unknown): Record<string, unknown> {
+  if (!event || typeof event !== 'object') return {};
+  const response = (event as JsonObject).response;
+  if (!response || typeof response !== 'object') return {};
+  const record = response as JsonObject;
+  const usage = record.usage as JsonObject | undefined;
+  const details = usage?.output_tokens_details as JsonObject | undefined;
+  const reasoningTokens = details?.reasoning_tokens;
+  return {
+    ...responseFailureDetails(event),
+    ...responseUsage(event),
+    outputItemCount: Array.isArray(record.output) ? record.output.length : undefined,
+    reasoningTokens: typeof reasoningTokens === 'number' && Number.isSafeInteger(reasoningTokens) && reasoningTokens >= 0
+      ? reasoningTokens : undefined,
+  };
 }
 
 export function emitResponseErrorDiagnostic(

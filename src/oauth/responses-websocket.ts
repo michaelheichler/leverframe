@@ -44,8 +44,10 @@ import {
   boundedDiagnosticIdentifier,
   diagnosticTextFingerprint,
   emitDiagnostic,
+  emitContextDiagnostic,
   emitResponseErrorDiagnostic,
   responseFailureDetails,
+  responseTerminalDetails,
 } from './responses-websocket-diagnostics.js';
 import { trackReasoningProtocol } from './responses-websocket-reasoning-protocol.js';
 import {
@@ -255,6 +257,13 @@ function handleSocketMessage(entry: ConnectionEntry, data: RawData): void {
   const type = eventType(event);
   trackReasoningProtocol(entry, ctx, event, type);
   captureOutput(ctx, event);
+  if (TERMINAL_EVENT_TYPES.has(type ?? '')) {
+    emitContextDiagnostic(entry, ctx, {
+      event: 'ws_response_terminal',
+      upstreamEventType: type,
+      ...responseTerminalDetails(event),
+    });
+  }
   if (type === 'response.completed') {
     const usage = responseUsage(event);
     if (usage) {

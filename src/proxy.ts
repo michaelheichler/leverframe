@@ -543,6 +543,7 @@ export async function startProxyCatalog(
                       plog,
                       {
                         onPart: partType => translationLifecycle?.onPart(partType),
+                        contextWindow: reportedContextWindow(route.contextWindow, route.contextWindowUnconfirmed),
                         initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
                         abortSignal: clientAbort.signal,
                         clientAbortSignal: clientAbort.signal,
@@ -586,6 +587,7 @@ export async function startProxyCatalog(
                 clientModelId,
                 {
                   forceStream: openAiOAuth,
+                  contextWindow: reportedContextWindow(route.contextWindow, route.contextWindowUnconfirmed),
                   abortSignal: clientAbort.signal,
                   onPart: partType => translationLifecycle?.onPart(partType),
                   lifecycle: requestExecution,
@@ -647,6 +649,7 @@ export async function startProxyCatalog(
               errorContent: details?.errorContent ?? message,
               isRetryable: terminalUsageLimit ? false : details?.isRetryable,
               attemptCount: details?.attemptCount,
+              completion: details?.completion,
             });
           }
           if (!res.headersSent) {

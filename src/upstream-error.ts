@@ -16,6 +16,15 @@ interface ApiCallLike {
   errors?: Array<{ message?: string; statusCode?: number }>;
 }
 
+export interface SdkCompletionDiagnostic {
+  finishReason?: string;
+  rawFinishReason?: string;
+  totalInputTokens?: number;
+  uncachedInputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+}
+
 export interface SdkUpstreamErrorDetails {
   statusCode?: number;
   errorContent: string;
@@ -25,12 +34,43 @@ export interface SdkUpstreamErrorDetails {
   retryAfterMs?: number;
   providerRequestId?: string;
   failurePhase?: ProviderFailurePhase;
+  completion?: SdkCompletionDiagnostic;
+}
+
+const COMPLETION_REASON = /^[a-zA-Z0-9_.:/-]{1,128}$/;
+
+function completionDiagnostic(error: ProviderTransportError): SdkCompletionDiagnostic | undefined {
+  if (error.phase !== 'completion' || !error.diagnosticDetail) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(error.diagnosticDetail);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  const record = parsed as Record<string, unknown>;
+  const reason = (value: unknown): string | undefined => (
+    typeof value === 'string' && COMPLETION_REASON.test(value) ? value : undefined
+  );
+  const tokens = (value: unknown): number | undefined => (
+    typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+  );
+  const diagnostic: SdkCompletionDiagnostic = {
+    ...(reason(record.finishReason) ? { finishReason: reason(record.finishReason) } : {}),
+    ...(reason(record.rawFinishReason) ? { rawFinishReason: reason(record.rawFinishReason) } : {}),
+    ...(tokens(record.totalInputTokens) !== undefined ? { totalInputTokens: tokens(record.totalInputTokens) } : {}),
+    ...(tokens(record.uncachedInputTokens) !== undefined ? { uncachedInputTokens: tokens(record.uncachedInputTokens) } : {}),
+    ...(tokens(record.cachedInputTokens) !== undefined ? { cachedInputTokens: tokens(record.cachedInputTokens) } : {}),
+    ...(tokens(record.outputTokens) !== undefined ? { outputTokens: tokens(record.outputTokens) } : {}),
+  };
+  return Object.keys(diagnostic).length > 0 ? diagnostic : undefined;
 }
 
 export function sdkUpstreamErrorDetails(err: unknown): SdkUpstreamErrorDetails | undefined {
   const retry = RetryError.isInstance(err) ? err : undefined;
   const inner = retry?.lastError ?? err;
   if (ProviderTransportError.isInstance(inner)) {
+    const completion = completionDiagnostic(inner);
     return {
       statusCode: inner.httpStatus,
       errorContent: inner.safeMessage,
@@ -40,6 +80,7 @@ export function sdkUpstreamErrorDetails(err: unknown): SdkUpstreamErrorDetails |
       retryAfterMs: inner.retryAfterMs,
       providerRequestId: inner.providerRequestId,
       failurePhase: inner.phase,
+      ...(completion ? { completion } : {}),
     };
   }
   if (ToolResultImageError.isInstance(inner)) {
