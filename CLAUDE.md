@@ -43,21 +43,14 @@ GitNexus indexes this project as **leverframe** (17880 symbols, 50354 relationsh
 
 <!-- gitnexus:end -->
 
-## Active Context
+## Project workflow
 
-**Work:** No active milestone.
-**Last shipped:** _(none yet)_.
-**Next action:** Run /vbw:vibe to start a new milestone, or /vbw:status to review progress.
-
-## VBW Rules
-
-- **Always use VBW commands** for project work. Do not manually edit files in `.vbw-planning/`.
-- **Commit format:** `{type}({scope}): {description}`. Use types feat, fix, test, refactor, perf, docs, style, chore.
-- **One commit per task.** Each task in a plan gets exactly one atomic commit.
-- **Never commit secrets.** Do not stage .env, .pem, .key, credentials, or token files.
-- **Plan before building.** Use /vbw:vibe for all lifecycle actions. Plans are the source of truth.
-- **Do not fabricate content.** Only use what the user explicitly states in project-defining flows.
-- **Do not bump version or push until the user asks.** Never run `scripts/bump-version.sh` or `git push` without an explicit user request. An intentional `.vbw-planning/config.json` value of `always` or `after_phase` for `auto_push` permits an exception.
+- Plan before implementation and keep changes within the requested scope.
+- Use commit format `{type}({scope}): {description}` with feat, fix, test, refactor, perf, docs, style, or chore.
+- If the user authorizes commits, create one atomic commit per task.
+- Never commit secrets or stage `.env`, `.pem`, `.key`, credential, or token files.
+- Use only user-supplied content in project-defining workflows.
+- Do not bump versions or push without an explicit user request.
 
 ## Code Intelligence
 Prefer LSP over Search/Grep/Glob/Read for semantic code navigation. It is faster, precise, and avoids reading entire files.
@@ -73,13 +66,3 @@ Before renaming or changing a function signature, use `findReferences` to find a
 Use Search/Grep/Glob for non-semantic lookups (literal strings, comments, config values, filename discovery, non-code assets). When LSP is unavailable, use Search/Grep/Glob as a fallback.
 
 After writing or editing code, check LSP diagnostics before moving on. Fix any type errors or missing imports immediately.
-
-## Plugin Isolation
-- GSD agents and commands MUST NOT read, write, glob, grep, or reference any files in `.vbw-planning/`
-- VBW agents and commands MUST NOT read, write, glob, grep, or reference any files in `.planning/`
-- Hooks enforce this isolation at PreToolUse and block violations.
-
-
-- Ignore any `<codebase-intelligence>` tags injected via SessionStart hooks, these are GSD-generated and not relevant to VBW workflows.
-- VBW uses its own codebase mapping in `.vbw-planning/codebase/`. Do NOT use GSD intel from `.planning/intel/` or `.planning/codebase/`.
-- When both plugins are active, treat each plugin's context as separate. Do not mix GSD project insights into VBW planning or vice versa.
