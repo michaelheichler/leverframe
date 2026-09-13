@@ -21,7 +21,7 @@ import {
   writeWebSocketDiagnosticRequestLog,
 } from '../trace-log.js';
 import type { ServerOptions } from './router.js';
-import { maxToolsForNpm } from '../provider-factory.js';
+import { isOpenAiOAuth, maxToolsForNpm } from '../provider-factory.js';
 import {
   anthropicErrorType,
   clientFacingAnthropicStatus,
@@ -102,6 +102,7 @@ export async function handleAnthropicMessages(
     sendJson(res, 400, { error: { message: routeValidation } });
     return;
   }
+  const passthrough = model.modelFormat === 'anthropic' && model.providerId !== 'github-copilot';
   const requestId = randomUUID();
   const claudeSessionIdHeader = Array.isArray(req.headers['x-claude-code-session-id'])
     ? req.headers['x-claude-code-session-id'][0]
@@ -112,7 +113,6 @@ export async function handleAnthropicMessages(
     provider: inferenceProvider(model),
     model: model.id,
   });
-
   const { controller: clientAbort, detach: detachClientAbort } = wireClientDisconnectAbort(req, res);
 
   try {
@@ -134,7 +134,7 @@ export async function handleAnthropicMessages(
         requestId,
         provider: inferenceProvider(model),
         model: body.model,
-        route: model.modelFormat === 'anthropic' ? 'passthrough' : 'translated',
+        route: passthrough ? 'passthrough' : 'translated',
         messages: toDigestableMessages(body),
         toolResults: extractAnthropicToolResults(body),
         capabilities: executionCapabilities(model, body),
@@ -151,7 +151,7 @@ export async function handleAnthropicMessages(
         requestId,
         claudeSessionId,
         provider: inferenceProvider(model),
-        route: model.modelFormat === 'anthropic' ? 'passthrough' : 'translated',
+        route: passthrough ? 'passthrough' : 'translated',
         headers: req.headers,
         body,
       });
@@ -159,7 +159,7 @@ export async function handleAnthropicMessages(
 
     plog(() => `anthropic-messages model=${body.model} format=${model.modelFormat} npm=${model.npm ?? 'none'} stream=${body.stream}`);
 
-    if (model.modelFormat === 'anthropic') {
+    if (passthrough) {
       const messagesUrl = `${model.baseUrl}/v1/messages`;
       const credentialRouteKey = providerRuntimeRouteKey(model, '@native-anthropic', model.baseUrl);
       const credential = modelCache.snapshot(credentialRouteKey, model.apiKey ?? options.apiKey);
@@ -228,7 +228,7 @@ export async function handleAnthropicMessages(
       return;
     }
 
-    if (model.modelFormat === 'openai') {
+    if (model.modelFormat === 'openai' || (model.modelFormat === 'anthropic' && !passthrough)) {
       const apiKey = model.apiKey ?? options.apiKey;
       auditInference(options, {
         requestId,
@@ -244,7 +244,7 @@ export async function handleAnthropicMessages(
       if (npmMaxTools !== undefined && toolCount > npmMaxTools) {
         plog(`tools truncated: ${toolCount} → ${npmMaxTools} (provider limit)`);
       }
-      const openAiOAuth = model.npm === '@ai-sdk/openai' && model.authType === 'oauth';
+      const openAiOAuth = isOpenAiOAuth(model.npm, model.authType, model.providerId);
       const params = sdkTranslateRequest(body as unknown as AnthropicRequest, model.npm!, {
         defaultEffort: anthropicEffortFromRequest(body as AnthropicRequest) ? undefined : model.defaultEffort,
         openAiOAuth,

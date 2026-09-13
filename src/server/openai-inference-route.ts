@@ -15,7 +15,7 @@ import { applyExecutionHeaders, auditInference, auditSdkError, executionCapabili
 import { supportsDirectOpenAIChatCompletions, upstreamModelId } from './models.js';
 import { validateOpenAiChatRoute } from './route-validation.js';
 import { createTrackedSseResponse } from './sse-response.js';
-
+import { isOpenAiOAuth } from '../provider-factory.js';
 export async function handleOpenAIChatCompletions(
   req: IncomingMessage,
   res: ServerResponse,
@@ -153,7 +153,7 @@ export async function handleOpenAIChatCompletions(
     });
     const baseURL = model.modelFormat === 'anthropic' ? model.baseUrl : model.apiBaseUrl;
     const languageModel = await getOrInitLanguageModel(modelCache, model, npm, baseURL, apiKey);
-    const openAiOAuth = npm === '@ai-sdk/openai' && model.authType === 'oauth';
+    const openAiOAuth = isOpenAiOAuth(npm, model.authType, model.providerId);
     const params = translateOpenAiRequest(body as unknown as OpenAiRequest, { openAiOAuth });
     const clientWantsStream = Boolean(body.stream);
     const responseModelId = getResponseModelId(body.model, model, options);

@@ -57,18 +57,19 @@ leverframe models --alias copilot=leverframe:github-copilot:<model-id>
 leverframe patch
 leverframe claude --proxy
 ```
-Device authorization uses Leverframe's public OAuth App client ID. Each user authorizes their own GitHub account. The durable GitHub token stays in that user's OS credential store.
-Leverframe does not store a GitHub account, subscription, short-lived Copilot token, or static model catalog. Model refresh uses the public SDK. It lists only models available to the authorized account.
-`@github/copilot-sdk@1.0.9` is optional and stays outside the Leverframe bundle. A normal package install attempts to install the SDK and its platform binary. A missing optional install fails only the Copilot route and provides an install command.
-Copilot sessions have these limits:
-- `tool_choice: auto` exposes only the request's custom tools.
-- `tool_choice: none` exposes no tools.
-- `required` and named-tool choices fail before runtime or session creation.
-- Transcript divergence creates a new isolated session with a versioned resync.
-- Session events and checkpoints use an in-memory filesystem.
-Built-in tools, memory, skills, plugins, instruction discovery, MCP servers, session search, host Git operations, and repository context stay disabled.
-A rejected durable GitHub token is not refreshed as an OpenAI token. Reauthorize with `leverframe providers auth github-copilot`. Short-lived Copilot session credentials remain owned by the official SDK.
-Use `leverframe claude --endpoint` instead of `--proxy` to verify the same alias through endpoint mode.
+Device authorization uses Leverframe's public OAuth App client ID. Each user signs in with their own GitHub account.
+
+Leverframe keeps the GitHub token in the OS credential store and sends it directly to `https://api.githubcopilot.com`. It uses HTTP requests without the GitHub Copilot SDK, CLI, or embedded runtime.
+
+Model refresh reads the authenticated `/models` catalog. Confirmed endpoint metadata selects Chat Completions, Responses, or Anthropic Messages. Missing capabilities and limits remain unconfirmed.
+
+Claude Code retains conversation control and executes tools. Leverframe does not create Copilot sessions or load GitHub tools and instructions. Standard HTTP adapters carry the complete request history and tool results.
+
+A rejected GitHub token requires GitHub login, not OpenAI token refresh. Reauthorize with `leverframe providers auth github-copilot`.
+
+This integration uses Copilot backend endpoints rather than a documented public inference API. See [provider contracts](docs/PROVIDER-CONTRACTS.md) for the authentication and metadata rules.
+
+Use `leverframe claude --endpoint` instead of `--proxy` to use the same alias through endpoint mode.
 ### API-key providers
 
 ```bash

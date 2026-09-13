@@ -1,12 +1,20 @@
 # Provider contracts
 
-## Copilot reasoning efforts
+## GitHub Copilot HTTP contract
 
-Leverframe validates Copilot requests against the installed public `@github/copilot-sdk` contract. Version 1.0.9 defines `ReasoningEffort` as `low`, `medium`, `high`, `xhigh`, or `max` in `dist/types.d.ts`. Its supported and default effort fields use that type.
+Leverframe keeps GitHub device authorization and the existing credential store. It sends the GitHub OAuth token directly to `https://api.githubcopilot.com` for model discovery and inference. It does not use a GitHub runtime or exchange the token through the legacy Copilot token endpoint.
 
-The shared registry type also contains values used by other providers. That broader type does not establish Copilot support for those values. The generated RPC layer accepts provider-defined strings, but this does not expand the public SDK contract for Copilot models. Validation remains specific to the provider until its supported contract changes.
+The HTTP boundary permits only the fixed Copilot HTTPS origin and known request paths. It rejects redirects and removes unrelated authentication headers. Requests identify Leverframe rather than another editor. Error responses cannot expose the stored OAuth token.
 
-`tests/copilot-models.test.ts` and `tests/copilot-language-model-validation.test.ts` verify this boundary.
+Model discovery reads the authenticated `/models` response. Explicit endpoint metadata selects `/v1/messages`, `/responses`, or `/chat/completions`. A chat model without endpoint metadata uses Chat Completions. Unsupported endpoint sets fail, and non-chat models stay outside the catalog.
+
+Only advertised capabilities and limits enter the model cache. Editor picker visibility does not imply an account policy restriction. Disabled or unconfigured model policies remain unavailable.
+
+If the backend advertises effort labels, Leverframe retains values that the shared HTTP adapters support. These include `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Unknown labels do not become request parameters, and absent metadata stays unconfirmed.
+
+These backend endpoints do not have a documented public inference contract. Compatibility depends on current backend behavior rather than the removed SDK contract.
+
+`tests/github-copilot-http.test.ts` covers the credential boundary. `tests/github-copilot-provider.test.ts` covers HTTP protocol selection and caller-owned tools. `tests/copilot-models.test.ts` covers metadata rules.
 
 ## Explicit local HTTP endpoints
 

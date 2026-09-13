@@ -1,3 +1,5 @@
+/** @file Because GitHub runtimes must not ship. */
+
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -70,19 +72,16 @@ try {
     encoding: 'utf8',
   }).trim();
   if (version !== packageVersion) throw new Error(`Packed CLI returned unexpected version: ${version}`);
-  const smoke = `
-    const sdk = await import('@github/copilot-sdk');
-    if (typeof sdk.CopilotClient !== 'function') throw new Error('CopilotClient export missing');
-    if (typeof sdk.RuntimeConnection?.forStdio !== 'function') throw new Error('RuntimeConnection.forStdio export missing');
-    const connection = sdk.RuntimeConnection.forStdio();
-    if (!connection) throw new Error('Could not construct Copilot stdio connection');
-  `;
-  execFileSync(process.execPath, ['--input-type=module', '--eval', smoke], {
-    cwd: consumer,
-    stdio: 'pipe',
-  });
+  // Because transitive SDK dependencies can add binaries.
+  const dependencies = execFileSync(npm, ['ls', '--all', '--parseable'], {
+    cwd: consumer, encoding: 'utf8',
+  }).trim().split(/\r?\n/);
+  // Because installed paths use either slash style.
+  if (dependencies.some(path => /[\\/]node_modules[\\/]@github[\\/]copilot(?:[-\\/]|$)/.test(path))) {
+    throw new Error('The installed package contains a GitHub Copilot runtime dependency');
+  }
 
-  console.log(`Package contents and Copilot runtime verified: ${actual.length} files, ${records[0].unpackedSize} bytes`);
+  console.log(`Package contains no Copilot runtime dependencies (${actual.length} files, ${records[0].unpackedSize} bytes)`);
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

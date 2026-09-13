@@ -27,10 +27,7 @@ import {
   refreshCopilotModels,
   type CopilotModelFailureKind,
 } from '../copilot/models.js';
-import {
-  createDefaultCopilotRuntime,
-  type CopilotRuntimeHandle,
-} from '../copilot/runtime.js';
+import { COPILOT_API_BASE_URL, fetchCopilotModels } from '../copilot/backend.js';
 
 export interface RefreshProviderResult {
   id: string;
@@ -59,59 +56,15 @@ type OAuthModelRefreshResult = {
 
 const MAX_DISCOVERY_ERROR_LENGTH = 500;
 
-async function disposeCopilotRuntime(runtime: CopilotRuntimeHandle): Promise<Error[]> {
-  const errors: Error[] = [];
-  try {
-    errors.push(...await runtime.stop());
-  } catch (error) {
-    errors.push(error instanceof Error ? error : new Error(String(error)));
-  }
-  if (errors.length === 0) return errors;
-  try {
-    await runtime.forceStop();
-  } catch (error) {
-    errors.push(error instanceof Error ? error : new Error(String(error)));
-  }
-  return errors;
-}
-
+/** Because the saved GitHub login authenticates HTTP. */
 async function refreshCopilotOAuthModels(
   provider: RegistryProvider,
   accessToken: string,
 ): Promise<OAuthModelRefreshResult> {
-  const runtime = createDefaultCopilotRuntime({
-    gitHubToken: accessToken,
-    nodeVersion: process.version,
-    environment: process.env,
+  return refreshCopilotModels({
+    listModels: () => fetchCopilotModels(accessToken),
+    cachedModels: provider.modelsCache?.models ?? [],
   });
-  let result: OAuthModelRefreshResult | undefined;
-  let discoveryError: unknown;
-  try {
-    result = await refreshCopilotModels({
-      listModels: () => runtime.listModels(),
-      cachedModels: provider.modelsCache?.models ?? [],
-    });
-  } catch (error) {
-    discoveryError = error;
-  }
-
-  const cleanupErrors = await disposeCopilotRuntime(runtime);
-  if (discoveryError !== undefined) {
-    if (cleanupErrors.length > 0) {
-      const message = discoveryError instanceof Error ? discoveryError.message : String(discoveryError);
-      throw new AggregateError([discoveryError, ...cleanupErrors], message, {
-        cause: discoveryError,
-      });
-    }
-    throw discoveryError;
-  }
-  if (cleanupErrors.length > 0) {
-    throw new AggregateError(cleanupErrors, 'Copilot runtime did not stop cleanly');
-  }
-  if (result === undefined) {
-    throw new Error('Copilot model discovery did not return a result');
-  }
-  return result;
 }
 
 async function refreshOAuthProvider(
@@ -420,7 +373,9 @@ function updateProviderCache(
   registry.providers[idx] = {
     ...provider,
     refreshedAt: now,
-    api: baseUrl ? { ...existing.api, url: baseUrl } : existing.api,
+    api: (provider.templateId ?? provider.id) === 'github-copilot'
+      ? { ...existing.api, npm: '@ai-sdk/openai-compatible', url: COPILOT_API_BASE_URL }
+      : baseUrl ? { ...existing.api, url: baseUrl } : existing.api,
     modelsCache: {
       fetchedAt: now,
       models,
@@ -468,7 +423,7 @@ function copilotDiscoveryFailureMessage(
     ? ''
     : ` Kept ${cachedModelCount} cached model${cachedModelCount === 1 ? '' : 's'}.`;
   if (kind === 'sdk') {
-    return `GitHub Copilot runtime is unavailable${detail}.${cache} Install @github/copilot-sdk@1.0.9 and refresh models.`;
+    return `GitHub Copilot has outdated model metadata${detail}.${cache} Run leverframe providers refresh-models github-copilot.`;
   }
   if (kind === 'authentication') {
     return `GitHub Copilot authentication or subscription validation failed${detail}.${cache} Sign in again with leverframe providers auth github-copilot.`;
@@ -480,7 +435,7 @@ function copilotDiscoveryFailureMessage(
     return `GitHub Copilot returned no models${detail}.${cache} Confirm this account has an eligible Copilot subscription.`;
   }
   if (kind === 'schema') {
-    return `GitHub Copilot returned unexpected model data${detail}.${cache} Update Leverframe or @github/copilot-sdk before retrying.`;
+    return `GitHub Copilot returned unexpected model data${detail}.${cache} Update Leverframe before retrying.`;
   }
   return `GitHub Copilot model discovery failed${detail}.${cache} Try refreshing again later.`;
 }
@@ -531,7 +486,7 @@ async function refreshProviderModelsInner(
       const failureDetail = oauthResult.failureReason ? ` (${oauthResult.failureReason})` : '';
       if (oauthResult.source === 'cache') {
         const reason = oauthResult.failureKind === 'schema'
-          ? `Copilot returned unexpected model data${failureDetail}. Kept your existing cached model list. Update Leverframe or its Copilot SDK before retrying.`
+          ? `Copilot returned unexpected model data${failureDetail}. Kept your existing cached model list. Update Leverframe before retrying.`
           : `Live model discovery failed${failureDetail}. Kept your existing cached model list. Try refreshing again later.`;
         return {
           ...skipWithCachedModels(provider, reason),

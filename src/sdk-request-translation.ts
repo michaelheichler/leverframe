@@ -561,17 +561,6 @@ export function translateRequest(
       upstreamModelId,
       options?.reasoningMetadata?.supportsPromptCacheBreakpoints,
     );
-  if (npm === '@github/copilot-sdk') {
-    if (claudeSessionId !== undefined) {
-      providerOptions = deepMergeProviderOptions(providerOptions, {
-        copilot: {
-          claudeSessionId,
-          ...(effort === undefined ? {} : { reasoningEffort: effort }),
-        },
-      });
-    }
-  }
-
   if (npm === '@ai-sdk/openai') {
     providerOptions = deepMergeProviderOptions(providerOptions, {
       openai: {

@@ -17,7 +17,7 @@ import {
   injectClaudeIdentity,
   selectBetaFlags,
 } from './oauth/claude-identity.js';
-import { createLanguageModel, isSdkMigratedNpm, maxToolsForNpm } from './provider-factory.js';
+import { createLanguageModel, isOpenAiOAuth, isSdkMigratedNpm, maxToolsForNpm } from './provider-factory.js';
 import { randomUUID } from 'node:crypto';
 import {
   translateRequest as sdkTranslateRequest,
@@ -241,7 +241,7 @@ export async function startProxyCatalog(
         `POST /v1/messages - alias=${originalModel} route=${route.realModelId} format=${route.modelFormat} key=${apiKey ? `len:${apiKey.length}` : 'MISSING'}`,
       );
 
-      const usesSdkAdapter = isSdkMigratedNpm(route.npm);
+      const usesSdkAdapter = providerId === 'github-copilot' || isSdkMigratedNpm(route.npm, providerId);
 
       const requestExecution = createRequestExecutionContext({
         requestId: relayRequestId ?? randomUUID(),
@@ -434,7 +434,7 @@ export async function startProxyCatalog(
           anthropicError(res, 400, 'Custom endpoint URL failed security revalidation.');
           return;
         }
-        const openAiOAuth = route.npm === '@ai-sdk/openai' && route.authType === 'oauth';
+        const openAiOAuth = isOpenAiOAuth(route.npm, route.authType, providerId);
         const translationLifecycle = createTranslationLifecycle(
           inferenceLogPath,
           relayRequestId,
@@ -483,7 +483,7 @@ export async function startProxyCatalog(
               modelId: route.realModelId,
               apiKey: handleCredential.credential,
               baseURL: route.baseURL,
-              providerId: route.providerId ?? route.aliasId,
+              providerId: providerId === 'github-copilot' ? providerId : route.providerId ?? route.aliasId,
               authType: route.authType,
               oauthAccountId: route.oauthAccountId,
               providerData: route.providerData,

@@ -1,4 +1,5 @@
-export const COPILOT_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+/** Unknown efforts drop to avoid invalid requests. */
+export const COPILOT_REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 
 export type CopilotReasoningEffort = typeof COPILOT_REASONING_EFFORTS[number];
 

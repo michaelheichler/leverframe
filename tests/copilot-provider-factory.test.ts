@@ -10,7 +10,7 @@ describe('createLanguageModel GitHub Copilot dispatch', () => {
     });
 
     const copilotModel = model as { provider?: string; modelId?: string };
-    expect(copilotModel.provider).toBe('github-copilot');
+    expect(copilotModel.provider).toBe('github-copilot.chat');
     expect(copilotModel.modelId).toBe('claude-sonnet-4-6');
   });
 });

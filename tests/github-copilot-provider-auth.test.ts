@@ -124,7 +124,7 @@ describe('authenticateProvider github-copilot success', () => {
       templateId: 'github-copilot',
       authType: 'oauth',
       authRef: 'keyring:oauth:provider:github-copilot',
-      api: expect.objectContaining({ npm: '@github/copilot-sdk' }),
+      api: expect.objectContaining({ npm: '@ai-sdk/openai-compatible', url: 'https://api.githubcopilot.com' }),
     }));
     expect(JSON.stringify(registry)).not.toContain(ACCESS_TOKEN);
   });

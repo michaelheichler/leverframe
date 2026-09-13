@@ -4,6 +4,16 @@
 
 This changelog records notable changes to Leverframe.
 
+## [Unreleased]
+
+### Changed
+
+- GitHub Copilot uses direct HTTP with the existing GitHub device login. It requires no GitHub SDK or CLI runtime.
+- Copilot model discovery uses authenticated account metadata for supported protocols, capabilities, and token limits. Missing values remain unconfirmed.
+- Copilot requests retain caller-owned tools and output limits across Chat Completions, Responses, and Anthropic Messages routes.
+- Successful model refresh migrates old Copilot SDK routing metadata without replacing saved credentials or aliases.
+- The repository no longer includes VBW planning files or workflow instructions.
+
 ## [0.4.1] - 2026-09-11
 
 ### Fixed

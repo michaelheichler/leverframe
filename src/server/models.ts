@@ -225,7 +225,7 @@ export function buildDedupedModelRows(models: ServerModelInfo[], opts?: GatewayM
 }
 
 export function supportsDirectOpenAIChatCompletions(model: ServerModelInfo): boolean {
-  return model.modelFormat === 'openai' && !!model.completionsUrl;
+  return model.providerId !== 'github-copilot' && model.modelFormat === 'openai' && !!model.completionsUrl;
 }
 
 export function formatOpenAIModels(models: ServerModelInfo[]) {
