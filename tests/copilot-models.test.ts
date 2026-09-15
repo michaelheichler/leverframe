@@ -1,10 +1,11 @@
 /** Metadata is required to prevent guessed routing. */
 import { expect, it } from 'vitest';
-import { mapCopilotModels, parseCopilotModelInfo } from '../src/copilot/models.js';
+import { mapCopilotModels, parseCopilotModelInfo, type CopilotModelSkipDiagnostic } from '../src/copilot/models.js';
 
 const modelInfo = (overrides: Record<string, unknown>): Record<string, unknown> => ({
   id: 'claude-sonnet-fixture',
   name: 'Claude Sonnet Fixture',
+  supported_endpoints: ['/chat/completions'],
   capabilities: {
     type: 'chat',
     supports: { vision: true, reasoningEffort: true },
@@ -33,10 +34,11 @@ it('preserves provider-confirmed identifiers and camelCase capabilities', () => 
   expect(model.contextWindowUnconfirmed).toBeUndefined();
 });
 
-it('maps the observed HTTP chat record without requiring editor visibility', () => {
+it('maps a transport-confirmed HTTP chat record without requiring editor visibility', () => {
   const model = parseCopilotModelInfo({
     id: 'gpt-4o-mini',
     name: 'GPT-4o mini',
+    supported_endpoints: ['/chat/completions'],
     capabilities: {
       family: 'gpt-4o-mini',
       limits: {
@@ -104,7 +106,11 @@ it.each([
 );
 
 it('does not guess an endpoint when both endpoints and chat type are absent', () => {
-  expect(() => parseCopilotModelInfo(modelInfo({ capabilities: {} }))).toThrow(TypeError);
+  expect(() => parseCopilotModelInfo(modelInfo({ capabilities: {}, supported_endpoints: undefined }))).toThrow(/transport is unknown/);
+});
+
+it('does not infer chat completions from the chat capability alone', () => {
+  expect(() => parseCopilotModelInfo(modelInfo({ supported_endpoints: undefined }))).toThrow(/transport is unknown/);
 });
 
 it('does not parse a completion model as a chat model', () => {
@@ -287,16 +293,79 @@ it('excludes models whose policy is not enabled', () => {
   expect(models.map(model => model.id)).toEqual(['enabled', 'no-policy']);
 });
 
-it('rejects malformed chat metadata even when policy disables the model', () => {
-  expect(() => mapCopilotModels([
+it('filters disabled records before validating unused chat metadata or transport', () => {
+  const skippedModels: CopilotModelSkipDiagnostic[] = [];
+  expect(mapCopilotModels([
     modelInfo({ name: 42, policy: { state: 'disabled' } }),
-  ])).toThrow(TypeError);
+    modelInfo({ supported_endpoints: undefined, policy: { state: 'disabled' } }),
+  ], skippedModels)).toEqual([]);
+  expect(skippedModels.map(record => record.kind)).toEqual(['policy', 'policy']);
 });
 
-it.each([null, {}, { state: 'unexpected' }])('rejects malformed policies %j', policy => {
-  expect(() => mapCopilotModels([modelInfo({ policy })])).toThrow(TypeError);
+it.each([null, {}, { state: 'unexpected' }])('diagnoses malformed policies %j', policy => {
+  const skippedModels: CopilotModelSkipDiagnostic[] = [];
+  expect(mapCopilotModels([modelInfo({ policy })], skippedModels)).toEqual([]);
+  expect(skippedModels).toEqual([expect.objectContaining({ index: 0, kind: 'schema', reason: expect.stringMatching(/policy|state/) })]);
 });
 
 it('rejects a non-array listModels result', () => {
   expect(() => mapCopilotModels({ models: [] })).toThrow(TypeError);
+});
+
+it('retains valid siblings in order and diagnoses each malformed record without requiring an ID', () => {
+  const skippedModels: CopilotModelSkipDiagnostic[] = [];
+  const models = mapCopilotModels([
+    modelInfo({ id: 'first' }),
+    null,
+    modelInfo({ id: 'invalid', name: 42 }),
+    { id: 'missing-capabilities' },
+    modelInfo({ id: 'last', capabilities: { type: 'chat' }, supported_endpoints: ['/responses'] }),
+  ], skippedModels);
+
+  expect(models.map(model => model.id)).toEqual(['first', 'last']);
+  expect(models[1]).toMatchObject({ npm: '@ai-sdk/openai', contextWindowUnconfirmed: true });
+  expect(skippedModels).toEqual([
+    { index: 1, kind: 'schema', reason: expect.stringContaining('record must be an object') },
+    { index: 2, modelId: 'invalid', kind: 'schema', reason: expect.stringContaining('name must be') },
+    { index: 3, modelId: 'missing-capabilities', kind: 'schema', reason: expect.stringContaining('capabilities must be') },
+  ]);
+});
+
+it.each([undefined, [], ['/embeddings'], ['/v1/chat/completions'], ['https://untrusted.example/responses']])(
+  'diagnoses transport-unknown exclusions for %j without hiding supported siblings', endpoints => {
+    const skippedModels: CopilotModelSkipDiagnostic[] = [];
+    const models = mapCopilotModels([
+      modelInfo({ id: 'unknown', supported_endpoints: endpoints }),
+      modelInfo({ id: 'supported', supported_endpoints: ['/v1/messages'] }),
+    ], skippedModels);
+
+    expect(models.map(model => model.id)).toEqual(['supported']);
+    expect(skippedModels).toEqual([{
+      index: 0, modelId: 'unknown', kind: 'transport-unknown',
+      reason: expect.stringContaining('transport is unknown'),
+    }]);
+  },
+);
+
+it('distinguishes malformed endpoints from missing or unsupported transports', () => {
+  const skippedModels: CopilotModelSkipDiagnostic[] = [];
+  mapCopilotModels([modelInfo({ supported_endpoints: ['/responses', 42] })], skippedModels);
+  expect(skippedModels).toEqual([expect.objectContaining({ kind: 'schema' })]);
+});
+
+it('retains all three protocol adapters, confirmed limits and capabilities in a mixed catalog', () => {
+  const models = mapCopilotModels([
+    modelInfo({ id: 'messages', supported_endpoints: ['/v1/messages', '/responses', '/chat/completions'] }),
+    modelInfo({ id: 'responses', supported_endpoints: ['/responses', '/chat/completions'] }),
+    modelInfo({ id: 'chat', supported_endpoints: ['/chat/completions'] }),
+  ]);
+  expect(models.map(model => model.npm)).toEqual(['@ai-sdk/anthropic', '@ai-sdk/openai', '@ai-sdk/openai-compatible']);
+  for (const model of models) {
+    expect(model).toMatchObject({
+      contextWindow: 200_000, reasoning: true, vision: true,
+      supportedReasoningEfforts: ['low', 'medium', 'high'], defaultReasoningEffort: 'medium',
+      apiUrl: 'https://api.githubcopilot.com',
+    });
+  }
+  expect(models.map(model => model.supportedParameters)).toEqual([undefined, undefined, ['reasoning_effort']]);
 });

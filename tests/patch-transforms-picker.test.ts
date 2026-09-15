@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as typescript from 'typescript';
 import { applyNativeContextPicker } from '../src/patch-transforms-picker.js';
+import { applyLeverframePatches } from '../src/patch-transforms.js';
+import { buildPatchModelConfig } from '../src/patcher.js';
 
 const SANITIZED_PICKER_FIXTURE = readFileSync(
   join(import.meta.dirname, 'fixtures', 'claude-picker-2.1.263.js'),
@@ -69,6 +71,170 @@ function createPickerHarness(source: string, fetch: PickerFetch): PickerHarness 
 }
 
 describe('native context picker transform', () => {
+  it.each(['leverframe:provider:model', 'daily'])('gates an unknown-context launch identity %s through the full patch configuration', async identity => {
+    const { config } = buildPatchModelConfig(
+      [{ providerId: 'provider', modelId: 'model' }],
+      [{ name: 'daily', providerId: 'provider', modelId: 'model' }],
+      () => ({ contextWindowUnconfirmed: true, modelFormat: 'openai' }),
+    );
+    const source = [
+      '.enum(["sonnet","opus","haiku","fable"]).optional().describe(`Optional model override for this agent.`)',
+      'var KNOWN=["sonnet","opus","haiku","fable","opusplan"];',
+      'function rz(x){switch(x){case"best":{return "opus"}default:return null}}',
+      pickerSource(),
+    ].join('\n');
+    const patched = applyLeverframePatches(source, config);
+    expect(patched.results).toContainEqual({ name: 'PATCH 12: context mode picker', status: 'OK' });
+    const harness = createPickerHarness(patched.content.slice(patched.content.indexOf('var __lfcGeneration=')), async () => ({
+      ok: true, json: async () => ({ model: 'model', contextWindowUnconfirmed: true, options: [] }),
+    }));
+    (harness.picker(harness.props).props.onChange as (value: string) => void)(identity);
+    expect(harness.selected).toEqual([]);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    (harness.picker(harness.props).props.onChange as (value: string) => void)('provider-default');
+    expect(harness.selected).toEqual([[identity, 'high']]);
+  });
+
+  it('requires an explicit provider-default choice for a live model with unknown context', async () => {
+    const id = 'leverframe:provider:model';
+    const result = applyNativeContextPicker(pickerSource(), {}, { daily: id }, [id, 'daily']);
+    expect(result.result.status).toBe('OK');
+    const runtime = globalThis as typeof globalThis & { __lfcContextWindows?: Record<string, number> };
+    const previous = runtime.__lfcContextWindows;
+    try {
+      runtime.__lfcContextWindows = Object.assign(Object.create(null), {
+        [id]: 400_000, [id + '[default]']: 400_000,
+        [id + '[maximum]']: 1_200_000, [id + '[1m]']: 1_200_000,
+        daily: 400_000, 'daily[default]': 400_000, 'daily[maximum]': 1_200_000, 'daily[1m]': 1_200_000,
+      });
+      const harness = createPickerHarness(result.content, async () => ({
+        ok: true,
+        json: async () => ({ model: 'model', contextWindowUnconfirmed: true, options: [] }),
+      }));
+      (harness.picker(harness.props).props.onChange as (value: string) => void)(id + '[maximum]');
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const ready = harness.picker(harness.props);
+      expect(harness.selected).toEqual([]);
+      expect(ready.props.options).toEqual([{
+        value: 'provider-default',
+        label: 'Context limits unavailable; use provider default',
+      }]);
+      for (const suffix of ['', '[default]', '[maximum]', '[1m]']) {
+        expect(runtime.__lfcContextWindows?.[id + suffix]).toBe(0);
+        expect(runtime.__lfcContextWindows?.['daily' + suffix]).toBe(0);
+      }
+      (ready.props.onChange as (value: string) => void)('provider-default');
+      expect(harness.selected).toEqual([[id, 'high']]);
+      expect(Object.values(runtime.__lfcContextWindows!)).toEqual(Array(8).fill(0));
+    } finally {
+      if (previous === undefined) delete runtime.__lfcContextWindows;
+      else runtime.__lfcContextWindows = previous;
+    }
+  });
+
+  it.each([
+    null,
+    {},
+    { options: [] },
+    { contextWindowUnconfirmed: true, options: [] },
+    { model: 'model', contextWindowUnconfirmed: true },
+    { model: 'model', contextWindowUnconfirmed: 'true', options: [] },
+    { model: 'model', contextWindowUnconfirmed: true, options: [{ mode: 'default', contextWindow: 100_000, label: 'Default' }] },
+    { model: 'model', contextWindowUnconfirmed: true, options: [null] },
+  ])('rejects malformed unavailable-context payload %j', async payload => {
+    const id = 'leverframe:provider:model';
+    const result = applyNativeContextPicker(pickerSource(), {}, {}, [id]);
+    const harness = createPickerHarness(result.content, async () => ({
+      ok: true, json: async () => payload,
+    }));
+    (harness.picker(harness.props).props.onChange as (value: string) => void)(id);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const failed = harness.picker(harness.props);
+    expect(failed.props.options).toEqual([{
+      value: '__leverframe_context_status', label: 'Context limits unavailable; cancel',
+    }]);
+    (failed.props.onChange as (value: string) => void)('provider-default');
+    expect(harness.selected).toEqual([]);
+  });
+
+  it('cancels the explicit unknown-context choice without selecting the model', async () => {
+    const id = 'leverframe:provider:model';
+    const result = applyNativeContextPicker(pickerSource(), {}, {}, [id]);
+    const harness = createPickerHarness(result.content, async () => ({
+      ok: true, json: async () => ({ model: 'model', contextWindowUnconfirmed: true, options: [] }),
+    }));
+    (harness.picker(harness.props).props.onChange as (value: string) => void)(id);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    (harness.picker(harness.props).props.onCancel as () => void)();
+    expect(harness.picker(harness.props).props.options).toEqual(harness.props.options);
+    expect(harness.selected).toEqual([]);
+    expect(harness.baseCancelled()).toBe(0);
+  });
+
+  it.each([false, true])('preserves confirmed runtime metadata after a malformed response (cancelled: %s)', async cancelled => {
+    const id = 'leverframe:provider:model';
+    const result = applyNativeContextPicker(pickerSource(), {}, { daily: id }, [id]);
+    const runtime = globalThis as typeof globalThis & { __lfcContextWindows?: Record<string, number> };
+    const previous = runtime.__lfcContextWindows;
+    const windows: Record<string, number> = Object.assign(Object.create(null), {
+      [id]: 400_000, [id + '[default]']: 400_000,
+      [id + '[maximum]']: 1_200_000, [id + '[1m]']: 1_200_000,
+      daily: 400_000, 'daily[maximum]': 1_200_000,
+    });
+    const before = { ...windows };
+    let finish!: (response: Awaited<ReturnType<PickerFetch>>) => void;
+    try {
+      runtime.__lfcContextWindows = windows;
+      const harness = createPickerHarness(result.content, () => new Promise(resolve => { finish = resolve; }));
+      (harness.picker(harness.props).props.onChange as (value: string) => void)(id);
+      if (cancelled) (harness.picker(harness.props).props.onCancel as () => void)();
+      finish({ ok: true, json: async () => ({ model: 'model', options: [] }) });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(runtime.__lfcContextWindows).toBe(windows);
+      expect(runtime.__lfcContextWindows).toEqual(before);
+      expect(harness.selected).toEqual([]);
+      expect(harness.picker(harness.props).props.options).toEqual(cancelled
+        ? harness.props.options
+        : [{ value: '__leverframe_context_status', label: 'Context limits unavailable; cancel' }]);
+    } finally {
+      if (previous === undefined) delete runtime.__lfcContextWindows;
+      else runtime.__lfcContextWindows = previous;
+    }
+  });
+
+  it.each([true, false])('ignores a cancelled unknown lookup after a newer %s context choice', async confirmed => {
+    const id = 'leverframe:provider:model';
+    const result = applyNativeContextPicker(pickerSource(), {}, {}, [id]);
+    let finishFirst!: (response: Awaited<ReturnType<PickerFetch>>) => void;
+    let calls = 0;
+    const runtime = globalThis as typeof globalThis & { __lfcContextWindows?: Record<string, number> };
+    const previous = runtime.__lfcContextWindows;
+    try {
+      delete runtime.__lfcContextWindows;
+      const harness = createPickerHarness(result.content, () => {
+        if (++calls === 1) return new Promise(resolve => { finishFirst = resolve; });
+        return Promise.resolve({
+          ok: true, json: async () => confirmed
+            ? { options: [{ mode: 'default', contextWindow: 123_456, label: 'Default' }] }
+            : { model: 'model', contextWindowUnconfirmed: true, options: [] },
+        });
+      });
+      (harness.picker(harness.props).props.onChange as (value: string) => void)(id);
+      (harness.picker(harness.props).props.onCancel as () => void)();
+      (harness.picker(harness.props).props.onChange as (value: string) => void)(id);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      if (!confirmed) (harness.picker(harness.props).props.onChange as (value: string) => void)('provider-default');
+      finishFirst({ ok: true, json: async () => ({ model: 'model', contextWindowUnconfirmed: true, options: [] }) });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(harness.selected).toEqual([[id, 'high']]);
+      expect(harness.picker(harness.props).props.options).toEqual(harness.props.options);
+      expect(runtime.__lfcContextWindows?.[id]).toBe(confirmed ? 123_456 : 0);
+    } finally {
+      if (previous === undefined) delete runtime.__lfcContextWindows;
+      else runtime.__lfcContextWindows = previous;
+    }
+  });
+
   it('matches the sanitized Claude 2.1.263 picker structure', () => {
       const result = applyNativeContextPicker(SANITIZED_PICKER_FIXTURE, {
         'leverframe:provider:model': { default: 272_000, maximum: 872_000 },

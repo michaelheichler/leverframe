@@ -1,5 +1,6 @@
 /** Because GitHub credentials must stay on its own API. */
 import { VERSION } from '../constants.js';
+import { CopilotModelValidationError } from './model-metadata.js';
 
 export const COPILOT_API_BASE_URL = 'https://api.githubcopilot.com';
 const CATALOG_API_VERSION = '2025-10-01';
@@ -115,9 +116,9 @@ export async function fetchCopilotModels(
   }
   const text = await responseText(response, CATALOG_BODY_LIMIT);
   let body: unknown;
-  try { body = JSON.parse(text); } catch { throw new CopilotHttpError(502, 'GitHub Copilot returned an invalid model catalog.'); }
+  try { body = JSON.parse(text); } catch { throw new CopilotModelValidationError('GitHub Copilot returned an invalid model catalog.'); }
   if (!body || typeof body !== 'object' || !('data' in body) || !Array.isArray(body.data)) {
-    throw new CopilotHttpError(502, 'GitHub Copilot returned an invalid model catalog.');
+    throw new CopilotModelValidationError('GitHub Copilot returned an invalid model catalog.');
   }
   return body.data;
 }

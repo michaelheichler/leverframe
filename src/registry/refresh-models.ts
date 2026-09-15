@@ -26,6 +26,7 @@ import {
   classifyCopilotModelFailure,
   refreshCopilotModels,
   type CopilotModelFailureKind,
+  type CopilotModelSkipDiagnostic,
 } from '../copilot/models.js';
 import { COPILOT_API_BASE_URL, fetchCopilotModels } from '../copilot/backend.js';
 
@@ -40,6 +41,7 @@ export interface RefreshProviderResult {
   reason?: string;
   failureKind?: CopilotModelFailureKind;
   failureReason?: string;
+  skippedModels?: CopilotModelSkipDiagnostic[];
 }
 
 export interface RefreshModelsResult {
@@ -52,6 +54,7 @@ type OAuthModelRefreshResult = {
   source: 'live' | 'seed' | 'cache';
   failureReason?: string;
   failureKind?: CopilotModelFailureKind;
+  skippedModels?: CopilotModelSkipDiagnostic[];
 };
 
 const MAX_DISCOVERY_ERROR_LENGTH = 500;
@@ -364,12 +367,17 @@ function updateProviderCache(
   providerId: string,
   models: CachedModel[],
   baseUrl?: string,
+  skippedModels?: CopilotModelSkipDiagnostic[],
 ): void {
   const idx = registry.providers.findIndex(p => p.id === providerId);
   if (idx < 0) return;
   const now = new Date().toISOString();
   const existing = registry.providers[idx]!;
-  const { modelDiscoveryError: _previousDiscoveryError, ...provider } = existing;
+  const {
+    modelDiscoveryError: _previousDiscoveryError,
+    modelDiscoveryWarnings: _previousDiscoveryWarnings,
+    ...provider
+  } = existing;
   registry.providers[idx] = {
     ...provider,
     refreshedAt: now,
@@ -380,6 +388,7 @@ function updateProviderCache(
       fetchedAt: now,
       models,
     },
+    ...(skippedModels?.length ? { modelDiscoveryWarnings: { checkedAt: now, skippedModels } } : {}),
   };
 }
 
@@ -411,6 +420,27 @@ function safeCopilotDiscoveryReason(reason: string, accessToken: string | null):
   if (compact.length <= MAX_DISCOVERY_ERROR_LENGTH) return compact;
   const marker = ' [truncated]';
   return compact.slice(0, MAX_DISCOVERY_ERROR_LENGTH - marker.length) + marker;
+}
+
+function safeCopilotSkippedModels(
+  skippedModels: CopilotModelSkipDiagnostic[],
+  accessToken: string,
+): CopilotModelSkipDiagnostic[] {
+  return skippedModels.map(record => ({
+    ...record,
+    ...(record.modelId === undefined ? {} : { modelId: safeCopilotDiscoveryReason(record.modelId, accessToken) }),
+    reason: safeCopilotDiscoveryReason(record.reason, accessToken),
+  }));
+}
+
+function copilotPartialDiscoveryMessage(skippedModels: CopilotModelSkipDiagnostic[]): string | undefined {
+  if (skippedModels.length === 0) return undefined;
+  const kinds = ['schema', 'transport-unknown', 'policy', 'non-chat'] as const;
+  const counts = kinds.flatMap(kind => {
+    const count = skippedModels.filter(record => record.kind === kind).length;
+    return count === 0 ? [] : [`${count} ${kind}`];
+  });
+  return `GitHub Copilot refreshed live models; skipped ${skippedModels.length} records (${counts.join(', ')}).`;
 }
 
 function copilotDiscoveryFailureMessage(
@@ -467,6 +497,7 @@ async function refreshProviderModelsInner(
     let baseUrl: string | undefined;
     let oauthFallbackReason: string | undefined;
     let modelSource: RefreshProviderResult['modelSource'];
+    let skippedModels: CopilotModelSkipDiagnostic[] | undefined;
 
     const oauthTemplateId = provider.templateId ?? provider.id;
     const supportsOAuthDiscovery = provider.authType === 'oauth'
@@ -483,6 +514,9 @@ async function refreshProviderModelsInner(
         };
       }
       const oauthResult = await refreshOAuthProvider(provider, apiKey);
+      skippedModels = oauthResult.skippedModels === undefined
+        ? undefined
+        : safeCopilotSkippedModels(oauthResult.skippedModels, apiKey);
       const failureDetail = oauthResult.failureReason ? ` (${oauthResult.failureReason})` : '';
       if (oauthResult.source === 'cache') {
         const reason = oauthResult.failureKind === 'schema'
@@ -492,6 +526,8 @@ async function refreshProviderModelsInner(
           ...skipWithCachedModels(provider, reason),
           failureKind: oauthResult.failureKind,
           failureReason: oauthResult.failureReason,
+          modelSource: 'cache',
+          skippedModels,
         };
       }
       if (oauthResult.source === 'seed' && cachedModelCount(provider) > 0) {
@@ -504,6 +540,9 @@ async function refreshProviderModelsInner(
       if (oauthResult.source === 'seed') {
         oauthFallbackReason = `Live model discovery failed${failureDetail}. Showing leverframe's built-in fallback `
           + 'model list, which may not include the newest models yet. Try refreshing again later.';
+      }
+      if (oauthResult.source === 'live' && skippedModels) {
+        oauthFallbackReason = copilotPartialDiscoveryMessage(skippedModels);
       }
       models = oauthResult.models;
       modelSource = oauthResult.source;
@@ -570,7 +609,7 @@ async function refreshProviderModelsInner(
     const enriched = enrichModelsWithPricing(models, buildPricingIndex(pricingCache), platform);
 
     updateRegistry(current => {
-      updateProviderCache(current, providerId, enriched, baseUrl);
+      updateProviderCache(current, providerId, enriched, baseUrl, skippedModels);
     });
     enrichPricingAsync();
 
@@ -582,6 +621,7 @@ async function refreshProviderModelsInner(
       modelCount: enriched.length,
       previousModelCount: provider.refreshedAt ? previousModelCount : undefined,
       reason: oauthFallbackReason,
+      skippedModels,
     };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);

@@ -132,7 +132,7 @@ export function reasoningEffortForPatch(provider: RegistryProvider, model: Cache
 function resolveContextForPatch(
   meta: PatchModelMeta | undefined,
 ): { context?: number; provenance: PatchContextProvenance } {
-
+  if (meta?.contextWindowUnconfirmed === true) return { provenance: 'unconfirmed' };
   const context = meta?.contextWindow;
   if (context === undefined || context <= 0) {
     return { provenance: meta?.contextWindowUnconfirmed ? 'unconfirmed' : 'missing' };
@@ -160,6 +160,12 @@ export function buildPatchModelConfig(
     if (alias) entry.alias = alias;
     const { context, provenance: contextProvenance } = resolveContextForPatch(meta);
     if (context !== undefined) entry.context = context;
+    if (
+      options.includeContextModes !== false
+      && meta?.modelFormat !== undefined
+      && meta.nativeAnthropic !== true
+      && context === undefined
+    ) entry.contextSelection = true;
     if (
       options.includeContextModes !== false
       && meta?.modelFormat !== undefined
@@ -201,6 +207,7 @@ export function computePatchConfigHash(
         : null,
       entry.display ?? null,
       entry.effort ? [entry.effort.levels, entry.effort.defaultLevel] : null,
+      entry.contextSelection === true,
     ];
   });
   return createHash('sha256')

@@ -3,9 +3,11 @@ import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import {
   formatRegistryAuthLabel,
+  fetchBrowsingProviderCatalog,
   resolveProvidersForDisplay,
   type ProviderDisplayEntry,
 } from './provider-catalog.js';
+import { reportBrowsingCatalogStatus } from './provider-catalog-status.js';
 import {
   listAddableTemplates,
   listVisibleOAuthTemplates,
@@ -204,11 +206,11 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed'> {
   printProviderDetailPanel(provider.name, modelCount, authLabel, provider.modelDiscoveryError?.reason);
 
   const detailOptions: Array<{ value: string; label: string; hint?: string }> = [];
-  if (modelCount > 0) {
+  if (provider.enabled || modelCount > 0) {
     detailOptions.push({
       value: 'browse',
       label: 'Browse models',
-      hint: `Search or browse ${modelCount} model${modelCount === 1 ? '' : 's'}`,
+      hint: provider.enabled ? 'Refresh and browse available models' : 'Browse cached models (provider disabled)',
     });
   }
   detailOptions.push({
@@ -240,6 +242,25 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed'> {
   if (p.isCancel(action) || action === 'back') return 'back';
 
   if (action === 'browse') {
+    if (provider.enabled) {
+      const spinner = p.spinner();
+      spinner.start(`Refreshing models for ${provider.name}...`);
+      let catalog: Awaited<ReturnType<typeof fetchBrowsingProviderCatalog>>;
+      try {
+        catalog = await fetchBrowsingProviderCatalog();
+      } catch (error) {
+        p.log.error(`Could not load provider models: ${error instanceof Error ? error.message : String(error)}`);
+        return 'back';
+      } finally {
+        spinner.stop('');
+      }
+      reportBrowsingCatalogStatus(catalog.statuses.filter(status => status.providerId === id));
+      const localProvider = catalog.providers.find(candidate => candidate.id === id);
+      if (localProvider) await browseAllModels(localProvider, loadPreferences());
+      else p.log.warn(`No models available for ${provider.name}.`);
+      return 'back';
+    }
+    p.log.warn(`${provider.name} is disabled. Showing cached models without refreshing. Last fetched: ${provider.modelsCache?.fetchedAt ?? 'unknown'}.`);
     const cachedModels = provider.modelsCache?.models ?? [];
     const localModels = cachedModels
       .map(m => cachedModelToLocal(m, provider))

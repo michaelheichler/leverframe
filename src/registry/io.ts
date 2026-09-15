@@ -24,6 +24,30 @@ export function ensureSecureAppHome(): void {
   ensurePrivateDirectory(getAppHome());
 }
 
+function parseModelDiscoveryWarnings(raw: unknown): RegistryProvider['modelDiscoveryWarnings'] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const warnings = raw as Record<string, unknown>;
+  if (typeof warnings.checkedAt !== 'string' || !Array.isArray(warnings.skippedModels)) return undefined;
+  const skippedModels: NonNullable<RegistryProvider['modelDiscoveryWarnings']>['skippedModels'] = [];
+  for (const rawRecord of warnings.skippedModels) {
+    if (!rawRecord || typeof rawRecord !== 'object' || Array.isArray(rawRecord)) return undefined;
+    const record = rawRecord as Record<string, unknown>;
+    if (
+      typeof record.index !== 'number' || !Number.isSafeInteger(record.index) || record.index < 0
+      || (record.modelId !== undefined && typeof record.modelId !== 'string')
+      || typeof record.reason !== 'string'
+      || (record.kind !== 'schema' && record.kind !== 'transport-unknown' && record.kind !== 'policy' && record.kind !== 'non-chat')
+    ) return undefined;
+    skippedModels.push({
+      index: record.index,
+      ...(record.modelId === undefined ? {} : { modelId: record.modelId }),
+      kind: record.kind,
+      reason: record.reason,
+    });
+  }
+  return { checkedAt: warnings.checkedAt, skippedModels };
+}
+
 function parseProvider(raw: unknown): RegistryProvider | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const p = raw as Record<string, unknown>;
@@ -68,6 +92,8 @@ function parseProvider(raw: unknown): RegistryProvider | null {
       provider.modelDiscoveryError = failure as RegistryProvider['modelDiscoveryError'];
     }
   }
+  const warnings = parseModelDiscoveryWarnings(p.modelDiscoveryWarnings);
+  if (warnings !== undefined) provider.modelDiscoveryWarnings = warnings;
   return provider;
 }
 
@@ -114,6 +140,9 @@ function strictOptionalFields(raw: unknown): boolean {
     const fields = failure as Record<string, unknown>;
     if (typeof fields.failedAt !== 'string' || typeof fields.reason !== 'string') return false;
     if (!['authentication', 'empty', 'policy', 'runtime', 'schema', 'sdk'].includes(String(fields.kind))) return false;
+  }
+  if (hasOwn(provider, 'modelDiscoveryWarnings') && parseModelDiscoveryWarnings(provider.modelDiscoveryWarnings) === undefined) {
+    return false;
   }
   return true;
 }

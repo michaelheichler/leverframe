@@ -11,7 +11,12 @@ export function applyFreshContextSelection(
   model: Pick<ContextSelectionMetadata, 'contextWindow' | 'maxContextWindow' | 'contextWindowUnconfirmed'>,
 ): ContextSelectionOption[] {
   const options = contextSelectionOptions(model);
-  if (options.length === 0) return [];
+  if (options.length === 0) {
+    route.contextWindow = undefined;
+    route.maxContextWindow = undefined;
+    route.contextWindowUnconfirmed = true;
+    return [];
+  }
   route.contextWindow = options[0]!.contextWindow;
   route.maxContextWindow = options.find(option => option.mode === 'maximum')?.contextWindow;
   route.contextWindowUnconfirmed = undefined;
@@ -134,7 +139,11 @@ export async function handleContextSelectionRequest(
   }
   const selection = applyFreshContextSelection(route, freshModel);
   if (selection.length === 0) {
-    sendJson(res, 503, { error: { type: 'overloaded_error', message: 'Fresh model discovery did not report a confirmed context window.' } });
+    sendJson(res, 200, {
+      model: route.realModelId,
+      contextWindowUnconfirmed: true,
+      options: [],
+    });
     return true;
   }
   sendJson(res, 200, {

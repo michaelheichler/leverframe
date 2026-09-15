@@ -2,7 +2,8 @@ import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { leverframeIntro, leverframeOutro, providerSelectOption, modelSelectOption, fmtModel, fmtEnabledStar } from './ui.js';
 import { loadPreferences, savePreferences } from './config.js';
-import { fetchProviderCatalog, providersForPicker } from './provider-catalog.js';
+import { fetchBrowsingProviderCatalog, providersForPicker } from './provider-catalog.js';
+import { reportBrowsingCatalogStatus } from './provider-catalog-status.js';
 import { MAX_MODEL_CATALOG } from './constants.js';
 import type { FavoriteModel, LocalProvider, LocalProviderModel } from './types.js';
 import { addFavorite, removeFavorite, isFavorite } from './favorites.js';
@@ -100,12 +101,19 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
   leverframeIntro(scopeName);
 
   const spinner = p.spinner();
-  spinner.start('Loading providers...');
+  spinner.start('Refreshing provider models...');
+  let catalog: Awaited<ReturnType<typeof fetchBrowsingProviderCatalog>>;
+  try {
+    catalog = await fetchBrowsingProviderCatalog();
+  } catch (error) {
+    p.log.error(`Could not load provider models: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  } finally {
+    spinner.stop('');
+  }
+  reportBrowsingCatalogStatus(catalog.statuses);
 
-  const catalog = await fetchProviderCatalog();
-  spinner.stop('');
-
-  const allProviders = providersForPicker(catalog);
+  const allProviders = providersForPicker(catalog.providers);
   const favoriteProviders = allProviders.map(provider => ({
     ...provider,
     name: favoriteProviderDisplayName(provider),

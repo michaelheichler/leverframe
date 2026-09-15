@@ -94,17 +94,35 @@ describe('fresh provider catalog', () => {
     expect(result.unavailable[0]?.reason).toBe('Provider authentication expired');
   });
 
-  it('rejects external models whose context is marked unconfirmed', () => {
+  it('keeps live external models with unconfirmed context without publishing stale limits', () => {
     const candidate = provider();
     candidate.models[0]!.contextWindowUnconfirmed = true;
+    candidate.models[0]!.maxContextWindow = 1_000_000;
 
     const result = filterFreshProviderCatalog(
       [candidate],
       { refreshed: [{ id: 'openai-oauth', name: 'OpenAI (ChatGPT)', ok: true, modelSource: 'live' }] },
     );
 
-    expect(result.providers).toEqual([]);
-    expect(result.unavailable[0]?.reason).toContain('confirmed context window');
+    expect(result.providers[0]?.models).toMatchObject([{
+      id: 'gpt-6-astra',
+      contextWindow: undefined,
+      maxContextWindow: undefined,
+      contextWindowUnconfirmed: true,
+    }]);
+    expect(result.unavailable).toEqual([]);
+  });
+
+  it.each([undefined, 0, -1, 1.5, Number.NaN])('retains live identities with invalid or absent context %s', contextWindow => {
+    const candidate = provider();
+    candidate.models[0]!.contextWindow = contextWindow;
+    const result = filterFreshProviderCatalog([candidate], {
+      refreshed: [{ id: candidate.id, name: candidate.name, ok: true, modelSource: 'live' }],
+    });
+    expect(result.providers[0]?.models[0]).toMatchObject({
+      id: 'gpt-6-astra', contextWindow: undefined, contextWindowUnconfirmed: true,
+    });
+    expect(result.unavailable).toEqual([]);
   });
 
   it('keeps only first-party Anthropic passthrough models without a model refresh', () => {
@@ -117,7 +135,7 @@ describe('fresh provider catalog', () => {
     expect(result.unavailable).toEqual([]);
   });
 
-  it('requires live confirmed metadata for third-party Anthropic-format models', () => {
+  it('keeps live third-party Anthropic-format models without inventing context metadata', () => {
     const result = filterFreshProviderCatalog(
       [anthropicProvider('custom-anthropic')],
       {
@@ -130,10 +148,10 @@ describe('fresh provider catalog', () => {
       },
     );
 
-    expect(result.providers).toEqual([]);
-    expect(result.unavailable).toMatchObject([{
-      providerId: 'custom-anthropic',
-      modelIds: ['claude-sonnet-4-6'],
-    }]);
+    expect(result.providers[0]?.models[0]).toMatchObject({
+      id: 'claude-sonnet-4-6',
+      contextWindowUnconfirmed: true,
+    });
+    expect(result.unavailable).toEqual([]);
   });
 });

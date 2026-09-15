@@ -40,15 +40,24 @@ describe('fresh proxy context selection', () => {
     expect(lookupRoute(byAlias, active.aliasId + '[maximum]')?.contextWindow).toBe(1_200_000);
   });
 
-  it('does not mutate a route when fresh context is unconfirmed', () => {
+  it('clears stale route limits when fresh context is unconfirmed', () => {
     const active = route();
     expect(applyFreshContextSelection(active, {
       contextWindow: 300_000,
       maxContextWindow: 900_000,
       contextWindowUnconfirmed: true,
     })).toEqual([]);
-    expect(active.contextWindow).toBe(272_000);
-    expect(active.maxContextWindow).toBe(872_000);
+    expect(active.contextWindow).toBeUndefined();
+    expect(active.maxContextWindow).toBeUndefined();
+    expect(active.contextWindowUnconfirmed).toBe(true);
+    const byAlias = new Map([[active.aliasId, active]]);
+    expect(lookupRoute(byAlias, active.aliasId + '[maximum]')?.contextWindow).toBeUndefined();
+    expect(lookupRoute(byAlias, active.aliasId + '[1m]')?.contextWindow).toBeUndefined();
+
+    applyFreshContextSelection(active, { contextWindow: 500_000 });
+    expect(active.contextWindow).toBe(500_000);
+    expect(active.maxContextWindow).toBeUndefined();
+    expect(active.contextWindowUnconfirmed).toBeUndefined();
   });
 
   it('shares credential runtime state across default and maximum aliases', () => {

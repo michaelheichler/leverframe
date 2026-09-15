@@ -74,49 +74,52 @@ export function filterFreshProviderCatalog(
       return [];
     }
 
-    const confirmedExternal = externalModels.filter(hasConfirmedContext);
-    if (confirmedExternal.length === 0 && externalModels.length > 0) {
-      const reason = 'Fresh model discovery did not report a confirmed context window.';
-      if (nativeModels.length > 0) {
-        recordUnavailable(provider, reason, externalModels.map(model => model.id));
-        return [{ ...provider, models: nativeModels }];
-      }
-      recordUnavailable(provider, reason, externalModels.map(model => model.id));
-      return [];
-    }
-
-    const missingContext = externalModels
-      .filter(model => !hasConfirmedContext(model))
-      .map(model => model.id);
-    if (missingContext.length > 0) {
-      recordUnavailable(
-        provider,
-        'Fresh model discovery did not report a confirmed context window.',
-        missingContext,
-      );
-    }
-
-    return [{ ...provider, models: [...nativeModels, ...confirmedExternal] }];
+    const liveExternal = externalModels.map(model => hasConfirmedContext(model) ? model : {
+      ...model,
+      contextWindow: undefined,
+      maxContextWindow: undefined,
+      contextWindowUnconfirmed: true,
+    });
+    return [{ ...provider, models: [...nativeModels, ...liveExternal] }];
   });
 
   return { providers: available, unavailable };
 }
 
-let freshCatalogInFlight: Promise<FreshProviderCatalog> | undefined;
+interface CatalogRefresh {
+  refresh: RefreshModelsResult;
+  refreshError?: string;
+}
+
+let catalogRefreshInFlight: Promise<CatalogRefresh> | undefined;
+
+async function refreshCatalog(): Promise<CatalogRefresh> {
+  try {
+    const refresh = await refreshAllProviderModels(async provider =>
+      resolveProviderCredential(provider.id, provider.authRef),
+    );
+    return { refresh };
+  } catch (error) {
+    return {
+      refresh: { refreshed: [] },
+      refreshError: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function refreshCatalogOnce(): Promise<CatalogRefresh> {
+  if (catalogRefreshInFlight) return catalogRefreshInFlight;
+  const request = refreshCatalog().finally(() => {
+    if (catalogRefreshInFlight === request) catalogRefreshInFlight = undefined;
+  });
+  catalogRefreshInFlight = request;
+  return request;
+}
 
 async function discoverFreshProviderCatalog(
   opts?: { agent?: CompatibilityAgent },
 ): Promise<FreshProviderCatalog> {
-  let refresh: RefreshModelsResult = { refreshed: [] };
-  let refreshError: string | undefined;
-  try {
-    refresh = await refreshAllProviderModels(async provider =>
-      resolveProviderCredential(provider.id, provider.authRef),
-    );
-  } catch (error) {
-    refreshError = error instanceof Error ? error.message : String(error);
-  }
-
+  const { refresh, refreshError } = await refreshCatalogOnce();
   const providers = await loadRegistryProviders(undefined, opts);
   return filterFreshProviderCatalog(providers, refresh, refreshError);
 }
@@ -124,14 +127,47 @@ async function discoverFreshProviderCatalog(
 export function fetchFreshProviderCatalog(
   opts?: { agent?: CompatibilityAgent },
 ): Promise<FreshProviderCatalog> {
-  if (freshCatalogInFlight) return freshCatalogInFlight;
-  const request = discoverFreshProviderCatalog(opts);
-  let settledRequest: Promise<FreshProviderCatalog>;
-  settledRequest = request.finally(() => {
-    if (freshCatalogInFlight === settledRequest) freshCatalogInFlight = undefined;
+  return discoverFreshProviderCatalog(opts);
+}
+
+export interface BrowsingCatalogStatus {
+  providerId: string;
+  providerName: string;
+  source: 'live' | 'cache' | 'seed' | 'fallback' | 'unavailable';
+  fetchedAt?: string;
+  reason?: string;
+}
+
+export interface BrowsingProviderCatalog {
+  providers: LocalProvider[];
+  statuses: BrowsingCatalogStatus[];
+}
+
+export async function fetchBrowsingProviderCatalog(
+  opts?: { agent?: CompatibilityAgent },
+): Promise<BrowsingProviderCatalog> {
+  const { refresh, refreshError } = await refreshCatalogOnce();
+  const providers = await loadRegistryProviders(undefined, opts);
+  const refreshedById = new Map(refresh.refreshed.map(result => [result.id, result]));
+  const statuses = loadRegistry().providers.filter(provider => provider.enabled).map(provider => {
+    const result = refreshedById.get(provider.id);
+    const live = result?.ok && !result.skipped && result.modelSource === 'live';
+    const hasCache = (provider.modelsCache?.models.length ?? 0) > 0;
+    const source: BrowsingCatalogStatus['source'] = live
+      ? 'live'
+      : !hasCache ? 'unavailable'
+        : result?.modelSource === 'seed' || result?.modelSource === 'fallback'
+          ? result.modelSource : 'cache';
+    return {
+      providerId: provider.id,
+      providerName: provider.name,
+      source,
+      fetchedAt: provider.modelsCache?.fetchedAt,
+      reason: result?.reason ?? (live ? undefined
+        : refreshError ?? provider.modelDiscoveryError?.reason ?? 'Fresh model discovery did not complete.'),
+    };
   });
-  freshCatalogInFlight = settledRequest;
-  return settledRequest;
+  return { providers, statuses };
 }
 
 export function providersForPicker(providers: LocalProvider[]): LocalProvider[] {

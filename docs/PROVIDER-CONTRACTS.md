@@ -6,7 +6,11 @@ Leverframe keeps GitHub device authorization and the existing credential store. 
 
 The HTTP boundary permits only the fixed Copilot HTTPS origin and known request paths. It rejects redirects and removes unrelated authentication headers. Requests identify Leverframe rather than another editor. Error responses cannot expose the stored OAuth token.
 
-Model discovery reads the authenticated `/models` response. Explicit endpoint metadata selects `/v1/messages`, `/responses`, or `/chat/completions`. A chat model without endpoint metadata uses Chat Completions. Unsupported endpoint sets fail, and non-chat models stay outside the catalog.
+Model discovery reads the authenticated `/models` response. Explicit endpoint metadata selects `/v1/messages`, `/responses`, or `/chat/completions`. Missing or unsupported endpoint metadata leaves transport unconfirmed: the model is excluded with diagnostics, never assumed to support Chat Completions. Non-chat models stay outside the catalog.
+
+Malformed individual records are skipped with diagnostics while valid live records are retained. Request failures, invalid top-level catalog responses, and catalogs with no usable models retain the previous cache as a visibly stale browsing fallback, not as live execution authorization.
+
+Model availability is independent of confirmed context metadata. Live supported models with unknown context limits remain selectable by their bare IDs, without fabricated limits or context overrides. Model browsing refreshes discovery and reports its source and last fetch time.
 
 Only advertised capabilities and limits enter the model cache. Editor picker visibility does not imply an account policy restriction. Disabled or unconfigured model policies remain unavailable.
 

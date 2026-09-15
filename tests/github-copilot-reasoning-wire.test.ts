@@ -7,6 +7,7 @@ import { generateAnthropicResponse, translateRequest } from '../src/sdk-adapter.
 it('sends the selected effort for a chat-only Copilot model', async () => {
   const modelInfo = parseCopilotModelInfo({
     id: 'copilot-reasoning', name: 'Copilot reasoning',
+    supported_endpoints: ['/chat/completions'],
     capabilities: { type: 'chat', supports: { reasoning_effort: true } },
     supported_reasoning_efforts: ['low', 'high'], default_reasoning_effort: 'high',
   });

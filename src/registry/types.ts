@@ -15,6 +15,13 @@ export type ModelDiscoveryFailureKind =
   | 'schema'
   | 'sdk';
 
+export interface ModelDiscoverySkipDiagnostic {
+  index: number;
+  modelId?: string;
+  kind: 'schema' | 'transport-unknown' | 'policy' | 'non-chat';
+  reason: string;
+}
+
 export interface CachedModel {
   id: string;
   name: string;
@@ -93,6 +100,11 @@ export interface RegistryProvider {
     failedAt: string;
     kind: ModelDiscoveryFailureKind;
     reason: string;
+  };
+  /** Exclusions from the last successfully refreshed live catalog. */
+  modelDiscoveryWarnings?: {
+    checkedAt: string;
+    skippedModels: ModelDiscoverySkipDiagnostic[];
   };
   addedAt: string;
   refreshedAt?: string;

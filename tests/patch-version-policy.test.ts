@@ -193,12 +193,12 @@ describe('Claude Code binary patch version policy', () => {
 
   it('marks an unchanged model config stale when the transform version advances', () => {
     const current = currentTransformVersion();
-    expect(current).toBe(17);
+    expect(current).toBe(18);
     expect(evaluatePatchStateV2({
       installationVersion: '2.1.263',
       manifest: {
         schemaVersion: 2,
-        transformVersion: 13,
+        transformVersion: 17,
         generation: 1,
         logicalPath: '/tmp/claude',
         canonicalPath: '/tmp/claude',

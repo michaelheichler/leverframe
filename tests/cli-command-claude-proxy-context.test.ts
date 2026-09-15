@@ -165,4 +165,41 @@ describe('Claude proxy context selection launch', () => {
     expect(close).toHaveBeenCalledTimes(1);
     expect(mocks.launchClaude).not.toHaveBeenCalled();
   });
+
+  it('launches a live unknown-context model without an inherited context override or suffix', async () => {
+    const model = 'leverframe:openai-oauth:gpt-fresh';
+    vi.stubEnv('CLAUDE_CODE_MAX_CONTEXT_TOKENS', '1000000');
+    const unknownProvider: LocalProvider = {
+      ...freshProvider,
+      models: [{
+        ...freshProvider.models[0]!,
+        contextWindow: undefined,
+        maxContextWindow: undefined,
+        contextWindowUnconfirmed: true,
+      }],
+    };
+    const configured = await mocks.startConfiguredHttpProxy();
+    mocks.startConfiguredHttpProxy.mockResolvedValue({
+      ...configured,
+      loaded: { ...configured.loaded, providers: [unknownProvider] },
+    });
+    const code = await runClaudeCommand({
+      command: 'claude',
+      showHelp: false,
+      showVersion: false,
+      dryRun: false,
+      trace: false,
+      claudeArgs: ['--model', model],
+      bridgeMode: 'proxy',
+    });
+
+    expect(code).toBe(0);
+    expect(mocks.runLaunchPatchCheck).toHaveBeenCalledWith(expect.objectContaining({
+      freshProviders: [unknownProvider],
+      contextSelectionAvailable: true,
+    }));
+    const [launch] = mocks.launchClaude.mock.calls[0]! as [{ env: NodeJS.ProcessEnv; extraArgs: string[] }];
+    expect(launch.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeUndefined();
+    expect(launch.extraArgs.slice(-2)).toEqual(['--model', model]);
+  });
 });

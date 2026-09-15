@@ -44,6 +44,12 @@ describe('buildHttpProxyChildEnv', () => {
     expect(env.ANTHROPIC_BASE_URL).toBe('https://api.anthropic.com');
   });
 
+  it('removes an inherited global context override so model choices use fresh metadata', () => {
+    vi.stubEnv('CLAUDE_CODE_MAX_CONTEXT_TOKENS', '1000000');
+    const env = buildHttpProxyChildEnv(9999, 'fixture-ca.pem');
+    expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeUndefined();
+  });
+
   it('injects a placeholder Anthropic API key so Claude --bare can send MITM-routed requests', () => {
     vi.stubEnv('ANTHROPIC_API_KEY', '');
     vi.stubEnv('ANTHROPIC_AUTH_TOKEN', '');
@@ -71,4 +77,3 @@ describe('withProxyAnthropicOriginSettings', () => {
     expect(withProxyAnthropicOriginSettings(args)).toEqual(args);
   });
 });
-

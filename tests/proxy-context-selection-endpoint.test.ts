@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import http from 'node:http';
 import { startProxyCatalog, type ProxyRoute } from '../src/proxy.js';
+import { fetchFreshProviderCatalog } from '../src/provider-catalog.js';
+
+vi.mock('../src/execution-tracking.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/execution-tracking.js')>(),
+  reconcileExecutionsAtStartup: vi.fn(() => []),
+}));
 
 vi.mock('../src/provider-catalog.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/provider-catalog.js')>();
@@ -45,6 +51,79 @@ function getJson(port: number, token: string, path: string): Promise<{ status: n
 }
 
 describe('context selection endpoint', () => {
+  it.each(['unconfirmed', 'missing'] as const)('explicitly confirms live identity with %s context and clears old route metadata', async context => {
+    const route: ProxyRoute = {
+      aliasId: 'anthropic-openai-oauth__gpt-5.6-luna',
+      realModelId: 'gpt-5.6-luna',
+      displayName: 'GPT-5.6 Luna',
+      upstreamUrl: 'https://api.openai.com/v1',
+      apiKey: 'provider-key',
+      modelFormat: 'openai',
+      providerId: 'openai-oauth',
+      contextWindow: 400_000,
+      maxContextWindow: 1_200_000,
+    };
+    const catalog = await fetchFreshProviderCatalog({ agent: 'claude' });
+    const model = catalog.providers[0]!.models[0]!;
+    if (context === 'unconfirmed') model.contextWindowUnconfirmed = true;
+    else {
+      model.contextWindow = undefined;
+      model.maxContextWindow = undefined;
+    }
+    vi.mocked(fetchFreshProviderCatalog).mockResolvedValueOnce(catalog);
+    const proxy = await startProxyCatalog([route], route.aliasId, false);
+    try {
+      const response = await getJson(proxy.port, proxy.token,
+        '/v1/leverframe/context-selection?model=' + encodeURIComponent(route.aliasId + '[maximum]'));
+      expect(response.status).toBe(200);
+      expect(JSON.parse(response.body)).toEqual({
+        model: route.realModelId,
+        contextWindowUnconfirmed: true,
+        options: [],
+      });
+      const metadata = await getJson(proxy.port, proxy.token, '/v1/leverframe/context-metadata');
+      expect(JSON.parse(metadata.body)).toEqual({ contextWindows: {} });
+      const models = await getJson(proxy.port, proxy.token, '/v1/models');
+      expect(JSON.parse(models.body).data[0].context_window).toBeUndefined();
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it.each(['failed', 'missing', 'unavailable'] as const)(
+    'keeps %s live discovery an error rather than offering provider default',
+    async failure => {
+      const route: ProxyRoute = {
+        aliasId: 'anthropic-openai-oauth__gpt-5.6-luna',
+        realModelId: 'gpt-5.6-luna',
+        displayName: 'GPT-5.6 Luna',
+        upstreamUrl: 'https://api.openai.com/v1',
+        apiKey: 'provider-key',
+        modelFormat: 'openai',
+        providerId: 'openai-oauth',
+      };
+      const catalog = await fetchFreshProviderCatalog({ agent: 'claude' });
+      if (failure === 'failed') vi.mocked(fetchFreshProviderCatalog).mockRejectedValueOnce(new Error('offline'));
+      else if (failure === 'missing') vi.mocked(fetchFreshProviderCatalog).mockResolvedValueOnce({ providers: [], unavailable: [] });
+      else {
+        vi.mocked(fetchFreshProviderCatalog).mockResolvedValueOnce({
+          ...catalog,
+          unavailable: [{ providerId: 'openai-oauth', providerName: 'OpenAI OAuth', reason: 'offline' }],
+        });
+      }
+      const proxy = await startProxyCatalog([route], route.aliasId, false);
+      try {
+        const response = await getJson(proxy.port, proxy.token,
+          '/v1/leverframe/context-selection?model=' + encodeURIComponent(route.aliasId));
+        expect(response.status).toBe(503);
+        expect(JSON.parse(response.body)).toHaveProperty('error');
+        expect(JSON.parse(response.body)).not.toHaveProperty('contextWindowUnconfirmed');
+      } finally {
+        await proxy.close();
+      }
+    },
+  );
+
   it('resolves the canonical picker identity through the live proxy route', async () => {
     const route: ProxyRoute = {
       aliasId: 'anthropic-openai-oauth__gpt-5.6-luna',

@@ -63,6 +63,10 @@ Leverframe keeps the GitHub token in the OS credential store and sends it direct
 
 Model refresh reads the authenticated `/models` catalog. Confirmed endpoint metadata selects Chat Completions, Responses, or Anthropic Messages. Missing capabilities and limits remain unconfirmed.
 
+There is no fixed Copilot model allowlist. `leverframe models` and enabled-provider model browsing refresh the catalog before displaying it. Failed refreshes show cached models as stale, with the last fetch time and failure reason; cached browsing results do not authorize execution routes.
+
+Live models with unknown context limits remain selectable without a context override. Models with missing or unsupported inference endpoint metadata are excluded with diagnostics rather than assumed to support Chat Completions. Malformed individual records do not discard other valid live models.
+
 Claude Code retains conversation control and executes tools. Leverframe does not create Copilot sessions or load GitHub tools and instructions. Standard HTTP adapters carry the complete request history and tool results.
 
 A rejected GitHub token requires GitHub login, not OpenAI token refresh. Reauthorize with `leverframe providers auth github-copilot`.
@@ -125,6 +129,8 @@ Normal Claude proxy launch exposes all freshly available external models from co
 - `--proxy`: selectively intercepts requests to `api.anthropic.com`. Anthropic models and Claude Code credentials pass through untouched. `leverframe:` routes and saved aliases go to their configured providers.
 - `--endpoint`: runs a local Anthropic-format gateway and launches Claude Code with `ANTHROPIC_BASE_URL` pointed at it.
 
+The Claude endpoint-mode picker remains limited to the starting model and saved favorites (up to 20 routes). Use proxy mode to expose the full freshly discovered external catalog.
+
 Leverframe preserves the Anthropic passthrough base URL. Gateway and proxy responses echo the requesting client's exact model id.
 
 ```bash
@@ -184,7 +190,7 @@ The values use Claude Code's bold suggestion and success theme roles. The senten
 
 Leverframe's Claude Code binary patch displays the notice without extra configuration. The notice stays in the Claude Code UI and preserves machine-readable output such as `--output-format json`.
 
-Binary patching requires Claude Code 2.1.223 or newer. Native-binary tests verify the current integration on 2.1.266, with regression coverage for earlier layouts. Known Agent launch sites require a working routing notice. An incompatible required site blocks patch publication and reports the failing capability. Re-run `leverframe patch` after a Claude Code update. Transform version 17 refreshes existing patches on the next Leverframe launch.
+Binary patching requires Claude Code 2.1.223 or newer. Native-binary tests verify the current integration on 2.1.266, with regression coverage for earlier layouts. Known Agent launch sites require a working routing notice. An incompatible required site blocks patch publication and reports the failing capability. Re-run `leverframe patch` after a Claude Code update. Transform version 18 refreshes existing patches on the next Leverframe launch.
 
 Leverframe can rebuild a lost V2 manifest only from an independently verified pristine legacy backup. It never patches on top of unowned injected bytes.
 

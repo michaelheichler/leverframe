@@ -122,6 +122,7 @@ export function buildHttpProxyChildEnv(
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   applyAnthropicProxyEnvNormalization(env);
+  delete env['CLAUDE_CODE_MAX_CONTEXT_TOKENS'];
   const proxyUrl = proxyToken
     ? `http://${HTTP_PROXY_AUTH_USER}:${encodeURIComponent(proxyToken)}@127.0.0.1:${proxyPort}`
     : `http://127.0.0.1:${proxyPort}`;

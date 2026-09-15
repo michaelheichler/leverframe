@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPatchModelConfig } from '../src/patcher.js';
+import { buildPatchModelConfig, computePatchConfigHash } from '../src/patcher.js';
 
 describe('buildPatchModelConfig', () => {
   const favorites = [
@@ -99,6 +99,36 @@ describe('buildPatchModelConfig', () => {
 });
 
 describe('buildPatchModelConfig context provenance', () => {
+  it('enrolls unknown external identities in fresh context selection without baking stale limits', () => {
+    const { config } = buildPatchModelConfig(
+      [{ providerId: 'github-copilot', modelId: 'unknown' }],
+      [{ name: 'daily', providerId: 'github-copilot', modelId: 'unknown' }],
+      () => ({
+        contextWindow: 200_000,
+        maxContextWindow: 1_000_000,
+        contextWindowUnconfirmed: true,
+        modelFormat: 'openai',
+      }),
+    );
+    expect(config).toEqual({
+      'leverframe:github-copilot:unknown': { alias: 'daily', contextSelection: true },
+    });
+    expect(computePatchConfigHash(config)).not.toBe(computePatchConfigHash({
+      'leverframe:github-copilot:unknown': { alias: 'daily' },
+    }));
+  });
+
+  it('does not enroll unknown native or endpointless models in fresh context selection', () => {
+    for (const [nativeAnthropic, includeContextModes] of [[true, true], [false, false]]) {
+      const { config } = buildPatchModelConfig(
+        [{ providerId: 'provider', modelId: 'unknown' }], [],
+        () => ({ modelFormat: 'anthropic', nativeAnthropic, contextWindowUnconfirmed: true }),
+        { includeContextModes },
+      );
+      expect(config).toEqual({ 'leverframe:provider:unknown': {} });
+    }
+  });
+
   it('marks a confirmed context window with provenance "confirmed" and bakes it', () => {
     const { config, unknownWindows, provenance } = buildPatchModelConfig(
       [{ providerId: 'openai-oauth', modelId: 'gpt-5.6-sol' }],

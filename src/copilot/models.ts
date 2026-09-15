@@ -2,12 +2,13 @@
 import type { CachedModel, ModelDiscoveryFailureKind } from '../registry/types.js';
 import {
   CopilotModelValidationError,
-  isChatRecord,
   mapCopilotModels,
   parseCopilotModelInfo,
+  type CopilotModelSkipDiagnostic,
 } from './model-metadata.js';
 
 export { mapCopilotModels, parseCopilotModelInfo };
+export type { CopilotModelSkipDiagnostic };
 export type CopilotModelFailureKind = ModelDiscoveryFailureKind;
 
 /** Kinds differ because catalogs can be empty or denied. */
@@ -47,25 +48,31 @@ export function classifyCopilotModelFailure(error: unknown): CopilotModelFailure
 }
 
 export type CopilotModelRefreshResult =
-  | { models: CachedModel[]; source: 'live' }
-  | { models: CachedModel[]; source: 'cache'; failureReason: string; failureKind: CopilotModelFailureKind };
+  | { models: CachedModel[]; source: 'live'; skippedModels: CopilotModelSkipDiagnostic[] }
+  | { models: CachedModel[]; source: 'cache'; failureReason: string; failureKind: CopilotModelFailureKind; skippedModels: CopilotModelSkipDiagnostic[] };
 
 /** Cache results are marked to prevent silent stale reuse. */
 export async function refreshCopilotModels(input: {
   listModels: () => Promise<unknown>;
   cachedModels: CachedModel[];
 }): Promise<CopilotModelRefreshResult> {
+  const skippedModels: CopilotModelSkipDiagnostic[] = [];
   try {
     const records = await input.listModels();
-    const recordCount = Array.isArray(records) ? records.filter(isChatRecord).length : 0;
-    const models = mapCopilotModels(records);
-    if (models.length === 0 && recordCount > 0) {
+    const models = mapCopilotModels(records, skippedModels);
+    const invalid = skippedModels.filter(record => record.kind === 'schema' || record.kind === 'transport-unknown');
+    if (models.length === 0 && invalid.length > 0) {
+      throw new CopilotModelValidationError(
+        `Copilot model discovery returned no usable models; skipped ${invalid.length} invalid records: ${invalid[0]!.reason}`,
+      );
+    }
+    if (models.length === 0 && skippedModels.some(record => record.kind === 'policy')) {
       throw new CopilotModelDiscoveryError('policy', 'Copilot model discovery returned no policy-enabled models');
     }
     if (models.length === 0) {
       throw new CopilotModelDiscoveryError('empty', 'Copilot model discovery returned no models');
     }
-    return { models, source: 'live' };
+    return { models, source: 'live', skippedModels };
   } catch (error) {
     if (input.cachedModels.length === 0) throw error;
     return {
@@ -73,6 +80,7 @@ export async function refreshCopilotModels(input: {
       source: 'cache',
       failureReason: error instanceof Error ? error.message : String(error),
       failureKind: classifyCopilotModelFailure(error),
+      skippedModels,
     };
   }
 }

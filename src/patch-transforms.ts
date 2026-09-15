@@ -5,11 +5,12 @@ import { applyNativeModelKnowledge } from './patch-transforms-model-knowledge.js
 import { applyNativeContextWindow } from './patch-transforms-context-window.js';
 import { ONE_M_CONTEXT_WINDOW } from './context-model-id.js';
 
-export const PATCH_TRANSFORMS_VERSION = 17;
+export const PATCH_TRANSFORMS_VERSION = 18;
 
 export interface PatchScriptModelEntry {
   alias?: string;
   context?: number;
+  contextSelection?: boolean;
 
   contextModes?: {
     default: number;
@@ -91,6 +92,7 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
   const CONTEXT_BY_KEY: Record<string, number> = Object.create(null) as Record<string, number>;
 
   const CONTEXT_MODES_BY_KEY: Record<string, { default: number; maximum?: number }> = Object.create(null) as Record<string, { default: number; maximum?: number }>;
+  const CONTEXT_SELECTION_IDS: string[] = [];
 
   const addContextWindowKeys = (key: string, contextWindow: number): void => {
     CONTEXT_BY_KEY[key] = contextWindow;
@@ -116,6 +118,10 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
 
   for (const [id, value] of Object.entries(MODEL_CONFIG)) {
     const spec: PatchScriptModelEntry = value && typeof value === 'object' ? value : { alias: value as unknown as string };
+    if (spec.contextSelection === true) {
+      CONTEXT_SELECTION_IDS.push(id);
+      if (spec.alias !== undefined) CONTEXT_SELECTION_IDS.push(String(spec.alias).trim().toLowerCase());
+    }
     if (spec.alias !== undefined) {
       const a = String(spec.alias).trim().toLowerCase();
       if (!/^[a-z0-9][a-z0-9._-]*(\[1m\])?$/.test(a)) {
@@ -394,9 +400,10 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
 
   if (
     Object.keys(CONTEXT_MODES_BY_KEY).length > 0
+    || CONTEXT_SELECTION_IDS.length > 0
     || js.includes(PATCH_COMMENT_START + 'ccpatch:context-mode-picker' + PATCH_COMMENT_END)
   ) {
-    const picker = applyNativeContextPicker(js, CONTEXT_MODES_BY_KEY, ALIAS_TO_ID);
+    const picker = applyNativeContextPicker(js, CONTEXT_MODES_BY_KEY, ALIAS_TO_ID, CONTEXT_SELECTION_IDS);
     js = picker.content;
     report.push(picker.result);
     if (picker.result.status === 'FAIL') {

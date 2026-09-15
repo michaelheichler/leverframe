@@ -259,11 +259,13 @@ export function applyNativeContextPicker(
   source: string,
   contextModes: NativeContextModes,
   contextAliases: Record<string, string> = {},
+  contextModelIds: readonly string[] = [],
 ): NativeContextPickerOutcome {
   const modelKeys = [...new Set(
-    Object.entries(contextModes)
+    [...Object.entries(contextModes)
       .filter(([, value]) => Number.isSafeInteger(value.default) && value.default > 0)
-      .flatMap(([key]) => pickerModelKeys(key))
+      .map(([key]) => key), ...contextModelIds]
+      .flatMap(pickerModelKeys)
       .filter(Boolean),
   )].sort();
   const modelTable = JSON.stringify(Object.fromEntries(modelKeys.map(key => [key, true])));
@@ -280,6 +282,7 @@ export function applyNativeContextPicker(
     'const __lfcNormalizeContextOptions=function',
     '__lfcNormalizeContextOptions(',
     '__lfcContextIdentity(',
+    'const __lfcProviderDefault=',
   ].every(marker => content.includes(marker));
   const pristineRebuildRequired = (): NativeContextPickerOutcome => ({
     content: source,
@@ -390,7 +393,6 @@ export function applyNativeContextPicker(
   const helper = [
     declaration,
     'let[' + names.pending + ',' + names.setPending + ']=' + stateHook + '(null);',
-    'let __lfcAllowLateRefresh=false;',
     'const ' + names.safeOptions + '=function(value){',
     'if(!Array.isArray(value))return[];',
     'const result=[];',
@@ -412,27 +414,31 @@ export function applyNativeContextPicker(
     'if(!__lfcStore||typeof __lfcStore!=="object"||Object.getPrototypeOf(__lfcStore)!==null){__lfcStore=Object.create(null);globalThis.__lfcContextWindows=__lfcStore;}',
     'const __lfcModelKey=String(model==null?"":model).trim().toLowerCase().replace(/(?:\\[(?:default|maximum|1m)\\])+$/i,"");',
     'if(__lfcModelKey==="")return;',
-    '__lfcStore[__lfcModelKey]=0;',
-    '__lfcStore[__lfcModelKey+"[default]"]=0;',
-    '__lfcStore[__lfcModelKey+"[maximum]"]=0;',
-    '__lfcStore[__lfcModelKey+"[1m]"]=0;',
+    'const __lfcIdentity=__lfcContextIdentity(__lfcModelKey);',
+    'const __lfcKeys=new Set([__lfcModelKey,__lfcIdentity,...Object.keys(__lfcContextAliases).filter(function(alias){return __lfcContextIdentity(alias)===__lfcIdentity})]);',
+    'for(const __lfcKey of __lfcKeys){',
+    '__lfcStore[__lfcKey]=0;',
+    '__lfcStore[__lfcKey+"[default]"]=0;',
+    '__lfcStore[__lfcKey+"[maximum]"]=0;',
+    '__lfcStore[__lfcKey+"[1m]"]=0;',
     'for(const __lfcOption of options){',
-    '__lfcStore[__lfcModelKey+"["+__lfcOption.mode+"]"]=__lfcOption.contextWindow;',
-    'if(__lfcOption.mode==="default"||__lfcStore[__lfcModelKey]===0)__lfcStore[__lfcModelKey]=__lfcOption.contextWindow;',
-    'if(__lfcOption.contextWindow>=' + ONE_M_CONTEXT_WINDOW + '&&__lfcStore[__lfcModelKey+"[1m]"]===0)__lfcStore[__lfcModelKey+"[1m]"]=__lfcOption.contextWindow;',
+    '__lfcStore[__lfcKey+"["+__lfcOption.mode+"]"]=__lfcOption.contextWindow;',
+    'if(__lfcOption.mode==="default"||__lfcStore[__lfcKey]===0)__lfcStore[__lfcKey]=__lfcOption.contextWindow;',
+    'if(__lfcOption.contextWindow>=' + ONE_M_CONTEXT_WINDOW + '&&__lfcStore[__lfcKey+"[1m]"]===0)__lfcStore[__lfcKey+"[1m]"]=__lfcOption.contextWindow;',
+    '}',
     '}',
     '};',
-    'const ' + names.cancel + '=function(){' + names.generation + '++;__lfcAllowLateRefresh=true;' + names.setPending + '(null);};',
+    'const ' + names.cancel + '=function(){__lfcCancelledGeneration=' + names.generation + ';' + names.generation + '++;' + names.setPending + '(null);};',
     'const ' + names.commit + '=function(model,effort,option){',
-    'if(!option||(option.mode!=="default"&&option.mode!=="maximum"))return;',
+    'if(!option||(option.mode!=="default"&&option.mode!=="maximum"&&option.mode!=="provider-default"))return;',
     'const __lfcModelKey=String(model==null?"":model).trim().replace(/(?:\\[(?:default|maximum|1m)\\])+$/i,"");',
     'if(__lfcModelKey==="")return;',
-    '__lfcAllowLateRefresh=false;' + names.generation + '++;' + names.setPending + '(null);',
-    names.remember + '(__lfcModelKey,[option]);',
+    '__lfcCancelledGeneration=-1;' + names.generation + '++;' + names.setPending + '(null);',
+    names.remember + '(__lfcModelKey,option.mode==="provider-default"?[]:[option]);',
     picker.select + '(option.mode==="maximum"?__lfcModelKey+"[maximum]":__lfcModelKey,effort);',
     '};',
     'const ' + names.begin + '=function(model,effort){',
-    '__lfcAllowLateRefresh=false;',
+    '__lfcCancelledGeneration=-1;',
     'const __lfcModelKey=String(model==null?"":model).trim().replace(/(?:\\[(?:default|maximum|1m)\\])+$/i,"");',
     'const key=__lfcModelKey.toLowerCase();',
     'if(!Object.prototype.hasOwnProperty.call(' + names.models + ',key))return false;',
@@ -446,11 +452,14 @@ export function applyNativeContextPicker(
     'try{endpoint=new URL("/v1/leverframe/context-selection",base)}catch{' + names.setPending + '({status:"error",model:__lfcModelKey,effort:effort});return true}',
     'endpoint.searchParams.set("model",__lfcModelKey);',
     'fetch(endpoint,{headers:{Authorization:"Bearer "+token},redirect:"error"}).then(function(response){if(!response.ok)throw new Error("context discovery failed");return response.json()}).then(function(payload){',
+    'const __lfcProviderDefault=!!(payload&&payload.contextWindowUnconfirmed===true&&typeof payload.model==="string"&&payload.model.trim()!==""&&Array.isArray(payload.options)&&payload.options.length===0);',
     'const options=' + names.safeOptions + '(payload&&payload.options);',
     'const current=generation===' + names.generation + ';',
-    'if(current||__lfcAllowLateRefresh)' + names.remember + '(__lfcModelKey,options);',
+    'if(payload&&payload.contextWindowUnconfirmed===true&&!__lfcProviderDefault)throw new Error("conflicting context metadata");',
+    'if(options.length===0&&!__lfcProviderDefault)throw new Error("no confirmed context options");',
+    'if(current||generation===__lfcCancelledGeneration)' + names.remember + '(__lfcModelKey,options);',
     'if(!current)return;',
-    'if(options.length===0)throw new Error("no confirmed context options");',
+    'if(__lfcProviderDefault){' + names.setPending + '({status:"ready",model:__lfcModelKey,effort:effort,options:[{mode:"provider-default",label:"Context limits unavailable; use provider default"}]});return;}',
     'if(options.length===1){' + names.commit + '(__lfcModelKey,effort,options[0]);return;}',
     names.setPending + '({status:"ready",model:__lfcModelKey,effort:effort,options:options});',
     '}).catch(function(){if(generation===' + names.generation + ')' + names.setPending + '({status:"error",model:__lfcModelKey,effort:effort});});',
@@ -487,7 +496,7 @@ export function applyNativeContextPicker(
     + '}'
     + 'return result;'
     + '};';
-  const sharedState = 'var ' + names.generation + '=0;' + contextOptionHelper;
+  const sharedState = 'var ' + names.generation + '=0;var __lfcCancelledGeneration=-1;' + contextOptionHelper;
   const withHelper = source.slice(0, picker.functionStart)
     + sharedState
     + source.slice(picker.functionStart, picker.bodyStart)

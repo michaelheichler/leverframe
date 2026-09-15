@@ -1,8 +1,10 @@
 /** Strict metadata is needed to prevent guessed routes. */
-import type { CachedModel } from '../registry/types.js';
+import type { CachedModel, ModelDiscoverySkipDiagnostic } from '../registry/types.js';
 import { COPILOT_REASONING_EFFORT_SET, type CopilotReasoningEffort } from './reasoning-effort.js';
 
 type JsonRecord = Record<string, unknown>;
+
+export type CopilotModelSkipDiagnostic = ModelDiscoverySkipDiagnostic;
 
 /** Types differ because callers classify failures. */
 export class CopilotModelValidationError extends TypeError {
@@ -12,6 +14,8 @@ export class CopilotModelValidationError extends TypeError {
     this.name = 'CopilotModelValidationError';
   }
 }
+
+class CopilotModelTransportError extends CopilotModelValidationError {}
 
 /** No arrays, because metadata must be keyed. */
 function requireRecord(value: unknown, field: string): JsonRecord {
@@ -114,8 +118,8 @@ function selectCopilotAdapter(model: JsonRecord, capabilities: JsonRecord): Pick
     throw new CopilotModelValidationError('Copilot model capabilities.type must be chat');
   }
   const endpoints = model.supported_endpoints;
-  if (endpoints === undefined && type === 'chat') {
-    return { npm: '@ai-sdk/openai-compatible', modelFormat: 'openai' };
+  if (endpoints === undefined) {
+    throw new CopilotModelTransportError('Copilot model transport is unknown: supported_endpoints is absent');
   }
   if (!Array.isArray(endpoints) || endpoints.some(endpoint => typeof endpoint !== 'string' || endpoint.length === 0)) {
     throw new CopilotModelValidationError('Copilot model supported_endpoints must be an array of non-empty strings');
@@ -129,7 +133,7 @@ function selectCopilotAdapter(model: JsonRecord, capabilities: JsonRecord): Pick
   if (endpoints.includes('/chat/completions')) {
     return { npm: '@ai-sdk/openai-compatible', modelFormat: 'openai' };
   }
-  throw new CopilotModelValidationError('Copilot model supported_endpoints has no supported inference endpoint');
+  throw new CopilotModelTransportError('Copilot model transport is unknown: supported_endpoints has no supported inference endpoint');
 }
 
 /** Missing flags stay unknown to avoid capability guesses. */
@@ -173,15 +177,37 @@ export function parseCopilotModelInfo(record: unknown): CachedModel {
   };
 }
 
-/** Invalid records fail to prevent partial catalogs. */
-export function mapCopilotModels(records: unknown): CachedModel[] {
+/** The collector reports exclusions without discarding valid sibling records. */
+export function mapCopilotModels(
+  records: unknown,
+  skippedModels: CopilotModelSkipDiagnostic[] = [],
+): CachedModel[] {
   if (!Array.isArray(records)) {
     throw new CopilotModelValidationError('Copilot model discovery must return an array');
   }
-  return records.flatMap(record => {
-    if (!isChatRecord(record)) return [];
-    const model = parseCopilotModelInfo(record);
-    const policy = requireRecord(record, 'record').policy;
-    return policyAllowsModel(policy) ? [model] : [];
+  return records.flatMap((record, index) => {
+    let modelId: string | undefined;
+    try {
+      const raw = requireRecord(record, 'record');
+      modelId = requireNonEmptyString(raw, 'id');
+      if (!isChatRecord(record)) {
+        skippedModels.push({ index, modelId, kind: 'non-chat', reason: 'Copilot model capabilities.type is not chat' });
+        return [];
+      }
+      if (!policyAllowsModel(raw.policy)) {
+        skippedModels.push({ index, modelId, kind: 'policy', reason: 'Copilot model policy is not enabled' });
+        return [];
+      }
+      return [parseCopilotModelInfo(record)];
+    } catch (error) {
+      if (!(error instanceof CopilotModelValidationError)) throw error;
+      skippedModels.push({
+        index,
+        ...(modelId === undefined ? {} : { modelId }),
+        kind: error instanceof CopilotModelTransportError ? 'transport-unknown' : 'schema',
+        reason: error.message,
+      });
+      return [];
+    }
   });
 }

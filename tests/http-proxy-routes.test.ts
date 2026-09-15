@@ -4,6 +4,7 @@ import { decideHttpProxyRoute } from '../src/http-proxy/routing-decision.js';
 import { buildProxyRoutesById } from '../src/http-proxy/server.js';
 import { normalizeModelAliases } from '../src/model-aliases.js';
 import type { LocalProvider } from '../src/types.js';
+import { filterFreshProviderCatalog } from '../src/provider-catalog.js';
 
 const providers: LocalProvider[] = [
   {
@@ -39,6 +40,29 @@ const providers: LocalProvider[] = [
 ];
 
 describe('HTTP proxy routes', () => {
+  it('routes live Copilot models with unknown context by bare ID without context aliases', () => {
+    const copilot: LocalProvider = {
+      id: 'github-copilot', name: 'GitHub Copilot', apiKey: 'test-token',
+      models: [{
+        id: 'new-model', upstreamModelId: 'new-model', name: 'New model',
+        brand: 'OpenAI', family: 'gpt', modelFormat: 'openai', npm: '@ai-sdk/openai',
+        contextWindow: 1_000_000, maxContextWindow: 2_000_000, contextWindowUnconfirmed: true,
+      }],
+    };
+    const fresh = filterFreshProviderCatalog([copilot], {
+      refreshed: [{ id: copilot.id, name: copilot.name, ok: true, modelSource: 'live' }],
+    });
+    const routed = buildHttpProxyRoutes(fresh.providers, []);
+    expect(routed.routes).toHaveLength(1);
+    expect(routed.routes[0]).toMatchObject({
+      aliasId: 'leverframe:github-copilot:new-model',
+      realModelId: 'new-model', contextWindow: undefined, maxContextWindow: undefined,
+      contextWindowUnconfirmed: true,
+    });
+    expect(routed.unavailable).toEqual([]);
+    expect(routed.unsupported).toEqual([]);
+  });
+
   it('uses stable provider-prefixed names and includes only AI SDK favorites', () => {
     const result = buildHttpProxyRoutes(providers, [
       { providerId: 'groq', modelId: 'llama-3.3-70b' },
