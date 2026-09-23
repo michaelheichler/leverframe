@@ -255,6 +255,27 @@ function invalid(detail: string, nativeBundleSource: boolean, source: string): N
   };
 }
 
+function patchCallbackInPicker(
+  source: string,
+  pattern: RegExp,
+  replacement: (match: string, ...groups: string[]) => string,
+): NativeContextPickerOutcome {
+  const pickers = findPicker(source);
+  if (pickers.length !== 1) {
+    return { content: source, result: result('FAIL', 'picker function changed before callback patch') };
+  }
+  const bodyStart = pickers[0]!.bodyStart;
+  const bodyEnd = findBalancedBlockEnd(source, bodyStart);
+  if (bodyEnd === undefined) {
+    return { content: source, result: result('FAIL', 'picker body could not be delimited before callback patch') };
+  }
+  const patched = patchOnce(source.slice(bodyStart, bodyEnd), pattern, replacement);
+  return {
+    content: source.slice(0, bodyStart) + patched.content + source.slice(bodyEnd),
+    result: patched.result,
+  };
+}
+
 export function applyNativeContextPicker(
   source: string,
   contextModes: NativeContextModes,
@@ -510,7 +531,7 @@ export function applyNativeContextPicker(
   if (contextRows.fatal) return contextRows;
   const selectedModel = patchOptional(contextRows.content, SELECTED_MODEL_PATTERN, replaceSelectedModel);
   if (selectedModel.fatal) return selectedModel;
-  const patched = patchOnce(
+  const patched = patchCallbackInPicker(
     selectedModel.content,
     callbackPattern,
     (_match, model, effort) =>

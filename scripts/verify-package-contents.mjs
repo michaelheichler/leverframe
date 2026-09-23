@@ -49,6 +49,9 @@ try {
       throw new Error(`${executable} is missing its Node shebang`);
     }
   }
+  if (readFileSync('scripts/claudeplus.py', 'utf8').split('\n', 1)[0] !== '#!/usr/bin/env python3') {
+    throw new Error('claudeplus is missing its Python shebang');
+  }
 
   const consumer = join(root, 'consumer');
   mkdirSync(consumer);

@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -16,15 +19,16 @@ import urllib.request
 
 HOME_DIR = Path.home()
 APP_HOME = Path(os.environ.get("LEVERFRAME_HOME", HOME_DIR / ".leverframe")).expanduser()
-LEVERFRAME = Path(shutil.which("leverframe") or "leverframe")
-HEADROOM = HOME_DIR / ".local/bin/headroom"
-CLAUDE = HOME_DIR / ".local/bin/claude"
+LEVERFRAME = Path(os.environ.get("CLAUDEPLUS_LEVERFRAME_PATH") or shutil.which("leverframe") or "leverframe")
+HEADROOM = Path(os.environ.get("CLAUDEPLUS_HEADROOM_PATH") or shutil.which("headroom") or "headroom")
+CLAUDE = Path(os.environ.get("CLAUDEPLUS_CLAUDE_PATH") or shutil.which("claude") or "claude")
 PROXY_KEYS = ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "ALL_PROXY", "all_proxy")
 BACKEND_FLAGS = ("CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_FOUNDRY")
 
 
 def client_environment(inherited, port, bare=False):
     env = dict(inherited)
+    env.pop("CLAUDE_CODE_MAX_CONTEXT_TOKENS", None)
     for key in PROXY_KEYS:
         env.pop(key, None)
     for key in BACKEND_FLAGS:
@@ -61,6 +65,7 @@ def claude_arguments(arguments, env, log_dir):
         else:
             remaining.append(argument)
     settings_env = dict(settings.get("env", {}))
+    settings_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = ""
     settings_env.update({key: "" for key in PROXY_KEYS})
     settings_env.update({key: "0" for key in BACKEND_FLAGS})
     for key in ("ANTHROPIC_BASE_URL", "LEVERFRAME_CONTEXT_SELECTION_BASE_URL",
@@ -120,8 +125,8 @@ def headroom_proxy():
     limits = json.loads(os.environ["LEVERFRAME_HEADROOM_CONTEXT_WINDOWS"])
     preserve_headroom_context_modes(anthropic, limits)
     handler.sanitize_anthropic_model_id = anthropic.sanitize_anthropic_model_id
-    sys.argv = [str(HEADROOM), *sys.argv[2:]]
-    return headroom_main()
+    sys.argv = [str(Path(__file__).resolve()), *sys.argv[2:]]
+    return headroom_main(prog_name="headroom")
 
 
 def mcp_config(port):
@@ -135,6 +140,17 @@ def free_port():
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         return listener.getsockname()[1]
+
+
+@contextmanager
+def startup_lock(log_root):
+    lock_path = log_root / "startup.lock"
+    with os.fdopen(os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600), "r+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def stop_processes(processes):
@@ -221,9 +237,10 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     signal.signal(signal.SIGHUP, lambda *_: sys.exit(129))
     try:
-        proxy, runtime = start_leverframe(os.environ, log_dir, processes)
-        windows = context_windows(runtime)
-        port = start_headroom(os.environ, proxy, log_dir, processes, windows)
+        with startup_lock(log_root):
+            proxy, runtime = start_leverframe(os.environ, log_dir, processes)
+            windows = context_windows(runtime)
+            port = start_headroom(os.environ, proxy, log_dir, processes, windows)
         print(f"Headroom dashboard: http://127.0.0.1:{port}/dashboard", file=sys.stderr)
         print(f"Session logs: {log_dir}", file=sys.stderr)
         arguments = sys.argv[1:]

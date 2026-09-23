@@ -59,13 +59,13 @@ leverframe claude --proxy
 ```
 Device authorization uses Leverframe's public OAuth App client ID. Each user signs in with their own GitHub account.
 
-Leverframe keeps the GitHub token in the OS credential store and sends it directly to `https://api.githubcopilot.com`. It uses HTTP requests without the GitHub Copilot SDK, CLI, or embedded runtime.
+Leverframe keeps the GitHub token in the OS credential store and sends it directly to `https://api.githubcopilot.com`. It uses HTTP requests without the GitHub Copilot SDK or a companion executable.
 
-Model refresh reads the authenticated `/models` catalog. Confirmed endpoint metadata selects Chat Completions, Responses, or Anthropic Messages. Missing capabilities and limits remain unconfirmed.
+Model refresh reads the authenticated `/models` catalog. Confirmed endpoint metadata selects Chat Completions or Responses for OpenAI endpoints and Anthropic Messages for Anthropic endpoints. Missing capabilities and limits remain unconfirmed.
 
-There is no fixed Copilot model allowlist. `leverframe models` and enabled-provider model browsing refresh the catalog before displaying it. Failed refreshes show cached models as stale, with the last fetch time and failure reason; cached browsing results do not authorize execution routes.
+There is no fixed Copilot model allowlist. `leverframe models` and enabled-provider model browsing refresh the catalog before displaying it. Failed refreshes show cached models as stale, with the last fetch time and failure reason. Cached browsing results do not authorize execution routes.
 
-Live models with unknown context limits remain selectable without a context override. Models with missing or unsupported inference endpoint metadata are excluded with diagnostics rather than assumed to support Chat Completions. Malformed individual records do not discard other valid live models.
+Live models with unknown context limits remain selectable without a context override. Leverframe excludes models with missing or unsupported inference endpoint metadata and explains why. It does not assume they support Chat Completions. Malformed individual records do not discard other valid live models.
 
 Claude Code retains conversation control and executes tools. Leverframe does not create Copilot sessions or load GitHub tools and instructions. Standard HTTP adapters carry the complete request history and tool results.
 
@@ -190,7 +190,7 @@ The values use Claude Code's bold suggestion and success theme roles. The senten
 
 Leverframe's Claude Code binary patch displays the notice without extra configuration. The notice stays in the Claude Code UI and preserves machine-readable output such as `--output-format json`.
 
-Binary patching requires Claude Code 2.1.223 or newer. Native-binary tests verify the current integration on 2.1.266, with regression coverage for earlier layouts. Known Agent launch sites require a working routing notice. An incompatible required site blocks patch publication and reports the failing capability. Re-run `leverframe patch` after a Claude Code update. Transform version 18 refreshes existing patches on the next Leverframe launch.
+Binary patching requires Claude Code 2.1.223 or newer. Native-binary tests verify the current integration on 2.1.280, with regression coverage for earlier layouts. Known Agent launch sites require a working routing notice. An incompatible required site blocks patch publication and reports the failing capability. Re-run `leverframe patch` after a Claude Code update. Transform version 19 refreshes existing patches on the next Leverframe launch.
 
 Leverframe can rebuild a lost V2 manifest only from an independently verified pristine legacy backup. It never patches on top of unowned injected bytes.
 
@@ -204,15 +204,19 @@ For agents view and background-agent setup, see [docs/background-agents.md](docs
 
 ### Headroom through claudeplus
 
-The packaged launcher runs Claude Code through Headroom, then Leverframe's HTTP proxy. Native Claude models use the existing Anthropic subscription login. External models use Leverframe routes and aliases.
+The packaged `claudeplus` command runs Claude Code through Headroom, then Leverframe's HTTP proxy. Native Claude models use the existing Anthropic subscription login. External models use Leverframe routes and aliases. Plain `claude` keeps its normal routing.
 
 ```bash
-python3 "$(npm root -g)/@michaelheichler/leverframe/scripts/claudeplus.py" --dangerously-skip-permissions
+claudeplus --dangerously-skip-permissions
 ```
 
-The launcher expects native Claude Code at `~/.local/bin/claude`, Headroom at `~/.local/bin/headroom`, and `leverframe` on PATH. It respects `LEVERFRAME_HOME`.
+The launcher resolves `claude`, `headroom`, and `leverframe` from PATH. Set `CLAUDEPLUS_CLAUDE_PATH`, `CLAUDEPLUS_HEADROOM_PATH`, or `CLAUDEPLUS_LEVERFRAME_PATH` to select another executable. It respects `LEVERFRAME_HOME`.
 
-It starts `leverframe server --proxy --prepare-claude` to prepare Claude and proxy routes from the same fresh catalog before accepting requests. Headroom receives the confirmed model limits. Private per-session settings pin the proxy connection, and startup prints the log path and dashboard address.
+It starts `leverframe server --proxy --prepare-claude` to prepare Claude and proxy routes from the same fresh catalog before accepting requests. Headroom receives the confirmed model limits. Each invocation gets its own ports, processes, settings, and log directory. A startup lock prevents concurrent launches from patching Claude or selecting ports at the same time. Private per-session settings pin the proxy connection, and startup prints the log path and dashboard address.
+
+The launcher removes inherited `CLAUDE_CODE_MAX_CONTEXT_TOKENS` overrides and masks settings-supplied overrides in its private session settings, without rewriting your saved configuration. Context limits remain provider-controlled rather than globally forced. Headroom receives a startup snapshot. Restart the session to pick up later metadata changes.
+
+The proxy keeps the launcher as its embedding entrypoint so Headroom's macOS self-restart does not discard the context-mode adapter.
 
 Headroom runs in cache mode, which freezes prior turns to preserve prefix caching, with MCP retrieval available for compressed content. Both proxies allow 600 seconds between output chunks. Native Anthropic server-side search remains available, while external requests expand deferred tools if no executable client search tool exists. Actual savings depend on the workload and provider cache behavior. See the [Headroom proxy documentation](https://github.com/headroomlabs-ai/headroom/blob/main/docs/content/docs/proxy.mdx).
 

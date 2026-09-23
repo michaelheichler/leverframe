@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,7 @@ import { isZeroCost } from '../src/free-models.js';
 import { httpProxyModelId } from '../src/http-proxy/routes.js';
 import { findClaudeBinary } from '../src/launch.js';
 import { getProvidersPath } from '../src/paths.js';
-import { fetchProviderCatalog, resolveLocalProviderApiKey } from '../src/provider-catalog.js';
+import { fetchFreshProviderCatalog, resolveLocalProviderApiKey } from '../src/provider-catalog.js';
 import { isSdkMigratedNpm } from '../src/provider-factory.js';
 import { loadRegistry } from '../src/registry/io.js';
 import { providersForTarget } from '../src/target-compatibility.js';
@@ -147,6 +147,23 @@ function classifySmokeResult(result: SpawnSmokeResult, modelRef: string): SmokeK
   return 'fail-claude';
 }
 
+function hasProviderQuotaLog(home: string, modelRef: string): boolean {
+  const dir = join(home, 'logs', 'sessions');
+  if (!existsSync(dir)) return false;
+  return readdirSync(dir).filter(name => name.endsWith('.jsonl')).some(name =>
+    readFileSync(join(dir, name), 'utf8').split('\n').some(line => {
+      try {
+        const event = JSON.parse(line) as Record<string, unknown>;
+        return event['event'] === 'upstream_error'
+          && event['modelId'] === modelRef
+          && event['statusCode'] === 429;
+      } catch {
+        return false;
+      }
+    }),
+  );
+}
+
 function runtimeHomeEnv(): NodeJS.ProcessEnv {
   const live = process.env['LEVERFRAME_LIVE_HOME']?.trim();
   if (live) return { ...process.env, LEVERFRAME_HOME: live };
@@ -209,7 +226,7 @@ function anthropicPassthroughCase(): SmokeCase {
 
 async function discoverSmokeCases(): Promise<SmokeCase[]> {
   const catalog = providersForTarget(
-    await fetchProviderCatalog({ agent: 'claude' }),
+    (await fetchFreshProviderCatalog({ agent: 'claude' })).providers,
     'claude',
   );
   const cases: SmokeCase[] = [];
@@ -457,6 +474,23 @@ describe('live provider Claude smoke helpers', () => {
     }, 'leverframe:opencode-go:hy3')).toBe('pass-quota');
   });
 
+  it('accepts a structured quota response only for the requested model', () => {
+    const home = mkdtempSync(join(tmpdir(), 'leverframe-quota-test-'));
+    try {
+      const dir = join(home, 'logs', 'sessions');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'proxy.jsonl'), [
+        JSON.stringify({ event: 'upstream_error', modelId: 'leverframe:zai:glm-4.7', statusCode: 429 }),
+        JSON.stringify({ event: 'upstream_error', modelId: 'leverframe:zai:glm-5.3', statusCode: 500 }),
+      ].join('\n'));
+      expect(hasProviderQuotaLog(home, 'leverframe:zai:glm-4.7')).toBe(true);
+      expect(hasProviderQuotaLog(home, 'leverframe:zai:glm-5.3')).toBe(false);
+      expect(hasProviderQuotaLog(home, 'leverframe:opencode-go:hy3')).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('labels Leverframe proxy errors even when the process also timed out', () => {
     expect(classifySmokeResult({
       exitCode: null,
@@ -536,7 +570,8 @@ describe.skipIf(!livePlan.runLive && !livePlan.forceFailReason).sequential(
             return;
           }
           const result = await runLeverframeClaudePrint(smokeCase.modelRef, smokeHome);
-          const kind = classifySmokeResult(result, smokeCase.modelRef);
+          const kind = result.timedOut && hasProviderQuotaLog(smokeHome, smokeCase.modelRef)
+            ? 'pass-quota' : classifySmokeResult(result, smokeCase.modelRef);
           if (kind !== 'pass-ok' && kind !== 'pass-quota') {
             expect.fail(formatFailure(smokeCase, result, kind));
           }

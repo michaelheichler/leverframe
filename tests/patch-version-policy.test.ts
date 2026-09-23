@@ -193,7 +193,7 @@ describe('Claude Code binary patch version policy', () => {
 
   it('marks an unchanged model config stale when the transform version advances', () => {
     const current = currentTransformVersion();
-    expect(current).toBe(18);
+    expect(current).toBe(19);
     expect(evaluatePatchStateV2({
       installationVersion: '2.1.263',
       manifest: {

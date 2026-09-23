@@ -2,6 +2,8 @@ import importlib.util
 import json
 from pathlib import Path
 import stat
+import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -15,6 +17,52 @@ SPEC.loader.exec_module(launcher)
 
 
 class ClaudeplusTests(unittest.TestCase):
+    def test_two_launchers_serialize_service_startup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script = (
+                "import sys, time\n"
+                "from pathlib import Path\n"
+                "sys.path.insert(0, sys.argv[1])\n"
+                "from scripts.claudeplus import startup_lock\n"
+                "with startup_lock(Path(sys.argv[2])):\n"
+                "    print(f'enter {time.monotonic_ns()}', flush=True)\n"
+                "    time.sleep(0.4)\n"
+                "    print(f'exit {time.monotonic_ns()}', flush=True)\n"
+            )
+            command = [sys.executable, "-c", script, str(ROOT), directory]
+            first = subprocess.Popen(command, stdout=subprocess.PIPE, text=True)
+            second = subprocess.Popen(command, stdout=subprocess.PIPE, text=True)
+            first_output, _ = first.communicate(timeout=10)
+            second_output, _ = second.communicate(timeout=10)
+            self.assertEqual((first.returncode, second.returncode), (0, 0))
+            intervals = []
+            for output in (first_output, second_output):
+                lines = output.splitlines()
+                self.assertEqual([line.split()[0] for line in lines], ["enter", "exit"])
+                intervals.append((int(lines[0].split()[1]), int(lines[1].split()[1])))
+            self.assertTrue(intervals[0][1] <= intervals[1][0] or intervals[1][1] <= intervals[0][0])
+
+    def test_headroom_keeps_embedding_entrypoint_and_installs_context_adapter(self):
+        provider = SimpleNamespace(
+            sanitize_anthropic_model_id=lambda model: model.removesuffix("[1m]"),
+            has_context_1m_suffix=lambda model: model.endswith("[1m]"),
+        )
+        handler = SimpleNamespace()
+        cli = Mock(return_value=0)
+        modules = {
+            "headroom.providers": SimpleNamespace(anthropic=provider),
+            "headroom.proxy.handlers": SimpleNamespace(anthropic=handler),
+            "headroom.cli": SimpleNamespace(main=cli),
+        }
+        with patch.dict(launcher.sys.modules, modules), \
+                patch.dict(launcher.os.environ, {"LEVERFRAME_HEADROOM_CONTEXT_WINDOWS": '{"atlas[maximum]":1048576}'}), \
+                patch.object(launcher.sys, "argv", ["launcher.py", "--headroom-proxy", "proxy", "--mode", "cache"]):
+            self.assertEqual(launcher.headroom_proxy(), 0)
+            self.assertEqual(launcher.sys.argv, [str(ROOT / "scripts/claudeplus.py"), "proxy", "--mode", "cache"])
+            cli.assert_called_once_with(prog_name="headroom")
+            self.assertIs(handler.sanitize_anthropic_model_id, provider.sanitize_anthropic_model_id)
+            self.assertEqual(handler.sanitize_anthropic_model_id("atlas[1m]"), "atlas[maximum]")
+
     def test_headroom_preserves_confirmed_external_maximum_context(self):
         provider = SimpleNamespace(
             sanitize_anthropic_model_id=lambda model: model.removesuffix("[1m]"),
@@ -47,6 +95,28 @@ class ClaudeplusTests(unittest.TestCase):
             self.assertEqual(explicit[key], "subscription-fixture")
             if key != "ANTHROPIC_API_KEY":
                 self.assertNotIn("ANTHROPIC_API_KEY", explicit)
+
+    def test_client_environment_removes_inherited_context_cap_without_mutating_parent(self):
+        inherited = {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000", "KEEP": "yes"}
+        env = launcher.client_environment(inherited, 8787)
+        self.assertNotIn("CLAUDE_CODE_MAX_CONTEXT_TOKENS", env)
+        self.assertEqual(env["KEEP"], "yes")
+        self.assertEqual(inherited["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "1000000")
+
+    def test_private_settings_mask_context_caps_without_rewriting_user_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            existing = root / "user.json"
+            original = json.dumps({"env": {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000", "KEEP": "yes"}})
+            existing.write_text(original)
+            for settings_args in ([], ["--settings", original], ["--settings", str(existing)]):
+                with self.subTest(settings_args=settings_args), tempfile.TemporaryDirectory(dir=root) as session:
+                    args = launcher.claude_arguments(settings_args, launcher.client_environment({}, 8787), Path(session))
+                    actual = json.loads(Path(args[1]).read_text())["env"]
+                    self.assertEqual(actual["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "")
+                    if settings_args:
+                        self.assertEqual(actual["KEEP"], "yes")
+            self.assertEqual(existing.read_text(), original)
 
     def test_settings_keep_user_values_and_pin_private_proxy_configuration(self):
         env = launcher.client_environment({}, 8787)

@@ -1,6 +1,6 @@
 {
   "name": "@michaelheichler/leverframe",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Bridge Claude Code to OpenAI-compatible providers, including OpenAI, ChatGPT/Codex OAuth, Kimi, Moonshot, and z.ai",
   "author": "Michael Heichler",
   "license": "MIT",
@@ -20,7 +20,8 @@
   "packageManager": "pnpm@10.34.5",
   "bin": {
     "leverframe": "dist/cli.js",
-    "leverframe-claude": "dist/claude-wrapper.js"
+    "leverframe-claude": "dist/claude-wrapper.js",
+    "claudeplus": "scripts/claudeplus.py"
   },
   "files": [
     "dist/*.js",

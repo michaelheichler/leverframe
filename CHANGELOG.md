@@ -6,6 +6,8 @@ This changelog records notable changes to Leverframe.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-23
+
 ### Changed
 
 - GitHub Copilot uses direct HTTP with the existing GitHub device login. It requires no GitHub SDK or CLI runtime.
@@ -16,6 +18,9 @@ This changelog records notable changes to Leverframe.
 
 ### Fixed
 
+- The packaged `claudeplus` command resolves its executables from PATH or explicit overrides. Concurrent launches serialize proxy startup, then run with separate ports and session files.
+- Claude Code 2.1.280 patches the model picker and Agent routing when minified names repeat or Agent helpers move between modules. Patch transform version 19 refreshes existing installations.
+- Agent notices retain configured model names and show the model ID when Claude Code no longer exposes its display helper to the Agent module.
 - Empty or failed provider completions report an upstream error instead of successful empty content. Streaming requests can use the existing bounded retry policy before output. Partial output and tool calls prevent replay.
 - Completion context checks include cached input and use the confirmed route limit in proxy mode. Diagnostics distinguish total and uncached input, normalized finish reasons, and raw provider reasons.
 - Streams require a terminal completion event. Signed reasoning blocks remain available for subsequent turns even when the provider omits summary text.

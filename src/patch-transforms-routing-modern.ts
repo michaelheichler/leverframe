@@ -6,7 +6,8 @@ const IDENT = '[A-Za-z_$][\\w$]*';
 const START = '/*ccpatch:routing-v3:start*/';
 const END = '/*ccpatch:routing-v3:end*/';
 const CALL = /async call\(([\w$]+),([\w$]+),([\w$]+),([\w$]+),([\w$]+)\)\{let\{subagent_type:/;
-const CONFIG = new RegExp('let (' + IDENT + ')=\\{agentDefinition:(' + IDENT + '),');
+const CALL_280 = /async function [\w$]+\(\{agentInput:([\w$]+),toolUseContext:([\w$]+),canUseTool:([\w$]+),assistantMessage:([\w$]+),onProgress:([\w$]+)\}\)\{let\{subagent_type:/;
+const CONFIG = new RegExp('(?:let |,)(' + IDENT + ')=\\{agentDefinition:(' + IDENT + '),');
 const MODEL = new RegExp('(' + IDENT + ')=' + IDENT + '\\(' + IDENT + '\\((' + IDENT + '),(' + IDENT + ')\\),\\3,(' + IDENT + '),(' + IDENT + ')\\)');
 const CALLBACK = new RegExp('onModelRestricted:\\((' + IDENT + '),(' + IDENT + ')\\)=>(' + IDENT + ')\\?\\.\\(\\{type:"notification",notification:\\{key:`agent-model-restricted-[^`]+`,text:`[^`]+`,priority:"medium",color:"warning",timeoutMs:1e4\\}\\}\\)');
 const LAUNCH = new RegExp('let (' + IDENT + ')=await ' + IDENT + '\\(\\),(' + IDENT + ')=' + IDENT + '\\(\\);' + IDENT + '\\.spawnedSubagent=\\2;');
@@ -46,21 +47,25 @@ interface RoutingSite {
   notify: string;
   insertAt: number;
   readEffort: string;
-  effectiveEffort: string;
-  displayModel: string;
+  effectiveEffort?: string;
+  displayModel?: string;
 }
 
 function routingSnippet(site: RoutingSite, displays: Record<string, string>): string {
   const table = JSON.stringify(JSON.stringify(displays).replaceAll('/', '\\u002f'));
+  const displayValue = site.displayModel ? site.displayModel + '(__lfcModel)??__lfcModel' : '__lfcModel';
+  const effortValue = site.effectiveEffort
+    ? site.effectiveEffort + '(__lfcModel,' + site.agent + '.effort??'
+      + site.readEffort + '(' + site.context + '.getAppState(),__lfcModel),'
+      + '{honorLaunchPin:' + site.config + '.querySource!=="auto_mode_investigator"})'
+    : site.agent + '.effort??' + site.readEffort + '(' + site.context + '.getAppState(),__lfcModel)';
   return (START + '(()=>{'
     + `if(${site.config}.override?.replHydration?.kind!=="resume"){`
     + 'let __lfcModel=' + site.model + ','
     + '__lfcKey=String(__lfcModel).trim().toLowerCase(),__lfcDisplays=Object.assign(Object.create(null),JSON.parse(' + table + ')),'
-    + '__lfcEffort=String(' + site.effectiveEffort + '(__lfcModel,' + site.agent + '.effort??'
-    + site.readEffort + '(' + site.context + '.getAppState(),__lfcModel),'
-    + '{honorLaunchPin:' + site.config + '.querySource!=="auto_mode_investigator"})??"default"),'
+    + '__lfcEffort=String(' + effortValue + '??"default"),'
     + '__lfcDisplay=__lfcDisplays[__lfcKey]??__lfcDisplays[__lfcKey.replace(/(?:\\[(?:default|maximum|1m)\\])+$/i,"")]??'
-    + site.displayModel + '(__lfcModel)??__lfcModel,'
+    + displayValue + ','
     + '__lfcAgent=String(' + site.agent + '.agentType);'
     + '__lfcDisplay=String(__lfcDisplay).trim().replace(/\\s+/g," ");'
     + site.description + '=String(' + site.description + '??"")+" \\u00b7 "+__lfcDisplay+" \\u00b7 "+__lfcEffort;'
@@ -73,7 +78,7 @@ function routingSnippet(site: RoutingSite, displays: Record<string, string>): st
 }
 
 function resolveSite(source: string, call: RegExpMatchArray, config: RegExpMatchArray, model: RegExpMatchArray, callback: RegExpMatchArray): RoutingSite | undefined {
-  const bodyStart = call.index! + call[0].indexOf('{') + 1;
+  const bodyStart = call.index! + call[0].indexOf('){') + 2;
   if (callback[3] !== call[5] || config[2] !== model[2] || model.index! >= config.index!
     || ![config, model, callback].every(match => bodyContains(source, bodyStart, match))) return undefined;
   const objectStart = config.index! + config[0].indexOf('{') + 1;
@@ -87,7 +92,8 @@ function resolveSite(source: string, call: RegExpMatchArray, config: RegExpMatch
   const readEffort = resolveRoutingBinding(source, STATE_EFFORT, offset);
   const effectiveEffort = resolveRoutingBinding(source, EFFECTIVE_EFFORT, offset);
   const displayModel = resolveRoutingBinding(source, MODEL_DISPLAY, offset);
-  if (!description || !readEffort || !effectiveEffort || !displayModel) return undefined;
+  const currentAgent = CALL_280.test(call[0]);
+  if (!description || !readEffort || (!currentAgent && (!effectiveEffort || !displayModel))) return undefined;
   return { agent: config[2]!, description, context: call[2]!, config: config[1]!, model: model[1]!,
     notify: call[5]!, insertAt: objectEnd + 1 + launch.index! + launch[0].length, readEffort, effectiveEffort, displayModel };
 }
@@ -95,11 +101,19 @@ function resolveSite(source: string, call: RegExpMatchArray, config: RegExpMatch
 export function applyModernRoutingNotice(source: string, displays: Record<string, string>): RoutingNoticePatchOutcome | undefined {
   const markerCounts = [START, END].map(marker => source.split(marker).length - 1);
   if (source.includes('/*ccpatch:routing-v2:')) return result(source, 'FAIL', 'Rebuild routing integration from the verified baseline');
-  if (!CALL.test(source) && markerCounts.every(count => count === 0)) return undefined;
-  const call = unique(source, CALL);
-  const config = unique(source, CONFIG);
-  const callback = unique(source, CALLBACK);
-  if (!call || !config || !callback) return result(source, 'FAIL', 'Agent routing anchors are missing or ambiguous');
+  const calls = [CALL, CALL_280].flatMap(pattern => [...source.matchAll(new RegExp(pattern.source, 'g'))]);
+  if (calls.length === 0 && markerCounts.every(count => count === 0)) return undefined;
+  const call = calls.length === 1 ? calls[0] : undefined;
+  if (!call) return result(source, 'FAIL', 'Agent routing anchors are missing or ambiguous');
+  const bodyStart = call.index! + call[0].indexOf('){') + 2;
+  const bodyEnd = findBalancedBlockEnd(source, bodyStart);
+  if (bodyEnd === undefined) return result(source, 'FAIL', 'Agent call body could not be delimited');
+  const body = source.slice(bodyStart, bodyEnd);
+  const config = unique(body, CONFIG);
+  const callback = unique(body, CALLBACK);
+  if (!config || !callback) return result(source, 'FAIL', 'Agent routing anchors are missing or ambiguous');
+  config.index = bodyStart + config.index!;
+  callback.index = bodyStart + callback.index!;
   const model = unique(source.slice(call.index, config.index), MODEL);
   if (!model) return result(source, 'FAIL', 'Agent resolved model is missing or ambiguous');
   model.index = call.index! + model.index!;
