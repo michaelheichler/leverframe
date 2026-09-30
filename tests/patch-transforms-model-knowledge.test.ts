@@ -109,6 +109,9 @@ describe('native model knowledge transform', () => {
     expect(isKnown('leverframe:provider:large[maximum]')).toBe(false);
   });
 
+});
+
+describe('runtime native model knowledge', () => {
   it('honors fresh runtime tombstones without overriding native model knowledge', () => {
     const result = applyNativeModelKnowledge(MODEL_KNOWLEDGE_SOURCE, {
       'leverframe:provider:large': {
@@ -199,6 +202,9 @@ describe('native context lookup integration', () => {
     }
   });
 
+});
+
+describe('reported native context metadata', () => {
   it('keeps every external known key backed by a reported or fresh context window', () => {
     const config = {
       'leverframe:provider:default-only': { alias: 'default-only', context: 272_000 },
@@ -249,6 +255,6 @@ describe('native context lookup integration', () => {
   });
 
   it('keeps the transform version ahead of older static context patches', () => {
-    expect(PATCH_TRANSFORMS_VERSION).toBe(19);
+    expect(PATCH_TRANSFORMS_VERSION).toBe(20);
   });
 });

@@ -379,7 +379,7 @@ export function applyNativeContextPicker(
   if (bodyEnd === undefined) return invalid('picker function body could not be delimited', nativeBundleSource, source);
   const body = source.slice(picker.bodyStart, bodyEnd);
 
-  const stateHookMatch = /\[\s*[A-Za-z_$][\w$]*\s*,\s*[A-Za-z_$][\w$]*\s*\]\s*=\s*([A-Za-z_$][\w$]*)\s*\(/.exec(body);
+  const stateHookMatch = /\[\s*[A-Za-z_$][\w$]*\s*,\s*[A-Za-z_$][\w$]*\s*(?:,\s*[A-Za-z_$][\w$]*\s*)?\]\s*=\s*([A-Za-z_$][\w$]*)\s*\(/.exec(body);
   const stateHook = stateHookMatch?.[1];
   if (stateHook === undefined) return invalid('picker state hook anchor not found', nativeBundleSource, source);
 

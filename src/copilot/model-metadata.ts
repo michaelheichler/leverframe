@@ -147,13 +147,17 @@ export function parseCopilotModelInfo(record: unknown): CachedModel {
   const limits = optionalRecord(capabilities.limits, 'capabilities.limits');
   const family = optionalString(capabilities, 'family');
   const vision = optionalBoolean(supports, 'vision');
-  const reasoningEffort = optionalBoolean(supports, 'reasoning_effort') ?? optionalBoolean(supports, 'reasoningEffort');
+  const rawReasoningEffort = aliasedField(supports, 'reasoning_effort', 'reasoningEffort');
+  const capabilityEfforts = Array.isArray(rawReasoningEffort) ? parseReasoningEfforts(rawReasoningEffort) : undefined;
+  const reasoningEffort = capabilityEfforts === undefined
+    ? optionalBoolean(supports, 'reasoning_effort') ?? optionalBoolean(supports, 'reasoningEffort')
+    : capabilityEfforts.length > 0;
   const reasoning = reasoningEffort ?? optionalBoolean(supports, 'reasoning');
   const supportsParallelToolCalls = optionalBoolean(supports, 'parallel_tool_calls');
   const contextWindow = parseContextWindow(limits);
   const inputTokenLimit = parseTokenLimit(limits, 'max_prompt_tokens');
   const outputTokenLimit = parseTokenLimit(limits, 'max_output_tokens');
-  const supportedReasoningEfforts = parseReasoningEfforts(aliasedField(model, 'supported_reasoning_efforts', 'supportedReasoningEfforts'));
+  const supportedReasoningEfforts = parseReasoningEfforts(aliasedField(model, 'supported_reasoning_efforts', 'supportedReasoningEfforts')) ?? capabilityEfforts;
   const defaultReasoningEffort = parseReasoningEffort(
     aliasedField(model, 'default_reasoning_effort', 'defaultReasoningEffort'),
     'default_reasoning_effort',
@@ -177,7 +181,6 @@ export function parseCopilotModelInfo(record: unknown): CachedModel {
   };
 }
 
-/** The collector reports exclusions without discarding valid sibling records. */
 export function mapCopilotModels(
   records: unknown,
   skippedModels: CopilotModelSkipDiagnostic[] = [],

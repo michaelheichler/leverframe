@@ -24,7 +24,7 @@ describe('direct Copilot HTTP authentication', () => {
     expect(request.headers.get('x-github-api-version')).toBe('2025-05-01');
     expect(request.headers.has('x-api-key')).toBe(false);
     expect(request.headers.has('cookie')).toBe(false);
-    expect(request.headers.has('copilot-integration-id')).toBe(false);
+    expect(request.headers.get('copilot-integration-id')).toBe('copilot-developer-cli');
     expect(request.redirect).toBe('manual');
     expect(await request.json()).toMatchObject({ model: 'gpt-4o-mini' });
   });

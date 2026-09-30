@@ -1,5 +1,5 @@
 import type { RoutingNoticePatchOutcome } from './patch-transforms-routing-notice.js';
-import { escapePattern, resolveRoutingBinding } from './patch-routing-bindings.js';
+import { escapePattern, importRoutingBinding, resolveRoutingBinding } from './patch-routing-bindings.js';
 import { findBalancedBlockEnd } from './patch-transforms-picker.js';
 
 const IDENT = '[A-Za-z_$][\\w$]*';
@@ -105,6 +105,10 @@ export function applyModernRoutingNotice(source: string, displays: Record<string
   if (calls.length === 0 && markerCounts.every(count => count === 0)) return undefined;
   const call = calls.length === 1 ? calls[0] : undefined;
   if (!call) return result(source, 'FAIL', 'Agent routing anchors are missing or ambiguous');
+  if (resolveRoutingBinding(source, STATE_EFFORT, call.index!) === undefined) {
+    const imported = importRoutingBinding(source, STATE_EFFORT, call.index!);
+    if (imported !== undefined) return applyModernRoutingNotice(imported, displays);
+  }
   const bodyStart = call.index! + call[0].indexOf('){') + 2;
   const bodyEnd = findBalancedBlockEnd(source, bodyStart);
   if (bodyEnd === undefined) return result(source, 'FAIL', 'Agent call body could not be delimited');

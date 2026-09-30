@@ -45,6 +45,7 @@ function requestHeaders(request: Request, token: string, path: string): Headers 
   headers.set('user-agent', identity);
   headers.set('editor-version', identity);
   headers.set('editor-plugin-version', identity);
+  headers.set('copilot-integration-id', 'copilot-developer-cli');
   headers.set('x-github-api-version', path === '/models' ? CATALOG_API_VERSION : INFERENCE_API_VERSION);
   return headers;
 }
