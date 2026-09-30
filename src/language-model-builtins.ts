@@ -3,7 +3,7 @@ import type { LanguageModel } from 'ai';
 import type { ProviderModelSpec } from './language-model-factory.js';
 import { CODEX_RESPONSES_LITE_VERSION, CODEX_RESPONSES_LITE_WS_URL } from './constants.js';
 import { extractOpenAiAccountId } from './oauth/openai.js';
-import { createResponsesWebSocketFetch } from './oauth/responses-websocket.js';
+import { createResponsesTransportFetch } from './oauth/responses-transport-fetch.js';
 import { CLAUDE_CODE_USER_AGENT, injectClaudeIdentity } from './oauth/claude-identity.js';
 
 /** Because version headers require numeric components. */
@@ -30,7 +30,7 @@ function openAiOptions(spec: ProviderModelSpec, useResponsesEndpoint: boolean) {
       } : {}),
     },
     ...(useResponsesEndpoint && spec.preferWebSockets === true ? {
-      fetch: createResponsesWebSocketFetch(CODEX_RESPONSES_LITE_WS_URL, spec.onDebug, {
+      fetch: createResponsesTransportFetch(CODEX_RESPONSES_LITE_WS_URL, spec.onDebug, {
         providerId: spec.providerId ?? 'openai', accountId, onDiagnostic: spec.onWebSocketDiagnostic,
       }),
     } : {}),

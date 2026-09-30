@@ -13,6 +13,7 @@ This changelog records notable changes to Leverframe.
 - Claude Code 2.1.285 supports the model picker state getter and imports the native Agent effort reader when needed. Transform version 20 refreshes existing patches.
 - GitHub Copilot catalog and inference requests use the documented CLI integration header to discover current account models.
 - Copilot accepts catalog effort arrays and keeps their reported levels for inference.
+- OpenAI OAuth retries through HTTP when WebSockets explicitly reject the requested model before output.
 
 ## [0.4.2] - 2026-09-23
 
