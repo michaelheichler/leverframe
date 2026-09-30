@@ -6,6 +6,13 @@ This changelog records notable changes to Leverframe.
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-09-30
+
+### Fixed
+
+- OpenAI OAuth declares Codex protocol 0.159.2. Older model minimum versions no longer downgrade it and block GPT-6.1 Sol.
+- Removed the HTTP fallback introduced during diagnosis. Both transports reject GPT-6.1 Sol when the request declares the older protocol.
+
 ## [0.4.3] - 2026-09-30
 
 ### Fixed

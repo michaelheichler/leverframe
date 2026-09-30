@@ -3,14 +3,16 @@ import type { LanguageModel } from 'ai';
 import type { ProviderModelSpec } from './language-model-factory.js';
 import { CODEX_RESPONSES_LITE_VERSION, CODEX_RESPONSES_LITE_WS_URL } from './constants.js';
 import { extractOpenAiAccountId } from './oauth/openai.js';
-import { createResponsesTransportFetch } from './oauth/responses-transport-fetch.js';
+import { createResponsesWebSocketFetch } from './oauth/responses-websocket.js';
 import { CLAUDE_CODE_USER_AGENT, injectClaudeIdentity } from './oauth/claude-identity.js';
 
 /** Because version headers require numeric components. */
 function validResponsesLiteVersion(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const version = value.trim();
-  return /^\d+(?:\.\d+){0,2}$/.test(version) ? version : undefined;
+  if (!/^\d+(?:\.\d+){0,2}$/.test(version)) return undefined;
+  return version.localeCompare(CODEX_RESPONSES_LITE_VERSION, 'en', { numeric: true }) > 0
+    ? version : undefined;
 }
 
 /** Because Codex subscriptions use a separate endpoint. */
@@ -30,7 +32,7 @@ function openAiOptions(spec: ProviderModelSpec, useResponsesEndpoint: boolean) {
       } : {}),
     },
     ...(useResponsesEndpoint && spec.preferWebSockets === true ? {
-      fetch: createResponsesTransportFetch(CODEX_RESPONSES_LITE_WS_URL, spec.onDebug, {
+      fetch: createResponsesWebSocketFetch(CODEX_RESPONSES_LITE_WS_URL, spec.onDebug, {
         providerId: spec.providerId ?? 'openai', accountId, onDiagnostic: spec.onWebSocketDiagnostic,
       }),
     } : {}),

@@ -6,7 +6,7 @@ import type { ModelFormat } from './types.js';
 
 export const CODEX_RESPONSES_LITE_WS_URL = 'wss://chatgpt.com/backend-api/codex/responses';
 
-export const CODEX_RESPONSES_LITE_VERSION = '0.144.1';
+export const CODEX_RESPONSES_LITE_VERSION = '0.159.2';
 
 export const CODEX_RESPONSES_WEBSOCKETS_BETA = 'responses_websockets=2026-02-06';
 
