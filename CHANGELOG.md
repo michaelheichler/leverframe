@@ -6,6 +6,10 @@ This changelog records notable changes to Leverframe.
 
 ## [Unreleased]
 
+### Fixed
+
+- Claude Code 2.1.285 Agent launches no longer fail with `__lfcRoutingEffort is not defined`. Bun does not link import specifiers that Leverframe adds to a compiled chunk. The routing notice now reads the native effort reader with `import.meta.require`. Transform version 21 refreshes existing patches.
+
 ## [0.4.4] - 2026-09-30
 
 ### Fixed

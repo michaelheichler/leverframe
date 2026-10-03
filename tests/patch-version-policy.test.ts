@@ -199,7 +199,7 @@ describe('Claude Code patch restoration', () => {
 describe('Claude Code transform version migration', () => {
   it('marks an unchanged model config stale when the transform version advances', () => {
     const current = currentTransformVersion();
-    expect(current).toBe(20);
+    expect(current).toBe(21);
     expect(evaluatePatchStateV2({
       installationVersion: '2.1.263',
       manifest: {

@@ -11,19 +11,27 @@ const agentModule = boundary + '/agent.js\nimport{Xv}from"/state.js";'
   + CLAUDE_AGENT_2_1_280.slice(CLAUDE_AGENT_2_1_280.indexOf('async function go'));
 
 describe('Claude Code 2.1.285 Agent effort binding', () => {
-  it('imports the verified native effort reader when Agent no longer imports it', () => {
+  it('reads the native effort reader at runtime instead of adding a static import', () => {
     const outcome = applyRoutingNoticeTransform(stateModule + agentModule, {});
 
     expect(outcome.results.every(result => result.status === 'OK')).toBe(true);
-    expect(outcome.content).toContain('import{Xv,Za as __lfcRoutingEffort}from"/state.js";');
-    expect(outcome.content).toContain('__lfcRoutingEffort(e.getAppState(),__lfcModel)');
+    expect(outcome.content).toContain('import{Xv}from"/state.js";');
+    expect(outcome.content).not.toContain('__lfcRoutingEffort');
+    expect(outcome.content).toContain('s.effort??import.meta.require("/state.js").Za(e.getAppState(),__lfcModel)');
     expect(applyRoutingNoticeTransform(outcome.content, {}).content).toBe(outcome.content);
   });
 
-  it('fails without importing a private native helper', () => {
+  it('reads the exported alias when the owner renames the reader on export', () => {
+    const renamed = stateModule.replace('export{Za,Xv}', 'export{Za as dd,Xv}');
+    const outcome = applyRoutingNoticeTransform(renamed + agentModule, {});
+
+    expect(outcome.content).toContain('import.meta.require("/state.js").dd(e.getAppState(),__lfcModel)');
+  });
+
+  it('fails without reaching a private native helper', () => {
     const outcome = applyRoutingNoticeTransform(stateModule.replace('export{Za,Xv}', 'export{Xv}') + agentModule, {});
 
     expect(outcome.results.every(result => result.status === 'FAIL')).toBe(true);
-    expect(outcome.content).not.toContain('Za as __lfcRoutingEffort');
+    expect(outcome.content).not.toContain('import.meta.require');
   });
 });

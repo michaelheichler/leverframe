@@ -190,7 +190,7 @@ The values use Claude Code's bold suggestion and success theme roles. The senten
 
 Leverframe's Claude Code binary patch displays the notice without extra configuration. The notice stays in the Claude Code UI and preserves machine-readable output such as `--output-format json`.
 
-Binary patching requires Claude Code 2.1.223 or newer. Native-binary tests verify the current integration on 2.1.280, with regression coverage for earlier layouts. Known Agent launch sites require a working routing notice. An incompatible required site blocks patch publication and reports the failing capability. Re-run `leverframe patch` after a Claude Code update. Transform version 19 refreshes existing patches on the next Leverframe launch.
+Binary patching requires Claude Code 2.1.223 or newer. Native-binary tests verify the current integration on 2.1.280, with regression coverage for earlier layouts. Known Agent launch sites require a working routing notice. An incompatible required site blocks patch publication and reports the failing capability. Re-run `leverframe patch` after a Claude Code update. Transform version 21 refreshes existing patches on the next Leverframe launch.
 
 Leverframe can rebuild a lost V2 manifest only from an independently verified pristine legacy backup. It never patches on top of unowned injected bytes.
 
