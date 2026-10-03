@@ -33,3 +33,4 @@
 /dist/*
 !/dist/*.js
 !/dist/*.mjs
+__pycache__/
