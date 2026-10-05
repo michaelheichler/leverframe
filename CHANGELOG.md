@@ -6,8 +6,11 @@ This changelog records notable changes to Leverframe.
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-10-05
+
 ### Fixed
 
+- Claude Code 2.1.288 patches again. The Agent tool now awaits its launch in a separate statement before it stores the subagent id. The routing notice anchor accepts both shapes.
 - Claude Code 2.1.285 Agent launches no longer fail with `__lfcRoutingEffort is not defined`. Bun does not link import specifiers that Leverframe adds to a compiled chunk. The routing notice now reads the native effort reader with `import.meta.require`. Transform version 21 refreshes existing patches.
 
 ## [0.4.4] - 2026-09-30
