@@ -6,13 +6,15 @@ const IDENT = '[A-Za-z_$][\\w$]*';
 const START = '/*ccpatch:routing-v3:start*/';
 const END = '/*ccpatch:routing-v3:end*/';
 const CALL = /async call\(([\w$]+),([\w$]+),([\w$]+),([\w$]+),([\w$]+)\)\{let\{subagent_type:/;
-const CALL_280 = /async function [\w$]+\(\{agentInput:([\w$]+),toolUseContext:([\w$]+),canUseTool:([\w$]+),assistantMessage:([\w$]+),onProgress:([\w$]+)\}\)\{let\{subagent_type:/;
+// Because 2.1.292 adds an enclosingToolUseId parameter after onProgress.
+const CALL_280 = /async function [\w$]+\(\{agentInput:([\w$]+),toolUseContext:([\w$]+),canUseTool:([\w$]+),assistantMessage:([\w$]+),onProgress:([\w$]+)(?:,enclosingToolUseId:[\w$]+)?\}\)\{let\{subagent_type:/;
 const CONFIG = new RegExp('(?:let |,)(' + IDENT + ')=\\{agentDefinition:(' + IDENT + '),');
 const MODEL = new RegExp('(' + IDENT + ')=' + IDENT + '\\(' + IDENT + '\\((' + IDENT + '),(' + IDENT + ')\\),\\3,(' + IDENT + '),(' + IDENT + ')\\)');
 const CALLBACK = new RegExp('onModelRestricted:\\((' + IDENT + '),(' + IDENT + ')\\)=>(' + IDENT + ')\\?\\.\\(\\{type:"notification",notification:\\{key:`agent-model-restricted-[^`]+`,text:`[^`]+`,priority:"medium",color:"warning",timeoutMs:1e4\\}\\}\\)');
 // Because 2.1.288 awaits the launch in a separate statement.
 const LAUNCH = new RegExp('let (?:' + IDENT + '=await ' + IDENT + '\\(\\),)?(' + IDENT + ')=' + IDENT + '\\(\\);' + IDENT + '\\.spawnedSubagent=\\1;');
-const STATE_EFFORT = /function ([\w$]+)\(([\w$]+),[\w$]+\)\{let ([\w$]+)=\2\.sessionEffort\?\?[\w$]+;switch\(\3\.kind\)\{case"level":return \3\.value;case"default":return;case"inherit":/;
+// Because 2.1.292 adds a defaulted withHold options parameter to the reader.
+const STATE_EFFORT = /function ([\w$]+)\(([\w$]+),[\w$]+(?:,\{withHold:[\w$]+=!0\}=\{\})?\)\{let ([\w$]+)=\2\.sessionEffort\?\?[\w$]+;switch\(\3\.kind\)\{case"level":return \3\.value;case"default":return;case"inherit":/;
 const EFFECTIVE_EFFORT = /function ([\w$]+)\(([\w$]+),([\w$]+),\{honorLaunchPin:[\w$]+=!0\}=\{\}\)\{if\(![\w$]+\(\2\)\)return;/;
 const MODEL_DISPLAY = /function ([\w$]+)\(([\w$]+)\)\{return [\w$]+\([\w$]+\(\2,\{identity:!0\}\),\2\.endsWith\("\[1m\]"\)\)\}/;
 
