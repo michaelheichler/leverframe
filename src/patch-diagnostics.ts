@@ -93,6 +93,7 @@ export interface PatchDiagnosticsReport {
   catalog: {
     source: 'cache' | 'none';
     refreshDue: string[];
+    unstable: string[];
   };
   state: PatchStateV2 | 'not_resolved';
   nextAction: string;
@@ -152,7 +153,7 @@ function inertReport(
     drift: { observedSha256: null, expectedPatchedSha256: null, hashesMatch: null, injectionState: null, semanticSitesComplete: null },
     transaction: { pending: false },
     lock: { path: '', held: false },
-    catalog: { source: 'none', refreshDue: [] },
+    catalog: { source: 'none', refreshDue: [], unstable: [] },
   };
 }
 
@@ -300,7 +301,7 @@ export async function diagnosePatchV2(
     lock: { path: lockPath, held: existsSync(lockPath) },
     migration: migrationSection(legacy !== null, legacyRecovery),
     integration: { status: integrationStatus(live, sites), capabilities: sites.patchSites },
-    catalog: { source: 'cache', refreshDue: catalog.refreshDue },
+    catalog: { source: 'cache', refreshDue: catalog.refreshDue, unstable: catalog.unstable },
     state,
     nextAction: nextActionFor(state, legacyRecovery, live.error),
   };
@@ -311,8 +312,10 @@ function pad(label: string): string {
 }
 
 function catalogLine(catalog: PatchDiagnosticsReport['catalog']): string {
-  if (catalog.refreshDue.length === 0) return 'cached';
-  return `cached; the next launch refreshes credentials for ${catalog.refreshDue.join(', ')}`;
+  const notes = ['cached'];
+  if (catalog.refreshDue.length > 0) notes.push(`the next launch refreshes credentials for ${catalog.refreshDue.join(', ')}`);
+  if (catalog.unstable.length > 0) notes.push(`could not read a consistent credential for ${catalog.unstable.join(', ')}`);
+  return notes.join('; ');
 }
 
 export function formatPatchDiagnosticsText(report: PatchDiagnosticsReport): string[] {

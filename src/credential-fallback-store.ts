@@ -1,11 +1,19 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { durableAtomicWrite, ensurePrivateDirectory, readFileStrict } from './durable-io.js';
+import {
+  FileReplacedWhileOpeningError,
+  durableAtomicWrite,
+  ensurePrivateDirectory,
+  readFileStrict,
+} from './durable-io.js';
 import { getAppHome } from './paths.js';
 import { withRegistryWriteLockSync } from './registry/lock.js';
 
 const FALLBACK_FILE_NAME = 'credentials-fallback.json';
 const MAX_FALLBACK_BYTES = 16 * 1024 * 1024;
+const PEEK_ATTEMPTS = 3;
+
+export class UnstableCredentialSnapshotError extends Error {}
 
 interface FallbackFile {
   schemaVersion: 1;
@@ -62,9 +70,22 @@ export function readFallbackCredential(account: string, path = getCredentialFall
   return withFallbackLock(path, () => readFallbackFile(path).credentials[account] ?? null);
 }
 
+function readSettledFallbackFile(path: string): FallbackFile | undefined {
+  try {
+    return readFallbackFile(path);
+  } catch (error) {
+    if (error instanceof FileReplacedWhileOpeningError) return undefined;
+    throw error;
+  }
+}
+
 /** Lock-free because writers publish by atomic rename. */
 export function peekFallbackCredential(account: string, path = getCredentialFallbackPath()): string | null {
-  return readFallbackFile(path).credentials[account] ?? null;
+  for (let attempt = 0; attempt < PEEK_ATTEMPTS; attempt += 1) {
+    const data = readSettledFallbackFile(path);
+    if (data) return data.credentials[account] ?? null;
+  }
+  throw new UnstableCredentialSnapshotError(`Credential fallback file kept changing while reading: ${path}`);
 }
 
 export function writeFallbackCredential(account: string, value: string, path = getCredentialFallbackPath()): void {

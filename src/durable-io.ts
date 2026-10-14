@@ -30,6 +30,8 @@ export interface DurableWriteOptions {
   validateExisting?: boolean;
 }
 
+export class FileReplacedWhileOpeningError extends Error {}
+
 function errorCode(error: unknown): string | undefined {
   return (error as NodeJS.ErrnoException | undefined)?.code;
 }
@@ -72,7 +74,7 @@ export function readFileStrict(path: string, options: StrictReadOptions = {}): s
     fd = openSync(path, 'r');
     const opened = fstatSync(fd);
     if (before.dev !== opened.dev || before.ino !== opened.ino) {
-      throw new Error(`${description} changed while opening: ${path}`);
+      throw new FileReplacedWhileOpeningError(`${description} changed while opening: ${path}`);
     }
     if (options.maxBytes !== undefined && opened.size > options.maxBytes) {
       throw new Error(`${description} exceeds ${options.maxBytes} bytes: ${path}`);

@@ -214,7 +214,7 @@ describe('patch diagnostics after a fresh patch', () => {
 
     expect(exitCode).toBe(0);
     expect(report.state).toBe('patched');
-    expect(report.catalog).toEqual({ source: 'cache', refreshDue: ['openai'] });
+    expect(report.catalog).toEqual({ source: 'cache', refreshDue: ['openai'], unstable: [] });
     expect(formatPatchDiagnosticsText(report)).toContainEqual(expect.stringMatching(/refreshes credentials for openai$/));
     expect(network).not.toHaveBeenCalled();
     expect(new Set(operations)).toEqual(new Set(['peek']));
@@ -238,7 +238,7 @@ describe('patch diagnostics after a fresh patch', () => {
 
     expect(exitCode).toBe(0);
     expect(report.state).toBe('patched');
-    expect(report.catalog).toEqual({ source: 'cache', refreshDue: [] });
+    expect(report.catalog).toEqual({ source: 'cache', refreshDue: [], unstable: [] });
   });
 
   it('keeps a launch with a selected model current when leverframe patch runs afterwards', async () => {
@@ -292,5 +292,17 @@ describe('patch diagnostics integration status', () => {
     expect(report.integration.status).toBe('unavailable');
     expect(report.drift.injectionState).toBeNull();
     expect(report.nextAction).toMatch(/could not be inspected/i);
+  });
+});
+
+describe('patch diagnostics text for the model catalog', () => {
+  it('names a provider whose stored credential could not be read consistently', async () => {
+    const fixture = prepareCatalogFixture();
+    await cliPatch(fixture.installation);
+    const report = await diagnosePatchV2(fixture.path, runtime());
+
+    const lines = formatPatchDiagnosticsText({ ...report, catalog: { ...report.catalog, unstable: ['openai'] } });
+
+    expect(lines).toContainEqual(expect.stringMatching(/could not read a consistent credential for openai$/));
   });
 });

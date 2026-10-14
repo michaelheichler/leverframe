@@ -12,6 +12,7 @@ import {
   getCredentialFallbackPath,
   peekFallbackCredential,
   readFallbackCredential,
+  UnstableCredentialSnapshotError,
   writeFallbackCredential,
 } from './credential-fallback-store.js';
 
@@ -28,6 +29,7 @@ export {
   readFallbackCredential,
   writeFallbackCredential,
   deleteFallbackCredential,
+  UnstableCredentialSnapshotError,
 } from './credential-fallback-store.js';
 
 const KEYRING_SERVICE = 'leverframe';
@@ -140,7 +142,8 @@ function peekKeyringService(service: string, account: string): Promise<KeyringRe
 function peekFallbackOrNull(account: string): string | null {
   try {
     return peekFallbackCredential(account);
-  } catch {
+  } catch (error) {
+    if (error instanceof UnstableCredentialSnapshotError) throw error;
     return null;
   }
 }

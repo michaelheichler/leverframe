@@ -1,3 +1,4 @@
+import { UnstableCredentialSnapshotError } from '../credential-store.js';
 import {
   resolveProviderCredential,
   resolveProviderOAuthAccountId,
@@ -45,6 +46,7 @@ export async function loadRegistryProviders(
 export interface StoredRegistryCatalog {
   providers: LocalProvider[];
   refreshDue: string[];
+  unstable: string[];
 }
 
 /** Because patch diagnostics must stay read-only and network-free. */
@@ -54,13 +56,18 @@ export async function loadStoredRegistryProviders(
   const registry = loadRegistry();
   const keys = new Map<string, string>();
   const refreshDue: string[] = [];
+  const unstable: string[] = [];
   for (const provider of registry.providers) {
     const stored = await resolveStoredProviderCredential(provider.id, provider.authRef)
-      .catch(() => ({ value: null, refreshDue: false }));
+      .catch((error: unknown) => {
+        if (error instanceof UnstableCredentialSnapshotError) unstable.push(provider.id);
+        return { value: null, refreshDue: false };
+      });
     if (stored.value) keys.set(provider.id, stored.value);
     if (stored.refreshDue) refreshDue.push(provider.id);
   }
-  return { providers: materializeRegistry(registry, provider => keys.get(provider.id) ?? null, opts), refreshDue };
+  const providers = materializeRegistry(registry, provider => keys.get(provider.id) ?? null, opts);
+  return { providers, refreshDue, unstable };
 }
 
 export function loadRegistryProvidersSync(
