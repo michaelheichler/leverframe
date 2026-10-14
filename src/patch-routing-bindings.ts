@@ -16,31 +16,34 @@ function bindingPattern(name: string): RegExp {
   return new RegExp('^' + escapePattern(name) + '(?: as [\\w$]+)?$');
 }
 
-interface ForeignBinding {
-  ownerName: string;
-  exportedName: string;
-  consumerContent: string;
-}
+type RoutingBinding =
+  | { kind: 'local'; name: string }
+  | { kind: 'foreign'; ownerName: string; exportedName: string; consumerContent: string };
 
-function foreignBinding(source: string, definition: RegExp, consumerOffset: number): string | ForeignBinding | undefined {
+function findRoutingBinding(source: string, definition: RegExp, consumerOffset: number): RoutingBinding | undefined {
   const matches = [...source.matchAll(new RegExp(definition.source, 'g'))];
   if (matches.length !== 1) return undefined;
   const match = matches[0]!;
   const name = match[1]!;
   const owner = moduleAt(source, match.index);
   const consumer = moduleAt(source, consumerOffset);
-  if (owner.start === consumer.start) return name;
+  if (owner.start === consumer.start) return { kind: 'local', name };
   if (owner.name === undefined) return undefined;
   const exported = [...owner.content.matchAll(/export\{([^}]+)\}/g)]
     .flatMap(entry => entry[1]!.split(','))
     .find(entry => bindingPattern(name).test(entry));
   if (!exported) return undefined;
-  return { ownerName: owner.name, exportedName: exported.split(' as ')[1] ?? name, consumerContent: consumer.content };
+  return {
+    kind: 'foreign',
+    ownerName: owner.name,
+    exportedName: exported.split(' as ')[1] ?? name,
+    consumerContent: consumer.content,
+  };
 }
 
 export function resolveRoutingBinding(source: string, definition: RegExp, consumerOffset: number): string | undefined {
-  const binding = foreignBinding(source, definition, consumerOffset);
-  if (binding === undefined || typeof binding === 'string') return binding;
+  const binding = findRoutingBinding(source, definition, consumerOffset);
+  if (binding?.kind !== 'foreign') return binding?.name;
   const imports = [...binding.consumerContent.matchAll(/import\{([^}]+)\}from"([^"\n]+)"/g)]
     .filter(entry => entry[2] === binding.ownerName)
     .flatMap(entry => entry[1]!.split(','));
@@ -48,7 +51,7 @@ export function resolveRoutingBinding(source: string, definition: RegExp, consum
 }
 
 export function requireRoutingBinding(source: string, definition: RegExp, consumerOffset: number): string | undefined {
-  const binding = foreignBinding(source, definition, consumerOffset);
-  if (binding === undefined || typeof binding === 'string') return undefined;
+  const binding = findRoutingBinding(source, definition, consumerOffset);
+  if (binding?.kind !== 'foreign') return undefined;
   return 'import.meta.require(' + JSON.stringify(binding.ownerName) + ').' + binding.exportedName;
 }
