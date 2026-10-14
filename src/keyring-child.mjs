@@ -241,19 +241,24 @@ try {
     return true;
   };
 
-  const reconcile = () => {
-    const guard = readGuard();
-    const journal = readJournal();
-    let current = activeValue();
+  const deletionState = (guard, journal) => {
     if (journal?.mode === 'deleted') {
-      if (guard === 'v1:deleted') return { deleted: true, active: null };
-      if (guard === null || guard === 'v1:pending') return { deleting: true, journal };
+      return guard === 'v1:deleted' ? { deleted: true, active: null } : { deleting: true, journal };
     }
     if (journal?.mode === 'delete') {
       if (guard === 'v1:deleted') throw integrity('keyring deletion metadata is inconsistent');
       return { deleting: true, journal };
     }
     if (guard !== null) throw integrity('keyring deletion metadata is inconsistent');
+    return null;
+  };
+
+  const reconcile = () => {
+    const guard = readGuard();
+    const journal = readJournal();
+    let current = activeValue();
+    const deletion = deletionState(guard, journal);
+    if (deletion) return deletion;
     if (journal?.mode === 'preparing') {
       if (descriptorMatches(journal.candidate, current)) {
         const retired = [journal.previous, ...journal.retired].filter(Boolean);
@@ -376,6 +381,20 @@ try {
     return combined;
   };
 
+  const peekCredential = () => {
+    const journal = readJournal();
+    if (deletionState(readGuard(), journal)) return null;
+    const current = activeValue();
+    if (
+      journal?.mode === 'preparing'
+      && !descriptorMatches(journal.candidate, current)
+      && !descriptorMatches(journal.previous, current)
+    ) throw integrity('published keyring state does not match its journal');
+    const descriptor = descriptorFor(current);
+    if (descriptor?.kind !== 'chunks') return current;
+    return readMarker(input.account, descriptor.marker);
+  };
+
   const deleteCredential = () => {
     const guard = readGuard();
     let journal = readJournal();
@@ -423,8 +442,9 @@ try {
   else if (input.operation === 'write') publish(input.value);
   else if (input.operation === 'delete') deleteCredential();
   else if (input.operation === 'repair') value = repairCredential();
+  else if (input.operation === 'peek') value = peekCredential();
   else throw new Error('Unsupported keyring operation');
-  const deleted = input.operation === 'read' && readGuard() !== null;
+  const deleted = (input.operation === 'read' || input.operation === 'peek') && readGuard() !== null;
   process.stdout.write(JSON.stringify({ ok: true, value, ...(deleted ? { deleted: true } : {}) }));
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);

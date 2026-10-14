@@ -132,9 +132,13 @@ async function readKeyringAfterIntegrityRepair(opts: {
   return { primary: await readKeyringService(KEYRING_SERVICE, account), repaired: true };
 }
 
+function peekKeyringService(service: string, account: string): Promise<KeyringResult> {
+  return _credentialStoreInternals.keyringOperation({ operation: 'peek', service, account });
+}
+
 /** Because diagnostics must not repair, migrate, or promote credentials. */
 export async function peekStoredCredential(account: string): Promise<string | null> {
-  const primary = await readKeyringService(KEYRING_SERVICE, account);
+  const primary = await peekKeyringService(KEYRING_SERVICE, account);
   if (!primary.ok && isIntegrityError(primary.error)) return null;
   let fallback: string | null;
   try {
@@ -146,7 +150,7 @@ export async function peekStoredCredential(account: string): Promise<string | nu
   if (primary.ok && primary.deleted) return null;
   if (primary.ok && primary.value !== null) return primary.value;
   for (const service of LEGACY_KEYRING_SERVICES) {
-    const legacy = await readKeyringService(service, account);
+    const legacy = await peekKeyringService(service, account);
     if (legacy.ok && legacy.value !== null) return legacy.value;
     if (!legacy.ok && isIntegrityError(legacy.error)) return null;
   }

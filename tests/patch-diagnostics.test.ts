@@ -195,7 +195,7 @@ function stubExpiredOAuthKeyring(): string[] {
   const operations: string[] = [];
   vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockImplementation(async input => {
     operations.push(input.operation);
-    const stored = input.operation === 'read' && input.service === 'leverframe' && input.account === OAUTH_ACCOUNT;
+    const stored = input.operation === 'peek' && input.service === 'leverframe' && input.account === OAUTH_ACCOUNT;
     return { ok: true, value: stored ? expired : null };
   });
   return operations;
@@ -217,7 +217,7 @@ describe('patch diagnostics after a fresh patch', () => {
     expect(report.catalog).toEqual({ source: 'cache', refreshDue: ['openai'] });
     expect(formatPatchDiagnosticsText(report)).toContainEqual(expect.stringMatching(/refreshes credentials for openai$/));
     expect(network).not.toHaveBeenCalled();
-    expect(new Set(operations)).toEqual(new Set(['read']));
+    expect(new Set(operations)).toEqual(new Set(['peek']));
   });
 
   it('reports the patch current right after a launch patched every catalog model', async () => {

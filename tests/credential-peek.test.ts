@@ -37,7 +37,7 @@ describe('peekStoredCredential', () => {
     const operations = stubKeyring(() => ({ ok: false, error: 'integrity: keyring credential journal is corrupt' }));
 
     await expect(peekStoredCredential(ACCOUNT)).resolves.toBeNull();
-    expect(operations).toEqual(['read:leverframe']);
+    expect(operations).toEqual(['peek:leverframe']);
   });
 
   it('returns a legacy keyring value without migrating it', async () => {
@@ -45,7 +45,7 @@ describe('peekStoredCredential', () => {
     const operations = stubKeyring(input => ({ ok: true, value: input.service === 'clodex' ? 'legacy-dummy' : null }));
 
     await expect(peekStoredCredential(ACCOUNT)).resolves.toBe('legacy-dummy');
-    expect(operations.every(operation => operation.startsWith('read:'))).toBe(true);
+    expect(operations.every(operation => operation.startsWith('peek:'))).toBe(true);
   });
 
   it('returns a fallback value without promoting it into the keyring', async () => {
@@ -54,7 +54,7 @@ describe('peekStoredCredential', () => {
     const operations = stubKeyring(() => ({ ok: true, value: null }));
 
     await expect(peekStoredCredential(ACCOUNT)).resolves.toBe('fallback-dummy');
-    expect(operations).toEqual(['read:leverframe']);
+    expect(operations).toEqual(['peek:leverframe']);
     expect(readFallbackCredential(ACCOUNT)).toBe('fallback-dummy');
   });
 });

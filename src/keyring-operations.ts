@@ -14,6 +14,7 @@ function keyringChildPath(): string {
 
 export type KeyringOperation =
   | { operation: 'read'; service: string; account: string }
+  | { operation: 'peek'; service: string; account: string }
   | { operation: 'write'; service: string; account: string; value: string }
   | { operation: 'delete'; service: string; account: string }
   | { operation: 'repair'; service: string; account: string };
