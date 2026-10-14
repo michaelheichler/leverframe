@@ -6,6 +6,14 @@ This changelog records notable changes to Leverframe.
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-10-14
+
+### Fixed
+
+- `leverframe patch --diagnose` no longer writes to the keyring. The keyring helper has a separate `peek` operation that reads a credential without a journal repair, a chunk cleanup, or a legacy migration. Diagnose in 0.4.6 still ran these steps through the normal read.
+- Diagnose reads the fallback credential file without its write lock, so it creates no directory and no lock file. A fallback that it cannot read no longer hides a valid keyring credential.
+- When a writer replaces the fallback file during a diagnose read, diagnose reads it again up to three times. If the file keeps changing, diagnose reports the provider as unstable, instead of the older keyring credential.
+
 ## [0.4.6] - 2026-10-14
 
 ### Fixed
