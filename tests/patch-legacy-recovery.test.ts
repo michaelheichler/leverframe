@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ClaudeInstallation } from '../src/claude-installation.js';
 import {
   inspectLegacyPatchRecovery,
@@ -156,6 +156,7 @@ function fixture(name: string): {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
   if (previousHome === undefined) delete process.env['LEVERFRAME_HOME'];
   else process.env['LEVERFRAME_HOME'] = previousHome;
@@ -176,6 +177,7 @@ function expectUnavailable(
 function seedCommandInputs(f: ReturnType<typeof fixture>): void {
   const home = process.env['LEVERFRAME_HOME']!;
   mkdirSync(home, { recursive: true });
+  vi.stubEnv('LEVERFRAME_KEY_OPENAI', 'test-key');
   writeFileSync(join(home, 'config.json'), JSON.stringify({
     favoriteModels: [{ providerId: 'openai', modelId: 'model' }],
     modelAliases: [{ name: 'current', providerId: 'openai', modelId: 'model' }],

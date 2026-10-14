@@ -19,6 +19,7 @@ import {
   buildDesiredPatchConfig,
   computePatchConfigHash,
   readPatchManifest,
+  type DesiredPatchConfig,
   type PatchManifest as LegacyPatchManifest,
 } from './patcher.js';
 
@@ -112,6 +113,7 @@ export interface LegacyMigrationResult {
 export interface LegacyMigrationInput extends LegacyPatchRecoveryInput {
 
   inspection?: LegacyPatchRecoveryInspection;
+  desired?: DesiredPatchConfig;
 }
 
 export async function migrateLegacyStateIfVerified(
@@ -133,7 +135,7 @@ export async function migrateLegacyStateIfVerified(
     baselineSha256: inspection.baseline.sha256,
     sourcePath: inspection.baseline.sourcePath,
   });
-  const desired = buildDesiredPatchConfig();
+  const desired = input.desired ?? buildDesiredPatchConfig();
   const content = await runtime.readContent(installation.canonicalPath, installation.version);
   const semantic = verifyPatchSites(content, desired.config);
   const desiredConfigHash = computePatchConfigHash(desired.config);

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveClaudeInstallation } from '../src/claude-installation.js';
 import {
   applyPatchTransactionV2,
@@ -132,8 +132,8 @@ function seedOneFavoriteAndBuildConfig(): { config: PatchScriptModelConfig; conf
         templateId: 'openai',
         name: 'OpenAI',
         enabled: true,
-        authRef: 'openai',
-        api: {},
+        authRef: 'env:LEVERFRAME_TEST_OPENAI_KEY',
+        api: { npm: '@ai-sdk/openai' },
         modelsCache: {
           fetchedAt: new Date().toISOString(),
           models: [{
@@ -161,9 +161,11 @@ beforeEach(() => {
   leverframeHome = join(workDir, 'leverframe-home');
   originalHome = process.env.LEVERFRAME_HOME;
   process.env.LEVERFRAME_HOME = leverframeHome;
+  vi.stubEnv('LEVERFRAME_TEST_OPENAI_KEY', 'test-key');
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   rmSync(workDir, { recursive: true, force: true });
   if (originalHome === undefined) delete process.env.LEVERFRAME_HOME;
   else process.env.LEVERFRAME_HOME = originalHome;

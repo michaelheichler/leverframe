@@ -162,7 +162,7 @@ leverframe providers [add|auth|list|remove|refresh-models]
 leverframe executions [list|show|reconcile]
 ```
 
-`leverframe patch` makes favorites and aliases first-class Claude Code models. It updates model validation, the `/model` picker, aliases, context-window metadata, and supported effort levels.
+`leverframe patch` makes your provider catalog models, favorites, and aliases first-class Claude Code models. It patches the same model set as `leverframe claude`, so `leverframe patch --diagnose` reports the same state after either command. It updates model validation, the `/model` picker, aliases, context-window metadata, and supported effort levels.
 
 ### Bypass permissions by default
 

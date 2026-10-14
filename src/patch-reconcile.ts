@@ -37,6 +37,7 @@ import {
   type LegacyPatchRecoveryInspection,
 } from './patch-legacy-recovery.js';
 import { buildDesiredPatchConfig, computePatchConfigHash, type DesiredPatchConfig } from './patcher.js';
+import { fetchProviderCatalog } from './provider-catalog.js';
 import type { FavoriteModel, LocalProvider } from './types.js';
 
 export { migrateLegacyStateIfVerified } from './patch-legacy-recovery.js';
@@ -156,6 +157,7 @@ async function checkOwnedPatchState(options: {
       installation,
       runtime,
       inspection: legacyInspection,
+      desired,
     }).catch(() => undefined);
   }
 
@@ -236,13 +238,14 @@ export async function runPatchCommandV2(
     presenter.error(unsupportedClaudeCodeBinaryPatchingMessage(installation.version));
     return 1;
   }
+  const catalogProviders = opts.freshProviders ?? await fetchProviderCatalog({ agent: 'claude' });
   let lockAcquired = false;
   return withPatchTargetLock(installation.identity, async () => {
     lockAcquired = true;
     const { manifest, state, desired, legacyRecovery } = await checkOwnedPatchState({
       installation,
       runtime,
-      freshProviders: opts.freshProviders,
+      freshProviders: catalogProviders,
       selectedModel: opts.selectedModel,
       contextSelectionAvailable: opts.contextSelectionAvailable !== false,
     });
@@ -252,7 +255,7 @@ export async function runPatchCommandV2(
     }
 
     if (Object.keys(desired.config).length === 0) {
-      presenter.error('No favorite models to patch. Save favorites with `leverframe models` first.');
+      presenter.error('No provider models to patch. Add a provider with `leverframe providers` first.');
       return 1;
     }
     for (const id of desired.unknownWindows) {

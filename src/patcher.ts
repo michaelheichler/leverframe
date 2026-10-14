@@ -277,11 +277,8 @@ export function buildDesiredPatchConfig(
         return left.index - right.index;
       })
       .map(({ model }) => model);
-  const requestedModels = freshProviders !== undefined && selectedModel === undefined
-    ? freshModels
-    : selectedModel === undefined
-      ? favorites
-      : [selectedModel, ...favorites];
+  const scopeModels = freshProviders === undefined ? favorites : freshModels;
+  const requestedModels = selectedModel === undefined ? scopeModels : [selectedModel, ...scopeModels];
   const freshSelections = freshProviders === undefined
     ? requestedModels
     : requestedModels.filter(favorite => freshProviders.some(provider =>

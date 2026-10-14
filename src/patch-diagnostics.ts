@@ -4,18 +4,27 @@ import {
   isClaudeCodeVersionSupportedForBinaryPatching,
   resolveClaudeInstallation,
   unsupportedClaudeCodeBinaryPatchingMessage,
+  type ClaudeInstallation,
 } from './claude-installation.js';
 import { getPatchTargetLockPath } from './patch-lock.js';
-import { readPatchJournal, verifyPatchSites, defaultPatchRuntime, type PatchRuntime } from './patch-transaction.js';
+import {
+  readPatchJournal,
+  verifyPatchSites,
+  defaultPatchRuntime,
+  type PatchRuntime,
+  type PatchRuntimeInspection,
+  type PatchTransactionJournal,
+} from './patch-transaction.js';
 import { currentTransformVersion, readManifestV2, type PatchManifestV2 } from './patch-state.js';
 import { evaluatePatchStateV2, type PatchStateV2 } from './patch-classify.js';
-import type { PatchSiteResult } from './patch-transforms.js';
+import type { PatchScriptModelConfig, PatchSiteResult } from './patch-transforms.js';
 import {
   inspectLegacyPatchRecovery,
   type LegacyPatchRecoveryInspection,
 } from './patch-legacy-recovery.js';
 import { readPatchManifest as readLegacyManifest } from './patcher.js';
 import { buildDesiredPatchConfig, computePatchConfigHash } from './patcher.js';
+import { fetchProviderCatalog } from './provider-catalog.js';
 
 function sha256File(path: string): string | null {
   try {
@@ -117,161 +126,174 @@ function nextActionFor(
   }
 }
 
+function identitySection(installation: ClaudeInstallation): NonNullable<PatchDiagnosticsReport['identity']> {
+  return {
+    logicalPath: installation.logicalPath,
+    canonicalPath: installation.canonicalPath,
+    discoverySource: installation.discoverySource,
+    installationKind: installation.installationKind,
+    executableType: installation.executableType,
+    version: installation.version,
+  };
+}
+
+function inertReport(
+  fields: Pick<PatchDiagnosticsReport, 'resolved' | 'identity' | 'migration' | 'integration' | 'state' | 'nextAction'>,
+): PatchDiagnosticsReport {
+  return {
+    ...fields,
+    supported: false,
+    leverframe: { schemaVersion: 2, transformVersion: currentTransformVersion() },
+    manifest: { present: false },
+    drift: { observedSha256: null, expectedPatchedSha256: null, hashesMatch: null, injectionState: null, semanticSitesComplete: null },
+    transaction: { pending: false },
+    lock: { path: '', held: false },
+  };
+}
+
+function manifestSection(manifest: PatchManifestV2 | null): PatchDiagnosticsReport['manifest'] {
+  if (!manifest) return { present: false };
+  return {
+    present: true,
+    generation: manifest.generation,
+    claudeVersion: manifest.claudeVersion,
+    configHash: manifest.configHash,
+    baselineSha256: manifest.baselineSha256,
+    baselinePath: manifest.baselinePath,
+    baselinePresent: existsSync(manifest.baselinePath),
+    patchedSha256: manifest.patchedSha256,
+    patchedSize: manifest.patchedSize,
+    provenance: manifest.provenance,
+    completedAt: manifest.completedAt,
+  };
+}
+
+function transactionSection(journal: PatchTransactionJournal | null): PatchDiagnosticsReport['transaction'] {
+  if (!journal) return { pending: false };
+  return {
+    pending: journal.phase !== 'completed',
+    phase: journal.phase,
+    operation: journal.operation,
+    startedAt: journal.startedAt,
+    updatedAt: journal.updatedAt,
+  };
+}
+
+function migrationSection(
+  legacyManifestPresent: boolean,
+  legacyRecovery: LegacyPatchRecoveryInspection,
+): PatchDiagnosticsReport['migration'] {
+  return legacyRecovery.kind === 'unavailable'
+    ? { legacyManifestPresent, eligible: false, reason: legacyRecovery.reason }
+    : { legacyManifestPresent, eligible: true, mode: legacyRecovery.kind };
+}
+
+interface SiteInspection {
+  patchSites: PatchSiteResult[];
+  semanticSitesComplete: boolean | null;
+  wantsSemanticVerdict: boolean;
+}
+
+async function inspectPatchSites(options: {
+  installation: ClaudeInstallation;
+  runtime: PatchRuntime;
+  live: PatchRuntimeInspection;
+  observedSha256: string | null;
+  manifest: PatchManifestV2 | null;
+  config: PatchScriptModelConfig;
+}): Promise<SiteInspection> {
+  const { installation, runtime, live, observedSha256, manifest, config } = options;
+  const wantsSemanticVerdict = Boolean(
+    live.readable && observedSha256 && live.injection.state === 'present'
+    && (!manifest || observedSha256 !== manifest.patchedSha256),
+  );
+  if (!live.readable) return { patchSites: [], semanticSitesComplete: null, wantsSemanticVerdict };
+  try {
+    const content = await runtime.readContent(installation.canonicalPath, installation.version, { allowNetwork: false });
+    const verification = verifyPatchSites(content, config);
+    return {
+      patchSites: verification.results,
+      semanticSitesComplete: wantsSemanticVerdict ? verification.complete : null,
+      wantsSemanticVerdict,
+    };
+  } catch {
+    return { patchSites: [], semanticSitesComplete: wantsSemanticVerdict ? false : null, wantsSemanticVerdict };
+  }
+}
+
+function integrationStatus(
+  live: PatchRuntimeInspection,
+  sites: SiteInspection,
+): PatchDiagnosticsReport['integration']['status'] {
+  if (!live.readable) return 'unavailable';
+  if (sites.patchSites.some(site => site.status === 'FAIL')
+    || (sites.semanticSitesComplete === false && sites.wantsSemanticVerdict)) return 'incompatible';
+  return live.injection.state === 'present' && sites.semanticSitesComplete !== false ? 'integrated' : 'compatible';
+}
+
+function unresolvedReport(): PatchDiagnosticsReport {
+  return inertReport({
+    resolved: false,
+    identity: null,
+    migration: { legacyManifestPresent: readLegacyManifest() !== null, eligible: false, reason: 'No installation resolved.' },
+    integration: { status: 'unavailable', capabilities: [] },
+    state: 'not_resolved',
+    nextAction: nextActionFor('not_resolved'),
+  });
+}
+
+function unsupportedReport(installation: ClaudeInstallation): PatchDiagnosticsReport {
+  return inertReport({
+    resolved: true,
+    identity: identitySection(installation),
+    migration: { legacyManifestPresent: false, eligible: false, reason: 'Binary patching is not supported for this Claude Code version.' },
+    integration: { status: 'incompatible', capabilities: [] },
+    state: 'unsupported',
+    nextAction: unsupportedClaudeCodeBinaryPatchingMessage(installation.version),
+  });
+}
+
 export async function diagnosePatchV2(
   target?: string,
   runtime: PatchRuntime = defaultPatchRuntime,
 ): Promise<PatchDiagnosticsReport> {
   const installation = resolveClaudeInstallation({ target });
-
-  if (!installation) {
-    const legacy = readLegacyManifest();
-    const legacyDiag = { legacyManifestPresent: legacy !== null };
-    return {
-      resolved: false,
-      supported: false,
-      identity: null,
-      leverframe: { schemaVersion: 2, transformVersion: currentTransformVersion() },
-      manifest: { present: false },
-      drift: { observedSha256: null, expectedPatchedSha256: null, hashesMatch: null, injectionState: null, semanticSitesComplete: null },
-      transaction: { pending: false },
-      lock: { path: '', held: false },
-      migration: { ...legacyDiag, eligible: false, reason: 'No installation resolved.' },
-      integration: { status: 'unavailable', capabilities: [] },
-      state: 'not_resolved',
-      nextAction: nextActionFor('not_resolved'),
-    };
-  }
-
-  const supported = isClaudeCodeVersionSupportedForBinaryPatching(installation.version);
-  if (!supported) {
-    return {
-      resolved: true,
-      supported,
-      identity: {
-        logicalPath: installation.logicalPath,
-        canonicalPath: installation.canonicalPath,
-        discoverySource: installation.discoverySource,
-        installationKind: installation.installationKind,
-        executableType: installation.executableType,
-        version: installation.version,
-      },
-      leverframe: { schemaVersion: 2, transformVersion: currentTransformVersion() },
-      manifest: { present: false },
-      drift: { observedSha256: null, expectedPatchedSha256: null, hashesMatch: null, injectionState: null, semanticSitesComplete: null },
-      transaction: { pending: false },
-      lock: { path: '', held: false },
-      migration: { legacyManifestPresent: false, eligible: false, reason: 'Binary patching is not supported for this Claude Code version.' },
-      integration: { status: 'incompatible', capabilities: [] },
-      state: 'unsupported',
-      nextAction: unsupportedClaudeCodeBinaryPatchingMessage(installation.version),
-    };
-  }
+  if (!installation) return unresolvedReport();
+  if (!isClaudeCodeVersionSupportedForBinaryPatching(installation.version)) return unsupportedReport(installation);
 
   const legacy = readLegacyManifest();
-  const legacyDiag = { legacyManifestPresent: legacy !== null };
-
-  const manifest: PatchManifestV2 | null = readManifestV2(installation.identity);
-  const journal = readPatchJournal(installation.identity);
+  const manifest = readManifestV2(installation.identity);
   const lockPath = getPatchTargetLockPath(installation.identity);
   const legacyRecovery = await inspectLegacyPatchRecovery({ installation, runtime, legacy });
-
   const observedSha256 = sha256File(installation.canonicalPath);
   const live = await runtime.inspect(installation.canonicalPath, manifest?.patchedSha256);
-  const desired = buildDesiredPatchConfig();
-  const configHash = computePatchConfigHash(desired.config);
-
-  let semanticSitesComplete: boolean | null = null;
-  let patchSites: PatchSiteResult[] = [];
-  const wantsSemanticVerdict = Boolean(
-    live.readable && observedSha256 && live.injection.state === 'present'
-    && (!manifest || observedSha256 !== manifest.patchedSha256),
-  );
-
-  if (live.readable) {
-    try {
-      const content = await runtime.readContent(
-        installation.canonicalPath,
-        installation.version,
-        { allowNetwork: false },
-      );
-      const verification = verifyPatchSites(content, desired.config);
-      patchSites = verification.results;
-      if (wantsSemanticVerdict) semanticSitesComplete = verification.complete;
-    } catch {
-      if (wantsSemanticVerdict) semanticSitesComplete = false;
-    }
-  }
-
+  const desired = buildDesiredPatchConfig(await fetchProviderCatalog({ agent: 'claude' }));
+  const sites = await inspectPatchSites({ installation, runtime, live, observedSha256, manifest, config: desired.config });
   const state = evaluatePatchStateV2({
     installationVersion: installation.version,
     manifest,
     live: { readable: live.readable, version: live.version, sha256: observedSha256, injectionState: live.injection.state },
-    desiredConfigHash: configHash,
-    semanticSitesComplete: semanticSitesComplete ?? undefined,
+    desiredConfigHash: computePatchConfigHash(desired.config),
+    semanticSitesComplete: sites.semanticSitesComplete ?? undefined,
   });
 
   return {
     resolved: true,
-    supported,
-    identity: {
-      logicalPath: installation.logicalPath,
-      canonicalPath: installation.canonicalPath,
-      discoverySource: installation.discoverySource,
-      installationKind: installation.installationKind,
-      executableType: installation.executableType,
-      version: installation.version,
-    },
+    supported: true,
+    identity: identitySection(installation),
     leverframe: { schemaVersion: 2, transformVersion: currentTransformVersion() },
-    manifest: manifest ? {
-      present: true,
-      generation: manifest.generation,
-      claudeVersion: manifest.claudeVersion,
-      configHash: manifest.configHash,
-      baselineSha256: manifest.baselineSha256,
-      baselinePath: manifest.baselinePath,
-      baselinePresent: existsSync(manifest.baselinePath),
-      patchedSha256: manifest.patchedSha256,
-      patchedSize: manifest.patchedSize,
-      provenance: manifest.provenance,
-      completedAt: manifest.completedAt,
-    } : { present: false },
+    manifest: manifestSection(manifest),
     drift: {
       observedSha256,
       expectedPatchedSha256: manifest?.patchedSha256 ?? null,
       hashesMatch: manifest ? observedSha256 === manifest.patchedSha256 : null,
-
       injectionState: live.readable ? live.injection.state : null,
-      semanticSitesComplete,
+      semanticSitesComplete: sites.semanticSitesComplete,
     },
-    transaction: journal ? {
-      pending: journal.phase !== 'completed',
-      phase: journal.phase,
-      operation: journal.operation,
-      startedAt: journal.startedAt,
-      updatedAt: journal.updatedAt,
-    } : { pending: false },
+    transaction: transactionSection(readPatchJournal(installation.identity)),
     lock: { path: lockPath, held: existsSync(lockPath) },
-    migration: legacyRecovery.kind === 'unavailable'
-      ? {
-          ...legacyDiag,
-          eligible: false,
-          reason: legacyRecovery.reason,
-        }
-      : {
-          ...legacyDiag,
-          eligible: true,
-          mode: legacyRecovery.kind,
-        },
-    integration: {
-      status: !live.readable
-        ? 'unavailable'
-        : patchSites.some(site => site.status === 'FAIL') || (semanticSitesComplete === false && wantsSemanticVerdict)
-          ? 'incompatible'
-          : live.injection.state === 'present' && semanticSitesComplete !== false
-            ? 'integrated'
-            : 'compatible',
-      capabilities: patchSites,
-    },
+    migration: migrationSection(legacy !== null, legacyRecovery),
+    integration: { status: integrationStatus(live, sites), capabilities: sites.patchSites },
     state,
     nextAction: nextActionFor(state, legacyRecovery, live.error),
   };

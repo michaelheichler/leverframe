@@ -229,9 +229,10 @@ ${pc.bold('Examples:')}
 
 export function patchHelpText(): string {
   return `${pc.bold('leverframe patch')} v${VERSION}
-Patch the installed Claude Code binary so leverframe favorites and aliases are
-first-class: accepted by the Agent tool, listed in /model, resolved to their
-real ids, and reporting the correct context window.
+Patch the installed Claude Code binary so your provider catalog models,
+favorites, and aliases are first-class: accepted by the Agent tool, listed in
+/model, resolved to their real ids, and reporting the correct context window.
+It patches the same model set as \`leverframe claude\`.
 
 ${pc.bold('Usage:')}
   leverframe patch
