@@ -238,7 +238,7 @@ export async function runPatchCommandV2(
     presenter.error(unsupportedClaudeCodeBinaryPatchingMessage(installation.version));
     return 1;
   }
-  const catalogProviders = opts.freshProviders ?? await loadStoredRegistryProviders({ agent: 'claude' });
+  const catalogProviders = opts.freshProviders ?? (await loadStoredRegistryProviders({ agent: 'claude' })).providers;
   let lockAcquired = false;
   return withPatchTargetLock(installation.identity, async () => {
     lockAcquired = true;

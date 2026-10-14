@@ -246,8 +246,9 @@ ${pc.bold('Options:')}
   --restore     Restore the pristine (unpatched) Claude Code binary
   --trace       Show per-patch-site results (OK/SKIP/FAIL)
   --diagnose    Read-only, network-free report: resolved installation, patch
-                state, baseline, drift, pending transaction, lock, and legacy
-                migration eligibility. Never modifies anything.
+                state, baseline, drift, pending transaction, lock, legacy
+                migration eligibility, and the cached model catalog. Never
+                modifies anything or refreshes credentials.
   --json        With --diagnose, print the report as ANSI-free JSON
   --target <path>
                 Pin an explicit Claude Code installation instead of the usual

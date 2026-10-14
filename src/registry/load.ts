@@ -42,17 +42,25 @@ export async function loadRegistryProviders(
     }));
 }
 
+export interface StoredRegistryCatalog {
+  providers: LocalProvider[];
+  refreshDue: string[];
+}
+
 /** Because patch diagnostics must stay read-only and network-free. */
 export async function loadStoredRegistryProviders(
   opts?: { agent?: CompatibilityAgent },
-): Promise<LocalProvider[]> {
+): Promise<StoredRegistryCatalog> {
   const registry = loadRegistry();
   const keys = new Map<string, string>();
+  const refreshDue: string[] = [];
   for (const provider of registry.providers) {
-    const key = await resolveStoredProviderCredential(provider.id, provider.authRef).catch(() => null);
-    if (key) keys.set(provider.id, key);
+    const stored = await resolveStoredProviderCredential(provider.id, provider.authRef)
+      .catch(() => ({ value: null, refreshDue: false }));
+    if (stored.value) keys.set(provider.id, stored.value);
+    if (stored.refreshDue) refreshDue.push(provider.id);
   }
-  return materializeRegistry(registry, provider => keys.get(provider.id) ?? null, opts);
+  return { providers: materializeRegistry(registry, provider => keys.get(provider.id) ?? null, opts), refreshDue };
 }
 
 export function loadRegistryProvidersSync(

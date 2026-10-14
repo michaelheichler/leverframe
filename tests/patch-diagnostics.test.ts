@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { savePreferences } from '../src/config.js';
 import { _credentialStoreInternals } from '../src/credential-store.js';
 import { resolveClaudeInstallation, type ClaudeInstallation } from '../src/claude-installation.js';
-import { diagnosePatchV2 } from '../src/patch-diagnostics.js';
+import { diagnosePatchV2, formatPatchDiagnosticsText } from '../src/patch-diagnostics.js';
 import { addLeverframeInjectionMarker, classifyLeverframeInjectionByHash } from '../src/patch-injection.js';
 import type { PatchPresenter } from '../src/patch-presenter.js';
 import { runLaunchPatchCheckV2, runPatchCommandV2 } from '../src/patch-reconcile.js';
@@ -214,6 +214,8 @@ describe('patch diagnostics after a fresh patch', () => {
 
     expect(exitCode).toBe(0);
     expect(report.state).toBe('patched');
+    expect(report.catalog).toEqual({ source: 'cache', refreshDue: ['openai'] });
+    expect(formatPatchDiagnosticsText(report)).toContainEqual(expect.stringMatching(/refreshes credentials for openai$/));
     expect(network).not.toHaveBeenCalled();
     expect(new Set(operations)).toEqual(new Set(['read']));
   });
@@ -236,6 +238,7 @@ describe('patch diagnostics after a fresh patch', () => {
 
     expect(exitCode).toBe(0);
     expect(report.state).toBe('patched');
+    expect(report.catalog).toEqual({ source: 'cache', refreshDue: [] });
   });
 
   it('keeps a launch with a selected model current when leverframe patch runs afterwards', async () => {

@@ -222,14 +222,29 @@ export async function resolveProviderCredential(
   return readProviderSecret(parsed.account, diag, options.rejectedAccessToken);
 }
 
+export interface StoredProviderCredential {
+  value: string | null;
+  refreshDue: boolean;
+}
+
+function storedOAuthRefreshDue(account: string, providerId: string, raw: string | null): boolean {
+  if (!raw || !oauthProviderIdFromAccount(account)) return false;
+  const credential = parseStoredOAuthCredential(raw.trim());
+  return credential !== null && oauthCredentialShouldRefresh(credential, providerId);
+}
+
 /** Because diagnostics must not refresh OAuth tokens over the network. */
-export async function resolveStoredProviderCredential(providerId: string, authRef: string): Promise<string | null> {
+export async function resolveStoredProviderCredential(
+  providerId: string,
+  authRef: string,
+): Promise<StoredProviderCredential> {
   const parsed = parseAuthRef(authRef);
-  if (!parsed || parsed.kind === 'none') return null;
+  if (!parsed || parsed.kind === 'none') return { value: null, refreshDue: false };
   const namespaced = readEnvCredential(leverframeKeyEnvVar(providerId));
-  if (namespaced) return namespaced;
-  if (parsed.kind === 'env') return readEnvCredential(parsed.varName);
-  return decodeProviderSecret(await peekStoredCredential(parsed.account));
+  if (namespaced) return { value: namespaced, refreshDue: false };
+  if (parsed.kind === 'env') return { value: readEnvCredential(parsed.varName), refreshDue: false };
+  const raw = await peekStoredCredential(parsed.account);
+  return { value: decodeProviderSecret(raw), refreshDue: storedOAuthRefreshDue(parsed.account, providerId, raw) };
 }
 
 export async function resolveProviderOAuthAccountId(

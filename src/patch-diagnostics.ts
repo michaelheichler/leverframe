@@ -90,6 +90,10 @@ export interface PatchDiagnosticsReport {
     status: 'unavailable' | 'compatible' | 'integrated' | 'incompatible';
     capabilities: PatchSiteResult[];
   };
+  catalog: {
+    source: 'cache' | 'none';
+    refreshDue: string[];
+  };
   state: PatchStateV2 | 'not_resolved';
   nextAction: string;
 }
@@ -148,6 +152,7 @@ function inertReport(
     drift: { observedSha256: null, expectedPatchedSha256: null, hashesMatch: null, injectionState: null, semanticSitesComplete: null },
     transaction: { pending: false },
     lock: { path: '', held: false },
+    catalog: { source: 'none', refreshDue: [] },
   };
 }
 
@@ -267,7 +272,8 @@ export async function diagnosePatchV2(
   const legacyRecovery = await inspectLegacyPatchRecovery({ installation, runtime, legacy });
   const observedSha256 = sha256File(installation.canonicalPath);
   const live = await runtime.inspect(installation.canonicalPath, manifest?.patchedSha256);
-  const desired = buildDesiredPatchConfig(await loadStoredRegistryProviders({ agent: 'claude' }));
+  const catalog = await loadStoredRegistryProviders({ agent: 'claude' });
+  const desired = buildDesiredPatchConfig(catalog.providers);
   const sites = await inspectPatchSites({ installation, runtime, live, observedSha256, manifest, config: desired.config });
   const state = evaluatePatchStateV2({
     installationVersion: installation.version,
@@ -294,6 +300,7 @@ export async function diagnosePatchV2(
     lock: { path: lockPath, held: existsSync(lockPath) },
     migration: migrationSection(legacy !== null, legacyRecovery),
     integration: { status: integrationStatus(live, sites), capabilities: sites.patchSites },
+    catalog: { source: 'cache', refreshDue: catalog.refreshDue },
     state,
     nextAction: nextActionFor(state, legacyRecovery, live.error),
   };
@@ -301,6 +308,11 @@ export async function diagnosePatchV2(
 
 function pad(label: string): string {
   return label.padEnd(22, ' ');
+}
+
+function catalogLine(catalog: PatchDiagnosticsReport['catalog']): string {
+  if (catalog.refreshDue.length === 0) return 'cached';
+  return `cached; the next launch refreshes credentials for ${catalog.refreshDue.join(', ')}`;
 }
 
 export function formatPatchDiagnosticsText(report: PatchDiagnosticsReport): string[] {
@@ -331,6 +343,7 @@ export function formatPatchDiagnosticsText(report: PatchDiagnosticsReport): stri
   lines.push(`${pad('transaction')}${report.transaction.pending ? `pending at ${report.transaction.phase} (${report.transaction.operation})` : 'none pending'}`);
   lines.push(`${pad('lock')}${report.lock.held ? `held (${report.lock.path})` : 'free'}`);
   lines.push(`${pad('legacy migration')}${report.migration.eligible ? `eligible - ${report.migration.mode}` : (report.migration.legacyManifestPresent ? `not eligible - ${report.migration.reason}` : 'no legacy state')}`);
+  lines.push(`${pad('model catalog')}${catalogLine(report.catalog)}`);
   lines.push(`${pad('state')}${report.state}`);
   lines.push(`${pad('next action')}${report.nextAction}`);
   if (report.integration.capabilities.length) {

@@ -194,7 +194,7 @@ Binary patching requires Claude Code 2.1.223 or newer. Native-binary tests verif
 
 Leverframe can rebuild a lost V2 manifest only from an independently verified pristine legacy backup. It never patches on top of unowned injected bytes.
 
-`leverframe patch --diagnose` prints a read-only, network-free report. The report covers the resolved installation, patch and manifest state, pending transaction, and exact legacy recovery mode. `--target` pins discovery to one binary for patching and diagnostics.
+`leverframe patch --diagnose` prints a read-only, network-free report. The report covers the resolved installation, patch and manifest state, pending transaction, and exact legacy recovery mode. Its model set comes from the cached catalog. It also names each provider with an expired OAuth credential. `--target` pins discovery to one binary for patching and diagnostics.
 
 `leverframe executions` inspects logs of interrupted or ambiguous provider executions in `~/.leverframe/state/executions`. The `list` and `show <scope-hash> <execution-id>` commands only display records.
 
