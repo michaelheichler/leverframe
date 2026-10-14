@@ -98,7 +98,7 @@ function temporaryCandidateRoot(): { home: string; appHome: string; config: stri
 }
 
 function withCandidateEnvironment<T>(root: ReturnType<typeof temporaryCandidateRoot>, run: () => T): T {
-  clearInheritedCredentialEnvs();
+  clearInheritedEnvs();
   vi.stubEnv('HOME', root.home);
   vi.stubEnv('CANDIDATE_HOME', root.home);
   vi.stubEnv('LEVERFRAME_HOME', root.appHome);
@@ -109,9 +109,15 @@ function withCandidateEnvironment<T>(root: ReturnType<typeof temporaryCandidateR
   return run();
 }
 
-function clearInheritedCredentialEnvs(): void {
+/** Because Leverframe-launched shells export unlisted LEVERFRAME_* vars. */
+function isInheritedCandidateEnv(name: string): boolean {
+  return name.startsWith('LEVERFRAME_') || name.startsWith('CANDIDATE_');
+}
+
+function clearInheritedEnvs(): void {
   for (const name of Object.keys(process.env)) {
-    if (/(?:api[_-]?key|auth(?:entication)?[_-]?(?:token|key)|access[_-]?token|refresh[_-]?token|secret|password|credential|cookie|bearer|oauth|keyring|ssh_auth_sock|npm[_-]?token|proxy|(?:^|[_-])(?:key|token)(?:$|[_-]))/i.test(name)) vi.stubEnv(name, undefined);
+    if (/(?:api[_-]?key|auth(?:entication)?[_-]?(?:token|key)|access[_-]?token|refresh[_-]?token|secret|password|credential|cookie|bearer|oauth|keyring|ssh_auth_sock|npm[_-]?token|proxy|(?:^|[_-])(?:key|token)(?:$|[_-]))/i.test(name)
+      || isInheritedCandidateEnv(name)) vi.stubEnv(name, undefined);
   }
 }
 
@@ -218,7 +224,7 @@ describe('candidate loopback transport', () => {
     const root = temporaryCandidateRoot();
     const env = candidateEnvironment(root);
     delete env.LEVERFRAME_CANDIDATE_MODE;
-    clearInheritedCredentialEnvs();
+    clearInheritedEnvs();
     for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
     const candidateModeGateError = new Error('Candidate mode requires LEVERFRAME_CANDIDATE_MODE=1');
     expect(() => materializeCandidateFixture(fullFixture() as unknown as ProviderRegistry, (registry, key) => {
@@ -233,7 +239,7 @@ describe('candidate loopback transport', () => {
   it('rejects inherited credential variables even when candidate controls are valid', () => {
     const root = temporaryCandidateRoot();
     writeFileSync(join(root.appHome, 'providers.json'), JSON.stringify(fixture()));
-    const env = candidateEnvironment(root, { OPENAI_API_KEY: 'inherited-secret' });
+    const env = candidateEnvironment(root, { OPENAI_API_KEY: 'inherited-dummy' });
     expect(() => validateCandidateLoopbackEnvironment(env)).toThrow(/credential|allowlist/i);
   });
 
@@ -266,7 +272,7 @@ describe('candidate loopback transport', () => {
   it('materializes all candidate routes with the constant credential and zero resolver calls', async () => {
     const root = temporaryCandidateRoot();
     writeFileSync(join(root.appHome, 'providers.json'), JSON.stringify(fullFixture()));
-    clearInheritedCredentialEnvs();
+    clearInheritedEnvs();
     vi.stubEnv('HOME', root.home);
     vi.stubEnv('CANDIDATE_HOME', root.home);
     vi.stubEnv('LEVERFRAME_HOME', root.appHome);
@@ -288,7 +294,7 @@ describe('candidate loopback transport', () => {
   it('persists the child resolver audit with zero counts and private mode', async () => {
     const root = temporaryCandidateRoot();
     writeFileSync(join(root.appHome, 'providers.json'), JSON.stringify(fullFixture()));
-    clearInheritedCredentialEnvs();
+    clearInheritedEnvs();
     vi.stubEnv('HOME', root.home);
     vi.stubEnv('CANDIDATE_HOME', root.home);
     vi.stubEnv('LEVERFRAME_HOME', root.appHome);
