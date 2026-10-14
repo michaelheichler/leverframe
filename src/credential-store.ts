@@ -10,6 +10,7 @@ import {
 import {
   deleteFallbackCredential,
   getCredentialFallbackPath,
+  peekFallbackCredential,
   readFallbackCredential,
   writeFallbackCredential,
 } from './credential-fallback-store.js';
@@ -136,16 +137,19 @@ function peekKeyringService(service: string, account: string): Promise<KeyringRe
   return _credentialStoreInternals.keyringOperation({ operation: 'peek', service, account });
 }
 
-/** Because diagnostics must not repair, migrate, or promote credentials. */
-export async function peekStoredCredential(account: string): Promise<string | null> {
-  const primary = await peekKeyringService(KEYRING_SERVICE, account);
-  if (!primary.ok && isIntegrityError(primary.error)) return null;
-  let fallback: string | null;
+function peekFallbackOrNull(account: string): string | null {
   try {
-    fallback = readFallbackCredential(account);
+    return peekFallbackCredential(account);
   } catch {
     return null;
   }
+}
+
+/** Because diagnostics must not repair, migrate, promote, or lock credentials. */
+export async function peekStoredCredential(account: string): Promise<string | null> {
+  const primary = await peekKeyringService(KEYRING_SERVICE, account);
+  if (!primary.ok && isIntegrityError(primary.error)) return null;
+  const fallback = peekFallbackOrNull(account);
   if (fallback !== null) return fallback;
   if (primary.ok && primary.deleted) return null;
   if (primary.ok && primary.value !== null) return primary.value;

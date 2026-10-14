@@ -62,6 +62,11 @@ export function readFallbackCredential(account: string, path = getCredentialFall
   return withFallbackLock(path, () => readFallbackFile(path).credentials[account] ?? null);
 }
 
+/** Lock-free because writers publish by atomic rename. */
+export function peekFallbackCredential(account: string, path = getCredentialFallbackPath()): string | null {
+  return readFallbackFile(path).credentials[account] ?? null;
+}
+
 export function writeFallbackCredential(account: string, value: string, path = getCredentialFallbackPath()): void {
   withFallbackLock(path, () => {
     const data = readFallbackFile(path);
