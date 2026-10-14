@@ -24,7 +24,7 @@ import {
 } from './patch-legacy-recovery.js';
 import { readPatchManifest as readLegacyManifest } from './patcher.js';
 import { buildDesiredPatchConfig, computePatchConfigHash } from './patcher.js';
-import { fetchProviderCatalog } from './provider-catalog.js';
+import { loadStoredRegistryProviders } from './registry/load.js';
 
 function sha256File(path: string): string | null {
   try {
@@ -267,7 +267,7 @@ export async function diagnosePatchV2(
   const legacyRecovery = await inspectLegacyPatchRecovery({ installation, runtime, legacy });
   const observedSha256 = sha256File(installation.canonicalPath);
   const live = await runtime.inspect(installation.canonicalPath, manifest?.patchedSha256);
-  const desired = buildDesiredPatchConfig(await fetchProviderCatalog({ agent: 'claude' }));
+  const desired = buildDesiredPatchConfig(await loadStoredRegistryProviders({ agent: 'claude' }));
   const sites = await inspectPatchSites({ installation, runtime, live, observedSha256, manifest, config: desired.config });
   const state = evaluatePatchStateV2({
     installationVersion: installation.version,

@@ -1,4 +1,9 @@
-import { resolveProviderCredential, resolveProviderOAuthAccountId, resolveProviderOAuthProviderData } from '../env.js';
+import {
+  resolveProviderCredential,
+  resolveProviderOAuthAccountId,
+  resolveProviderOAuthProviderData,
+  resolveStoredProviderCredential,
+} from '../env.js';
 import type { CompatibilityAgent } from '../model-compatibility.js';
 import type { LocalProvider } from '../types.js';
 import { materializeRegistry } from './materialize.js';
@@ -35,6 +40,19 @@ export async function loadRegistryProviders(
       oauthAccountId: oauthAccountIds.get(provider.id),
       providerData: oauthProviderData.get(provider.id),
     }));
+}
+
+/** Because patch diagnostics must stay read-only and network-free. */
+export async function loadStoredRegistryProviders(
+  opts?: { agent?: CompatibilityAgent },
+): Promise<LocalProvider[]> {
+  const registry = loadRegistry();
+  const keys = new Map<string, string>();
+  for (const provider of registry.providers) {
+    const key = await resolveStoredProviderCredential(provider.id, provider.authRef).catch(() => null);
+    if (key) keys.set(provider.id, key);
+  }
+  return materializeRegistry(registry, provider => keys.get(provider.id) ?? null, opts);
 }
 
 export function loadRegistryProvidersSync(

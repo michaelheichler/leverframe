@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { savePreferences } from '../src/config.js';
+import { _credentialStoreInternals } from '../src/credential-store.js';
 import { resolveClaudeInstallation, type ClaudeInstallation } from '../src/claude-installation.js';
 import { diagnosePatchV2 } from '../src/patch-diagnostics.js';
 import { addLeverframeInjectionMarker, classifyLeverframeInjectionByHash } from '../src/patch-injection.js';
@@ -78,7 +79,7 @@ function unreadableRuntime(): PatchRuntime {
   };
 }
 
-function seedRegistry(models: CachedModel[]): void {
+function seedRegistry(models: CachedModel[], authRef = 'env:LEVERFRAME_TEST_CATALOG_KEY'): void {
   vi.stubEnv('LEVERFRAME_TEST_CATALOG_KEY', 'catalog-key');
   saveRegistry({
     ...loadRegistry(),
@@ -87,7 +88,7 @@ function seedRegistry(models: CachedModel[]): void {
       templateId: 'openai',
       name: 'OpenAI',
       enabled: true,
-      authRef: 'env:LEVERFRAME_TEST_CATALOG_KEY',
+      authRef,
       api: { npm: '@ai-sdk/openai' },
       modelsCache: { fetchedAt: '2026-10-14T00:00:00.000Z', models },
       addedAt: '2026-10-14T00:00:00.000Z',
@@ -100,6 +101,7 @@ const roots: string[] = [];
 const previousHome = process.env['LEVERFRAME_HOME'];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
@@ -186,7 +188,36 @@ function cliPatch(installation: ClaudeInstallation): Promise<number> {
   return runPatchCommandV2({ installation, runtime: runtime() }, silentPresenter);
 }
 
+const OAUTH_ACCOUNT = 'oauth:provider:openai';
+
+function stubExpiredOAuthKeyring(): string[] {
+  const expired = JSON.stringify({ type: 'oauth', access: 'expired-dummy', refresh: 'refresh-dummy', expires: 0 });
+  const operations: string[] = [];
+  vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockImplementation(async input => {
+    operations.push(input.operation);
+    const stored = input.operation === 'read' && input.service === 'leverframe' && input.account === OAUTH_ACCOUNT;
+    return { ok: true, value: stored ? expired : null };
+  });
+  return operations;
+}
+
 describe('patch diagnostics after a fresh patch', () => {
+  it('reads an expired OAuth credential without refreshing or rewriting it', async () => {
+    const path = prepareTarget('leverframe-diagnostics-oauth-');
+    seedRegistry([catalogModel('favorite')], `keyring:${OAUTH_ACCOUNT}`);
+    savePreferences({ favoriteModels: [{ providerId: 'openai', modelId: 'favorite' }] });
+    const operations = stubExpiredOAuthKeyring();
+    const network = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network disabled'));
+    const exitCode = await cliPatch(resolveFixtureInstallation(path));
+
+    const report = await diagnosePatchV2(path, runtime());
+
+    expect(exitCode).toBe(0);
+    expect(report.state).toBe('patched');
+    expect(network).not.toHaveBeenCalled();
+    expect(new Set(operations)).toEqual(new Set(['read']));
+  });
+
   it('reports the patch current right after a launch patched every catalog model', async () => {
     const fixture = prepareCatalogFixture();
     await launchPatch(fixture.installation);

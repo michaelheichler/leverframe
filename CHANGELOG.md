@@ -11,7 +11,7 @@ This changelog records notable changes to Leverframe.
 ### Fixed
 
 - Claude Code 2.1.292 patches again. The Agent call takes an `enclosingToolUseId` parameter, and the session effort reader takes a defaulted `withHold` options parameter. Both routing anchors accept the old and the new shapes.
-- `leverframe patch --diagnose` reports `patched` right after a patch. It no longer reports `config_stale` after every `leverframe claude` launch. Diagnose and `leverframe patch` build the desired config from the provider catalog, the same model set the launch patches.
+- `leverframe patch --diagnose` reports `patched` right after a patch. It no longer reports `config_stale` after every `leverframe claude` launch. Diagnose and `leverframe patch` build the desired config from the provider catalog, the same model set the launch patches. Both read stored credentials without an OAuth refresh, a keyring repair, or a legacy migration, so diagnose stays read-only and network-free.
 - A launch with a selected model keeps the full catalog in the patch. Launch modes and `leverframe patch` no longer re-patch each other.
 - The test suite passes inside a shell launched by Leverframe. The candidate transport tests clear inherited `LEVERFRAME_*` variables.
 

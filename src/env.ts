@@ -10,6 +10,7 @@ import { refreshStoredOAuthCredential, oauthCredentialShouldRefresh } from './oa
 import type { ConflictInfo } from './types.js';
 import {
   deleteStoredCredential,
+  peekStoredCredential,
   readStoredCredential,
   writeStoredCredential,
 } from './credential-store.js';
@@ -219,6 +220,16 @@ export async function resolveProviderCredential(
   }
 
   return readProviderSecret(parsed.account, diag, options.rejectedAccessToken);
+}
+
+/** Because diagnostics must not refresh OAuth tokens over the network. */
+export async function resolveStoredProviderCredential(providerId: string, authRef: string): Promise<string | null> {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind === 'none') return null;
+  const namespaced = readEnvCredential(leverframeKeyEnvVar(providerId));
+  if (namespaced) return namespaced;
+  if (parsed.kind === 'env') return readEnvCredential(parsed.varName);
+  return decodeProviderSecret(await peekStoredCredential(parsed.account));
 }
 
 export async function resolveProviderOAuthAccountId(

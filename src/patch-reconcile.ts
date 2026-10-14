@@ -37,7 +37,7 @@ import {
   type LegacyPatchRecoveryInspection,
 } from './patch-legacy-recovery.js';
 import { buildDesiredPatchConfig, computePatchConfigHash, type DesiredPatchConfig } from './patcher.js';
-import { fetchProviderCatalog } from './provider-catalog.js';
+import { loadStoredRegistryProviders } from './registry/load.js';
 import type { FavoriteModel, LocalProvider } from './types.js';
 
 export { migrateLegacyStateIfVerified } from './patch-legacy-recovery.js';
@@ -238,7 +238,7 @@ export async function runPatchCommandV2(
     presenter.error(unsupportedClaudeCodeBinaryPatchingMessage(installation.version));
     return 1;
   }
-  const catalogProviders = opts.freshProviders ?? await fetchProviderCatalog({ agent: 'claude' });
+  const catalogProviders = opts.freshProviders ?? await loadStoredRegistryProviders({ agent: 'claude' });
   let lockAcquired = false;
   return withPatchTargetLock(installation.identity, async () => {
     lockAcquired = true;
