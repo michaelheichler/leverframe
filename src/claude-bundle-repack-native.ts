@@ -319,32 +319,69 @@ export function computeBunSectionPlacement(params: {
   return { newVaddr, newFileOffset, alignedNewSize, extensionSize, compact };
 }
 
+export interface BunPayloadRange {
+  vaddr: bigint;
+  size: bigint;
+}
+
+// Payload bytes can match the address, so only aligned slots outside count.
+function isBunCompiledSlot(address: bigint, payload: BunPayloadRange): boolean {
+  const insidePayload = address >= payload.vaddr && address < payload.vaddr + payload.size;
+  return address % 8n === 0n && !insidePayload;
+}
+
 export function findUniqueBunCompiledPointer(
   segmentContent: Buffer,
   segmentVirtualAddress: bigint,
-  oldBunSectionVaddr: bigint,
+  payload: BunPayloadRange,
 ): bigint {
   const target = Buffer.alloc(8);
-  target.writeBigUInt64LE(oldBunSectionVaddr);
+  target.writeBigUInt64LE(payload.vaddr);
 
-  const firstOffset = segmentContent.indexOf(target);
-  if (firstOffset === -1) {
-    throw new Error(
-      `Could not find original BUN_COMPILED location in binary (searched for 0x${oldBunSectionVaddr.toString(16)})`,
-    );
+  const slots: bigint[] = [];
+  for (let offset = segmentContent.indexOf(target); offset !== -1;
+    offset = segmentContent.indexOf(target, offset + 1)) {
+    const address = segmentVirtualAddress + BigInt(offset);
+    if (isBunCompiledSlot(address, payload)) slots.push(address);
   }
 
-  const secondOffset = segmentContent.indexOf(target, firstOffset + 1);
-  if (secondOffset !== -1) {
-    const firstAddress = segmentVirtualAddress + BigInt(firstOffset);
-    const secondAddress = segmentVirtualAddress + BigInt(secondOffset);
+  const [first, second] = slots;
+  if (first === undefined) {
+    throw new Error(
+      `Could not find original BUN_COMPILED location in binary (searched for 0x${payload.vaddr.toString(16)})`,
+    );
+  }
+  if (second !== undefined) {
     throw new Error(
       `Found multiple BUN_COMPILED locations in writable ELF segment `
-      + `(0x${firstAddress.toString(16)} and 0x${secondAddress.toString(16)})`,
+      + `(0x${first.toString(16)} and 0x${second.toString(16)})`,
     );
   }
 
-  return segmentVirtualAddress + BigInt(firstOffset);
+  return first;
+}
+
+function writableLoadSegment(elfBinary: LIEF.ELF.Binary): LIEF.ELF.Segment {
+  const rwSegment = elfBinary
+    .segments()
+    .find(s => s.type === 'LOAD' && (s.flags & 2) !== 0);
+  if (!rwSegment) {
+    throw new Error('No writable ELF PT_LOAD segment found');
+  }
+  return rwSegment;
+}
+
+function topmostLoadEndAboveWritable(elfBinary: LIEF.ELF.Binary, rwVirtualAddress: bigint): bigint {
+  const loadSegments = elfBinary.segments().filter(s => s.type === 'LOAD');
+  if (loadSegments.some(s => BigInt(s.virtualAddress) > rwVirtualAddress)) {
+    throw new Error(
+      'Writable ELF PT_LOAD segment is not topmost; refusing unsafe in-segment extension',
+    );
+  }
+  return loadSegments.reduce((max, s) => {
+    const end = BigInt(s.virtualAddress) + BigInt(s.virtualSize);
+    return end > max ? end : max;
+  }, 0n);
 }
 
 export function repackELFSection(
@@ -360,59 +397,31 @@ export function repackELFSection(
       throw new Error('.bun section not found');
     }
 
-    const rwSegment = elfBinary
-      .segments()
-      .find(s => s.type === 'LOAD' && (s.flags & 2) !== 0);
-    if (!rwSegment) {
-      throw new Error('No writable ELF PT_LOAD segment found');
-    }
-
+    const rwSegment = writableLoadSegment(elfBinary);
     const newSectionData = buildSectionData(newBunBuffer, sectionHeaderSize);
-    const oldBunSectionVaddr = bunSection.virtualAddress;
-
-    const rwContent = rwSegment.content;
-    const rwVaddrStart = rwSegment.virtualAddress;
+    const newContentSize = BigInt(newSectionData.length);
     const bunCompiledVaddr = findUniqueBunCompiledPointer(
-      rwContent,
-      rwVaddrStart,
-      oldBunSectionVaddr,
+      rwSegment.content,
+      BigInt(rwSegment.virtualAddress),
+      { vaddr: BigInt(bunSection.virtualAddress), size: BigInt(bunSection.size) },
     );
 
-    const pageSize = elfBinary.pageSize();
-    const newContentSize = BigInt(newSectionData.length);
-    const loadSegments = elfBinary.segments().filter(s => s.type === 'LOAD');
-    const rwVirtualAddress = BigInt(rwSegment.virtualAddress);
-    if (loadSegments.some(s => BigInt(s.virtualAddress) > rwVirtualAddress)) {
-      throw new Error(
-        'Writable ELF PT_LOAD segment is not topmost; refusing unsafe in-segment extension',
-      );
-    }
-    const topmostLoadEnd = loadSegments.reduce((max, s) => {
-      const end = BigInt(s.virtualAddress) + BigInt(s.virtualSize);
-      return end > max ? end : max;
-    }, 0n);
-
     const placement = computeBunSectionPlacement({
-      rwVirtualAddress,
+      rwVirtualAddress: BigInt(rwSegment.virtualAddress),
       rwVirtualSize: BigInt(rwSegment.virtualSize),
       rwFileOffset: BigInt(rwSegment.fileOffset),
       rwFileSize: BigInt(rwSegment.fileSize),
-      topmostLoadEnd,
+      topmostLoadEnd: topmostLoadEndAboveWritable(elfBinary, BigInt(rwSegment.virtualAddress)),
       newContentSize,
-      pageSize: BigInt(pageSize),
+      pageSize: BigInt(elfBinary.pageSize()),
     });
     const { newVaddr, newFileOffset, extensionSize } = placement;
     if (extensionSize < 0n) {
-      throw new Error(
-        'New .bun location overlaps existing writable ELF segment'
-      );
+      throw new Error('New .bun location overlaps existing writable ELF segment');
     }
 
-    if (extensionSize > 0n) {
-      const extendedSegment = elfBinary.extend(rwSegment, extensionSize);
-      if (!extendedSegment) {
-        throw new Error('Failed to extend writable ELF PT_LOAD segment');
-      }
+    if (extensionSize > 0n && !elfBinary.extend(rwSegment, extensionSize)) {
+      throw new Error('Failed to extend writable ELF PT_LOAD segment');
     }
 
     bunSection.fileOffset = newFileOffset;

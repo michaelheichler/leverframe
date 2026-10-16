@@ -6,6 +6,12 @@ This changelog records notable changes to Leverframe.
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-10-16
+
+### Fixed
+
+- `leverframe patch` works on a Linux binary that tweakcc already repacked. The old and the new `.bun` payloads contain the 8 bytes of the payload address, so the BUN_COMPILED search found 3 matches. The search now accepts only an 8-byte-aligned slot outside the current payload.
+
 ## [0.4.8] - 2026-10-16
 
 ### Fixed

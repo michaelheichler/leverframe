@@ -86,7 +86,7 @@ describe('native binary repacking safety', () => {
     expect(findUniqueBunCompiledPointer(
       segment,
       segmentVirtualAddress,
-      bunSectionVirtualAddress,
+      { vaddr: bunSectionVirtualAddress, size: 0x1000n },
     )).toBe(pointerVirtualAddress);
   });
 
@@ -99,7 +99,7 @@ describe('native binary repacking safety', () => {
     expect(() => findUniqueBunCompiledPointer(
       Buffer.alloc(64),
       segmentVirtualAddress,
-      bunSectionVirtualAddress,
+      { vaddr: bunSectionVirtualAddress, size: 0x1000n },
     )).toThrow(/Could not find original BUN_COMPILED/);
 
     const ambiguous = Buffer.alloc(64);
@@ -108,7 +108,7 @@ describe('native binary repacking safety', () => {
     expect(() => findUniqueBunCompiledPointer(
       ambiguous,
       segmentVirtualAddress,
-      bunSectionVirtualAddress,
+      { vaddr: bunSectionVirtualAddress, size: 0x1000n },
     )).toThrow(/multiple BUN_COMPILED locations/);
   });
 
