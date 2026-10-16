@@ -293,9 +293,10 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     } else {
       applyOnce(
         RESUME_MODEL_NAME,
-        /!\(([\w$]+)\.has\(([\w$]+)\(([\w$]+)\)\)\|\|([\w$]+)\(\3\)\|\|([\w$]+)\(\3\)===([\w$]+)\)\?"unknown_family":!([\w$]+)\(\3\)&&!([\w$]+)\(\3\)\?"not_allowed":([\w$]+)\(\3\)\?"retired":void 0;/,
-        (_m, r, Eo, a, tJe, dd, o, Ek, vc, ypr) =>
-          `!(${r!}.has(${Eo!}(${a!}))||${tJe!}(${a!})||${dd!}(${a!})===${o!}||${RESUME_MODEL_MARKER}${vc!}(${a!}))?"unknown_family":!${Ek!}(${a!})&&!${vc!}(${a!})?"not_allowed":${ypr!}(${a!})?"retired":void 0;`,
+        // Free-form middle terms, because 2.1.301 adds a guarded family check.
+        /!\(([\w$]+)\.has\(([\w$]+)\(([\w$]+)\)\)((?:\|\|[^?;]+?)?)\|\|([\w$]+)\(\3\)===([\w$]+)\)\?"unknown_family":!([\w$]+)\(\3\)&&!([\w$]+)\(\3\)\?"not_allowed":([\w$]+)\(\3\)\?"retired":void 0;/,
+        (_m, r, Eo, a, middle, dd, o, Ek, vc, ypr) =>
+          `!(${r!}.has(${Eo!}(${a!}))${middle!}||${dd!}(${a!})===${o!}||${RESUME_MODEL_MARKER}${vc!}(${a!}))?"unknown_family":!${Ek!}(${a!})&&!${vc!}(${a!})?"not_allowed":${ypr!}(${a!})?"retired":void 0;`,
         { marker: RESUME_MODEL_MARKER, required: false }
       );
     }

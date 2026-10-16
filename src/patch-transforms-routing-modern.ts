@@ -6,8 +6,8 @@ const IDENT = '[A-Za-z_$][\\w$]*';
 const START = '/*ccpatch:routing-v3:start*/';
 const END = '/*ccpatch:routing-v3:end*/';
 const CALL = /async call\(([\w$]+),([\w$]+),([\w$]+),([\w$]+),([\w$]+)\)\{let\{subagent_type:/;
-// Because builds before 2.1.292 omit enclosingToolUseId, its group is optional.
-const CALL_280 = /async function [\w$]+\(\{agentInput:([\w$]+),toolUseContext:([\w$]+),canUseTool:([\w$]+),assistantMessage:([\w$]+),onProgress:([\w$]+)(?:,enclosingToolUseId:[\w$]+)?\}\)\{let\{subagent_type:/;
+// Optional, because timing is new in 2.1.301 and enclosingToolUseId in 2.1.292.
+const CALL_280 = /async function [\w$]+\(\{agentInput:([\w$]+),toolUseContext:([\w$]+),canUseTool:([\w$]+),assistantMessage:([\w$]+),onProgress:([\w$]+)(?:,timing:[\w$]+)?(?:,enclosingToolUseId:[\w$]+)?\}\)\{let\{subagent_type:/;
 const CONFIG = new RegExp('(?:let |,)(' + IDENT + ')=\\{agentDefinition:(' + IDENT + '),');
 const MODEL = new RegExp('(' + IDENT + ')=' + IDENT + '\\(' + IDENT + '\\((' + IDENT + '),(' + IDENT + ')\\),\\3,(' + IDENT + '),(' + IDENT + ')\\)');
 const CALLBACK = new RegExp('onModelRestricted:\\((' + IDENT + '),(' + IDENT + ')\\)=>(' + IDENT + ')\\?\\.\\(\\{type:"notification",notification:\\{key:`agent-model-restricted-[^`]+`,text:`[^`]+`,priority:"medium",color:"warning",timeoutMs:1e4\\}\\}\\)');

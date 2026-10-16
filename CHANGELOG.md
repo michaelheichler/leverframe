@@ -6,6 +6,13 @@ This changelog records notable changes to Leverframe.
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-10-16
+
+### Fixed
+
+- `leverframe patch` supports Claude Code 2.1.301. The Agent call signature in 2.1.301 has a new `timing` parameter, so the routing notice and the agent row display did not find their anchor.
+- The session-restore allowlist patch accepts the family check in 2.1.301, which adds a guarded term before the last comparison.
+
 ## [0.4.7] - 2026-10-14
 
 ### Fixed
