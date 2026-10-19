@@ -202,25 +202,19 @@ Leverframe can rebuild a lost V2 manifest only from an independently verified pr
 
 For agents view and background-agent setup, see [docs/background-agents.md](docs/background-agents.md).
 
-### Headroom through claudeplus
+### claudeplus
 
-The packaged `claudeplus` command runs Claude Code through Headroom, then Leverframe's HTTP proxy. Native Claude models use the existing Anthropic subscription login. External models use Leverframe routes and aliases. Plain `claude` keeps its normal routing.
+The packaged `claudeplus` command runs Claude Code through a private Leverframe HTTP proxy for each session. Native Claude models use the existing Anthropic subscription login. External models use Leverframe routes and aliases. Plain `claude` keeps its normal routing.
 
 ```bash
 claudeplus --dangerously-skip-permissions
 ```
 
-The launcher resolves `claude`, `headroom`, and `leverframe` from PATH. Set `CLAUDEPLUS_CLAUDE_PATH`, `CLAUDEPLUS_HEADROOM_PATH`, or `CLAUDEPLUS_LEVERFRAME_PATH` to select another executable. It respects `LEVERFRAME_HOME`.
+The launcher resolves `claude` and `leverframe` from PATH. Set `CLAUDEPLUS_CLAUDE_PATH` or `CLAUDEPLUS_LEVERFRAME_PATH` to select another executable. It respects `LEVERFRAME_HOME`.
 
-It starts `leverframe server --proxy --prepare-claude` to prepare Claude and proxy routes from the same fresh catalog before accepting requests. Headroom receives the confirmed model limits. Each invocation gets its own ports, processes, settings, and log directory. A startup lock prevents concurrent launches from patching Claude or selecting ports at the same time. Private per-session settings pin the proxy connection, and startup prints the log path and dashboard address.
+It starts `leverframe server --proxy --prepare-claude` to prepare Claude and proxy routes from the same fresh catalog before accepting requests. Each invocation gets its own port, process, settings, and log directory. A startup lock prevents concurrent launches from patching Claude or selecting ports at the same time. Private per-session settings pin the proxy connection and the Leverframe CA, and startup prints the log path.
 
-The launcher removes inherited `CLAUDE_CODE_MAX_CONTEXT_TOKENS` overrides and masks settings-supplied overrides in its private session settings, without rewriting your saved configuration. Context limits remain provider-controlled rather than globally forced. Headroom receives a startup snapshot. Restart the session to pick up later metadata changes.
-
-The proxy keeps the launcher as its embedding entrypoint so Headroom's macOS self-restart does not discard the context-mode adapter.
-
-Headroom runs in cache mode, which freezes prior turns to preserve prefix caching, with MCP retrieval available for compressed content. Both proxies allow 600 seconds between output chunks. Native Anthropic server-side search remains available, while external requests expand deferred tools if no executable client search tool exists. Actual savings depend on the workload and provider cache behavior. See the [Headroom proxy documentation](https://github.com/headroomlabs-ai/headroom/blob/main/docs/content/docs/proxy.mdx).
-
-The launcher uses Headroom's Python environment. The launcher's Headroom adapter preserves confirmed maximum-context selections when Headroom normalizes an external model's legacy `[1m]` suffix.
+The launcher removes inherited `CLAUDE_CODE_MAX_CONTEXT_TOKENS` overrides and masks settings-supplied overrides in its private session settings, without rewriting your saved configuration. Context limits remain provider-controlled rather than globally forced. The proxy allows 600 seconds between output chunks.
 
 ## Configuration and compatibility
 

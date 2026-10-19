@@ -5,19 +5,38 @@ import stat
 import subprocess
 import sys
 import tempfile
-from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("claudeplus", ROOT / "scripts/claudeplus.py")
-launcher = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(launcher)
+PROXY_URL = "http://leverframe:fixture@127.0.0.1:3128"
+CA_PATH = "/tmp/leverframe-ca.pem"
+
+
+def load_launcher() -> object:
+    spec = importlib.util.spec_from_file_location("claudeplus", ROOT / "scripts/claudeplus.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+launcher = load_launcher()
+PROXY = launcher.Proxy(PROXY_URL, CA_PATH)
+
+
+def critical_section_interval(output: str) -> tuple:
+    lines = output.splitlines()
+    return [line.split()[0] for line in lines], (int(lines[0].split()[1]), int(lines[1].split()[1]))
+
+
+def generated_settings_env(settings_args: list, env: dict, directory: str) -> dict:
+    args = launcher.claude_arguments(settings_args, env, Path(directory))
+    return json.loads(Path(args[1]).read_text())["env"]
 
 
 class ClaudeplusTests(unittest.TestCase):
-    def test_two_launchers_serialize_service_startup(self):
+    def test_two_launchers_serialize_service_startup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             script = (
                 "import sys, time\n"
@@ -34,92 +53,62 @@ class ClaudeplusTests(unittest.TestCase):
             second = subprocess.Popen(command, stdout=subprocess.PIPE, text=True)
             first_output, _ = first.communicate(timeout=10)
             second_output, _ = second.communicate(timeout=10)
-            self.assertEqual((first.returncode, second.returncode), (0, 0))
-            intervals = []
-            for output in (first_output, second_output):
-                lines = output.splitlines()
-                self.assertEqual([line.split()[0] for line in lines], ["enter", "exit"])
-                intervals.append((int(lines[0].split()[1]), int(lines[1].split()[1])))
-            self.assertTrue(intervals[0][1] <= intervals[1][0] or intervals[1][1] <= intervals[0][0])
+        first_events, first_interval = critical_section_interval(first_output)
+        second_events, second_interval = critical_section_interval(second_output)
+        self.assertEqual((first.returncode, second.returncode), (0, 0))
+        self.assertEqual((first_events, second_events), (["enter", "exit"], ["enter", "exit"]))
+        self.assertTrue(first_interval[1] <= second_interval[0] or second_interval[1] <= first_interval[0])
 
-    def test_headroom_keeps_embedding_entrypoint_and_installs_context_adapter(self):
-        provider = SimpleNamespace(
-            sanitize_anthropic_model_id=lambda model: model.removesuffix("[1m]"),
-            has_context_1m_suffix=lambda model: model.endswith("[1m]"),
-        )
-        handler = SimpleNamespace()
-        cli = Mock(return_value=0)
-        modules = {
-            "headroom.providers": SimpleNamespace(anthropic=provider),
-            "headroom.proxy.handlers": SimpleNamespace(anthropic=handler),
-            "headroom.cli": SimpleNamespace(main=cli),
-        }
-        with patch.dict(launcher.sys.modules, modules), \
-                patch.dict(launcher.os.environ, {"LEVERFRAME_HEADROOM_CONTEXT_WINDOWS": '{"atlas[maximum]":1048576}'}), \
-                patch.object(launcher.sys, "argv", ["launcher.py", "--headroom-proxy", "proxy", "--mode", "cache"]):
-            self.assertEqual(launcher.headroom_proxy(), 0)
-            self.assertEqual(launcher.sys.argv, [str(ROOT / "scripts/claudeplus.py"), "proxy", "--mode", "cache"])
-            cli.assert_called_once_with(prog_name="headroom")
-            self.assertIs(handler.sanitize_anthropic_model_id, provider.sanitize_anthropic_model_id)
-            self.assertEqual(handler.sanitize_anthropic_model_id("atlas[1m]"), "atlas[maximum]")
-
-    def test_headroom_preserves_confirmed_external_maximum_context(self):
-        provider = SimpleNamespace(
-            sanitize_anthropic_model_id=lambda model: model.removesuffix("[1m]"),
-            has_context_1m_suffix=lambda model: model.endswith("[1m]"),
-        )
-        windows = {"atlas": 272000, "atlas[maximum]": 1048576, "atlas[1m]": 1048576,
-                   "broad": 1000000, "broad[maximum]": 2000000, "broad[1m]": 1000000}
-        launcher.preserve_headroom_context_modes(provider, windows)
-        self.assertEqual(provider.sanitize_anthropic_model_id("atlas[1m]"), "atlas[maximum]")
-        self.assertEqual(provider.sanitize_anthropic_model_id("atlas[maximum]"), "atlas[maximum]")
-        self.assertEqual(provider.sanitize_anthropic_model_id("atlas"), "atlas")
-        self.assertEqual(provider.sanitize_anthropic_model_id("claude-opus-4-8[1m]"), "claude-opus-4-8")
-        self.assertEqual(provider.sanitize_anthropic_model_id("unknown[1m]"), "unknown")
-        self.assertEqual(provider.sanitize_anthropic_model_id("broad[1m]"), "broad")
-
-    def test_client_environment_preserves_auth_and_enables_large_models(self):
-        env = launcher.client_environment({"HTTP_PROXY": "old", "CLAUDE_CODE_OAUTH_TOKEN": "subscription-fixture"}, 8787)
-        self.assertNotIn("HTTP_PROXY", env)
+    def test_client_routes_anthropic_through_the_leverframe_proxy(self) -> None:
+        inherited = {"HTTP_PROXY": "old", "NO_PROXY": "api.anthropic.com", "CLAUDE_CODE_OAUTH_TOKEN": "subscription-fixture"}
+        env = launcher.client_environment(inherited, PROXY)
+        self.assertEqual({key: env[key] for key in launcher.PROXY_KEYS}, dict.fromkeys(launcher.PROXY_KEYS, PROXY_URL))
+        self.assertNotIn("NO_PROXY", env)
+        self.assertEqual(env["NODE_EXTRA_CA_CERTS"], CA_PATH)
         self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "subscription-fixture")
-        self.assertEqual(env["ANTHROPIC_BASE_URL"], "http://127.0.0.1:8787")
+        self.assertEqual(env["ANTHROPIC_BASE_URL"], "https://api.anthropic.com")
         self.assertEqual(env.get("CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"), "1")
         self.assertEqual(env["ENABLE_TOOL_SEARCH"], "auto")
 
-    def test_client_uses_proxy_auth_when_no_explicit_claude_credential_exists(self):
-        self.assertNotIn("ANTHROPIC_API_KEY", launcher.client_environment({}, 8787))
-        env = launcher.client_environment({}, 8787, bare=True)
+    def test_bare_client_uses_proxy_auth_only_without_an_explicit_credential(self) -> None:
+        self.assertNotIn("ANTHROPIC_API_KEY", launcher.client_environment({}, PROXY))
+        env = launcher.client_environment({}, PROXY, bare=True)
         self.assertEqual(env.get("ANTHROPIC_API_KEY"), "sk-ant-api03-leverframe-http-proxy")
-        for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
-            explicit = launcher.client_environment({key: "subscription-fixture"}, 8787, bare=True)
-            self.assertEqual(explicit[key], "subscription-fixture")
-            if key != "ANTHROPIC_API_KEY":
-                self.assertNotIn("ANTHROPIC_API_KEY", explicit)
 
-    def test_client_environment_removes_inherited_context_cap_without_mutating_parent(self):
+    def test_bare_client_keeps_each_explicit_credential(self) -> None:
+        for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
+            with self.subTest(key=key):
+                explicit = launcher.client_environment({key: "subscription-fixture"}, PROXY, bare=True)
+                self.assertEqual(explicit[key], "subscription-fixture")
+                self.assertEqual(explicit.get("ANTHROPIC_API_KEY", "subscription-fixture"), "subscription-fixture")
+
+    def test_client_environment_removes_inherited_context_cap_without_mutating_parent(self) -> None:
         inherited = {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000", "KEEP": "yes"}
-        env = launcher.client_environment(inherited, 8787)
+        env = launcher.client_environment(inherited, PROXY)
         self.assertNotIn("CLAUDE_CODE_MAX_CONTEXT_TOKENS", env)
         self.assertEqual(env["KEEP"], "yes")
         self.assertEqual(inherited["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "1000000")
 
-    def test_private_settings_mask_context_caps_without_rewriting_user_settings(self):
+    def test_private_settings_mask_context_caps_without_rewriting_user_settings(self) -> None:
+        original = json.dumps({"env": {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000", "KEEP": "yes"}})
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            existing = root / "user.json"
-            original = json.dumps({"env": {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000", "KEEP": "yes"}})
+            existing = Path(directory) / "user.json"
             existing.write_text(original)
-            for settings_args in ([], ["--settings", original], ["--settings", str(existing)]):
-                with self.subTest(settings_args=settings_args), tempfile.TemporaryDirectory(dir=root) as session:
-                    args = launcher.claude_arguments(settings_args, launcher.client_environment({}, 8787), Path(session))
-                    actual = json.loads(Path(args[1]).read_text())["env"]
-                    self.assertEqual(actual["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "")
-                    if settings_args:
-                        self.assertEqual(actual["KEEP"], "yes")
-            self.assertEqual(existing.read_text(), original)
+            from_json = generated_settings_env(["--settings", original], launcher.client_environment({}, PROXY), directory)
+            (Path(directory) / "claude-settings.json").unlink()
+            from_file = generated_settings_env(["--settings", str(existing)], launcher.client_environment({}, PROXY), directory)
+            unchanged = existing.read_text()
+        self.assertEqual((from_json["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], from_json["KEEP"]), ("", "yes"))
+        self.assertEqual((from_file["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], from_file["KEEP"]), ("", "yes"))
+        self.assertEqual(unchanged, original)
 
-    def test_settings_keep_user_values_and_pin_private_proxy_configuration(self):
-        env = launcher.client_environment({}, 8787)
+    def test_private_settings_mask_context_caps_without_user_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            actual = generated_settings_env([], launcher.client_environment({}, PROXY), directory)
+        self.assertEqual(actual["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "")
+
+    def test_settings_keep_user_values_and_pin_private_proxy_configuration(self) -> None:
+        env = launcher.client_environment({}, PROXY)
         env["LEVERFRAME_CONTEXT_SELECTION_BASE_URL"] = "http://127.0.0.1:3128"
         env["LEVERFRAME_CONTEXT_SELECTION_TOKEN"] = "private-runtime-token"
         settings = {"env": {"ANTHROPIC_BASE_URL": "http://old", "KEEP": "yes"}, "permissions": {"defaultMode": "plan"}}
@@ -127,88 +116,65 @@ class ClaudeplusTests(unittest.TestCase):
             args = launcher.claude_arguments(["--settings", json.dumps(settings), "--print", "hello"], env, Path(directory))
             config_file = Path(args[args.index("--settings") + 1])
             actual = json.loads(config_file.read_text())
-            self.assertEqual(actual["permissions"], settings["permissions"])
-            self.assertEqual(actual["env"]["KEEP"], "yes")
-            self.assertEqual(actual["env"]["ANTHROPIC_BASE_URL"], env["ANTHROPIC_BASE_URL"])
-            self.assertEqual(actual["env"]["LEVERFRAME_CONTEXT_SELECTION_TOKEN"], "private-runtime-token")
-            self.assertNotIn("private-runtime-token", " ".join(args))
-            self.assertEqual(stat.S_IMODE(config_file.stat().st_mode), 0o600)
-            self.assertEqual(args[-2:], ["--print", "hello"])
+            mode = stat.S_IMODE(config_file.stat().st_mode)
+        self.assertEqual(actual["permissions"], settings["permissions"])
+        self.assertEqual(actual["env"]["KEEP"], "yes")
+        self.assertEqual(actual["env"]["ANTHROPIC_BASE_URL"], "https://api.anthropic.com")
+        self.assertEqual(actual["env"]["LEVERFRAME_CONTEXT_SELECTION_TOKEN"], "private-runtime-token")
+        self.assertNotIn("private-runtime-token", " ".join(args))
+        self.assertNotIn("fixture", " ".join(args))
+        self.assertEqual(mode, 0o600)
+        self.assertEqual(args[-2:], ["--print", "hello"])
 
-    def test_accepts_a_settings_file_and_preserves_the_prompt_separator(self):
+    def test_accepts_a_settings_file_and_preserves_the_prompt_separator(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             existing = root / "user.json"
             existing.write_text('{"model":"fable"}')
-            args = launcher.claude_arguments([f"--settings={existing}", "--", "--settings", "literal"], launcher.client_environment({}, 8787), root)
+            args = launcher.claude_arguments([f"--settings={existing}", "--", "--settings", "literal"], launcher.client_environment({}, PROXY), root)
             actual = json.loads(Path(args[1]).read_text())
-            self.assertEqual(actual["model"], "fable")
-            self.assertEqual(args[-3:], ["--", "--settings", "literal"])
+        self.assertEqual(actual["model"], "fable")
+        self.assertEqual(args[-3:], ["--", "--settings", "literal"])
 
-    def test_headroom_uses_confirmed_limits_and_matches_the_proxy_timeout(self):
-        with tempfile.TemporaryDirectory() as directory, patch.object(launcher, "start_service") as start, patch.object(launcher.ssl, "create_default_context") as ssl_context:
-            ssl_context.return_value.get_ca_certs.return_value = []
-            inherited = {"HEADROOM_MODEL_LIMITS": '{"anthropic":{"context_limits":{"claude-sonnet-4-6[maximum]":1000000}}}'}
-            windows = {"atlas": 272000, "atlas[maximum]": 1048576}
-            launcher.start_headroom(inherited, "http://leverframe:fixture@127.0.0.1:3128", Path(directory), [], windows)
-            command, env = start.call_args.args[:2]
-            self.assertEqual(command[command.index("--mode") + 1], "cache")
-            self.assertEqual(command[command.index("--workers") + 1], "1")
-            self.assertEqual(env["HEADROOM_REQUEST_TIMEOUT"], "600")
-            self.assertEqual(env["HEADROOM_HTTP_PROXY"], "http://leverframe:fixture@127.0.0.1:3128")
-            self.assertEqual(json.loads(env["HEADROOM_MODEL_LIMITS"])["anthropic"]["context_limits"]["atlas[maximum]"], 1048576)
-            self.assertEqual(json.loads(env["LEVERFRAME_HEADROOM_CONTEXT_WINDOWS"]), windows)
-
-    def test_generated_settings_pin_the_proxy_path_and_native_backend(self):
-        settings = {"env": {"HTTPS_PROXY": "http://old", "CLAUDE_CODE_USE_VERTEX": "1", "KEEP": "yes"}}
-        env = launcher.client_environment(settings["env"], 8787)
+    def test_generated_settings_pin_the_proxy_path_and_native_backend(self) -> None:
+        settings = {"env": {"HTTPS_PROXY": "http://old", "NO_PROXY": "*", "CLAUDE_CODE_USE_VERTEX": "1", "KEEP": "yes"}}
+        env = launcher.client_environment(settings["env"], PROXY)
         with tempfile.TemporaryDirectory() as directory:
-            args = launcher.claude_arguments(["--settings", json.dumps(settings)], env, Path(directory))
-            actual = json.loads(Path(args[1]).read_text())["env"]
-            for key in launcher.PROXY_KEYS:
-                self.assertEqual(actual[key], "")
-            for key in ("CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_FOUNDRY"):
-                self.assertEqual(actual[key], "0")
-                self.assertEqual(env[key], "0")
-            self.assertEqual(actual["KEEP"], "yes")
+            actual = generated_settings_env(["--settings", json.dumps(settings)], env, directory)
+        backends = launcher.BACKEND_FLAGS
+        self.assertEqual({key: actual[key] for key in launcher.PROXY_KEYS}, dict.fromkeys(launcher.PROXY_KEYS, PROXY_URL))
+        self.assertEqual(actual["NO_PROXY"], "")
+        self.assertEqual(actual["NODE_EXTRA_CA_CERTS"], CA_PATH)
+        self.assertEqual({key: actual[key] for key in backends}, dict.fromkeys(backends, "0"))
+        self.assertEqual({key: env[key] for key in backends}, dict.fromkeys(backends, "0"))
+        self.assertEqual(actual["KEEP"], "yes")
 
-    def test_prepared_proxy_failure_cleans_up_without_launching_headroom_or_claude(self):
+    def test_prepared_proxy_failure_cleans_up_without_launching_claude(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch.object(launcher, "HOME_DIR", Path(directory)), \
                 patch.object(launcher, "start_leverframe", side_effect=RuntimeError("patch failed")), \
-                patch.object(launcher, "start_headroom") as headroom, \
                 patch.object(launcher.subprocess, "Popen") as child, \
                 patch.object(launcher, "stop_processes") as cleanup, \
                 patch.object(launcher.signal, "signal"):
             with self.assertRaisesRegex(RuntimeError, "patch failed"):
                 launcher.main()
-            headroom.assert_not_called()
-            child.assert_not_called()
-            cleanup.assert_called_once()
+        child.assert_not_called()
+        cleanup.assert_called_once_with([])
 
-    def test_proxy_startup_requests_preparation_for_the_native_claude_target(self):
-        runtime = [{"port": 3128, "pid": 321, "token": "fixture"}]
+    def test_proxy_startup_prepares_claude_and_returns_the_session_proxy(self) -> None:
+        runtime = [{"port": 3128, "pid": 321, "token": "fix ture", "caPath": "/tmp/ca.pem"}]
         with tempfile.TemporaryDirectory() as directory, patch.object(launcher, "APP_HOME", Path(directory)), \
                 patch.object(launcher, "free_port", return_value=3128), \
-                patch.object(launcher, "start_service", return_value=Mock(pid=321)) as start:
+                patch.object(launcher, "wait_ready"), \
+                patch.object(launcher.subprocess, "Popen", return_value=Mock(pid=321)) as start:
             (Path(directory) / "server-runtime.json").write_text(json.dumps(runtime))
-            launcher.start_leverframe({}, Path(directory), [])
-            command, env = start.call_args.args[:2]
-            self.assertIn("--prepare-claude", command)
-            self.assertIn("--proxy", command)
-            self.assertEqual(env["LEVERFRAME_CLAUDE_PATH"], str(launcher.CLAUDE))
-
-    def test_metadata_request_uses_the_local_proxy_token(self):
-        response = Mock()
-        response.read.return_value = b'{"contextWindows":{"atlas":272000}}'
-        response.__enter__ = Mock(return_value=response)
-        response.__exit__ = Mock(return_value=False)
-        with patch.object(launcher.urllib.request, "build_opener") as build:
-            build.return_value.open.return_value = response
-            windows = launcher.context_windows({"port": 3128, "token": "private-runtime-token"})
-            request = build.return_value.open.call_args.args[0]
-            self.assertEqual(request.full_url, "http://127.0.0.1:3128/v1/leverframe/context-metadata")
-            self.assertEqual(request.get_header("Authorization"), "Bearer private-runtime-token")
-            self.assertEqual(windows, {"atlas": 272000})
+            proxy, entry = launcher.start_leverframe({}, Path(directory), [])
+        command, env = start.call_args.args[0], start.call_args.kwargs["env"]
+        self.assertIn("--prepare-claude", command)
+        self.assertIn("--proxy", command)
+        self.assertEqual(env["LEVERFRAME_CLAUDE_PATH"], str(launcher.CLAUDE))
+        self.assertEqual(env["LEVERFRAME_OUTPUT_IDLE_TIMEOUT_MS"], "600000")
+        self.assertEqual(proxy, launcher.Proxy("http://leverframe:fix%20ture@127.0.0.1:3128", "/tmp/ca.pem"))
+        self.assertEqual(entry, runtime[0])
 
 
 if __name__ == "__main__":

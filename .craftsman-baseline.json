@@ -1,4 +1,5 @@
 [
+{"complexity":5,"fan_out":16,"file_lines":197,"ignores":0,"instrument":2,"max_fn_lines":24,"path":"scripts/claudeplus.py"},
 {"complexity":0,"fan_out":0,"file_lines":12,"ignores":0,"max_fn_lines":12,"path":"src/agent-io.ts"},
 {"complexity":6,"fan_out":0,"file_lines":81,"ignores":0,"max_fn_lines":23,"path":"src/anthropic-endpoints.ts"},
 {"complexity":10,"fan_out":2,"file_lines":182,"ignores":0,"max_fn_lines":91,"path":"src/atomic-file.ts"},
@@ -190,6 +191,7 @@
 {"complexity":0,"fan_out":3,"file_lines":24,"ignores":0,"max_fn_lines":24,"path":"tests/anthropic-effort-serialization.test.ts"},
 {"complexity":5,"fan_out":3,"file_lines":40,"ignores":0,"max_fn_lines":40,"path":"tests/checkpoint-publication-worker.test.ts"},
 {"complexity":2,"fan_out":7,"file_lines":64,"ignores":0,"max_fn_lines":9,"path":"tests/checkpoint-publication.test.ts"},
+{"complexity":3,"fan_out":9,"file_lines":180,"ignores":0,"instrument":2,"max_fn_lines":23,"path":"tests/claudeplus_test.py"},
 {"complexity":0,"fan_out":2,"file_lines":34,"ignores":0,"max_fn_lines":1,"path":"tests/cli-command-claude-discovery-failure.test.ts"},
 {"complexity":1,"fan_out":5,"file_lines":34,"ignores":0,"max_fn_lines":34,"path":"tests/config-lock-reclaim.test.ts"},
 {"complexity":0,"fan_out":4,"file_lines":602,"ignores":0,"max_fn_lines":5,"path":"tests/config.test.ts"},
