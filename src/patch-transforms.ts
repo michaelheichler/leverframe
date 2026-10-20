@@ -124,6 +124,8 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
   const fail = (message: string): never => {
     throw new PatchApplyError(message, report);
   };
+  const groups = (...values: Array<string | undefined>): string[] =>
+    values.map(value => value ?? fail('leverframe patch: anchor matched without a required capture group'));
 
   const capabilityKeys = (value: string): string[] => {
     const normalized = String(value).trim().toLowerCase();
@@ -312,8 +314,10 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
         RESUME_MODEL_NAME,
         // Free-form middle terms, because 2.1.301 adds a guarded family check.
         /!\(([\w$]+)\.has\(([\w$]+)\(([\w$]+)\)\)((?:\|\|[^?;]+?)?)\|\|([\w$]+)\(\3\)===([\w$]+)\)\?"unknown_family":!([\w$]+)\(\3\)&&!([\w$]+)\(\3\)\?"not_allowed":([\w$]+)\(\3\)\?"retired":void 0;/,
-        (_m, r, Eo, a, middle, dd, o, Ek, vc, ypr) =>
-          `!(${r!}.has(${Eo!}(${a!}))${middle!}||${dd!}(${a!})===${o!}||${RESUME_MODEL_MARKER}${vc!}(${a!}))?"unknown_family":!${Ek!}(${a!})&&!${vc!}(${a!})?"not_allowed":${ypr!}(${a!})?"retired":void 0;`,
+        (_m, ...captured) => {
+          const [r, Eo, a, middle, dd, o, Ek, vc, ypr] = groups(...captured.slice(0, 9));
+          return `!(${r}.has(${Eo}(${a}))${middle}||${dd}(${a})===${o}||${RESUME_MODEL_MARKER}${vc}(${a}))?"unknown_family":!${Ek}(${a})&&!${vc}(${a})?"not_allowed":${ypr}(${a})?"retired":void 0;`;
+        },
         { marker: RESUME_MODEL_MARKER, required: false }
       );
     }
@@ -378,7 +382,10 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
       applyOnce(
         'PATCH 5: model picker options',
         /(function [\w$]+\(e,[\w$]+,[\w$]+\)\{let [^{}]{0,400}?;for\(let [\w$]+ of [\w$]+\)[\w$]+\(e,[\w$]+,[\w$]+\);)(return e\})/,
-        (_m, head, tail) => head! + injection + tail!,
+        (_m, ...captured) => {
+          const [head, tail] = groups(captured[0], captured[1]);
+          return head + injection + tail;
+        },
         { required: false, noopIsSkip: true }
       );
     }
@@ -393,10 +400,12 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     applyOnce(
       'PATCH 4: Agent tool model description',
       /(describe\(`Optional model override for this agent[^`]*?)(`)/,
-      (_m, body, close) =>
-        body!.includes('Additional custom models')
-          ? body! + close!
-          : body! + ' Additional custom models: ' + listing + '.' + close!,
+      (_m, ...captured) => {
+        const [body, close] = groups(captured[0], captured[1]);
+        return body.includes('Additional custom models')
+          ? body + close
+          : body + ' Additional custom models: ' + listing + '.' + close;
+      },
       { required: false, noopIsSkip: true }
     );
   }
@@ -472,14 +481,17 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
       applyOnce(
         'PATCH 9: default effort (refresh)',
         /\/\*ccpatch:default-effort\*\/var _cce=Object\.assign\(Object\.create\(null\),\{[^{}]*\}\)\[String\(([\w$]+)\|\|""\)\.trim\(\)\.toLowerCase\(\)\];if\(_cce!==void 0\)return _cce;/,
-        (_m, arg) => snippet(arg!),
+        (_m, arg) => snippet(groups(arg).join('')),
         { required: true, noopIsSkip: true },
       );
     } else {
       applyOnce(
         'PATCH 9: default effort',
         /(function [\w$]+\(([\w$]+)\)\{)(return [\w$]+\([\w$]+\(\2\)\)\?\.default_effort\?\?"high"\})/,
-        (_m, head, arg, body) => head! + snippet(arg!) + body!,
+        (_m, ...captured) => {
+        const [head, arg, body] = groups(captured[0], captured[1], captured[2]);
+        return head + snippet(arg) + body;
+      },
         { required: true },
       );
     }
@@ -521,7 +533,7 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
           + '\\[String\\(([\\w$]+)\\|\\|""\\)\\.trim\\(\\)\\.toLowerCase\\(\\)\\];'
           + 'if\\(_ccv!==void 0\\)return _ccv;',
         ),
-        (_m, arg) => snippet(arg!),
+        (_m, arg) => snippet(groups(arg).join('')),
         { required: true, noopIsSkip: true },
       );
       return;
@@ -530,7 +542,10 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     applyOnce(
       name,
       anchor,
-      (_m, head, arg, body) => head! + snippet(arg!) + body!,
+      (_m, ...captured) => {
+        const [head, arg, body] = groups(captured[0], captured[1], captured[2]);
+        return head + snippet(arg) + body;
+      },
       { required: true },
     );
   }
