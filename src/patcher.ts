@@ -72,6 +72,8 @@ export interface PatchModelMeta {
 
 export interface PatchModelConfigOptions {
   includeContextModes?: boolean;
+
+  agentModels?: Array<{ providerId: string; modelId: string }>;
 }
 
 interface PatchMetadataModel {
@@ -150,6 +152,9 @@ export function buildPatchModelConfig(
   const unknownWindows: string[] = [];
   const provenance: Record<string, PatchContextProvenance> = {};
   const aliasByFavorite = new Map(aliases.map(a => [`${a.providerId}:${a.modelId}`, a.name]));
+  const agentKeys = options.agentModels === undefined
+    ? undefined
+    : new Set(options.agentModels.map(model => `${model.providerId}:${stripContextMarkers(model.modelId)}`));
 
   for (const favorite of favorites) {
     const id = stripOneMContextSuffix(httpProxyModelId(favorite.providerId, favorite.modelId));
@@ -187,6 +192,11 @@ export function buildPatchModelConfig(
     if (display) entry.display = display;
     const projectedEffort = projectNativeEffort(meta?.effort);
     if (projectedEffort) entry.effort = projectedEffort;
+    if (
+      agentKeys !== undefined
+      && !alias
+      && !agentKeys.has(`${favorite.providerId}:${stripContextMarkers(favorite.modelId)}`)
+    ) entry.pickerOnly = true;
     config[id] = entry;
   }
   return { config, unknownWindows, provenance };
@@ -208,6 +218,7 @@ export function computePatchConfigHash(
       entry.display ?? null,
       entry.effort ? [entry.effort.levels, entry.effort.defaultLevel] : null,
       entry.contextSelection === true,
+      entry.pickerOnly === true,
     ];
   });
   return createHash('sha256')
@@ -277,7 +288,9 @@ export function buildDesiredPatchConfig(
         return left.index - right.index;
       })
       .map(({ model }) => model);
-  const scopeModels = freshProviders === undefined ? favorites : freshModels;
+  const scopeModels = freshProviders === undefined
+    ? [...favorites, ...aliases.map(({ providerId, modelId }) => ({ providerId, modelId }))]
+    : freshModels;
   const requestedModels = selectedModel === undefined ? scopeModels : [selectedModel, ...scopeModels];
   const freshSelections = freshProviders === undefined
     ? requestedModels
@@ -290,7 +303,7 @@ export function buildDesiredPatchConfig(
     freshSelections,
     aliases,
     (providerId, modelId) => meta.get(`${providerId}:${modelId}`),
-    options,
+    { ...options, agentModels: favorites },
   );
 }
 

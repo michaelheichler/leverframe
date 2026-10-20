@@ -9,7 +9,7 @@ import { resolveClaudeInstallation, type ClaudeInstallation } from '../src/claud
 import { diagnosePatchV2, formatPatchDiagnosticsText } from '../src/patch-diagnostics.js';
 import { addLeverframeInjectionMarker, classifyLeverframeInjectionByHash } from '../src/patch-injection.js';
 import type { PatchPresenter } from '../src/patch-presenter.js';
-import { runLaunchPatchCheckV2, runPatchCommandV2 } from '../src/patch-reconcile.js';
+import { checkResolvedPatchState, runLaunchPatchCheckV2, runPatchCommandV2 } from '../src/patch-reconcile.js';
 import { readManifestV2 } from '../src/patch-state.js';
 import { applyPatchTransactionV2, type PatchRuntime } from '../src/patch-transaction.js';
 import { fetchProviderCatalog } from '../src/provider-catalog.js';
@@ -250,6 +250,18 @@ describe('patch diagnostics after a fresh patch', () => {
 
     expect(exitCode).toBe(0);
     expect(readManifestV2(fixture.installation.identity)?.generation).toBe(generation);
+  });
+});
+
+describe('patch state check after a fresh patch', () => {
+  it('agrees with leverframe patch on the desired config when checked without a fresh catalog', async () => {
+    const fixture = prepareCatalogFixture();
+    await cliPatch(fixture.installation);
+
+    const check = await checkResolvedPatchState(fixture.installation, runtime());
+
+    expect(check.state).toBe('patched');
+    expect(check.configHash).toBe(readManifestV2(fixture.installation.identity)?.configHash);
   });
 });
 

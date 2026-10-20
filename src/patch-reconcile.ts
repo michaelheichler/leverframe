@@ -137,6 +137,11 @@ export async function checkResolvedPatchState(
   }), { waitMs: 500 });
 }
 
+/** Because every staleness check must hash the same catalog. */
+async function loadStoredPatchCatalog(): Promise<LocalProvider[]> {
+  return (await loadStoredRegistryProviders({ agent: 'claude' })).providers;
+}
+
 async function checkOwnedPatchState(options: {
   installation: ClaudeInstallation;
   runtime: PatchRuntime;
@@ -145,7 +150,8 @@ async function checkOwnedPatchState(options: {
   contextSelectionAvailable: boolean;
 }): Promise<CheckResult> {
   const { installation, runtime, freshProviders, selectedModel, contextSelectionAvailable } = options;
-  const desired = buildDesiredPatchConfig(freshProviders, selectedModel, {
+  const catalog = freshProviders ?? await loadStoredPatchCatalog();
+  const desired = buildDesiredPatchConfig(catalog, selectedModel, {
     includeContextModes: contextSelectionAvailable,
   });
   const configHash = computePatchConfigHash(desired.config);
@@ -202,7 +208,7 @@ export async function checkPatchState(
   const installation = resolveClaudeInstallation({ target });
   if (installation) return checkResolvedPatchState(installation, runtime);
 
-  const desired = buildDesiredPatchConfig();
+  const desired = buildDesiredPatchConfig(await loadStoredPatchCatalog());
   return {
     installation: null,
     manifest: null,
@@ -238,7 +244,7 @@ export async function runPatchCommandV2(
     presenter.error(unsupportedClaudeCodeBinaryPatchingMessage(installation.version));
     return 1;
   }
-  const catalogProviders = opts.freshProviders ?? (await loadStoredRegistryProviders({ agent: 'claude' })).providers;
+  const catalogProviders = opts.freshProviders ?? await loadStoredPatchCatalog();
   let lockAcquired = false;
   return withPatchTargetLock(installation.identity, async () => {
     lockAcquired = true;

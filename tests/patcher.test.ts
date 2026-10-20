@@ -217,7 +217,7 @@ describe('buildDesiredPatchConfig', () => {
     const freshProviders: LocalProvider[] = [{
       id: 'openai-oauth',
       name: 'OpenAI (ChatGPT)',
-      apiKey: 'provider-key',
+      apiKey: 'test-key-not-secret',
       authType: 'oauth',
       models: [{
         id: 'gpt-6-astra',
@@ -257,7 +257,7 @@ describe('buildDesiredPatchConfig', () => {
     const freshProviders: LocalProvider[] = [{
       id: 'openai-oauth',
       name: 'OpenAI (ChatGPT)',
-      apiKey: 'provider-key',
+      apiKey: 'test-key-not-secret',
       authType: 'oauth',
       models: [
         {
@@ -315,13 +315,13 @@ describe('buildDesiredPatchConfig', () => {
       {
         id: 'openai-oauth',
         name: 'OpenAI (ChatGPT)',
-        apiKey: 'openai-key',
+        apiKey: 'test-key-not-secret',
         models: [model('other-openai', 'Other OpenAI'), model('favorite-openai', 'Favorite OpenAI')],
       },
       {
         id: 'zai',
         name: 'Z.ai',
-        apiKey: 'zai-key',
+        apiKey: 'test-key-not-secret',
         models: [model('other-z', 'Other Z'), model('favorite-z', 'Favorite Z')],
       },
     ];
@@ -398,7 +398,7 @@ describe('applyLeverframePatches input validation', () => {
 
   it('rejects unsafe aliases', () => {
     expect(() => applyLeverframePatches('var x = 1;', {
-      'leverframe:openai:model': { alias: 'Bad Alias!' },
+      'leverframe:openai:model': { alias: 'Bad Alias' },
     })).toThrow(/not a safe lowercase alias/);
   });
 
@@ -444,7 +444,7 @@ function readModelPickerOptions(source: string): Array<{ value: string; label: s
     /\/\*ccpatch:model-picker-options\*\/var __lfcModelPickerOptions=JSON\.parse\(("(?:[^"\\]|\\.)*")\)/,
   )?.[1];
   expect(encoded).toBeDefined();
-  return JSON.parse(JSON.parse(encoded!)) as Array<{ value: string; label: string; description: string }>;
+  return JSON.parse(JSON.parse(encoded ?? '"[]"')) as Array<{ value: string; label: string; description: string }>;
 }
 
 describe('patch script identity naming', () => {
@@ -476,7 +476,7 @@ describe('patch script identity naming', () => {
     const out = runPatchScript(config);
     const table = out.match(/\/\*ccpatch:ctx\*\/var _ccw=Object\.assign\(Object\.create\(null\),JSON\.parse\(("(?:[^"\\]|\\.)*")\)\)/)?.[1];
     expect(table).toBeTruthy();
-    const parsed = JSON.parse(JSON.parse(table!)) as Record<string, number>;
+    const parsed = JSON.parse(JSON.parse(table ?? '"{}"')) as Record<string, number>;
     expect(parsed['sol']).toBe(272_000);
     expect(parsed['leverframe:openai-oauth:gpt-5.6-sol']).toBe(272_000);
     expect(parsed['leverframe:openai:mystery']).toBe(128_000);
@@ -503,8 +503,7 @@ describe('patch script identity naming', () => {
       description: 'Model ID: leverframe:openai:mystery',
     });
     expect(out).not.toContain('Custom model (');
-    expect(out).toContain('Additional custom models: sol = GPT-5.6 Sol (OpenAI (ChatGPT)); '
-      + 'leverframe:openai:mystery = Mystery (OpenAI).');
+    expect(out).toContain('Additional custom models: sol = GPT-5.6 Sol; leverframe:openai:mystery = Mystery.');
   });
 
   it('falls back to the old "Custom model (id)" description when no label is known', () => {
@@ -581,7 +580,7 @@ describe('patch script identity naming', () => {
     );
     expect(updated).not.toBe(once);
     const table = updated.match(/\/\*ccpatch:ctx\*\/var _ccw=Object\.assign\(Object\.create\(null\),JSON\.parse\(("(?:[^"\\]|\\.)*")\)\)/)?.[1];
-    const parsed = JSON.parse(JSON.parse(table!)) as Record<string, number>;
+    const parsed = JSON.parse(JSON.parse(table ?? '"{}"')) as Record<string, number>;
     expect(parsed['leverframe:openai:mystery']).toBe(131_072);
     expect(parsed['sol']).toBe(272_000);
   });

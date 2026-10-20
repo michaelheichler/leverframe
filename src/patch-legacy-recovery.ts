@@ -22,6 +22,7 @@ import {
   type DesiredPatchConfig,
   type PatchManifest as LegacyPatchManifest,
 } from './patcher.js';
+import { loadStoredRegistryProviders } from './registry/load.js';
 
 interface LegacyPatchRecoveryBase {
   legacyManifestPresent: true;
@@ -135,7 +136,8 @@ export async function migrateLegacyStateIfVerified(
     baselineSha256: inspection.baseline.sha256,
     sourcePath: inspection.baseline.sourcePath,
   });
-  const desired = input.desired ?? buildDesiredPatchConfig();
+  const desired = input.desired
+    ?? buildDesiredPatchConfig((await loadStoredRegistryProviders({ agent: 'claude' })).providers);
   const content = await runtime.readContent(installation.canonicalPath, installation.version);
   const semantic = verifyPatchSites(content, desired.config);
   const desiredConfigHash = computePatchConfigHash(desired.config);

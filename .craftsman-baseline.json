@@ -232,6 +232,7 @@
 {"complexity":1,"fan_out":4,"file_lines":120,"ignores":0,"max_fn_lines":10,"path":"tests/openai-adapter-protocol.test.ts"},
 {"complexity":0,"fan_out":2,"file_lines":37,"ignores":0,"max_fn_lines":37,"path":"tests/openai-instruction-content.test.ts"},
 {"complexity":1,"fan_out":2,"file_lines":12,"ignores":0,"max_fn_lines":12,"path":"tests/openai-response-usage.test.ts"},
+{"complexity":1,"fan_out":8,"file_lines":170,"ignores":0,"instrument":2,"max_fn_lines":81,"path":"tests/patch-agent-model-list.test.ts"},
 {"complexity":0,"fan_out":4,"file_lines":40,"ignores":0,"instrument":2,"max_fn_lines":40,"path":"tests/patch-claude-2-1-301.test.ts"},
 {"complexity":3,"fan_out":20,"file_lines":296,"ignores":0,"instrument":2,"max_fn_lines":27,"path":"tests/patch-diagnostics.test.ts"},
 {"complexity":2,"fan_out":12,"file_lines":554,"ignores":0,"max_fn_lines":31,"path":"tests/patch-legacy-recovery.test.ts"},

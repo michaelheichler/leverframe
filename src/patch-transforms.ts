@@ -5,7 +5,7 @@ import { applyNativeModelKnowledge } from './patch-transforms-model-knowledge.js
 import { applyNativeContextWindow } from './patch-transforms-context-window.js';
 import { ONE_M_CONTEXT_WINDOW } from './context-model-id.js';
 
-export const PATCH_TRANSFORMS_VERSION = 21;
+export const PATCH_TRANSFORMS_VERSION = 22;
 
 export interface PatchScriptModelEntry {
   alias?: string;
@@ -20,6 +20,8 @@ export interface PatchScriptModelEntry {
   display?: string;
 
   effort?: PatchScriptEffort;
+
+  pickerOnly?: boolean;
 }
 
 export interface PatchScriptEffort {
@@ -49,6 +51,18 @@ export function projectNativeEffort(effort: PatchScriptEffort | undefined): Patc
 
   if (!levels.some(level => level === effort.defaultLevel)) return undefined;
   return { levels, defaultLevel: 'high' };
+}
+
+/** Because the provider suffix repeats on every Agent tool listing entry. */
+export function shortDisplayName(display: string | undefined): string | undefined {
+  const trimmed = display?.trim();
+  if (!trimmed?.endsWith(')')) return trimmed;
+  let depth = 0;
+  for (let index = trimmed.length - 1; index >= 0; index -= 1) {
+    if (trimmed[index] === ')') depth += 1;
+    else if (trimmed[index] === '(' && --depth === 0) return trimmed.slice(0, index).trim() || trimmed;
+  }
+  return trimmed;
 }
 
 export type PatchSiteStatus = 'OK' | 'SKIP' | 'FAIL';
@@ -86,6 +100,7 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
   const ALIAS_TO_ID: Record<string, string> = Object.create(null) as Record<string, string>;
 
   const IDENTITIES: string[] = [];
+  const AGENT_IDENTITIES: string[] = [];
 
   const DISPLAY_BY_IDENTITY: Record<string, string> = Object.create(null) as Record<string, string>;
 
@@ -142,6 +157,7 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
       IDENTITIES.push(String(id));
       if (spec.display) DISPLAY_BY_IDENTITY[String(id)] = String(spec.display);
     }
+    if (spec.pickerOnly !== true) AGENT_IDENTITIES.push(IDENTITIES.at(-1) ?? String(id));
     for (const key of capabilityKeys(spec.alias !== undefined ? String(spec.alias) : String(id))) {
       CONFIGURED_CAPABILITY_KEYS.add(key);
     }
@@ -265,8 +281,8 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     log('OK', name);
   }
 
-  function extendAliasArray(arrLiteral: string): string {
-    const toAdd = IDENTITIES.filter((a) => !new RegExp('"' + reEsc(a) + '"').test(arrLiteral));
+  function extendAliasArray(arrLiteral: string, identities: string[]): string {
+    const toAdd = [...new Set(identities)].filter((a) => !new RegExp('"' + reEsc(a) + '"').test(arrLiteral));
     if (toAdd.length === 0) return arrLiteral;
     return arrLiteral.replace(/\]\s*$/, ',' + toAdd.map(q).join(',') + ']');
   }
@@ -274,14 +290,15 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
   applyOnce(
     'PATCH 1: Agent tool model enum',
     /((?:\.enum|:[A-Za-z_$][\w$]*)\()(\["sonnet","opus","haiku","fable"(?:,"[^"]+")*\])(\)\.optional\(\)\.describe\(`Optional model override for this agent)/,
-    (_m, constructorHead, arr, descriptionHead) => constructorHead! + extendAliasArray(arr!) + descriptionHead!,
+    (_m, constructorHead = '', arr = '', descriptionHead = '') =>
+      constructorHead + extendAliasArray(arr, AGENT_IDENTITIES) + descriptionHead,
     { required: true, noopIsSkip: true }
   );
 
   applyOnce(
     'PATCH 3: known-alias validator list',
     /\["sonnet","opus","haiku","fable"(?:,"[^"]+")*,"opusplan"(?:,"[^"]+")*\]/,
-    (m) => extendAliasArray(m),
+    (m) => extendAliasArray(m, IDENTITIES),
     { required: true, noopIsSkip: true }
   );
 
@@ -369,9 +386,9 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
 
   {
     const safe = (s: string) => String(s).replace(/`/g, "'").replace(/\$\{/g, '(');
-    const listing = IDENTITIES.map(function (i) {
-      const d = DISPLAY_BY_IDENTITY[i];
-      return d ? safe(i) + ' = ' + safe(d) : safe(i);
+    const listing = [...new Set(AGENT_IDENTITIES)].map(function (i) {
+      const d = shortDisplayName(DISPLAY_BY_IDENTITY[i]);
+      return d && d.toLowerCase() !== i ? safe(i) + ' = ' + safe(d) : safe(i);
     }).join('; ');
     applyOnce(
       'PATCH 4: Agent tool model description',
