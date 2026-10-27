@@ -288,16 +288,12 @@ async function handleExecutionReconcile(input: HandleExecutionReconcileInput): P
 
 
 function toRequest(req: IncomingMessage): Request {
-  const headers = new Headers();
+  const pairs: Array<[string, string]> = [];
   for (const [name, value] of Object.entries(req.headers)) {
-    if (Array.isArray(value)) {
-      for (const item of value) headers.append(name, sanitizeIncomingHeaderValue(item));
-    } else if (value !== undefined) {
-      headers.set(name, sanitizeIncomingHeaderValue(value));
-    }
+    const items = value === undefined ? [] : [value].flat();
+    for (const item of items) pairs.push([name, sanitizeIncomingHeaderValue(item)]);
   }
-
-  return new Request('http://localhost/', { headers });
+  return new Request('http://localhost/', { headers: new Headers(pairs) });
 }
 
 function sanitizeIncomingHeaderValue(value: string): string {
