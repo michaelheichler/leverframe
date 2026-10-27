@@ -43,6 +43,42 @@ GitNexus indexes this project as **leverframe** (17880 symbols, 50354 relationsh
 
 <!-- gitnexus:end -->
 
+## Project
+
+Leverframe bridges Claude Code to OpenAI-compatible providers. It ships as `@michaelheichler/leverframe`, an ESM TypeScript package built with tsup. It needs Node 22 or newer and pnpm, and `.nvmrc` pins the local Node version.
+
+### Build
+
+```bash
+pnpm install
+pnpm build
+```
+
+`pnpm build` runs tsup and then copies `src/keyring-child.mjs` into `dist/`.
+
+### Check before a commit
+
+```bash
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm check:package
+```
+
+### Run one test file
+
+```bash
+corepack pnpm exec vitest run tests/proxy.test.ts
+```
+
+### Layout
+
+- `src/cli.ts` backs the `leverframe` bin and `src/claude-wrapper.ts` backs `leverframe-claude`.
+- `src/` holds the subsystems `context/`, `oauth/`, `copilot/`, `server/`, `registry/`, `data/`, and `http-proxy/`.
+- Tests live in `tests/`, with fixtures in `tests/fixtures/`.
+- `docs/TESTING.md` maps modules to pinned behaviors and test files. Read it before you change compaction or stream code.
+- `docs/PROVIDER-CONTRACTS.md` and `docs/TRANSPORT-CONTRACTS.md` define the provider and transport contracts.
+
 ## Project workflow
 
 - Plan before implementation and keep changes within the requested scope.
@@ -66,3 +102,25 @@ Before renaming or changing a function signature, use `findReferences` to find a
 Use Search/Grep/Glob for non-semantic lookups (literal strings, comments, config values, filename discovery, non-code assets). When LSP is unavailable, use Search/Grep/Glob as a fallback.
 
 After writing or editing code, check LSP diagnostics before moving on. Fix any type errors or missing imports immediately.
+
+## Before Committing
+
+Run `caliber refresh` before every commit:
+
+```bash
+caliber refresh
+```
+
+Leave out `--quiet`, because quiet mode skips the refresh inside an agent session. The pre-commit hook then stages the tracked doc files that the refresh changed. Check `git status` for new untracked files yourself. `caliber refresh` accepts only `--quiet` and `--dry-run`, and `caliber config` takes no flags. If `caliber` is missing, ask the user to run `/setup-caliber`.
+
+## Session Learnings
+
+`CALIBER_LEARNINGS.md` holds patterns that Caliber extracted from earlier sessions. Read it and treat its entries as project rules.
+
+## Model Configuration
+
+The user picks the model and effort with `/model` in Claude Code. `CALIBER_MODEL` sets only the model that Caliber itself uses with an API provider.
+
+## Context Sync
+
+[Caliber](https://github.com/caliber-ai-org/ai-setup) keeps the agent configs of this repo in sync. If the pre-commit hook is missing, ask the user to run `/setup-caliber`.

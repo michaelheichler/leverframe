@@ -69,7 +69,7 @@ function readExactClaudeVersion(path: string): string | null {
       timeout: 5_000,
       killSignal: 'SIGKILL',
     });
-    return /^(\d+\.\d+\.\d+) \(Claude Code\)(?:\n(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*) \(tweakcc-fixed\))?\n?$/.exec(output)?.[1] ?? null;
+    return /^(\d+\.\d+\.\d+) \(Claude Code\)(?:\n(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)? \(tweakcc-fixed\))?\n?$/.exec(output)?.[1] ?? null;
   } catch {
     return null;
   }

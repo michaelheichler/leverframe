@@ -269,6 +269,7 @@ describe('reported native context metadata', () => {
 
 describe('patch transform version', () => {
   it('keeps the transform version ahead of older static context patches', () => {
-    expect(PATCH_TRANSFORMS_VERSION).toBe(22);
+    const firstNativeContextTransformVersion = 12;
+    expect(PATCH_TRANSFORMS_VERSION).toBeGreaterThanOrEqual(firstNativeContextTransformVersion);
   });
 });

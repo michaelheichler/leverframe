@@ -255,10 +255,30 @@ function invalid(detail: string, nativeBundleSource: boolean, source: string): N
   };
 }
 
+function findReturnStatement(body: string): number | undefined {
+  let curly = 0;
+  let paren = 0;
+  let square = 0;
+  let statement = 0;
+  for (const { char, index } of scanCodeCharacters(body)) {
+    if (curly === 0 && paren === 0 && square === 0 && char === 'r'
+      && /^return\b/.test(body.slice(index)) && !/[\w$.]/.test(body[index - 1] ?? '')) return statement;
+    if (char === '{') curly++;
+    else if (char === '}') curly--;
+    else if (char === '(') paren++;
+    else if (char === ')') paren--;
+    else if (char === '[') square++;
+    else if (char === ']') square--;
+    if (curly === 0 && paren === 0 && square === 0 && (char === ';' || char === '}')) statement = index + 1;
+  }
+  return undefined;
+}
+
 function patchCallbackInPicker(
   source: string,
   pattern: RegExp,
   replacement: (match: string, ...groups: string[]) => string,
+  renderBranch: string,
 ): NativeContextPickerOutcome {
   const pickers = findPicker(source);
   if (pickers.length !== 1) {
@@ -270,8 +290,12 @@ function patchCallbackInPicker(
     return { content: source, result: result('FAIL', 'picker body could not be delimited before callback patch') };
   }
   const patched = patchOnce(source.slice(bodyStart, bodyEnd), pattern, replacement);
+  if (patched.result.status === 'FAIL') return { content: source, result: patched.result };
+  const renderStart = findReturnStatement(patched.content);
+  if (renderStart === undefined) return { content: source, result: result('FAIL', 'picker render statement not found') };
+  const body = patched.content.slice(0, renderStart) + renderBranch + patched.content.slice(renderStart);
   return {
-    content: source.slice(0, bodyStart) + patched.content + source.slice(bodyEnd),
+    content: source.slice(0, bodyStart) + body + source.slice(bodyEnd),
     result: patched.result,
   };
 }
@@ -536,7 +560,8 @@ export function applyNativeContextPicker(
     callbackPattern,
     (_match, model, effort) =>
       'if(' + names.begin + '(' + model! + ',' + effort! + '))return;'
-      + picker.select + '(' + model! + ',' + effort! + ');}' + renderBranch,
+      + picker.select + '(' + model! + ',' + effort! + ');}',
+    renderBranch,
   );
   return patched;
 }

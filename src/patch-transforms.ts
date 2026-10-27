@@ -1,11 +1,12 @@
 
 import { applyRoutingNoticeTransform } from './patch-transforms-routing-notice.js';
 import { applyNativeContextPicker } from './patch-transforms-picker.js';
+import { applyModelPickerOptions } from './patch-model-picker-options.js';
 import { applyNativeModelKnowledge } from './patch-transforms-model-knowledge.js';
 import { applyNativeContextWindow } from './patch-transforms-context-window.js';
 import { ONE_M_CONTEXT_WINDOW } from './context-model-id.js';
 
-export const PATCH_TRANSFORMS_VERSION = 22;
+export const PATCH_TRANSFORMS_VERSION = 24;
 
 export interface PatchScriptModelEntry {
   alias?: string;
@@ -40,8 +41,6 @@ const BASE_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
 const PATCH_COMMENT_START = '/' + '*';
 const PATCH_COMMENT_END = '*' + '/';
 
-const MODEL_PICKER_MARKER = PATCH_COMMENT_START + 'ccpatch:model-picker-options' + PATCH_COMMENT_END;
-const MODEL_PICKER_OPTIONS_VARIABLE = '__lfcModelPickerOptions';
 
 export function projectNativeEffort(effort: PatchScriptEffort | undefined): PatchScriptEffort | undefined {
   if (!effort || !Array.isArray(effort.levels) || typeof effort.defaultLevel !== 'string') return undefined;
@@ -356,39 +355,9 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
             : displayFor(identity, canonicalId),
       };
     });
-    const optionsJson = JSON.stringify(JSON.stringify(pickerOptions));
-    const injection = MODEL_PICKER_MARKER
-      + 'var ' + MODEL_PICKER_OPTIONS_VARIABLE + '=JSON.parse(' + optionsJson + ');'
-      + MODEL_PICKER_OPTIONS_VARIABLE + '.forEach(function(_o){if(!e.some(function(_i){return _i.value===_o.value}))e.push(_o)});';
-    const existingInjection = new RegExp(
-      reEsc(MODEL_PICKER_MARKER)
-      + 'var ' + reEsc(MODEL_PICKER_OPTIONS_VARIABLE) + '=JSON\\.parse\\("(?:[^"\\\\]|\\\\.)*"\\);'
-      + reEsc(MODEL_PICKER_OPTIONS_VARIABLE)
-      + '\\.forEach\\(function\\(_o\\)\\{if\\(!e\\.some\\(function\\(_i\\)\\{return _i\\.value===_o\\.value\\}\\)\\)e\\.push\\(_o\\)\\}\\);',
-    );
-    const missing = pickerIdentities.filter(identity => !new RegExp('value:' + reEsc(q(identity))).test(js));
-    if (pickerIdentities.length === 0) {
-      log('SKIP', 'PATCH 5: model picker options', 'no configured model identities');
-    } else if (js.includes(MODEL_PICKER_MARKER)) {
-      applyOnce(
-        'PATCH 5: model picker options',
-        existingInjection,
-        () => injection,
-        { required: true, noopIsSkip: true },
-      );
-    } else if (missing.length === 0) {
-      log('SKIP', 'PATCH 5: model picker options', 'already integrated');
-    } else {
-      applyOnce(
-        'PATCH 5: model picker options',
-        /(function [\w$]+\(e,[\w$]+,[\w$]+\)\{let [^{}]{0,400}?;for\(let [\w$]+ of [\w$]+\)[\w$]+\(e,[\w$]+,[\w$]+\);)(return e\})/,
-        (_m, ...captured) => {
-          const [head, tail] = groups(captured[0], captured[1]);
-          return head + injection + tail;
-        },
-        { required: false, noopIsSkip: true }
-      );
-    }
+    const picker = applyModelPickerOptions(js, pickerOptions);
+    js = picker.content;
+    report.push(picker.result);
   }
 
   {
