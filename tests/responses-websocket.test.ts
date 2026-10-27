@@ -374,35 +374,6 @@ describe('createResponsesWebSocketFetch', () => {
     }));
   });
 
-  it('does not retry an in-band connection-limit error once output has already been emitted', async () => {
-    const wsFetch = createResponsesWebSocketFetch(WS_URL, undefined, {
-      maxTransportRetries: 1,
-      retryBaseDelayMs: 0,
-      random: () => 0,
-    });
-    const res = await wsFetch('https://x', {
-      method: 'POST',
-      headers: {},
-      body: JSON.stringify(sessionPayload([
-        { role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
-      ])),
-    });
-    const socket = lastSocket();
-    socket.emit('open');
-    socket.emit('message', Buffer.from(JSON.stringify({
-      type: 'response.output_text.delta',
-      item_id: 'msg_1',
-      delta: 'partial',
-    })));
-    socket.emit('message', Buffer.from(JSON.stringify({
-      type: 'error',
-      error: { code: 'websocket_connection_limit_reached', message: 'limit reached' },
-    })));
-
-    expect(fakeSockets).toHaveLength(1);
-    await expect(readAll(res)).resolves.not.toContain('recovered');
-  });
-
   it('stops after exactly one pre-frame transport retry', async () => {
     const wsFetch = createResponsesWebSocketFetch(WS_URL, undefined, {
       maxTransportRetries: 1,
@@ -860,4 +831,63 @@ describe('createResponsesWebSocketFetch', () => {
     expect(JSON.stringify(diagnostics)).not.toMatch(/token-[ab]/);
   });
 
+});
+
+async function openRetryingRequest(): Promise<{ res: Response; socket: FakeWebSocket }> {
+  const wsFetch = createResponsesWebSocketFetch(WS_URL, undefined, {
+    maxTransportRetries: 1,
+    retryBaseDelayMs: 0,
+    random: () => 0,
+  });
+  const res = await wsFetch('https://x', {
+    method: 'POST',
+    headers: {},
+    body: JSON.stringify(sessionPayload([
+      { role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+    ])),
+  });
+  const socket = lastSocket();
+  socket.emit('open');
+  return { res, socket };
+}
+
+describe('createResponsesWebSocketFetch in-band error frames', () => {
+  beforeEach(() => {
+    resetResponsesWebSocketConnectionsForTests();
+    fakeSockets.length = 0;
+  });
+
+  it('does not retry an in-band connection-limit error once output has already been emitted', async () => {
+    const { res, socket } = await openRetryingRequest();
+    socket.emit('message', Buffer.from(JSON.stringify({
+      type: 'response.output_text.delta',
+      item_id: 'msg_1',
+      delta: 'partial',
+    })));
+    socket.emit('message', Buffer.from(JSON.stringify({
+      type: 'error',
+      error: { code: 'websocket_connection_limit_reached', message: 'limit reached' },
+    })));
+
+    expect(fakeSockets).toHaveLength(1);
+    await expect(readAll(res)).rejects.toMatchObject({ name: 'ProviderTransportError', outputEmitted: true });
+  });
+
+  it('fails a client-error frame with its upstream status instead of an empty stream', async () => {
+    const { res, socket } = await openRetryingRequest();
+    socket.emit('message', Buffer.from(JSON.stringify({
+      type: 'error',
+      status: 400,
+      error: { code: 'invalid_request_error', message: 'bad input' },
+    })));
+
+    await expect(readAll(res)).rejects.toMatchObject({
+      name: 'ProviderTransportError',
+      httpStatus: 400,
+      retryable: false,
+      safeMessage: expect.stringMatching(/invalid_request_error[\s\S]*bad input/),
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(fakeSockets).toHaveLength(1);
+  });
 });

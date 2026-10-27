@@ -82,6 +82,7 @@ import {
 } from './responses-websocket-payload.js';
 import {
   captureOutput,
+  errorFrameTransportError,
   eventType,
   expectedAssistantItems,
   responseErrorCode,
@@ -279,55 +280,12 @@ function handleSocketMessage(entry: ConnectionEntry, data: RawData): void {
     }
   }
   if (isModelDataEvent(type)) ctx.emittedModelData = true;
-
-  const errorCode = responseErrorCode(event);
-  const previousMissing = errorCode === 'previous_response_not_found';
-  const willRetry = previousMissing && ctx.continued && !ctx.retried && !ctx.emittedModelData;
-  if (errorCode === 'websocket_connection_limit_reached' && !ctx.emittedModelData) {
-    const retryAfterMs = boundedThrottleRetryAfterMs(responseRetryAfterMs(event));
-    const retryAfterSeconds = retryAfterMs / 1_000;
-    const error = new ProviderTransportError({
-      provider: ctx.provider,
-      model: ctx.model,
-      phase: 'stream',
-      category: 'rate_limit',
-      httpStatus: 429,
-      retryAfterMs,
-      retryable: true,
-      outputEmitted: false,
-      safeMessage: 'OpenAI reported the Responses WebSocket connection limit was reached; '
-        + `retry after ${retryAfterSeconds}s.`,
-    });
-    handleTransportFailure(entry, ctx, error, {
-      source: 'error_frame',
-      errorCode,
-      mappedStatusCode: 429,
-      retryAfterMs,
-    }, 1);
-    return;
-  }
-  if (FAILURE_EVENT_TYPES.has(type ?? '')) {
-    emitResponseErrorDiagnostic(entry, ctx, {
-      source: 'response_event',
-      upstreamEventType: type,
-      willRetry,
-      ...responseFailureDetails(event),
-    });
-  }
-  if (willRetry) {
-    ctx.retried = true;
-    entry.debug('previous response unavailable; retrying once with full context');
-    deleteEntry(entry);
-    resetContextForRetry(ctx);
-    const replacement = ctx.createReplacement();
-    dispatchContext(replacement, ctx);
-    return;
-  }
+  if (handleUpstreamFailureEvent(entry, ctx, event)) return;
 
   ctx.pendingEvents.push(event);
   if (isModelDataEvent(type)) flushPending(ctx);
 
-  if (TERMINAL_EVENT_TYPES.has(type ?? '') || type === 'error') {
+  if (TERMINAL_EVENT_TYPES.has(type ?? '')) {
     flushPending(ctx);
     const failed = FAILURE_EVENT_TYPES.has(type ?? '') || ctx.emittedProtocolAnomalies.size > 0;
     if (!failed && ctx.responseId && entry.persistent) {
@@ -350,6 +308,62 @@ function handleSocketMessage(entry: ConnectionEntry, data: RawData): void {
     }
     closeContext(ctx);
   }
+}
+
+function handleUpstreamFailureEvent(entry: ConnectionEntry, ctx: RequestContext, event: unknown): boolean {
+  const type = eventType(event);
+  const errorCode = responseErrorCode(event);
+  if (errorCode === 'websocket_connection_limit_reached' && !ctx.emittedModelData) {
+    failOnConnectionLimit(entry, ctx, event);
+    return true;
+  }
+  const errorFrame = type === 'error';
+  const continuationFailed = errorCode === 'previous_response_not_found' || errorFrame;
+  const willRetry = continuationFailed && ctx.continued && !ctx.retried && !ctx.emittedModelData;
+  if (FAILURE_EVENT_TYPES.has(type ?? '')) {
+    emitResponseErrorDiagnostic(entry, ctx, {
+      source: 'response_event',
+      upstreamEventType: type,
+      willRetry,
+      ...responseFailureDetails(event),
+    });
+  }
+  if (willRetry) {
+    ctx.retried = true;
+    entry.debug('continuation failed upstream; retrying once with full context');
+    deleteEntry(entry);
+    resetContextForRetry(ctx);
+    dispatchContext(ctx.createReplacement(), ctx);
+    return true;
+  }
+  if (!errorFrame) return false;
+  handleTransportFailure(entry, ctx, errorFrameTransportError(ctx, event), {
+    source: 'error_frame',
+    errorCode,
+  }, ctx.frameCount);
+  return true;
+}
+
+function failOnConnectionLimit(entry: ConnectionEntry, ctx: RequestContext, event: unknown): void {
+  const retryAfterMs = boundedThrottleRetryAfterMs(responseRetryAfterMs(event));
+  const error = new ProviderTransportError({
+    provider: ctx.provider,
+    model: ctx.model,
+    phase: 'stream',
+    category: 'rate_limit',
+    httpStatus: 429,
+    retryAfterMs,
+    retryable: true,
+    outputEmitted: false,
+    safeMessage: 'OpenAI reported the Responses WebSocket connection limit was reached; '
+      + `retry after ${retryAfterMs / 1_000}s.`,
+  });
+  handleTransportFailure(entry, ctx, error, {
+    source: 'error_frame',
+    errorCode: 'websocket_connection_limit_reached',
+    mappedStatusCode: 429,
+    retryAfterMs,
+  }, 1);
 }
 
 function createConnection(

@@ -499,41 +499,6 @@ describe('createResponsesWebSocketFetch (continued)', () => {
     await readAll(next);
   });
 
-  it('retries previous_response_not_found once on a new socket with full context', async () => {
-    const input = [{ role: 'user', content: [{ type: 'input_text', text: 'one' }] }];
-    const wsFetch = createResponsesWebSocketFetch(WS_URL, undefined, { accountId: 'acct-retry' });
-    const first = await wsFetch('https://x', {
-      method: 'POST', headers: {}, body: JSON.stringify(sessionPayload(input)),
-    });
-    const firstSocket = lastSocket();
-    firstSocket.emit('open');
-    emitTextResponse(firstSocket, 'resp_old', 'answer');
-    await readAll(first);
-
-    const fullNextInput = [
-      ...input,
-      { role: 'assistant', content: [{ type: 'output_text', text: 'answer' }] },
-      { role: 'user', content: [{ type: 'input_text', text: 'two' }] },
-    ];
-    const second = await wsFetch('https://x', {
-      method: 'POST', headers: {}, body: JSON.stringify(sessionPayload(fullNextInput)),
-    });
-    firstSocket.emit('message', Buffer.from(JSON.stringify({
-      type: 'error', status: 400,
-      error: { code: 'previous_response_not_found', message: 'gone' },
-    })));
-
-    expect(fakeSockets).toHaveLength(2);
-    const replacement = lastSocket();
-    replacement.emit('open');
-    const retried = JSON.parse(replacement.send.mock.calls[0]![0] as string);
-    expect(retried.previous_response_id).toBeUndefined();
-    expect(retried.input).toEqual(fullNextInput);
-    emitTextResponse(replacement, 'resp_recovered', 'recovered');
-    const body = await readAll(second);
-    expect(body).not.toContain('previous_response_not_found');
-  });
-
   it('resets a rewind/branch to full context and establishes the branch as the new head', async () => {
     const original = [{ role: 'user', content: [{ type: 'input_text', text: 'original' }] }];
     const wsFetch = createResponsesWebSocketFetch(WS_URL, undefined, { accountId: 'acct-branch' });
@@ -847,5 +812,51 @@ describe('createResponsesWebSocketFetch (continued)', () => {
   it('canonicalizes object key ordering in prompt fingerprints', () => {
     expect(responsesWebSocketPromptFingerprint({ model: 'm', tools: [{ name: 'x', parameters: { b: 2, a: 1 } }], input: ['a'] }))
       .toBe(responsesWebSocketPromptFingerprint({ tools: [{ parameters: { a: 1, b: 2 }, name: 'x' }], model: 'm', input: ['different'] }));
+  });
+});
+
+describe('createResponsesWebSocketFetch (continuation failure)', () => {
+  beforeEach(() => {
+    resetResponsesWebSocketConnectionsForTests();
+    fakeSockets.length = 0;
+  });
+
+  it.each([
+    'previous_response_not_found',
+    'invalid_encrypted_content',
+  ])('retries a continued request failing with %s once on a new socket with full context', async (errorCode) => {
+    const input = [{ role: 'user', content: [{ type: 'input_text', text: 'one' }] }];
+    const wsFetch = createResponsesWebSocketFetch(WS_URL, undefined, { accountId: 'acct-retry' });
+    const first = await wsFetch('https://x', {
+      method: 'POST', headers: {}, body: JSON.stringify(sessionPayload(input)),
+    });
+    const firstSocket = lastSocket();
+    firstSocket.emit('open');
+    emitTextResponse(firstSocket, 'resp_old', 'answer');
+    await readAll(first);
+
+    const fullNextInput = [
+      ...input,
+      { role: 'assistant', content: [{ type: 'output_text', text: 'answer' }] },
+      { role: 'user', content: [{ type: 'input_text', text: 'two' }] },
+    ];
+    const second = await wsFetch('https://x', {
+      method: 'POST', headers: {}, body: JSON.stringify(sessionPayload(fullNextInput)),
+    });
+    firstSocket.emit('message', Buffer.from(JSON.stringify({
+      type: 'error', status: 400,
+      error: { code: errorCode, message: 'gone' },
+    })));
+
+    expect(fakeSockets).toHaveLength(2);
+    const replacement = lastSocket();
+    replacement.emit('open');
+    const retried = JSON.parse(replacement.send.mock.calls[0]![0] as string);
+    expect(retried.previous_response_id).toBeUndefined();
+    expect(retried.input).toEqual(fullNextInput);
+    emitTextResponse(replacement, 'resp_recovered', 'recovered');
+    const body = await readAll(second);
+    expect(body).toContain('recovered');
+    expect(body).not.toContain(errorCode);
   });
 });

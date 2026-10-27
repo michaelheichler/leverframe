@@ -1,3 +1,4 @@
+import { ProviderTransportError } from '../provider-error.js';
 import type { JsonObject, OutputAccumulator, RequestContext } from './responses-websocket-types.js';
 
 export const TERMINAL_EVENT_TYPES = new Set(['response.completed', 'response.failed', 'response.incomplete']);
@@ -17,6 +18,28 @@ export function responseErrorCode(event: unknown): string | undefined {
   const response = record.response && typeof record.response === 'object' ? record.response as JsonObject : undefined;
   const responseError = response?.error && typeof response.error === 'object' ? response.error as JsonObject : undefined;
   return typeof responseError?.code === 'string' ? responseError.code : undefined;
+}
+
+const ERROR_FRAME_MESSAGE_LIMIT = 300;
+
+// The AI SDK silently drops nested error frames, so fail the request here.
+export function errorFrameTransportError(ctx: RequestContext, event: unknown): ProviderTransportError {
+  const record = event && typeof event === 'object' ? event as JsonObject : {};
+  const error = record.error && typeof record.error === 'object' ? record.error as JsonObject : record;
+  const status = typeof record.status === 'number' ? record.status : undefined;
+  const errorCode = responseErrorCode(event);
+  const message = typeof error.message === 'string' ? error.message.slice(0, ERROR_FRAME_MESSAGE_LIMIT) : undefined;
+  const codeSuffix = errorCode ? ' (' + errorCode + ')' : '';
+  const messageSuffix = message ? ': ' + message : '';
+  return new ProviderTransportError({
+    provider: ctx.provider,
+    model: ctx.model,
+    phase: 'stream',
+    httpStatus: status ?? 502,
+    retryable: status === undefined || status >= 500,
+    outputEmitted: ctx.emittedModelData,
+    safeMessage: 'Provider returned an error frame' + codeSuffix + messageSuffix,
+  });
 }
 
 function responseIdFromEvent(event: unknown): string | undefined {
