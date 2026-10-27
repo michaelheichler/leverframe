@@ -6,6 +6,20 @@ This changelog records notable changes to Leverframe.
 
 ## [Unreleased]
 
+## [0.4.10] - 2026-10-27
+
+### Fixed
+
+- An in-band error frame on the ChatGPT Responses WebSocket no longer turns into a 502 "Upstream returned no content". The AI SDK dropped the nested `{type:'error', error:{...}}` shape, so the stream ended empty and Claude Code retried the same turn for minutes. Leverframe now fails the request with the upstream status and message. A transient server error still retries before output.
+- An error frame on a continued request (sent with `previous_response_id`) before any output now retries once on a fresh socket with the full context, as `previous_response_not_found` already did.
+- `leverframe patch` reads a tweakcc-fixed version that carries a prerelease suffix, such as `2.9.14-local.311.1`.
+- The model picker patch inserts its render branch before the picker return statement, so it applies to the current Claude Code picker.
+
+### Changed
+
+- The Agent tool model list holds only favorites and aliases, with short names. Other catalog models stay in the `/model` picker. This saves about 3k context tokens per session.
+- `claudeplus` routes Claude straight through its per-session Leverframe proxy, without a Headroom proxy in between.
+
 ## [0.4.9] - 2026-10-16
 
 ### Fixed
