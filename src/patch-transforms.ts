@@ -2,6 +2,10 @@
 import { applyRoutingNoticeTransform } from './patch-transforms-routing-notice.js';
 import { applyNativeContextPicker } from './patch-transforms-picker.js';
 import { applyModelPickerOptions } from './patch-model-picker-options.js';
+import { applySelectBadge } from './patch-select-badge.js';
+import { ANTHROPIC_API_PROVIDER_ID } from './provider-templates.js';
+
+const ANTHROPIC_API_IDENTITY_PREFIX = `leverframe:${ANTHROPIC_API_PROVIDER_ID}:`;
 import { applyNativeModelKnowledge } from './patch-transforms-model-knowledge.js';
 import { applyNativeContextWindow } from './patch-transforms-context-window.js';
 import { ONE_M_CONTEXT_WINDOW } from './context-model-id.js';
@@ -343,7 +347,9 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
       const canonicalId = ALIAS_TO_ID[identity] ?? identity;
       const display = DISPLAY_BY_IDENTITY[identity] ?? DISPLAY_BY_IDENTITY[canonicalId];
       const isAlias = ALIAS_TO_ID[identity] !== undefined;
+      const badge = canonicalId.startsWith(ANTHROPIC_API_IDENTITY_PREFIX) ? { badge: 'API' } : {};
       return {
+        ...badge,
         value: identity,
         label: isAlias
           ? identity.charAt(0).toUpperCase() + identity.slice(1)
@@ -358,6 +364,11 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     const picker = applyModelPickerOptions(js, pickerOptions);
     js = picker.content;
     report.push(picker.result);
+    if (pickerOptions.some(option => 'badge' in option)) {
+      const badged = applySelectBadge(js);
+      js = badged.content;
+      report.push(badged.result);
+    }
   }
 
   {

@@ -13,6 +13,7 @@ import type { RegistryProvider } from '../src/registry/types.js';
 import * as env from '../src/env.js';
 import * as catalog from '../src/provider-catalog.js';
 import * as prompts from '../src/prompts.js';
+import { ANTHROPIC_API_PROVIDER_ID } from '../src/provider-templates.js';
 
 const selectMock = vi.hoisted(() => vi.fn());
 
@@ -189,6 +190,7 @@ describe('providers add menu', () => {
     expect(options).toEqual([
       'oauth:github-copilot',
       'oauth:openai-oauth',
+      `api:${ANTHROPIC_API_PROVIDER_ID}`,
       'api:kimi',
       'api:moonshot',
       'api:openai',
@@ -210,6 +212,7 @@ describe('providers add menu', () => {
     expect(options).toEqual([
       'oauth:github-copilot',
       'oauth:openai-oauth',
+      `api:${ANTHROPIC_API_PROVIDER_ID}`,
       'api:kimi',
       'api:moonshot',
       'api:opencode-go',

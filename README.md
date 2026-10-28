@@ -5,6 +5,7 @@ Leverframe bridges Claude Code to external model providers through Anthropic and
 Supported provider setups include:
 
 - OpenAI API keys
+- Anthropic API keys
 - ChatGPT/Codex plan OAuth
 - GitHub Copilot subscription OAuth
 - OpenCode Go subscription
@@ -82,7 +83,7 @@ leverframe models
 leverframe claude
 ```
 
-`providers add` supports OpenAI, OpenCode Go, Kimi Coding Plan, Moonshot, z.ai Coding Plan, and custom OpenAI-compatible endpoints. Credentials stay separate because each provider has its own endpoint and billing arrangement.
+`providers add` supports OpenAI, Anthropic API, OpenCode Go, Kimi Coding Plan, Moonshot, z.ai Coding Plan, and custom OpenAI-compatible endpoints. Credentials stay separate because each provider has its own endpoint and billing arrangement.
 
 ### OpenCode Go subscription
 
@@ -111,6 +112,7 @@ Examples:
 ```text
 leverframe:openai:gpt-5.4
 leverframe:openai-oauth:gpt-5.6-sol
+leverframe:anthropic-api:<model-id>
 leverframe:github-copilot:<model-id>
 leverframe:kimi:k3
 leverframe:moonshot:kimi-k3

@@ -1,6 +1,7 @@
 import { tool, jsonSchema, type ModelMessage, type UserContent } from 'ai';
 import { parseToolArguments } from './proxy-shared.js';
 import type { SdkCallParams } from './sdk-adapter.js';
+import { neutralClientInstructions } from './neutral-client-request.js';
 
 export interface OpenAiMessage {
   role: 'system' | 'developer' | 'user' | 'assistant' | 'tool';
@@ -101,7 +102,7 @@ export function translateOpenAiRequest(
     openAiOAuth?: boolean;
   },
 ): SdkCallParams {
-
+  if (options?.openAiOAuth) body = neutralClientInstructions(body);
   const toolNameById = new Map<string, string>();
   for (const msg of body.messages) {
     if (msg.role === 'assistant' && msg.tool_calls) {

@@ -1,4 +1,5 @@
 import type { ServerResponse } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { PassThrough } from 'node:stream';
 import type { Writable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -31,6 +32,20 @@ function responseBody(response: Writable): Promise<string> {
 import { anthropicUpstreamHeaders, fetchWithOAuthRetry, relayAnthropicMessages } from '../src/upstream-forward.js';
 
 describe('anthropicUpstreamHeaders', () => {
+  it.each([
+    { authType: 'api' as const, expectedBeta: 'fine-grained-tool-streaming-2025-05-14', expectedKey: 'fixture-credential' },
+    { authType: 'oauth' as const, expectedBeta: 'oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14', expectedKey: undefined },
+  ])('forwards only betas compatible with $authType credentials', ({ authType, expectedBeta, expectedKey }) => {
+    const credential = 'fixture-credential';
+    const inboundBeta = 'oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14';
+
+    const headers = anthropicUpstreamHeaders(credential, false, inboundBeta, authType);
+
+    expect(headers['anthropic-beta']).toBe(expectedBeta);
+    expect(headers['x-api-key']).toBe(expectedKey);
+    expect(headers.Authorization).toBe(`Bearer ${credential}`);
+  });
+
   it('uses x-api-key for API-key auth', () => {
     expect(anthropicUpstreamHeaders('secret-key')).toMatchObject({
       Authorization: 'Bearer secret-key',
@@ -60,6 +75,48 @@ describe('anthropicUpstreamHeaders', () => {
       'X-Claude-Code-Session-Id': 'session-123',
     });
     expect(headers).not.toHaveProperty('x-api-key');
+  });
+});
+
+describe('relay cache-control compatibility', () => {
+  it.each([
+    { authType: 'api' as const, expectedCacheControl: { type: 'ephemeral', ttl: '1h' } },
+    { authType: 'oauth' as const, expectedCacheControl: { type: 'ephemeral', scope: 'organization', ttl: '1h' } },
+    { authType: undefined, expectedCacheControl: { type: 'ephemeral', ttl: '1h' } },
+  ])('sends cache controls compatible with $authType authentication', async ({ authType, expectedCacheControl }) => {
+    const key = randomUUID();
+    const url = 'https://api.anthropic.test/v1/messages';
+    const body = {
+      model: 'claude-cache-fixture',
+      system: [
+        { type: 'text', text: 'First context' },
+        { type: 'text', text: 'Second context' },
+        { type: 'text', text: 'Cached context', cache_control: { type: 'ephemeral', scope: 'organization', ttl: '1h' } },
+      ],
+      messages: [{ role: 'user', content: 'Hello' }],
+    };
+    const expectedBody = {
+      ...body,
+      system: [body.system[0], body.system[1], { ...body.system[2], cache_control: expectedCacheControl }],
+    };
+    const headers = anthropicUpstreamHeaders(key, false, undefined, authType);
+    const reply = { type: 'message', content: [] };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json(reply));
+    const response = streamedResponse();
+    const received = responseBody(response);
+
+    try {
+      await relayAnthropicMessages(response, url, body, key, false, { authType });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(url, {
+        method: 'POST', headers, body: expect.any(String), signal: undefined,
+      });
+      expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual(expectedBody);
+      expect(JSON.parse(await received)).toEqual(reply);
+    } finally {
+      fetchMock.mockRestore();
+    }
   });
 });
 

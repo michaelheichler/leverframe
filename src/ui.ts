@@ -108,6 +108,8 @@ function providerTagColor(providerId: string): (text: string) => string {
   switch (providerId) {
     case 'anthropic':
       return pc.yellow;
+    case 'anthropic-api':
+      return pc.magenta;
     case 'openai':
     case 'openai-oauth':
       return pc.white;

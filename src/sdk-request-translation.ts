@@ -18,6 +18,8 @@ import type { AnthropicRequestMessage, AnthropicToolDefinition } from './proxy-t
 import { CLAUDE_CODE_BILLING_HEADER_PREFIX } from './oauth/claude-identity.js';
 import { ToolResultImageError } from './provider-error.js';
 import { VERTEX_ANTHROPIC_NPM } from './constants.js';
+import { neutralClientInstructions } from './neutral-client-request.js';
+import { decodeOpenAiReasoningSignature } from './reasoning-signature.js';
 
 export { ToolResultImageError };
 
@@ -305,17 +307,66 @@ function thinkingToSdkPart(
   npm: string,
 ): Record<string, unknown> | null {
   const text = block.thinking ?? '';
-  if (npm === '@ai-sdk/openai' && !block.signature && !text.trim()) return null;
+  const openAiSignature = decodeOpenAiReasoningSignature(block.signature);
+  if (npm === '@ai-sdk/openai' && !openAiSignature && !text.trim()) return null;
 
   const part: Record<string, unknown> = { type: 'reasoning', text };
   if (block.signature) {
-    if (npm === '@ai-sdk/google') {
+    if (npm === '@ai-sdk/google' && !openAiSignature) {
       part.providerOptions = { google: { thoughtSignature: block.signature } };
-    } else if (npm === '@ai-sdk/openai' || npm === '@ai-sdk/openai-compatible') {
-      part.providerOptions = { openai: { reasoningEncryptedContent: block.signature } };
+    } else if ((npm === '@ai-sdk/openai' || npm === '@ai-sdk/openai-compatible') && openAiSignature) {
+      part.providerOptions = { openai: { reasoningEncryptedContent: openAiSignature } };
     }
   }
   return part;
+}
+
+function translateUserBlocks(
+  blocks: AnthropicBlock[],
+  openAiPromptCacheBreakpoints: boolean,
+): ModelMessage[] {
+  const out: ModelMessage[] = [];
+  const toolResults = blocks.filter(b => b.type === 'tool_result');
+  const parts: Array<Record<string, unknown>> = [];
+  for (const b of blocks) {
+    if (b.type === 'text') {
+      parts.push({
+        type: 'text',
+        text: b.text ?? '',
+        ...(openAiCacheBreakpoint(b, openAiPromptCacheBreakpoints)
+          ? { providerOptions: openAiCacheBreakpoint(b, openAiPromptCacheBreakpoints) }
+          : {}),
+      });
+    } else if (b.type === 'image') {
+      const p = imagePart(b);
+      if (p) {
+        parts.push({
+          ...p,
+          ...(openAiCacheBreakpoint(b, openAiPromptCacheBreakpoints)
+            ? { providerOptions: openAiCacheBreakpoint(b, openAiPromptCacheBreakpoints) }
+            : {}),
+        });
+      }
+    }
+  }
+  const toolResultImageParts: Array<Record<string, unknown>> = [];
+  if (toolResults.length) {
+    out.push({
+      role: 'tool',
+      content: toolResults.map(tr => ({
+        type: 'tool-result',
+        toolCallId: splitToolUseId(tr.tool_use_id ?? '').rawId,
+        toolName: tr._name ?? 'unknown',
+        output: { type: 'text', value: serializeToolResultForModel(tr, toolResultImageParts) },
+        ...(openAiCacheBreakpoint(tr, openAiPromptCacheBreakpoints)
+          ? { providerOptions: openAiCacheBreakpoint(tr, openAiPromptCacheBreakpoints) }
+          : {}),
+      })),
+    } as unknown as ModelMessage);
+  }
+  const userParts = [...toolResultImageParts, ...parts];
+  if (userParts.length) out.push({ role: 'user', content: userParts } as unknown as ModelMessage);
+  return out;
 }
 
 export function translateMessages(
@@ -325,14 +376,11 @@ export function translateMessages(
 ): ModelMessage[] {
   const isGoogle = npm === '@ai-sdk/google';
   const out: ModelMessage[] = [];
-
   for (const msg of messages) {
     const blocks: AnthropicBlock[] = typeof msg.content === 'string'
       ? [{ type: 'text', text: msg.content }]
       : msg.content ?? [];
-
     if (msg.role === 'system') {
-
       for (const block of blocks) {
         if (block.type !== 'text' || !block.text?.trim()) continue;
         out.push({
@@ -344,46 +392,7 @@ export function translateMessages(
         } as unknown as ModelMessage);
       }
     } else if (msg.role === 'user') {
-      const toolResults = blocks.filter(b => b.type === 'tool_result');
-      const parts: Array<Record<string, unknown>> = [];
-      for (const b of blocks) {
-        if (b.type === 'text') {
-          parts.push({
-            type: 'text',
-            text: b.text ?? '',
-            ...(openAiCacheBreakpoint(b, openAiPromptCacheBreakpoints)
-              ? { providerOptions: openAiCacheBreakpoint(b, openAiPromptCacheBreakpoints) }
-              : {}),
-          });
-        } else if (b.type === 'image') {
-          const p = imagePart(b);
-          if (p) {
-            parts.push({
-              ...p,
-              ...(openAiCacheBreakpoint(b, openAiPromptCacheBreakpoints)
-                ? { providerOptions: openAiCacheBreakpoint(b, openAiPromptCacheBreakpoints) }
-                : {}),
-            });
-          }
-        }
-      }
-      const toolResultImageParts: Array<Record<string, unknown>> = [];
-      if (toolResults.length) {
-        out.push({
-          role: 'tool',
-          content: toolResults.map(tr => ({
-            type: 'tool-result',
-            toolCallId: splitToolUseId(tr.tool_use_id ?? '').rawId,
-            toolName: tr._name ?? 'unknown',
-            output: { type: 'text', value: serializeToolResultForModel(tr, toolResultImageParts) },
-            ...(openAiCacheBreakpoint(tr, openAiPromptCacheBreakpoints)
-              ? { providerOptions: openAiCacheBreakpoint(tr, openAiPromptCacheBreakpoints) }
-              : {}),
-          })),
-        } as unknown as ModelMessage);
-      }
-      const userParts = [...toolResultImageParts, ...parts];
-      if (userParts.length) out.push({ role: 'user', content: userParts } as unknown as ModelMessage);
+      out.push(...translateUserBlocks(blocks, openAiPromptCacheBreakpoints));
     } else if (msg.role === 'assistant') {
       const parts: Array<Record<string, unknown>> = [];
       for (const b of blocks) {
@@ -526,6 +535,7 @@ export function translateRequest(
   npm: string,
   options?: TranslateRequestOptions,
 ): SdkCallParams {
+  if (options?.openAiOAuth) body = neutralClientInstructions(body);
   const messages = body.messages ?? [];
   annotateToolNames(messages);
   const baseSystem = systemToString(body.system, options?.openAiOAuth === true);

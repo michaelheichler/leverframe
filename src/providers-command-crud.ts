@@ -12,8 +12,10 @@ import {
   listAddableTemplates,
   listVisibleOAuthTemplates,
   getTemplateById,
+  type ProviderTemplate,
 } from './provider-templates.js';
-import { addProviderFromTemplate } from './registry/add-template.js';
+import { addProviderFromTemplate, type AddTemplateResult } from './registry/add-template.js';
+import { listAnthropicWorkspaces, type AnthropicWorkspace } from './registry/anthropic-workspaces.js';
 import {
   removeProviderFromRegistry,
   toggleProviderEnabled,
@@ -56,6 +58,49 @@ export async function runProvidersList(): Promise<number> {
   return 0;
 }
 
+const WORKSPACE_GUIDANCE = 'This key needs a workspace. Create a workspace at https://platform.claude.com/settings/workspaces, '
+  + 'or create a regular API key (sk-ant-api03-...) that needs no workspace ID.';
+
+async function promptWorkspaceHeaders(
+  template: ProviderTemplate,
+  apiKey: string,
+): Promise<Record<string, string> | undefined | null> {
+  const header = template.workspaceHeader;
+  if (!header) return undefined;
+  const listing = await listAnthropicWorkspaces(template.defaultBaseUrl ?? 'https://api.anthropic.com', apiKey);
+  const workspaces = listing.ok ? listing.workspaces : [];
+  const workspaceId = workspaces.length > 0
+    ? await chooseWorkspace(workspaces)
+    : await askWorkspaceId(listing.ok);
+  if (workspaceId === null) return null;
+  return workspaceId ? { [header]: workspaceId } : undefined;
+}
+
+async function chooseWorkspace(workspaces: AnthropicWorkspace[]): Promise<string | null> {
+  if (workspaces.length === 1) {
+    const [only] = workspaces as [AnthropicWorkspace];
+    p.log.info(`Using workspace ${only.name} (${only.id}).`);
+    return only.id;
+  }
+  const choice = await p.select({
+    message: 'Which workspace should this key use?',
+    options: [
+      ...workspaces.map(workspace => ({ value: workspace.id, label: workspace.name, hint: workspace.id })),
+      { value: '', label: 'No workspace', hint: 'the key is scoped to one workspace' },
+    ],
+  });
+  return p.isCancel(choice) ? null : String(choice);
+}
+
+async function askWorkspaceId(listed: boolean): Promise<string | null> {
+  if (listed) p.log.info('No workspaces found in this organization.');
+  const input = await p.text({
+    message: 'Workspace ID (press Enter if the key is scoped to one workspace):',
+    placeholder: 'wrkspc_...',
+  });
+  return p.isCancel(input) ? null : String(input ?? '').trim();
+}
+
 async function runTemplateAddFlow(templateId: string): Promise<number> {
   const registry = loadRegistry();
   const configuredIds = registry.providers.map(p => p.id);
@@ -86,25 +131,33 @@ async function runTemplateAddFlow(templateId: string): Promise<number> {
   }
 
   const apiKey = String(apiKeyInput).trim();
+  const headers = await promptWorkspaceHeaders(template, apiKey);
+  if (headers === null) {
+    p.cancel('Cancelled.');
+    return 0;
+  }
 
   const spinner = p.spinner();
   spinner.start(template.skipKeyVerification
     ? `Saving ${template.name} API key...`
     : `Testing connection to ${template.name}...`);
-  const result = await addProviderFromTemplate(template, apiKey);
+  const result = await addProviderFromTemplate(template, apiKey, { headers });
   spinner.stop('');
+  return reportTemplateAddResult(template.name, result);
+}
 
+function reportTemplateAddResult(name: string, result: AddTemplateResult): number {
   if (!result.added) {
     p.log.error(result.error ?? 'Could not add provider.');
     if (result.hint) p.log.info(result.hint);
+    if (result.hint?.includes('anthropic-workspace-id')) p.log.info(WORKSPACE_GUIDANCE);
     return 1;
   }
-
   if (result.keyVerified === false) {
-    logKeyStoredUnverified(template.name, result.modelCount ?? 0);
+    logKeyStoredUnverified(name, result.modelCount ?? 0);
     if (result.hint) p.log.info(result.hint);
   } else {
-    logConnected(template.name, result.modelCount ?? 0);
+    logConnected(name, result.modelCount ?? 0);
   }
   return 0;
 }

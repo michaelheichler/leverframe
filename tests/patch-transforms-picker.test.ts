@@ -70,6 +70,38 @@ function createPickerHarness(source: string, fetch: PickerFetch): PickerHarness 
   return { picker, props, selected, baseCancelled: () => cancelled };
 }
 
+describe('provider ownership in the native context picker', () => {
+  it.each([
+    {
+      providerId: 'anthropic-api',
+      selection: 'claude-opus-5-5',
+      expectedSelections: [['claude-opus-5-5', 'high']],
+    },
+    {
+      providerId: 'anthropic-api',
+      selection: 'leverframe:anthropic-api:claude-opus-5-5',
+      expectedSelections: [],
+    },
+    {
+      providerId: 'vendor',
+      selection: 'claude-opus-5-5',
+      expectedSelections: [],
+    },
+  ])('gates $selection only when owned by $providerId in the injected picker', ({
+    providerId, selection, expectedSelections,
+  }) => {
+    const modelId = 'claude-opus-5-5';
+    const result = applyNativeContextPicker(pickerSource(), {
+      [`leverframe:${providerId}:${modelId}`]: { default: 240_000, maximum: 960_000 },
+    });
+    const harness = createPickerHarness(result.content, () => new Promise<never>(() => {}));
+
+    (harness.picker(harness.props).props.onChange as (value: string) => void)(selection);
+
+    expect(harness.selected).toEqual(expectedSelections);
+  });
+});
+
 describe('native context picker transform', () => {
   it.each(['leverframe:provider:model', 'daily'])('gates an unknown-context launch identity %s through the full patch configuration', async identity => {
     const { config } = buildPatchModelConfig(

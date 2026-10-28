@@ -56,6 +56,7 @@ export const TEMPLATE_TO_PRICING_PLATFORM: Record<string, string> = {
   alibaba: 'alibaba',
   openrouter: 'openrouter',
   anthropic: 'anthropic',
+  'anthropic-api': 'anthropic',
   nvidia: 'nvidia',
   venice: 'openrouter',
 };

@@ -1,4 +1,4 @@
-import { fetchAnthropicModels } from './custom-endpoint.js';
+import { fetchAnthropicModels } from './anthropic-models-fetch.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
 import { loadRegistry, updateRegistry } from './io.js';
 import { reconcilePendingCredentialDeletes } from './credential-lifecycle.js';
@@ -327,7 +327,7 @@ async function refreshApiListProvider(
   const template = catalogTemplate ?? syntheticTemplate(provider, safeBaseUrl);
 
   if (npm === '@ai-sdk/anthropic') {
-    const fetched = await fetchAnthropicModels(safeBaseUrl, apiKey);
+    const fetched = await fetchAnthropicModels(safeBaseUrl, apiKey, provider.api.headers);
     if (fetched.error || fetched.models.length === 0) {
       return { models: [], error: fetched.error ?? 'No models returned.', baseUrl: fetched.baseUrl };
     }

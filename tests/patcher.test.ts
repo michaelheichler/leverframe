@@ -10,6 +10,7 @@ import {
 import { applyLeverframePatches, formatPatchSiteLine, PatchApplyError, projectNativeEffort } from '../src/patch-transforms.js';
 import type { CachedModel, RegistryProvider } from '../src/registry/types.js';
 import type { LocalProvider } from '../src/types.js';
+import { applySelectBadge } from '../src/patch-select-badge.js';
 
 describe('projectNativeEffort', () => {
   it('accepts a full native-plus ladder and pins the default to high', () => {
@@ -446,6 +447,50 @@ function readModelPickerOptions(source: string): Array<{ value: string; label: s
   expect(encoded).toBeDefined();
   return JSON.parse(JSON.parse(encoded ?? '"[]"')) as Array<{ value: string; label: string; description: string }>;
 }
+
+describe('Anthropic API picker badges', () => {
+  const canonicalId = 'leverframe:anthropic-api:claude-opus-5-5';
+
+  it.each([
+    { alias: undefined, expectedIdentity: canonicalId },
+    { alias: 'api-opus', expectedIdentity: 'api-opus' },
+  ])('preserves the API badge in the injected picker metadata for $expectedIdentity', ({ alias, expectedIdentity }) => {
+    const config = { [canonicalId]: { alias, display: 'API model fixture' } };
+
+    const patched = applyLeverframePatches(CLAUDE_FIXTURE, config);
+
+    expect(readModelPickerOptions(patched.content)).toContainEqual(expect.objectContaining({
+      value: expectedIdentity,
+      badge: 'API',
+    }));
+  });
+
+  it('omits the badge and its patch report when only a vendor identity is configured', () => {
+    const identity = 'leverframe:vendor:claude-opus-5-5';
+    const badgePatchName = applySelectBadge('').result.name;
+
+    const patched = applyLeverframePatches(CLAUDE_FIXTURE, {
+      [identity]: { display: 'Vendor model fixture' },
+    });
+
+    const option = readModelPickerOptions(patched.content).find(candidate => candidate.value === identity);
+    expect(option).toBeDefined();
+    expect(option).not.toHaveProperty('badge');
+    expect(patched.results.map(result => result.name)).not.toContain(badgePatchName);
+  });
+
+  it('reports a non-fatal badge skip and completes patching when the Select anchor is absent', () => {
+    const badgePatchName = applySelectBadge('').result.name;
+
+    const patched = applyLeverframePatches(CLAUDE_FIXTURE, {
+      [canonicalId]: { display: 'API model fixture' },
+    });
+
+    expect(patched.results.find(result => result.name === badgePatchName)).toMatchObject({ status: 'SKIP' });
+    expect(patched.results.map(result => result.status)).not.toContain('FAIL');
+    expect(readModelPickerOptions(patched.content)).toContainEqual(expect.objectContaining({ value: canonicalId }));
+  });
+});
 
 describe('patch script identity naming', () => {
   const config = {

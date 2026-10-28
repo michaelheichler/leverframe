@@ -52,7 +52,7 @@ it('discovers HTTP models and migrates old SDK routing metadata', async () => {
 it('exposes sparse HTTP records without inventing context limits', async () => {
   seedProvider([]);
   backend.fetch.mockResolvedValue([{ id: 'sparse-model', name: 'Sparse Model', supported_endpoints: ['/chat/completions'], capabilities: { type: 'chat' } }]);
-  vi.spyOn(env, 'resolveProviderCredential').mockResolvedValue(ACCESS_TOKEN);
+  vi.spyOn(env, 'resolveProviderAuth').mockResolvedValue({ apiKey: ACCESS_TOKEN });
   expect(await refreshProviderModels('github-copilot', ACCESS_TOKEN)).toMatchObject({ ok: true, modelCount: 1 });
   expect(await fetchProviderCatalog()).toContainEqual(expect.objectContaining({
     id: 'github-copilot', models: [expect.objectContaining({ id: 'sparse-model', contextWindowUnconfirmed: true })],

@@ -113,6 +113,7 @@ export const REGISTRY_TO_MODELS_DEV: Record<string, string> = {
   alibaba: 'alibaba',
   openrouter: 'openrouter',
   anthropic: 'anthropic',
+  'anthropic-api': 'anthropic',
   nvidia: 'nvidia',
   venice: 'openrouter',
 };

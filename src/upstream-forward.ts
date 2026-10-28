@@ -7,6 +7,8 @@ import { sanitizeCredential } from './server/auth.js';
 import { CLAUDE_CODE_USER_AGENT } from './oauth/claude-identity.js';
 import { createSseHeartbeat } from './sse-heartbeat.js';
 import { anthropicErrorType } from './upstream-error.js';
+import { withoutCacheControlScope } from './anthropic-cache-control.js';
+import { neutralAnthropicApiRequest, neutralClientHeaders } from './neutral-client-request.js';
 
 function createBoundaryTransform(onWrite: (chunk: Buffer) => void): Transform {
   return new Transform({
@@ -30,7 +32,7 @@ export function anthropicUpstreamHeaders(
   const key = sanitizeCredential(apiKey) ?? apiKey.trim();
   const isOAuth = authType === 'oauth';
   const headers: Record<string, string> = {
-    ...extraHeaders,
+    ...(isOAuth ? extraHeaders : neutralClientHeaders(extraHeaders ?? {})),
     'Content-Type': 'application/json',
     'anthropic-version': '2023-06-01',
     Authorization: `Bearer ${key}`,
@@ -39,10 +41,22 @@ export function anthropicUpstreamHeaders(
     ...(isOAuth && claudeCodeSessionId ? { 'X-Claude-Code-Session-Id': claudeCodeSessionId } : {}),
     ...(stream ? { Accept: 'text/event-stream' } : {}),
   };
-  if (inboundBeta) {
-    headers['anthropic-beta'] = inboundBeta;
+  const customBetas = Object.entries(headers).filter(([name]) => name.toLowerCase() === 'anthropic-beta');
+  if (!isOAuth) for (const [name] of customBetas) delete headers[name];
+  const beta = isOAuth ? inboundBeta : withoutOAuthBetas(inboundBeta ?? customBetas.map(([, value]) => value).join(','));
+  if (beta) {
+    headers['anthropic-beta'] = beta;
   }
   return headers;
+}
+
+export function withoutOAuthBetas(inboundBeta: string | undefined): string | undefined {
+  if (!inboundBeta) return undefined;
+  const kept = inboundBeta
+    .split(',')
+    .map(value => value.trim())
+    .filter(value => value !== '' && !/^(?:oauth|claude-code)-/i.test(value));
+  return kept.length > 0 ? kept.join(',') : undefined;
 }
 
 export class UpstreamUnreachableError extends Error {
@@ -173,6 +187,8 @@ export async function relayAnthropicMessages(
 ): Promise<void> {
   const lifecycle = options.lifecycle;
   lifecycle?.startConnecting();
+  const payload = JSON.stringify(options.authType === 'oauth'
+    ? body : withoutCacheControlScope(neutralAnthropicApiRequest(body)));
   const doFetch = (key: string) => fetch(messagesUrl, {
     method: 'POST',
     headers: anthropicUpstreamHeaders(
@@ -183,7 +199,7 @@ export async function relayAnthropicMessages(
       options.claudeCodeSessionId,
       options.extraHeaders,
     ),
-    body: JSON.stringify(body),
+    body: payload,
     signal: lifecycle?.abortSignal ?? options.signal,
   });
 

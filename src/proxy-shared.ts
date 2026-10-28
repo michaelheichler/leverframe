@@ -1,5 +1,4 @@
-
-
+import { encodeOpenAiReasoningSignature } from './reasoning-signature.js';
 export type FullStreamPart = {
   type: string;
   id?: string;
@@ -27,9 +26,10 @@ export type FullStreamPart = {
 
 export function grabRoundTripSignature(part: FullStreamPart): string | undefined {
   const md = part.providerMetadata;
+  const openAiSignature = md?.openai?.reasoningEncryptedContent;
   return md?.google?.thoughtSignature
     ?? md?.google?.thought_signature
-    ?? md?.openai?.reasoningEncryptedContent
+    ?? (openAiSignature ? encodeOpenAiReasoningSignature(openAiSignature) : undefined)
     ?? undefined;
 }
 

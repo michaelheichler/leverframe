@@ -227,6 +227,36 @@ export interface StoredProviderCredential {
   refreshDue: boolean;
 }
 
+export interface ResolvedProviderAuth {
+  apiKey: string | null;
+  accountId?: string;
+  providerData?: Record<string, unknown>;
+}
+
+export async function resolveProviderAuth(
+  providerId: string,
+  authRef: string,
+  diag?: (msg: string) => void,
+): Promise<ResolvedProviderAuth> {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== 'keyring' || readEnvCredential(leverframeKeyEnvVar(providerId))) {
+    return { apiKey: await resolveProviderCredential(providerId, authRef, diag) };
+  }
+  const raw = await readKeyringAccount(parsed.account, diag);
+  const oauthProviderId = oauthProviderIdFromAccount(parsed.account);
+  const credential = oauthProviderId ? parseStoredOAuthCredential(raw) : null;
+  if (!credential || !oauthProviderId || !raw) return { apiKey: decodeProviderSecret(raw) };
+  if (!credential.accessRejected && !oauthCredentialShouldRefresh(credential, oauthProviderId)) {
+    return { apiKey: credential.access, accountId: credential.accountId, providerData: credential.providerData };
+  }
+  const apiKey = await refreshOAuthKeyringAccount(parsed.account, oauthProviderId, raw, diag);
+  if (!apiKey) return { apiKey: null };
+  const refreshed = parseStoredOAuthCredential(await readKeyringAccount(parsed.account, diag));
+  return refreshed?.access === apiKey
+    ? { apiKey, accountId: refreshed.accountId, providerData: refreshed.providerData }
+    : { apiKey };
+}
+
 function storedOAuthRefreshDue(account: string, providerId: string, raw: string | null): boolean {
   if (!raw || !oauthProviderIdFromAccount(account)) return false;
   const credential = parseStoredOAuthCredential(raw.trim());
@@ -352,6 +382,9 @@ async function readProviderSecret(
 
   const oauthProviderId = oauthProviderIdFromAccount(account);
   if (oauthProviderId && raw.trim().startsWith('{')) {
+    const credential = parseStoredOAuthCredential(raw);
+    if (credential && credential.access !== rejectedAccessToken && !credential.accessRejected
+      && !oauthCredentialShouldRefresh(credential, oauthProviderId)) return credential.access;
     return refreshOAuthKeyringAccount(account, oauthProviderId, raw, diag, rejectedAccessToken);
   }
   const decoded = decodeProviderSecret(raw);

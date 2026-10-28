@@ -19,6 +19,7 @@ export interface ProviderTemplate {
   skipKeyVerification?: boolean;
 
   headers?: Record<string, string>;
+  workspaceHeader?: string;
   modelSource: ProviderModelSource;
   modelsDevProviderId?: string;
   supplierMetadataUrl?: string;
@@ -28,7 +29,21 @@ export interface ProviderTemplate {
   unsupportedReason?: string;
 }
 
+// Because the id 'anthropic' means subscription traffic, this one differs.
+export const ANTHROPIC_API_PROVIDER_ID = 'anthropic-api';
+
 export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
+  {
+    id: ANTHROPIC_API_PROVIDER_ID,
+    name: 'Anthropic API',
+    authType: 'api',
+    npm: '@ai-sdk/anthropic',
+    defaultBaseUrl: 'https://api.anthropic.com',
+    signupUrl: 'https://platform.claude.com/settings/keys',
+    workspaceHeader: 'anthropic-workspace-id',
+    modelSource: 'api-list',
+    supported: true,
+  },
   {
     id: 'openai',
     name: 'OpenAI',

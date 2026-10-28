@@ -72,7 +72,7 @@ describe('translateRequest', () => {
 
     const oauth = translateRequest(body, '@ai-sdk/openai', { openAiOAuth: true });
     expect(oauth.providerOptions?.openai?.instructions)
-      .toBe('You are Claude Code.\nFollow the user instructions.');
+      .toBe('You are a coding assistant.\nFollow the user instructions.');
 
     const changedAttribution = translateRequest({
       ...body,

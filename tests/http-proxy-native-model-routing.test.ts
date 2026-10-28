@@ -30,6 +30,34 @@ function decideModelRoute(model: string, routesById: Map<string, ProxyRoute>) {
   });
 }
 
+describe('Anthropic API and subscription routing', () => {
+  it('keeps the bare Claude ID on subscription passthrough when Anthropic API exposes it', () => {
+    const route: ProxyRoute = {
+      ...vendorClaudeRoute('claude-opus-5-5'),
+      aliasId: 'leverframe:anthropic-api:claude-opus-5-5',
+      providerId: 'anthropic-api',
+    };
+    const routesById = buildProxyRoutesById([route]);
+
+    const decision = decideModelRoute(route.realModelId, routesById);
+
+    expect(decision.action).toBe('passthrough-messages');
+  });
+
+  it('routes the explicit Anthropic API identity to the API route', () => {
+    const route: ProxyRoute = {
+      ...vendorClaudeRoute('claude-opus-5-5'),
+      aliasId: 'leverframe:anthropic-api:claude-opus-5-5',
+      providerId: 'anthropic-api',
+    };
+    const routesById = buildProxyRoutesById([route]);
+
+    const decision = decideModelRoute(route.aliasId, routesById);
+
+    expect(decision).toMatchObject({ action: 'translated', route });
+  });
+});
+
 describe('native Claude subscription routing', () => {
   it.each(['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-fable-fixture'])(
     'keeps %s on subscription passthrough when a vendor exposes the same model ID',

@@ -17,6 +17,7 @@ import {
 } from '../config.js';
 import { MAX_MODEL_CATALOG, DEFAULT_SERVER_PORT } from '../constants.js';
 import { fetchProviderCatalog } from '../provider-catalog.js';
+import { loadRegistry } from '../registry/io.js';
 import type { ServerModelInfo } from './models.js';
 import {
   loadServerModels,
@@ -282,12 +283,7 @@ async function runServerWizard(): Promise<{ runConfig: ServerRunConfig; promptFo
 }
 
 export async function resolveServerUpstreamApiKey(): Promise<string | null> {
-  const catalog = await fetchProviderCatalog({ agent: 'server' });
-  if (catalog.some(provider => provider.apiKey.trim() || provider.models.length > 0)) {
-    return 'registry-local';
-  }
-
-  return null;
+  return loadRegistry().providers.some(provider => provider.enabled) ? 'registry-local' : null;
 }
 
 export async function runServerCommand(options: ServerCommandOptions = {}): Promise<number> {

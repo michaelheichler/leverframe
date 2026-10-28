@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { grabRoundTripSignature } from '../src/proxy-shared.js';
 import {
   annotateToolNames,
   translateMessages,
@@ -192,8 +193,11 @@ describe('translateMessages', () => {
   });
 
   it('round-trips OpenAI reasoningEncryptedContent via thinking.signature', () => {
+    const signature = grabRoundTripSignature({
+      type: 'reasoning-end', providerMetadata: { openai: { reasoningEncryptedContent: 'enc_blob_abc' } },
+    });
     const msg = [{ role: 'assistant' as const, content: [
-      { type: 'thinking', thinking: 'chain...', signature: 'enc_blob_abc' },
+      { type: 'thinking', thinking: 'chain...', signature },
     ] }];
     const openai = translateMessages(msg, '@ai-sdk/openai') as any[];
     expect(openai[0].content[0]).toEqual({

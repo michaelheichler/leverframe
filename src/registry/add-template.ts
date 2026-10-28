@@ -4,7 +4,7 @@ import { saveProviderCredential } from '../env.js';
 import { isSdkMigratedNpm } from '../provider-factory.js';
 import type { ProviderTemplate } from '../provider-templates.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
-import { fetchTemplateModels } from './fetch-template-models.js';
+import { fetchTemplateModels, type FetchTemplateModelsResult } from './fetch-template-models.js';
 import { loadRegistryStrict, updateRegistry } from './io.js';
 import { cancelCredentialDelete, journalCredentialWrite, reconcilePendingCredentialDeletes } from './credential-lifecycle.js';
 import { withCredentialMutationLock, withProviderMutationLock } from './lock.js';
@@ -15,7 +15,7 @@ import {
   loadPricingCache,
   pricingPlatformForProvider,
 } from './pricing.js';
-import type { RegistryProvider } from './types.js';
+import type { CachedModel, RegistryProvider } from './types.js';
 
 export interface AddTemplateResult {
   added: boolean;
@@ -55,12 +55,13 @@ function filterAnonymousFreeModels<T extends { cost?: { input: number; output: n
 
 function buildRegistryEntry(
   template: ProviderTemplate,
-  fetched: { baseUrl: string; models: import('./types.js').CachedModel[] },
+  fetched: { baseUrl: string; models: import('./types.js').CachedModel[]; headers?: Record<string, string> },
   pricedModels: import('./types.js').CachedModel[],
   authRef: string,
   existing: RegistryProvider | undefined,
 ): RegistryProvider {
   const now = new Date().toISOString();
+  const headers = fetched.headers && Object.keys(fetched.headers).length > 0 ? { headers: fetched.headers } : {};
   return {
     id: template.id,
     templateId: template.id,
@@ -71,6 +72,7 @@ function buildRegistryEntry(
     api: {
       npm: template.npm,
       url: fetched.baseUrl,
+      ...headers,
     },
     addedAt: existing?.addedAt ?? now,
     refreshedAt: now,
@@ -81,10 +83,44 @@ function buildRegistryEntry(
   };
 }
 
+export interface AddTemplateOptions {
+  replaceExisting?: boolean;
+  baseUrl?: string;
+  headers?: Record<string, string>;
+}
+
+type TemplateListing =
+  | { failure: AddTemplateResult }
+  | { fetched: FetchTemplateModelsResult & { headers?: Record<string, string> }; usableModels: CachedModel[] };
+
+async function listUsableTemplateModels(
+  template: ProviderTemplate,
+  trimmedKey: string,
+  opts?: AddTemplateOptions,
+): Promise<TemplateListing> {
+  const listed = await fetchTemplateModels(template, trimmedKey, opts?.baseUrl, opts?.headers);
+  if (listed.error || listed.models.length === 0) {
+    return { failure: { added: false, error: listed.error ?? 'No models returned.', hint: listed.hint } };
+  }
+  const usableModels = !trimmedKey && template.anonymousFreeModels
+    ? filterAnonymousFreeModels(listed.models, template)
+    : listed.models;
+  if (usableModels.length === 0) {
+    return {
+      failure: {
+        added: false,
+        error: 'No free models were returned for anonymous access.',
+        hint: template.signupUrl ? `Add a ${template.name} API key from ${template.signupUrl} to use paid models.` : undefined,
+      },
+    };
+  }
+  return { fetched: { ...listed, headers: opts?.headers }, usableModels };
+}
+
 async function addProviderFromTemplateLocked(
   template: ProviderTemplate,
   apiKey: string,
-  opts?: { replaceExisting?: boolean; baseUrl?: string },
+  opts?: AddTemplateOptions,
 ): Promise<AddTemplateResult> {
   const packageError = await probeTemplatePackage(template);
   if (packageError) {
@@ -106,24 +142,9 @@ async function addProviderFromTemplateLocked(
     };
   }
 
-  const fetched = await fetchTemplateModels(template, trimmedKey, opts?.baseUrl);
-  if (fetched.error || fetched.models.length === 0) {
-    return {
-      added: false,
-      error: fetched.error ?? 'No models returned.',
-      hint: fetched.hint,
-    };
-  }
-  const usableModels = !trimmedKey && template.anonymousFreeModels
-    ? filterAnonymousFreeModels(fetched.models, template)
-    : fetched.models;
-  if (usableModels.length === 0) {
-    return {
-      added: false,
-      error: 'No free models were returned for anonymous access.',
-      hint: template.signupUrl ? `Add a ${template.name} API key from ${template.signupUrl} to use paid models.` : undefined,
-    };
-  }
+  const listing = await listUsableTemplateModels(template, trimmedKey, opts);
+  if ('failure' in listing) return listing.failure;
+  const { fetched, usableModels } = listing;
 
   const authRef = trimmedKey ? `keyring:provider:${template.id}` : 'none:anonymous';
   const pricingCache = loadPricingCache();
@@ -144,50 +165,57 @@ async function addProviderFromTemplateLocked(
     else current.providers.push(entry);
     return entry;
   });
-  let entry: RegistryProvider;
-  if (trimmedKey) {
-    const published = await withCredentialMutationLock(authRef, async () => {
-      await journalCredentialWrite(authRef);
-      if (!await saveProviderCredential(authRef, trimmedKey)) return null;
-      const committed = publish();
-      try {
-        await cancelCredentialDelete(authRef);
-      } catch {
-        return committed;
-      }
-      return committed;
-    });
-    if (!published) {
-      return {
-        added: false,
-        error: 'Could not save API key to credential storage.',
-        hint: 'Check Keychain access and leverframe home permissions, then try again.',
-      };
-    }
-    entry = published;
-  } else {
-    entry = publish();
+  const entry = trimmedKey ? await publishWithCredential(authRef, trimmedKey, publish) : publish();
+  if (!entry) {
+    return {
+      added: false,
+      error: 'Could not save API key to credential storage.',
+      hint: 'Check Keychain access and leverframe home permissions, then try again.',
+    };
   }
   enrichPricingAsync();
+  return addedResult(template, entry, pricedModels.length);
+}
 
-  const keyVerified = !template.skipKeyVerification && !fetched.usedStaticFallback;
+async function publishWithCredential(
+  authRef: string,
+  key: string,
+  publish: () => RegistryProvider,
+): Promise<RegistryProvider | null> {
+  return withCredentialMutationLock(authRef, async () => {
+    await journalCredentialWrite(authRef);
+    if (!await saveProviderCredential(authRef, key)) return null;
+    const committed = publish();
+    try {
+      await cancelCredentialDelete(authRef);
+    } catch {
+      return committed;
+    }
+    return committed;
+  });
+}
+
+function addedResult(
+  template: ProviderTemplate,
+  entry: RegistryProvider,
+  modelCount: number,
+): AddTemplateResult {
+  const keyVerified = !template.skipKeyVerification;
   return {
     added: true,
     provider: entry,
-    modelCount: pricedModels.length,
+    modelCount,
     keyVerified,
     hint: keyVerified
       ? undefined
-      : fetched.usedStaticFallback
-        ? `Live model listing for ${template.name} was unavailable. leverframe stored the API key and the documented static model list, but did not verify the key. The first request will validate it.`
-        : 'API key stored in leverframe credential storage. leverframe did not verify it against an upstream endpoint, so a bad key will only surface on the first request.',
+      : 'API key stored in leverframe credential storage. leverframe did not verify it against an upstream endpoint, so a bad key will only surface on the first request.',
   };
 }
 
 export function addProviderFromTemplate(
   template: ProviderTemplate,
   apiKey: string,
-  opts?: { replaceExisting?: boolean; baseUrl?: string },
+  opts?: AddTemplateOptions,
 ): Promise<AddTemplateResult> {
   return withProviderMutationLock(template.id, async () => {
     try {

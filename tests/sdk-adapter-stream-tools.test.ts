@@ -169,7 +169,7 @@ describe('writeAnthropicStream tool input handling', () => {
       { type: 'finish', finishReason: 'stop' },
     ]);
     const sigDelta = events.find(e => e.event === 'content_block_delta' && e.data.delta.type === 'signature_delta')!;
-    expect(sigDelta.data.delta.signature).toBe('enc_xyz');
+    expect(sigDelta.data.delta.signature).toBe('leverframe:openai:v1:enc_xyz');
   });
 
   const strictTools = translateTools([{

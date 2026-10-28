@@ -1,8 +1,21 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { runLaunchPatchCheckV2 } from '../src/patch-reconcile.js';
 import type { ClaudeInstallation } from '../src/claude-installation.js';
 import type { PatchRuntime } from '../src/patch-transaction.js';
+
+let home: string;
+beforeEach(() => {
+  home = mkdtempSync(join(tmpdir(), 'leverframe-launch-blocking-'));
+  vi.stubEnv('LEVERFRAME_HOME', home);
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+  rmSync(home, { recursive: true, force: true });
+});
 
 describe('launch-time Claude integration compatibility', () => {
   it('blocks launch when structural inspection fails', async () => {
@@ -21,6 +34,7 @@ describe('launch-time Claude integration compatibility', () => {
       async confirm() { return false; },
     };
 
-    await expect(runLaunchPatchCheckV2({ installation, runtime }, presenter)).rejects.toThrow(/structurally incompatible/);
+    await expect(runLaunchPatchCheckV2({ installation, runtime, freshProviders: [] }, presenter))
+      .rejects.toThrow(/structurally incompatible/);
   });
 });

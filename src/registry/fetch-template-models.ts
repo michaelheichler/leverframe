@@ -16,6 +16,7 @@ import {
   stripModelsDevCacheMeta,
 } from './models-dev.js';
 import { fetchOpenCodeGoMetadata } from './supplier-metadata.js';
+import { fetchAnthropicModels } from './anthropic-models-fetch.js';
 
 const TEST_TIMEOUT_MS = 10_000;
 
@@ -236,18 +237,17 @@ export async function fetchTemplateModels(
     }
   }
 
+  if (template.npm === '@ai-sdk/anthropic') {
+    return fetchAnthropicModels(baseUrl, apiKey.trim(), { ...template.headers, ...extraHeaders });
+  }
+
   const url = modelsUrl(baseUrl, template);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TEST_TIMEOUT_MS);
 
   const headers: Record<string, string> = { Accept: 'application/json' };
   const trimmedApiKey = apiKey.trim();
-  if (template.npm === '@ai-sdk/anthropic') {
-    if (trimmedApiKey) headers['x-api-key'] = trimmedApiKey;
-    headers['anthropic-version'] = '2023-06-01';
-  } else if (trimmedApiKey) {
-    headers['Authorization'] = `Bearer ${trimmedApiKey}`;
-  }
+  if (trimmedApiKey) headers['Authorization'] = `Bearer ${trimmedApiKey}`;
   if (template.headers) Object.assign(headers, template.headers);
   if (extraHeaders) Object.assign(headers, extraHeaders);
 

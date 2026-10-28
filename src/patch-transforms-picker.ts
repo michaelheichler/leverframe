@@ -1,5 +1,6 @@
 import type { PatchSiteResult } from './patch-transforms.js';
 import { ONE_M_CONTEXT_WINDOW } from './context-model-id.js';
+import { ANTHROPIC_API_PROVIDER_ID } from './provider-templates.js';
 
 export interface NativeContextMode {
   default: number;
@@ -141,6 +142,8 @@ function pickerModelKeys(key: string): string[] {
   if (separator <= 0 || separator === target.length - 1) return [normalized];
   const provider = target.slice(0, separator).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   const model = target.slice(separator + 1);
+  // Because a bare claude-* key would claim the native subscription entry.
+  if (provider === ANTHROPIC_API_PROVIDER_ID) return [normalized];
   const alias = model.startsWith('claude-') ? model : `anthropic-${provider}__${model}`;
   return [...new Set([normalized, alias])];
 }

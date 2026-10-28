@@ -1,8 +1,6 @@
 import { UnstableCredentialSnapshotError } from '../credential-store.js';
 import {
-  resolveProviderCredential,
-  resolveProviderOAuthAccountId,
-  resolveProviderOAuthProviderData,
+  resolveProviderAuth,
   resolveStoredProviderCredential,
 } from '../env.js';
 import type { CompatibilityAgent } from '../model-compatibility.js';
@@ -19,20 +17,16 @@ export async function loadRegistryProviders(
   const oauthAccountIds = new Map<string, string>();
   const oauthProviderData = new Map<string, Record<string, unknown>>();
   for (const provider of registry.providers) {
+    if (!provider.enabled) continue;
     try {
-      const key = await resolveProviderCredential(provider.id, provider.authRef, diag);
-      if (key) keys.set(provider.id, key);
+      const auth = await resolveProviderAuth(provider.id, provider.authRef, diag);
+      if (auth.apiKey) keys.set(provider.id, auth.apiKey);
+      if (provider.authType === 'oauth') {
+        if (auth.accountId) oauthAccountIds.set(provider.id, auth.accountId);
+        if (auth.providerData) oauthProviderData.set(provider.id, auth.providerData);
+      }
     } catch (err) {
       diag?.(`${provider.id}: credential unavailable: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    if (provider.authType === 'oauth') {
-      try {
-        const accountId = await resolveProviderOAuthAccountId(provider.authRef, diag);
-        if (accountId) oauthAccountIds.set(provider.id, accountId);
-        const pd = await resolveProviderOAuthProviderData(provider.authRef, diag);
-        if (pd) oauthProviderData.set(provider.id, pd);
-      } catch {
-      }
     }
   }
   return materializeRegistry(registry, provider => keys.get(provider.id) ?? null, opts)

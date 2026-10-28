@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { fetchTemplateModels } from '../src/registry/fetch-template-models.js';
 import type { ProviderTemplate } from '../src/provider-templates.js';
 import { getProviderDebugLogPath } from '../src/log-paths.js';
+import { ANTHROPIC_MODELS_PAGE_LIMIT } from '../src/registry/anthropic-model-list.js';
 
 function template(partial: Partial<ProviderTemplate> & Pick<ProviderTemplate, 'id' | 'name' | 'npm'>): ProviderTemplate {
   return {
@@ -72,8 +73,9 @@ describe('fetchTemplateModels', () => {
     expect(result.error).toBeUndefined();
     expect(result.models.map(m => m.id)).toEqual(['claude-sonnet-4-6']);
 
+    expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledWith(
-      'https://api.anthropic.com/v1/models',
+      `https://api.anthropic.com/v1/models?limit=${ANTHROPIC_MODELS_PAGE_LIMIT}`,
       expect.objectContaining({
         headers: expect.objectContaining({
           'x-api-key': 'sk-ant-test-key',
