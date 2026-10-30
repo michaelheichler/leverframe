@@ -9,6 +9,8 @@ import { createSseHeartbeat } from './sse-heartbeat.js';
 import { anthropicErrorType } from './upstream-error.js';
 import { withoutCacheControlScope } from './anthropic-cache-control.js';
 import { neutralAnthropicApiRequest, neutralClientHeaders } from './neutral-client-request.js';
+import { openCodeGoHeaders } from './opencode-go-headers.js';
+import { extractClaudeSessionId } from './client-session.js';
 
 function createBoundaryTransform(onWrite: (chunk: Buffer) => void): Transform {
   return new Transform({
@@ -189,6 +191,8 @@ export async function relayAnthropicMessages(
   lifecycle?.startConnecting();
   const payload = JSON.stringify(options.authType === 'oauth'
     ? body : withoutCacheControlScope(neutralAnthropicApiRequest(body)));
+  const extraHeaders = openCodeGoHeaders(messagesUrl, options.extraHeaders,
+    extractClaudeSessionId(body, options.claudeCodeSessionId));
   const doFetch = (key: string) => fetch(messagesUrl, {
     method: 'POST',
     headers: anthropicUpstreamHeaders(
@@ -197,7 +201,7 @@ export async function relayAnthropicMessages(
       options.inboundBeta,
       options.authType,
       options.claudeCodeSessionId,
-      options.extraHeaders,
+      extraHeaders,
     ),
     body: payload,
     signal: lifecycle?.abortSignal ?? options.signal,

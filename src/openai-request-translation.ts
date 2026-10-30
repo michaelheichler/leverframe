@@ -102,7 +102,7 @@ export function translateOpenAiRequest(
     openAiOAuth?: boolean;
   },
 ): SdkCallParams {
-  if (options?.openAiOAuth) body = neutralClientInstructions(body);
+  body = neutralClientInstructions(body);
   const toolNameById = new Map<string, string>();
   for (const msg of body.messages) {
     if (msg.role === 'assistant' && msg.tool_calls) {

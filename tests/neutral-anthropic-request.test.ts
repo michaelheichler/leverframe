@@ -2,6 +2,7 @@ import type { ServerResponse } from 'node:http';
 import { PassThrough } from 'node:stream';
 import { afterEach, expect, it, vi } from 'vitest';
 import { anthropicUpstreamHeaders, relayAnthropicMessages } from '../src/upstream-forward.js';
+import { NEUTRAL_ASSISTANT_PROMPT } from '../src/neutral-client-request.js';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -62,7 +63,7 @@ it.each(['api', undefined] as const)('normalizes system blocks on the wire for %
   expect(fetchMock).toHaveBeenCalledWith('https://api.anthropic.test/v1/messages', {
     method: 'POST', signal: undefined, headers: expect.objectContaining({ 'x-api-key': 'fixture-key' }),
     body: JSON.stringify({ ...body, system: [{
-      type: 'text', text: 'You are a coding assistant.\nPreserve user changes.',
+      type: 'text', text: `${NEUTRAL_ASSISTANT_PROMPT}\nPreserve user changes.`,
       cache_control: { type: 'ephemeral', ttl: '1h' },
     }] }),
   });
@@ -80,7 +81,7 @@ it('normalizes string system instructions without changing user content', async 
   expect(fetchMock).toHaveBeenCalledTimes(1);
   expect(fetchMock).toHaveBeenCalledWith('https://api.anthropic.test/v1/messages', {
     method: 'POST', signal: undefined, headers: expect.objectContaining({ 'x-api-key': 'fixture-key' }),
-    body: JSON.stringify({ ...body, system: 'You are a coding assistant.\nPreserve user changes.' }),
+    body: JSON.stringify({ ...body, system: `${NEUTRAL_ASSISTANT_PROMPT}\nPreserve user changes.` }),
   });
   expect(body.system).toBe(system);
 });

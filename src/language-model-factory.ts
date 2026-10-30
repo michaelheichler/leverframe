@@ -4,8 +4,10 @@ import { createCopilotHttpLanguageModel } from './copilot/provider.js';
 import { createBuiltinAnthropicModel, createBuiltinOpenAiModel } from './language-model-builtins.js';
 import type { ResponsesWebSocketDiagnosticEvent } from './oauth/responses-websocket.js';
 import { revalidateCustomEndpointUrl } from './registry/url-security.js';
+import { neutralClientHeaders } from './neutral-client-request.js';
+import { openCodeGoFetch, openCodeGoHeaders } from './opencode-go-headers.js';
 
-type SdkProviderFactory = (options: { apiKey: string; baseURL?: string; name?: string; headers?: Record<string, string> }) => {
+type SdkProviderFactory = (options: { apiKey: string; baseURL?: string; name?: string; headers?: Record<string, string>; fetch?: typeof fetch }) => {
   (modelId: string): LanguageModel;
   chat: (modelId: string) => LanguageModel;
   responses: (modelId: string) => LanguageModel;
@@ -35,6 +37,7 @@ export interface ProviderModelSpec {
   providerData?: Record<string, unknown>;
   vertex?: VertexProviderConfig;
   headers?: Record<string, string>;
+  fetch?: typeof fetch;
   useResponsesLite?: boolean;
   preferWebSockets?: boolean;
   minimalClientVersion?: string;
@@ -105,6 +108,8 @@ export async function createLanguageModel(spec: ProviderModelSpec): Promise<Lang
         `${revalidation.error ?? 'Custom endpoint URL failed security revalidation.'}${revalidation.hint ? ` ${revalidation.hint}` : ''}`);
     }
   }
+  spec = { ...spec, fetch: openCodeGoFetch(baseURL), headers: openCodeGoHeaders(baseURL,
+    spec.authType === 'oauth' || !spec.headers ? spec.headers : neutralClientHeaders(spec.headers)) };
   if (spec.providerId === 'github-copilot' || npm === '@github/copilot-sdk') {
     return createCopilotHttpLanguageModel({
       npm: npm === '@github/copilot-sdk' ? '@ai-sdk/openai-compatible' : npm,
@@ -119,8 +124,10 @@ export async function createLanguageModel(spec: ProviderModelSpec): Promise<Lang
       name: spec.providerId ?? 'openai-compatible', baseURL: baseURL ?? '', includeUsage: true,
       ...(apiKey.trim() ? { apiKey } : {}),
       ...(spec.headers ? { headers: spec.headers } : {}),
+      ...(spec.fetch ? { fetch: spec.fetch } : {}),
     })(modelId);
   }
   const create = await loadSdkProviderFactory(npm);
-  return create({ apiKey, ...(baseURL ? { baseURL } : {}), ...(spec.headers ? { headers: spec.headers } : {}) })(modelId);
+  return create({ apiKey, ...(baseURL ? { baseURL } : {}), ...(spec.headers ? { headers: spec.headers } : {}),
+    ...(spec.fetch ? { fetch: spec.fetch } : {}) })(modelId);
 }

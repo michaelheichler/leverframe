@@ -1,11 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { it, expect } from 'vitest';
+import { NEUTRAL_ASSISTANT_PROMPT } from '../src/neutral-client-request.js';
 import { OPENAI_OAUTH_ASTRA_MODEL } from './fixtures/openai-oauth-astra-metadata.js';
 import {
   anthropicEffortFromRequest,
   translateRequest,
 } from '../src/sdk-adapter.js';
 
-describe('translateRequest', () => {
   it('assembles SDK params and adds Google thinking options', () => {
     const params = translateRequest({
       model: 'gemini-3-flash-preview',
@@ -58,7 +58,7 @@ describe('translateRequest', () => {
     expect(params.maxRetries).toBe(0);
   });
 
-  it('strips Claude Code Anthropic billing attribution from OpenAI OAuth instructions only', () => {
+  it('strips client billing attribution from OAuth and public API instructions', () => {
     const body = {
       model: 'gpt-5.6-terra',
       system: [
@@ -72,7 +72,7 @@ describe('translateRequest', () => {
 
     const oauth = translateRequest(body, '@ai-sdk/openai', { openAiOAuth: true });
     expect(oauth.providerOptions?.openai?.instructions)
-      .toBe('You are a coding assistant.\nFollow the user instructions.');
+      .toBe(`${NEUTRAL_ASSISTANT_PROMPT}\nFollow the user instructions.`);
 
     const changedAttribution = translateRequest({
       ...body,
@@ -87,7 +87,7 @@ describe('translateRequest', () => {
       .toBe(oauth.providerOptions?.openai?.promptCacheKey);
 
     const publicApi = translateRequest({ ...body, model: 'gpt-5.5' }, '@ai-sdk/openai');
-    expect(publicApi.instructions).toContain('x-anthropic-billing-header:');
+    expect(publicApi.instructions).toBe(`${NEUTRAL_ASSISTANT_PROMPT}\nFollow the user instructions.`);
   });
 
   it('maps output_config.effort to the reported Google level without guessing a budget', () => {
@@ -369,4 +369,3 @@ describe('translateRequest', () => {
     expect(compact.providerOptions?.openai?.promptCacheKey)
       .toBe(ordinary.providerOptions?.openai?.promptCacheKey);
   });
-});

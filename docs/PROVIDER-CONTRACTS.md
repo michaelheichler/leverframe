@@ -28,7 +28,7 @@ Model discovery pages through `GET /v1/models?limit=1000` with `after_id` until 
 
 The picker shows these models under their `leverframe:anthropic-api:<model>` identity. Bare `claude-*` ids keep routing to the subscription, and the native context picker table never receives a bare key for this provider. Leverframe relays requests in native Messages format with the API key and drops `oauth-*` and `claude-code-*` beta values. The subscription token never reaches this route.
 
-API requests remove Claude Code client headers, the billing line, and recognized device/account/session user metadata. The standard Claude Code identity sentence becomes "You are a coding assistant." Other instructions, user content, tool definitions, and tool results retain their meaning. Anthropic OAuth requests retain their required client identity. This normalization removes known identifiers, but does not guarantee anonymity or improved model performance.
+API requests remove Claude Code client headers, the billing line, and recognized device/account/session user metadata. The standard client identity sentence becomes a neutral assistant prompt for coding, research, explanation, and practical help. Remaining client-name mentions in system and developer instructions become neutral wording. User content, tool definitions, and tool results retain their meaning. Anthropic OAuth requests retain their required client identity. See [neutral prompt sources and boundaries](NEUTRAL-PROMPT.md).
 
 Picker rows for this provider carry `badge: "API"`. An optional patch renders the badge in the theme purple (`autoAccept`) inside the Select description cell. When the anchor is missing or ambiguous, the patch skips and the label keeps its `(Anthropic API)` suffix.
 
@@ -36,7 +36,7 @@ Picker rows for this provider carry `badge: "API"`. An optional patch renders th
 
 ## ChatGPT instructions and reasoning signatures
 
-Both ChatGPT request translators normalize the Claude Code billing line and identity sentence in system and developer instructions. User messages, tool descriptions, and tool results remain unchanged. Public OpenAI API translation retains its existing instruction behavior.
+Both request translators normalize the client billing line and identity in system and developer instructions for all SDK and OpenAI-compatible routes, including ChatGPT. User messages, tool descriptions, and tool results remain unchanged.
 
 Leverframe marks OpenAI encrypted reasoning signatures before sending them through the Anthropic response format. Only marked signatures become OpenAI encrypted reasoning on replay. Native Claude signatures and unmarked signatures from older sessions do not cross that boundary. OpenAI signatures do not become Google thought signatures. This prevents foreign signature replay without deleting user messages or tool exchanges. It does not validate upstream ciphertext or guarantee replay across different accounts or providers.
 
@@ -44,9 +44,9 @@ Leverframe marks OpenAI encrypted reasoning signatures before sending them throu
 
 ## Credential reads during discovery
 
-Catalog loading reads a fresh OAuth credential once for its access token, account ID, and provider metadata. It skips disabled providers. The server startup existence check reads registry configuration without opening Keychain. Expired or rejected tokens still use the refresh and persistence checks, and later catalog loads read current credentials instead of retaining a process-wide secret cache.
+Catalog loading reads each enabled provider's fresh OAuth credential once, including the account metadata. The server startup existence check reads registry configuration without opening Keychain. Expired or rejected tokens still use the refresh and persistence checks, and later catalog loads read current credentials instead of retaining a process-wide secret cache.
 
-`tests/provider-keychain-reads.test.ts` checks read counts and disabled providers. `tests/resolve-provider-auth.test.ts` covers refresh, rejected tokens, and environment overrides. These changes reduce repeated access, but macOS may still prompt for access to individual Keychain items.
+`tests/provider-keychain-reads.test.ts` checks read counts and disabled providers. `tests/resolve-provider-auth.test.ts` covers token refresh and rejection, along with environment overrides. These changes reduce repeated access, but macOS may still prompt for access to individual Keychain items.
 
 ## Explicit local HTTP endpoints
 

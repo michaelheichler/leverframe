@@ -6,6 +6,22 @@ This changelog records notable changes to Leverframe.
 
 ## [Unreleased]
 
+### Fixed
+
+- Subagents on translated provider routes receive neutral runtime instructions, including agents using the CLI and Agent SDK identity variants. Delegated task constraints and native Anthropic subscription identity remain intact.
+
+## [0.4.11] - 2026-10-29
+
+### Fixed
+
+- OpenCode Go requests carry a session identifier and identify Leverframe across Chat Completions, Responses, and Messages transports. Legacy client session metadata now survives translation.
+- OpenAI API-key adapters retain custom endpoints and headers, so Go Responses models reach the configured provider.
+- OpenCode Go models use their advertised reasoning effort levels, including low effort for DeepSeek V4.1 Flash.
+
+### Changed
+
+- All translated providers receive neutral assistant instructions in place of the client identity. The prompt covers coding and practical help with evidence-based verification. Native Anthropic subscription requests retain their required identity. The prompt sources and preservation boundaries appear in `docs/NEUTRAL-PROMPT.md`.
+
 ## [0.4.10] - 2026-10-27
 
 ### Fixed

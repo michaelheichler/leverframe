@@ -17,7 +17,12 @@ function validResponsesLiteVersion(value: unknown): string | undefined {
 
 /** Because Codex subscriptions use a separate endpoint. */
 function openAiOptions(spec: ProviderModelSpec, useResponsesEndpoint: boolean) {
-  if (spec.authType !== 'oauth') return { apiKey: spec.apiKey };
+  if (spec.authType !== 'oauth') return {
+    apiKey: spec.apiKey,
+    ...(spec.baseURL ? { baseURL: spec.baseURL } : {}),
+    ...(spec.headers ? { headers: spec.headers } : {}),
+    ...(spec.fetch ? { fetch: spec.fetch } : {}),
+  };
   const tokenAccountId = extractOpenAiAccountId({ access_token: spec.apiKey })?.trim();
   const accountId = tokenAccountId || spec.oauthAccountId;
   return {
@@ -64,6 +69,7 @@ export async function createBuiltinAnthropicModel(spec: ProviderModelSpec): Prom
       }
     : { apiKey };
   if (spec.headers) options.headers = { ...options.headers, ...spec.headers };
+  if (spec.fetch) options.fetch = spec.fetch;
   if (!root || root === 'https://api.anthropic.com') return createAnthropic(options)(modelId);
   const sdkBase = baseURL!.endsWith('/v1') ? baseURL : `${root}/v1`;
   return createAnthropic({ ...options, baseURL: sdkBase })(modelId);

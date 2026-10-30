@@ -20,8 +20,9 @@ import { ToolResultImageError } from './provider-error.js';
 import { VERTEX_ANTHROPIC_NPM } from './constants.js';
 import { neutralClientInstructions } from './neutral-client-request.js';
 import { decodeOpenAiReasoningSignature } from './reasoning-signature.js';
+import { extractClaudeSessionId } from './client-session.js';
 
-export { ToolResultImageError };
+export { ToolResultImageError, extractClaudeSessionId };
 
 interface AnthropicBlock {
   type: string;
@@ -70,31 +71,6 @@ export interface TranslateRequestOptions {
   claudeSessionId?: string;
 
   maxTools?: number;
-}
-
-const CLAUDE_SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function validClaudeSessionId(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const trimmed = value.trim();
-  return CLAUDE_SESSION_ID_RE.test(trimmed) ? trimmed.toLowerCase() : undefined;
-}
-
-export function extractClaudeSessionId(
-  body: Pick<AnthropicRequest, 'metadata'>,
-  headerFallback?: string,
-): string | undefined {
-  const userId = body.metadata?.user_id;
-  if (typeof userId === 'string') {
-    try {
-      const parsed = JSON.parse(userId) as { session_id?: unknown };
-      const fromMetadata = validClaudeSessionId(parsed?.session_id);
-      if (fromMetadata) return fromMetadata;
-    } catch {
-
-    }
-  }
-  return validClaudeSessionId(headerFallback);
 }
 
 export function claudeSessionPromptCacheKey(sessionId: string): string {
@@ -535,7 +511,7 @@ export function translateRequest(
   npm: string,
   options?: TranslateRequestOptions,
 ): SdkCallParams {
-  if (options?.openAiOAuth) body = neutralClientInstructions(body);
+  body = neutralClientInstructions(body);
   const messages = body.messages ?? [];
   annotateToolNames(messages);
   const baseSystem = systemToString(body.system, options?.openAiOAuth === true);
@@ -600,8 +576,7 @@ export function translateRequest(
     maxRetries: options?.openAiOAuth
       ? OPENAI_OAUTH_SDK_MAX_RETRIES
       : SDK_MAX_RETRIES_NON_OAUTH,
-    headers: npm === '@ai-sdk/openai-compatible'
-      && options?.reasoningMetadata?.providerId === 'opencode-go'
+    headers: options?.reasoningMetadata?.providerId === 'opencode-go'
       && claudeSessionId
       ? { 'x-opencode-session': claudeSessionId }
       : undefined,

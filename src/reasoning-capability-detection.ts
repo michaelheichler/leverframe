@@ -172,7 +172,10 @@ function openAiCompatibleReasoningWireFormat(
   metadata: ReasoningMetadata | undefined,
 ): ReasoningWireFormat | undefined {
   if (metadata?.supportsReasoningToggle === true) return { kind: 'deepseek-thinking' };
-  if (hasSupportedParameter(metadata, 'reasoning_effort')) return { kind: 'openai-reasoning-effort' };
+  if (hasSupportedParameter(metadata, 'reasoning_effort')
+    || (metadata?.providerId === 'opencode-go' && reportedReasoningLevels(metadata)?.length)) {
+    return { kind: 'openai-reasoning-effort' };
+  }
   if (hasSupportedParameter(metadata, 'reasoning')) return { kind: 'openrouter-reasoning' };
   return undefined;
 }
@@ -223,29 +226,7 @@ export function getReasoningCapabilities(
   }
 
   if (npm === '@ai-sdk/openai' || npm === '@ai-sdk/azure') {
-    if (metadata?.reasoning === false) return EMPTY_REASONING;
-    const reportedLevels = reportedReasoningLevels(metadata);
-    if (reportedLevels !== undefined) {
-      return {
-        levels: reportedLevels,
-        defaultLevel: defaultReportedReasoningLevel(reportedLevels, metadata?.defaultReasoningEffort),
-        supportsSummaries: metadata?.supportsReasoningSummaries === true,
-        mode: reportedLevels.length > 0 ? 'controllable' : 'internal-only',
-        source: 'model-metadata',
-        confidence: 'documented',
-        wireFormat: { kind: 'openai-reasoning-effort' },
-      };
-    }
-    if (metadata?.reasoning === true) {
-      return {
-        ...EMPTY_REASONING,
-        mode: 'internal-only',
-        source: 'model-metadata',
-        confidence: 'documented',
-        wireFormat: { kind: 'openai-reasoning-effort' },
-      };
-    }
-    return EMPTY_REASONING;
+    return metadataReasoningCapabilities(metadata, { kind: 'openai-reasoning-effort' });
   }
 
   if (npm === '@ai-sdk/google') {
@@ -356,7 +337,7 @@ export function effortProviderOptions(
         deepseek: { thinking },
       };
     }
-    if (hasSupportedParameter(metadata, 'reasoning_effort')) {
+    if (openAiCompatibleReasoningWireFormat(metadata)?.kind === 'openai-reasoning-effort') {
       const options = { reasoningEffort: effort };
       if (metadata?.providerId) return { [toCamelCase(metadata.providerId)]: options };
       return { openai: options, openaiCompatible: options };

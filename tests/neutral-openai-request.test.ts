@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { translateRequest } from '../src/sdk-adapter.js';
 import { translateOpenAiRequest } from '../src/openai-adapter.js';
+import { NEUTRAL_ASSISTANT_PROMPT } from '../src/neutral-client-request.js';
 
 function identityText() {
   return 'x-anthropic-billing-header: cc_version=2.1.207; cc_entrypoint=cli;\n'
@@ -18,10 +19,10 @@ it('neutralizes ChatGPT instructions from Anthropic blocks while retaining user 
 
   const result = translateRequest(body, '@ai-sdk/openai', { openAiOAuth: true });
 
-  expect(result.providerOptions?.openai?.instructions).toBe('You are a coding assistant.\nPreserve user changes.');
+  expect(result.providerOptions?.openai?.instructions).toBe(`${NEUTRAL_ASSISTANT_PROMPT}\nPreserve user changes.`);
   expect(result.messages).toEqual([
     { role: 'user', content: [{ type: 'text', text: identity }] },
-    { role: 'system', content: 'You are a coding assistant.\nPreserve user changes.' },
+    { role: 'system', content: `${NEUTRAL_ASSISTANT_PROMPT}\nPreserve user changes.` },
   ]);
   expect(result.tools?.Read.description).toBe('Claude Code file reader');
   expect(body).toEqual(original);
@@ -39,21 +40,21 @@ it.each(['system', 'developer'] as const)('neutralizes ChatGPT %s instructions a
 
   const result = translateOpenAiRequest(body, { openAiOAuth: true });
 
-  expect(result.providerOptions?.openai?.instructions).toBe('You are a coding assistant.\nPreserve user changes.');
+  expect(result.providerOptions?.openai?.instructions).toBe(`${NEUTRAL_ASSISTANT_PROMPT}\nPreserve user changes.`);
   expect(result.messages).toEqual([
     { role: 'user', content: identity },
-    { role: 'system', content: 'You are a coding assistant.\nPreserve user changes.' },
+    { role: 'system', content: `${NEUTRAL_ASSISTANT_PROMPT}\nPreserve user changes.` },
     { role: 'assistant', content: [{ type: 'text', text: identity }] },
   ]);
   expect(body).toEqual(original);
 });
 
-it('preserves public OpenAI API instructions', () => {
+it('neutralizes public OpenAI API instructions', () => {
   const identity = identityText();
 
   const result = translateOpenAiRequest({ model: 'gpt-test', messages: [{ role: 'system', content: identity }] });
 
-  expect(result.instructions).toBe(identity);
+  expect(result.instructions).toBe(`${NEUTRAL_ASSISTANT_PROMPT}\nPreserve user changes.`);
 });
 
 it('preserves user text and tool exchanges on the ChatGPT route', () => {
@@ -66,7 +67,7 @@ it('preserves user text and tool exchanges on the ChatGPT route', () => {
     { role: 'tool', tool_call_id: 'call_1', content: 'Claude Code settings' },
   ] }, { openAiOAuth: true });
 
-  expect(result.providerOptions?.openai?.instructions).toBe('You are a coding assistant.');
+  expect(result.providerOptions?.openai?.instructions).toBe(NEUTRAL_ASSISTANT_PROMPT);
   expect(result.messages).toEqual([
     { role: 'user', content: 'Read Claude Code settings.' },
     { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'call_1', toolName: 'Read', input: { path: 'settings.json' } }] },
