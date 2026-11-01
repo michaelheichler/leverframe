@@ -1,0 +1,90 @@
+src/evidence-command.ts
+  s_8776d7edbe969f::t_af5412e06e92e9 1-16
+src/proxy-handler.ts
+  s_8776d7edbe969f::t_af5412e06e92e9 18-19,36-40
+src/server/router.ts
+  s_8776d7edbe969f::t_af5412e06e92e9 38,155-157
+  s_3b2b0aae9b3746::t_75a7390f284429 158-160
+src/cli.ts
+  s_8776d7edbe969f::t_1e32ca584e8689 52,138-148
+  s_8776d7edbe969f::t_af5412e06e92e9 17,23
+  s_8776d7edbe969f::t_3c2116fbe4aa01 149-150
+docs/context-evidence.md
+  s_8776d7edbe969f::t_b1406f8b32ffc1 1-25
+tests/context-evidence-proxy.test.ts
+  s_8776d7edbe969f::t_90b28226b6b46a 33,74,136
+  s_8776d7edbe969f::t_cc0db5503bf8e4 1-32,34-73,75-135,137-140
+src/context/evidence-runtime.ts
+  s_8776d7edbe969f::t_928c5f77092dc5 1-16
+tests/deterministic-reduction.test.ts
+  s_8776d7edbe969f::t_83ae35c8fa1b6e 137-139
+  s_8776d7edbe969f::t_d8fa9c52647d36 2,81-96,127-136,140-150
+  s_8776d7edbe969f::t_5829f153ca97a0 1,3-5,11-24,27-28,31-32,42-57,64-76,78-80,97-99,101-102,112-117,121,123-126,151
+  s_8776d7edbe969f::t_d8dc076bfaf66f 77,118-120
+  s_8776d7edbe969f::t_b7757df65f2af0 103-111
+  s_8776d7edbe969f::t_a6f06082e18d9b 25-26,100
+  s_8776d7edbe969f::t_fd6074b1b7e7bb 122
+  s_8776d7edbe969f::t_09220907ed1470 6-10,29-30,33-41,58-63
+tests/context-evidence.test.ts
+  s_8776d7edbe969f::t_cf75b68fd98bfe 1
+  s_8776d7edbe969f::t_ed2d20851a1f09 41-43,45-46,53-57
+  s_8776d7edbe969f::t_cde77363137376 36,44,47-52,58-60,76-77
+  s_8776d7edbe969f::t_2d3cf84328af4c 64-65
+  s_8776d7edbe969f::t_0874c75504b187 2-35,37-40,61-63,66-75,78-83
+src/context/evidence-route.ts
+  s_8776d7edbe969f::t_cdf8dcc61fd741 17
+  s_8776d7edbe969f::t_af5412e06e92e9 1-12,14-16,18-22
+  s_8776d7edbe969f::t_d57207f59a9f87 13
+tests/fixtures/context-evidence.ts
+  s_8776d7edbe969f::t_0874c75504b187 8-11
+  s_8776d7edbe969f::t_5829f153ca97a0 1-7,12
+src/context/request-policy.ts
+  s_8776d7edbe969f::t_928c5f77092dc5 3-4,16,52,55-56
+  s_8776d7edbe969f::t_88dc875fdad6fa 48-51,53-54,57
+  s_8776d7edbe969f::t_22548b9b6286e2 46-47
+src/cli-help.ts
+  s_8776d7edbe969f::t_1f9b2a0856c808 34
+  s_8776d7edbe969f::t_af5412e06e92e9 16,32-33,35
+src/context/evidence-store.ts
+  s_8776d7edbe969f::t_e0abfb43c9dde6 1-2,4-16,43-53,56-60,64-65,67-69,74,76,78-79,81-84
+  s_8776d7edbe969f::t_8d502cadf65e13 20
+  s_8776d7edbe969f::t_446db6576afdb4 3,54-55
+  s_8776d7edbe969f::t_e248c61d687c9e 18-19,21,38-42,61-62,66,70-73,75,77,80
+  s_8776d7edbe969f::t_2079a3036ca696 17,22-37,63
+src/context/deterministic-reduction.ts
+  s_8776d7edbe969f::t_e0abfb43c9dde6 1,3-9,16,18-33,35-42,44-45,47-49,51-53,55-56
+  s_8776d7edbe969f::t_88dc875fdad6fa 14-15,54
+  s_8776d7edbe969f::t_6b767cfcb11179 2,50
+  s_8776d7edbe969f::t_084e01e844a6d9 10-13,17,34,43,46
+tests/context-evidence-retention.test.ts
+  s_8776d7edbe969f::t_8e3afd4214c884 36
+  s_8776d7edbe969f::t_668a14febedb6f 1,18,58-96
+  s_8776d7edbe969f::t_73837e37b1156a 2-17,19-35,37-57,97-106
+tests/context-evidence-route.test.ts
+  s_8776d7edbe969f::t_4919c0136a6125 5-6,13,15-30,34,46,49,53-54,72,75-76,106
+  s_8776d7edbe969f::t_e73b43a623ecf7 1-4,7-12,14,31-33,35-45,47-48,50-52,55-71,73-74,77-105,107-118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1e32d0ceed70cada7563e99365e5a44e7d3eb062",
+  "prompts": {},
+  "sessions": {
+    "s_3b2b0aae9b3746": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "071ca473-7878-4004-b3b2-230dcefb5ec8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    },
+    "s_8776d7edbe969f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19785-6895-79e1-aee9-8f20d8de9c31",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
