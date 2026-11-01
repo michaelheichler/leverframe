@@ -1,0 +1,131 @@
+tests/http-proxy-response-usage-audit.test.ts
+  s_8776d7edbe969f::t_30da2ed665415f 1-18,20-21,26-28,42,46-47,51-77
+  s_8776d7edbe969f::t_20a1663a2d26de 19,22-25,29-41,43-45,48-50
+tests/account-pool-anthropic-billing-route.test.ts
+  s_8776d7edbe969f::t_c62a97a0e6bd69 1-7,9-100,121-125
+  s_8776d7edbe969f::t_c98ca7bc05eb6e 8,101-120
+tests/http-proxy-server.test.ts
+  s_8776d7edbe969f::t_110b46929c30c6 1,11-19,68-69,72,74-77,81-82
+  s_8776d7edbe969f::t_0ef4bd5b54a50f 133,141
+src/account-pool-dispatch.ts
+  s_8776d7edbe969f::t_1d96584c1e94e6 35,42-47
+  s_8776d7edbe969f::t_48f77935d0ebff 101,108,111,121,171
+src/sdk-stream-blocks.ts
+  s_8776d7edbe969f::t_156ab65fb75e29 1-4,6-16,18-57
+  s_8776d7edbe969f::t_8aee5bbbb7c79e 5,17
+src/sdk-stream-events.ts
+  s_8776d7edbe969f::t_97f6811340c75d 30-31,63-66
+  s_8776d7edbe969f::t_4eaeba54d376bc 1-29,32-62,67-121
+docs/anthropic-request-evidence.md
+  s_8776d7edbe969f::t_fc07d3ab847a1e 16
+  s_8776d7edbe969f::t_ec1f6666ea9a88 14-15
+tests/http-proxy-response-usage.test.ts
+  s_8776d7edbe969f::t_0fc09e25054c2d 29-38
+tests/neutral-anthropic-request.test.ts
+  s_8776d7edbe969f::t_c7b086fd1806fa 105-115,129-139
+  s_8776d7edbe969f::t_63b31a8005d946 116-128
+src/account-pool-native.ts
+  s_8776d7edbe969f::t_9726b666accc31 8,34,46
+  s_8776d7edbe969f::t_9d347f758b2fe2 28,43
+tests/sdk-adapter-stream.test.ts
+  s_8776d7edbe969f::t_567f2faf4bf22b 1
+tests/sdk-usage-audit.test.ts
+  s_8776d7edbe969f::t_fe97a65b9b82df 1-2,4-20,22-31,33-47
+  s_8776d7edbe969f::t_2ee31f04ebb75a 3,21,32
+src/trace-log.ts
+  s_8776d7edbe969f::t_86d824560b051c 177-179,370-372,398-400
+  s_8776d7edbe969f::t_bd580d3d4e2d40 159,380
+src/proxy-messages-handler.ts
+  s_8776d7edbe969f::t_9d347f758b2fe2 201
+tests/anthropic-context-acceptance.test.ts
+  s_8776d7edbe969f::t_f3e535b1538504 1-49
+tests/context-coding-session-comparison.test.ts
+  s_8776d7edbe969f::t_48e43a88c2c49b 9,107-109,112,116-122,124-139,146-148,150,156-161,166-167,173-174,183-184,188
+  s_8776d7edbe969f::t_42084aa10dae13 1-3,6,10,12,34-35,37-43,48-87,98-99,104-106,175-179,181-182,190,193-197
+  s_8776d7edbe969f::t_f69651acdce94c 111,113,140-145,149,152,154-155,162-164,170,172,185-187,189
+  s_8776d7edbe969f::t_8ee04b7b538142 151,153,165,168-169,171
+  s_8776d7edbe969f::t_5191d488c7a1a4 5,14,16-28,180,192
+  s_8776d7edbe969f::t_e1f84e695104cf 4,7-8,11,13,15,29-33,92-93,97,100-103,191
+  s_8776d7edbe969f::t_9b08ce54558863 36,44-47
+  s_8776d7edbe969f::t_1fd1d2aa47424d 88-91,94-96
+  s_8776d7edbe969f::t_23db18dfc1c74e 110,114-115,123
+src/http-proxy/response-usage.ts
+  s_8776d7edbe969f::t_974c83fe25686c 95-97
+  s_8776d7edbe969f::t_3c7114282112d4 13-15,19,41-43,50-52,68,77,84,90-91,98-101
+  s_8776d7edbe969f::t_9876558f99e5b7 69,92,94
+  s_8776d7edbe969f::t_8816fc4a22e083 64,113-117
+  s_8776d7edbe969f::t_adb3ec1f0be5d6 93
+  s_8776d7edbe969f::t_1ec35eb00cf939 102-103,118-119
+tests/account-pool-anthropic-billing.test.ts
+  s_8776d7edbe969f::t_8d2577cd495166 2,20-34
+  s_8776d7edbe969f::t_46633b2a39e058 1,3-19,35
+tests/native-response-usage-audit.test.ts
+  s_8776d7edbe969f::t_17924b799d28bd 33,71-83
+  s_8776d7edbe969f::t_f67c745f991f39 34-35,70
+  s_8776d7edbe969f::t_14ec1d1ebd6729 1-32,36-64,66-69,84
+  s_8776d7edbe969f::t_801cf6465d3aa0 65
+src/native-usage-log.ts
+  s_8776d7edbe969f::t_8451bddbf3c4be 1-12
+src/sdk-stream-finish.ts
+  s_8776d7edbe969f::t_322a46b7a2a104 1-29
+src/server/anthropic-native-route.ts
+  s_8776d7edbe969f::t_9d347f758b2fe2 62,75,82
+  s_8776d7edbe969f::t_8451bddbf3c4be 18,63,83
+tests/context-summary-policy.test.ts
+  s_8776d7edbe969f::t_5135c11c4cf644 3,20-27
+  s_8776d7edbe969f::t_b7b02ccfbd14cb 28
+src/context/request-policy.ts
+  s_8776d7edbe969f::t_f5dd47acd4297a 85
+  s_8776d7edbe969f::t_aea5462fb67cc3 84,86-87
+src/proxy-native-handler.ts
+  s_8776d7edbe969f::t_8451bddbf3c4be 19,27,50,116,124
+  s_8776d7edbe969f::t_9d347f758b2fe2 51,123
+src/sdk-streaming-response.ts
+  s_8776d7edbe969f::t_f276f2aa5cabcb 11-14,152-153,156-159,162-166,173,176-178,180,183,187-189,192-194,197
+  s_8776d7edbe969f::t_0aa23e9c325806 160-161
+tests/account-pool-recovery.test.ts
+  s_8776d7edbe969f::t_2fc057a82408f7 154-174
+tests/trace-log-usage-audit.test.ts
+  s_8776d7edbe969f::t_bba373ebf4a02b 1-38
+tests/fixtures/http-proxy-first-party.ts
+  s_8776d7edbe969f::t_33931e30b31bfc 22,28
+  s_8776d7edbe969f::t_8d58a4098d302a 6,127-178
+  s_8776d7edbe969f::t_d34f0c6170f730 5,15,74,78,92-100,112
+  s_8776d7edbe969f::t_cdf9ac5cd1dec0 1-4,7-14,16-21,23-27,29-73,75-77,79-91,101-111,113-126,179
+tests/account-pool-native-usage-audit.test.ts
+  s_8776d7edbe969f::t_4b8a6e8fc348ab 1-93,95-103
+  s_8776d7edbe969f::t_20771dcaa385fb 94
+src/upstream-forward.ts
+  s_8776d7edbe969f::t_26709f16f2260a 38,40
+  s_8776d7edbe969f::t_9d347f758b2fe2 34,42,97,214
+  s_8776d7edbe969f::t_8816fc4a22e083 14,253-256
+  s_8776d7edbe969f::t_9726b666accc31 111,198-199,252,355
+src/account-pool.ts
+  s_8776d7edbe969f::t_48f77935d0ebff 22,65,73-74
+  s_8776d7edbe969f::t_da1dcbe1826e9a 207-210
+  s_8776d7edbe969f::t_1d96584c1e94e6 231-232
+src/sdk-stream-tools.ts
+  s_8776d7edbe969f::t_c2a450bd5f3517 1-18,20-41,43-47,49-69
+  s_8776d7edbe969f::t_0aa23e9c325806 19,42,48
+src/sdk-usage.ts
+  s_8776d7edbe969f::t_f4e2d54cd9478c 50,55-71
+  s_8776d7edbe969f::t_eab353615ec487 72-73
+src/sdk-non-streaming-response.ts
+  s_8776d7edbe969f::t_f4e2d54cd9478c 8,159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "20ffb328c03f25279536b18f54efe9912d6662a7",
+  "prompts": {},
+  "sessions": {
+    "s_8776d7edbe969f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19785-6895-79e1-aee9-8f20d8de9c31",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
