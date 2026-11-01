@@ -1,5 +1,15 @@
 import type { ProviderRegistry } from './types.js';
 
+export function migrateProviderAccounts(registry: ProviderRegistry): boolean {
+  let changed = false;
+  for (const provider of registry.providers) {
+    if (provider.accounts !== undefined) continue;
+    provider.accounts = [{ id: 'default', authRef: provider.authRef, enabled: true }];
+    changed = true;
+  }
+  return changed;
+}
+
 export function migrateOAuthOpenAiProvider(registry: ProviderRegistry): boolean {
   if (registry.providers.some(p => p.id === 'openai-oauth')) return false;
 

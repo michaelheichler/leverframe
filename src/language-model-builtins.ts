@@ -40,7 +40,7 @@ function openAiOptions(spec: ProviderModelSpec, useResponsesEndpoint: boolean) {
       fetch: createResponsesWebSocketFetch(CODEX_RESPONSES_LITE_WS_URL, spec.onDebug, {
         providerId: spec.providerId ?? 'openai', accountId, onDiagnostic: spec.onWebSocketDiagnostic,
       }),
-    } : {}),
+    } : spec.fetch ? { fetch: spec.fetch } : {}),
   };
 }
 

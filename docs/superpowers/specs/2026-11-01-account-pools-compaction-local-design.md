@@ -90,6 +90,8 @@ Account acceptance covers shared quota scopes, unknown capacity, exhausted pools
 
 Compaction acceptance compares original and compacted representative coding sessions for instruction preservation, tool validity, task results, and net token savings including summary cost. Record baseline measurements before choosing a numeric reduction threshold. A shorter prompt alone is not a pass.
 
+Measure summary overhead across the session that reuses it. Report main-agent tokens separately from local inference tokens, and include paid summary cost in the billed-cost comparison. A one-time summary need not recover its entire input cost on the first request, but the session benchmark must demonstrate the intended saving without hiding that overhead.
+
 Local acceptance covers download cancellation, artifact verification, process cleanup, memory pressure, tool-use sessions, stream errors, summary quality, and removal. User-run interactive Claude Code checks cover behavior that deterministic fixtures cannot establish.
 
 ## Review boundary

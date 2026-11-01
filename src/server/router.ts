@@ -34,6 +34,7 @@ import { reconcileExecution, type ReconcileOutcome } from '../execution-recovery
 import { cancelAllActiveRequestExecutions } from '../request-execution-context.js';
 import { handleAnthropicMessages, handleOpenAIChatCompletions } from './inference-routes.js';
 import { readJson, requestHeader, type PLog } from './route-helpers.js';
+import { rememberConfiguredPool } from '../account-pool-dispatch.js';
 
 export interface ServerOptions {
   host: string;
@@ -52,6 +53,7 @@ export interface ServerOptions {
   inferenceLogPath?: string;
 
   webSocketDiagnosticsLogPath?: string;
+  managedPools?: Set<string>;
 }
 
 export interface ServerHandle {
@@ -88,6 +90,13 @@ function reconcileExecutionsAtStartupSafely(plog: PLog): void {
 }
 
 export async function startServer(options: ServerOptions): Promise<ServerHandle> {
+  const managedPools = new Set<string>();
+  for (const model of options.catalog.list()) {
+    if (model.providerId && (model.authType === 'api' || model.authType === 'oauth')) {
+      rememberConfiguredPool(managedPools, model.providerId, model.authType);
+    }
+  }
+  options = { ...options, managedPools };
   silenceSdkWarnings();
   const languageModelCache = new ProviderRuntimeCache<LanguageModel>({
     disposeHandle: disposeLanguageModel,

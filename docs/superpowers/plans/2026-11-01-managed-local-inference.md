@@ -92,7 +92,7 @@ Create `src/local/mlx-runtime.ts`, `src/local/mlx-server.py`, `tests/local-mlx-r
 - [ ] Write compaction tests for capability filtering, coverage and tool-pair validation, unchanged original on invalid output, and net token accounting using representative coding fixtures.
 - [ ] Run `pnpm exec vitest run tests/local-mlx-runtime.test.ts tests/local-provider.test.ts` and confirm failure for the missing integration.
 - [ ] Implement MLX through its underlying runtime library. Pin the environment and provide reproducible installation and diagnostics. Wire the existing provider, CLI, and compaction seams through their normal error and validation paths.
-- [ ] Rerun targeted tests, then run `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm build`, and `pnpm check:package`. Confirm all pass without provider or model API calls.
+- [ ] Rerun targeted tests, then run `pnpm exec vitest run --exclude 'tests/live-*.test.ts'`, `pnpm typecheck`, `pnpm lint`, `pnpm build`, and `pnpm check:package`. Record any known baseline installed-binary failure separately. Confirm new behavior passes without provider or model API calls.
 - [ ] Record local validation of tool use, streaming, coverage, net tokens, memory peak, and artifact digests. The user runs an interactive Claude Code session for each coding candidate. Do not mark that acceptance complete without its result.
 - [ ] Run complete GitNexus graph change analysis, resolve findings, then commit. Independent QA reviews the MLX stage before NVIDIA work starts.
 

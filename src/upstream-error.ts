@@ -35,6 +35,8 @@ export interface SdkUpstreamErrorDetails {
   providerRequestId?: string;
   failurePhase?: ProviderFailurePhase;
   completion?: SdkCompletionDiagnostic;
+  responseHeaders?: Readonly<Record<string, string>>;
+  data?: unknown;
 }
 
 const COMPLETION_REASON = /^[a-zA-Z0-9_.:/-]{1,128}$/;
@@ -80,6 +82,7 @@ export function sdkUpstreamErrorDetails(err: unknown): SdkUpstreamErrorDetails |
       retryAfterMs: inner.retryAfterMs,
       providerRequestId: inner.providerRequestId,
       failurePhase: inner.phase,
+      ...(inner.responseHeaders ? { responseHeaders: inner.responseHeaders } : {}),
       ...(completion ? { completion } : {}),
     };
   }
@@ -107,6 +110,8 @@ export function sdkUpstreamErrorDetails(err: unknown): SdkUpstreamErrorDetails |
     errorContent: errorContent || inner.message,
     isRetryable: inner.isRetryable,
     attemptCount: retry?.errors.length ?? 1,
+    ...(inner.responseHeaders ? { responseHeaders: inner.responseHeaders } : {}),
+    ...(inner.data !== undefined ? { data: inner.data } : {}),
   };
 }
 

@@ -7,7 +7,7 @@ import {
   ensurePrivateDirectory,
   readFileStrict,
 } from '../durable-io.js';
-import type { ProviderRegistry, RegistryProvider } from './types.js';
+import type { ProviderRegistry, RegistryAccount, RegistryProvider } from './types.js';
 import { REGISTRY_SCHEMA_VERSION } from './types.js';
 import {
   assertRegistryWriteOwnership,
@@ -15,7 +15,7 @@ import {
   withRegistryWriteLock,
   withRegistryWriteLockSync,
 } from './lock.js';
-import { migrateOAuthOpenAiProvider } from './migrate.js';
+import { migrateOAuthOpenAiProvider, migrateProviderAccounts } from './migrate.js';
 import { isValidProviderId } from './validate.js';
 
 const MAX_REGISTRY_BYTES = 16 * 1024 * 1024;
@@ -48,6 +48,25 @@ function parseModelDiscoveryWarnings(raw: unknown): RegistryProvider['modelDisco
   return { checkedAt: warnings.checkedAt, skippedModels };
 }
 
+function parseAccounts(raw: unknown): RegistryAccount[] | null {
+  if (!Array.isArray(raw)) return null;
+  const ids = new Set<string>();
+  const refs = new Set<string>();
+  const accounts: RegistryAccount[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+    const account = item as Record<string, unknown>;
+    if (typeof account.id !== 'string' || !isValidProviderId(account.id)
+      || typeof account.authRef !== 'string' || !account.authRef
+      || typeof account.enabled !== 'boolean'
+      || ids.has(account.id) || refs.has(account.authRef)) return null;
+    ids.add(account.id);
+    refs.add(account.authRef);
+    accounts.push({ id: account.id, authRef: account.authRef, enabled: account.enabled });
+  }
+  return accounts;
+}
+
 function parseProvider(raw: unknown): RegistryProvider | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const p = raw as Record<string, unknown>;
@@ -58,6 +77,8 @@ function parseProvider(raw: unknown): RegistryProvider | null {
   if (typeof p.authRef !== 'string' || !p.authRef) return null;
   if (typeof p.addedAt !== 'string' || !p.addedAt) return null;
   if (!p.api || typeof p.api !== 'object' || Array.isArray(p.api)) return null;
+  const accounts = p.accounts === undefined ? undefined : parseAccounts(p.accounts);
+  if (accounts === null) return null;
 
   const provider: RegistryProvider = {
     id: p.id,
@@ -68,6 +89,10 @@ function parseProvider(raw: unknown): RegistryProvider | null {
     api: p.api as RegistryProvider['api'],
     addedAt: p.addedAt,
   };
+  if (accounts !== undefined) provider.accounts = accounts;
+  if (typeof p.pinnedAccountId === 'string' && isValidProviderId(p.pinnedAccountId)) {
+    provider.pinnedAccountId = p.pinnedAccountId;
+  }
   if (p.subscriptionFilter === 'free') provider.subscriptionFilter = 'free';
   if (p.authType === 'api' || p.authType === 'oauth' || p.authType === 'none') {
     provider.authType = p.authType;
@@ -224,12 +249,16 @@ export function loadRegistry(path = getProvidersPath()): ProviderRegistry {
   }
 
   const registry = parseRegistry(raw);
-  if (migrateOAuthOpenAiProvider(registry)) {
+  const oauthMigrated = migrateOAuthOpenAiProvider(registry);
+  const accountsMigrated = migrateProviderAccounts(registry);
+  if (oauthMigrated || accountsMigrated) {
     try {
       withRegistryWriteLockSync(() => {
         if (!existsSync(path)) return;
         const current = readStrict(path);
-        if (migrateOAuthOpenAiProvider(current)) saveRegistryUnlocked(current, path);
+        const oauthChanged = migrateOAuthOpenAiProvider(current);
+        const accountsChanged = migrateProviderAccounts(current);
+        if (oauthChanged || accountsChanged) saveRegistryUnlocked(current, path);
       }, { lockPath: getRegistryLockPath(path) });
     } catch {
 
@@ -243,6 +272,7 @@ export function loadRegistryStrict(path = getProvidersPath()): ProviderRegistry 
   if (!existsSync(path)) return emptyRegistry();
   const registry = readStrict(path);
   migrateOAuthOpenAiProvider(registry);
+  migrateProviderAccounts(registry);
   return registry;
 }
 

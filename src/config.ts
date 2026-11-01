@@ -88,6 +88,8 @@ export function loadPreferences(): UserPreferences {
     ? undefined
     : normalizeModelAliases(config.modelAliases);
   return {
+    accountPoolBalancing: typeof config.accountPoolBalancing === 'boolean' ? config.accountPoolBalancing : true,
+    accountPoolFailover: typeof config.accountPoolFailover === 'boolean' ? config.accountPoolFailover : true,
     lastModel: config.lastModel,
     lastProvider: config.lastProvider,
     recentModelsByProvider: config.recentModelsByProvider,
@@ -103,9 +105,11 @@ export function loadPreferences(): UserPreferences {
   };
 }
 
-export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastModel' | 'lastProvider' | 'recentModelsByProvider' | 'favoriteModels' | 'modelAliases' | 'claudeBridgeMode' | 'serverBridgeMode' | 'appPathOverrides' | 'recentLaunchFolders' | 'contextCeilingOverrides'>>): void {
+export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastModel' | 'lastProvider' | 'recentModelsByProvider' | 'favoriteModels' | 'modelAliases' | 'claudeBridgeMode' | 'serverBridgeMode' | 'appPathOverrides' | 'recentLaunchFolders' | 'contextCeilingOverrides' | 'accountPoolBalancing' | 'accountPoolFailover'>>): void {
   withConfigWriteLock(() => {
     const config = readConfig();
+    if (prefs.accountPoolBalancing !== undefined) config.accountPoolBalancing = prefs.accountPoolBalancing;
+    if (prefs.accountPoolFailover !== undefined) config.accountPoolFailover = prefs.accountPoolFailover;
     if (prefs.lastModel !== undefined) config.lastModel = prefs.lastModel;
     if (prefs.lastProvider !== undefined) config.lastProvider = prefs.lastProvider;
     if (prefs.recentModelsByProvider !== undefined) config.recentModelsByProvider = prefs.recentModelsByProvider;

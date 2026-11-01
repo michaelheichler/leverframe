@@ -5,6 +5,7 @@ import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import open from 'open';
 import { saveProviderCredential } from '../env.js';
+import { addOAuthProviderAccount } from '../account-management.js';
 import { diagnoseCredentialStorage } from '../credential-store.js';
 import {
   githubCopilotTokensToStoredCredential,
@@ -21,7 +22,7 @@ import {
 } from '../oauth/types.js';
 import { getTemplateById } from '../provider-templates.js';
 import { oauthAuthRef, toOAuthRegistryId } from './import-build.js';
-import { updateRegistry } from './io.js';
+import { loadRegistry, updateRegistry } from './io.js';
 import { cancelCredentialDelete, journalCredentialWrite, reconcilePendingCredentialDeletes } from './credential-lifecycle.js';
 import { withCredentialMutationLock, withProviderMutationLock } from './lock.js';
 import { refreshProviderModels } from './refresh-models.js';
@@ -110,7 +111,11 @@ export async function saveNativeOAuthCredential(
     const registryId = toOAuthRegistryId(providerId);
     const diagnostics: string[] = [];
     const authRef = oauthAuthRef(registryId);
-    await persistOAuthProvider(providerId, cred, authRef, diagnostics);
+    if (registryId === 'openai-oauth' && loadRegistry().providers.some(provider => provider.id === registryId)) {
+      await addOAuthProviderAccount(registryId, oauthCredentialToKeychainJson(cred));
+    } else {
+      await persistOAuthProvider(providerId, cred, authRef, diagnostics);
+    }
   } finally {
     await reconcilePendingCredentialDeletes(message => p.log.warn(message));
   }
@@ -202,7 +207,13 @@ async function authenticateProviderInner(
 
   const nativeDiagnostics: string[] = [];
   const authRef = oauthAuthRef(registryId);
-  const registryProvider = await persistOAuthProvider(providerId, cred, authRef, nativeDiagnostics);
+  let registryProvider: RegistryProvider;
+  if (registryId === 'openai-oauth' && loadRegistry().providers.some(provider => provider.id === registryId)) {
+    await addOAuthProviderAccount(registryId, oauthCredentialToKeychainJson(cred));
+    registryProvider = loadRegistry().providers.find(provider => provider.id === registryId)!;
+  } else {
+    registryProvider = await persistOAuthProvider(providerId, cred, authRef, nativeDiagnostics);
+  }
 
   const refreshSpinner = p.spinner();
   refreshSpinner.start('Refreshing model list...');

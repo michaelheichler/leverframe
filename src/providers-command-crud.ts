@@ -38,6 +38,8 @@ import {
 import { providerLabel } from './providers-command-args.js';
 import { runProvidersAuth, runProvidersRefreshModels } from './providers-command-auth.js';
 import { runCustomEndpointAddFlow } from './providers-command-custom.js';
+import { runAccountManagement, runAccountPoolSettings } from './account-management-prompts.js';
+import { formatProviderAccounts } from './account-management.js';
 
 export async function runProvidersList(): Promise<number> {
   const entries = await resolveProvidersForDisplay();
@@ -242,6 +244,7 @@ export async function runProvidersRemove(id: string, interactive = false): Promi
   if (result.credentialDeleted) {
     p.log.info('Provider API key removed from credential storage.');
   }
+  if (result.error) p.log.warn(result.error);
   return 0;
 }
 
@@ -249,16 +252,40 @@ export function providerHubChoiceValue(entry: ProviderDisplayEntry): string {
   return `provider:${entry.id}`;
 }
 
-async function runProviderDetail(id: string): Promise<'back' | 'removed'> {
-  const registry = loadRegistry();
-  const provider = registry.providers.find(pr => pr.id === id);
-  if (!provider) return 'back';
+async function browseProvider(id: string, provider: import('./registry/types.js').RegistryProvider): Promise<void> {
+  if (provider.enabled) {
+    const spinner = p.spinner();
+    spinner.start(`Refreshing models for ${provider.name}...`);
+    let catalog: Awaited<ReturnType<typeof fetchBrowsingProviderCatalog>>;
+    try {
+      catalog = await fetchBrowsingProviderCatalog();
+    } catch (error) {
+      p.log.error(`Could not load provider models: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    } finally {
+      spinner.stop('');
+    }
+    reportBrowsingCatalogStatus(catalog.statuses.filter(status => status.providerId === id));
+    const localProvider = catalog.providers.find(candidate => candidate.id === id);
+    if (localProvider) await browseAllModels(localProvider, loadPreferences());
+    else p.log.warn(`No models available for ${provider.name}.`);
+    return;
+  }
+  p.log.warn(`${provider.name} is disabled. Showing cached models without refreshing. Last fetched: ${provider.modelsCache?.fetchedAt ?? 'unknown'}.`);
+  const localModels = (provider.modelsCache?.models ?? [])
+    .map(m => cachedModelToLocal(m, provider))
+    .filter((m): m is NonNullable<typeof m> => m !== null);
+  const localProvider: LocalProvider = { id: provider.id, name: provider.name, apiKey: '', models: localModels };
+  await browseAllModels(localProvider, loadPreferences());
+}
 
+function providerDetailOptions(provider: import('./registry/types.js').RegistryProvider): AddMenuItem[] {
+  const id = provider.id;
   const modelCount = provider.modelsCache?.models.length ?? 0;
-  const authLabel = formatRegistryAuthLabel(provider);
-  printProviderDetailPanel(provider.name, modelCount, authLabel, provider.modelDiscoveryError?.reason);
-
   const detailOptions: Array<{ value: string; label: string; hint?: string }> = [];
+  if (id === 'anthropic-api' || id === 'openai-oauth') {
+    detailOptions.push({ value: 'accounts', label: 'Manage accounts' });
+  }
   if (provider.enabled || modelCount > 0) {
     detailOptions.push({
       value: 'browse',
@@ -287,44 +314,33 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed'> {
     { value: 'remove', label: 'Remove provider', hint: 'Delete from registry and credential storage when safe' },
     { value: 'back', label: 'Back', hint: '' },
   );
+  return detailOptions;
+}
+
+async function runProviderDetail(id: string): Promise<'back' | 'removed'> {
+  const registry = loadRegistry();
+  const provider = registry.providers.find(pr => pr.id === id);
+  if (!provider) return 'back';
+  const modelCount = provider.modelsCache?.models.length ?? 0;
+  const authLabel = formatRegistryAuthLabel(provider);
+  printProviderDetailPanel(provider.name, modelCount, authLabel, provider.modelDiscoveryError?.reason);
+  if (id === 'anthropic-api' || id === 'openai-oauth') {
+    for (const line of formatProviderAccounts(provider)) p.log.info(line);
+  }
 
   const action = await p.select({
     message: 'What would you like to do?',
-    options: detailOptions,
+    options: providerDetailOptions(provider),
   });
   if (p.isCancel(action) || action === 'back') return 'back';
 
+  if (action === 'accounts') {
+    await runAccountManagement(id);
+    return 'back';
+  }
+
   if (action === 'browse') {
-    if (provider.enabled) {
-      const spinner = p.spinner();
-      spinner.start(`Refreshing models for ${provider.name}...`);
-      let catalog: Awaited<ReturnType<typeof fetchBrowsingProviderCatalog>>;
-      try {
-        catalog = await fetchBrowsingProviderCatalog();
-      } catch (error) {
-        p.log.error(`Could not load provider models: ${error instanceof Error ? error.message : String(error)}`);
-        return 'back';
-      } finally {
-        spinner.stop('');
-      }
-      reportBrowsingCatalogStatus(catalog.statuses.filter(status => status.providerId === id));
-      const localProvider = catalog.providers.find(candidate => candidate.id === id);
-      if (localProvider) await browseAllModels(localProvider, loadPreferences());
-      else p.log.warn(`No models available for ${provider.name}.`);
-      return 'back';
-    }
-    p.log.warn(`${provider.name} is disabled. Showing cached models without refreshing. Last fetched: ${provider.modelsCache?.fetchedAt ?? 'unknown'}.`);
-    const cachedModels = provider.modelsCache?.models ?? [];
-    const localModels = cachedModels
-      .map(m => cachedModelToLocal(m, provider))
-      .filter((m): m is NonNullable<typeof m> => m !== null);
-    const localProvider: LocalProvider = {
-      id: provider.id,
-      name: provider.name,
-      apiKey: '',
-      models: localModels,
-    };
-    await browseAllModels(localProvider, loadPreferences());
+    await browseProvider(id, provider);
     return 'back';
   }
 
@@ -359,6 +375,7 @@ export async function runProvidersHub(): Promise<number> {
     const entries = await resolveProvidersForDisplay();
     const options: Array<{ value: string; label: string; hint?: string }> = [
       { value: 'add', label: pc.bold('+ Add a provider'), hint: '' },
+      { value: 'pool-settings', label: 'Account pool settings', hint: '' },
     ];
 
     for (const entry of entries) {
@@ -389,6 +406,10 @@ export async function runProvidersHub(): Promise<number> {
     }
     if (choice === 'add') {
       await runProvidersAdd();
+      continue;
+    }
+    if (choice === 'pool-settings') {
+      await runAccountPoolSettings();
       continue;
     }
     if (choice === 'refresh-all') {

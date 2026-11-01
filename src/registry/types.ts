@@ -77,12 +77,20 @@ export interface CachedModel {
   preferWebSockets?: boolean;
 }
 
+export interface RegistryAccount {
+  id: string;
+  authRef: string;
+  enabled: boolean;
+}
+
 export interface RegistryProvider {
   id: string;
   templateId: string;
   name: string;
   enabled: boolean;
   authRef: string;
+  accounts?: RegistryAccount[];
+  pinnedAccountId?: string;
   authType?: 'api' | 'oauth' | 'none';
   subscriptionFilter?: RegistrySubscriptionFilter;
   api: {
@@ -101,7 +109,6 @@ export interface RegistryProvider {
     kind: ModelDiscoveryFailureKind;
     reason: string;
   };
-  /** Exclusions from the last successfully refreshed live catalog. */
   modelDiscoveryWarnings?: {
     checkedAt: string;
     skippedModels: ModelDiscoverySkipDiagnostic[];

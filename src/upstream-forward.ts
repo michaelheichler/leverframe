@@ -88,6 +88,8 @@ export async function fetchWithOAuthRetry<TResponse extends { status: number }>(
 }
 
 export interface RelayAnthropicOptions {
+  deferRejection?: boolean;
+  onResponseHeaders?: (headers: Headers) => void | Promise<void>;
   inboundBeta?: string;
   authType?: 'api' | 'oauth';
   log?: (message: string) => void;
@@ -186,7 +188,7 @@ export async function relayAnthropicMessages(
   apiKey: string,
   clientWantsStream: boolean,
   options: RelayAnthropicOptions = {},
-): Promise<void> {
+): Promise<{ status: number; body: string; headers: Headers } | undefined> {
   const lifecycle = options.lifecycle;
   lifecycle?.startConnecting();
   const payload = JSON.stringify(options.authType === 'oauth'
@@ -218,10 +220,9 @@ export async function relayAnthropicMessages(
     throw unreachable;
   }
 
-  lifecycle?.markHeadersReceived();
-
   if (!upstreamRes.ok) {
     const errBody = await upstreamRes.text();
+    if (options.deferRejection) return { status: upstreamRes.status, body: errBody, headers: upstreamRes.headers };
     options.log?.(`anthropic upstream ${upstreamRes.status}: ${errBody}`);
     options.onUpstreamError?.(upstreamRes.status, errBody);
     lifecycle?.fail(new Error(`Upstream returned HTTP ${upstreamRes.status}`));
@@ -229,6 +230,9 @@ export async function relayAnthropicMessages(
     res.end(errBody);
     return;
   }
+
+  lifecycle?.markHeadersReceived();
+  await options.onResponseHeaders?.(upstreamRes.headers);
 
   if (clientWantsStream && upstreamRes.body) {
     res.writeHead(200, {

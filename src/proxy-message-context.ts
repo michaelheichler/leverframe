@@ -1,0 +1,31 @@
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { LanguageModel } from 'ai';
+import type { ExecutionTrackingHandle } from './execution-tracking.js';
+import type { ProviderRuntimeCache } from './provider-runtime-cache.js';
+import type { ProxyAnthropicRequestBody, ProxyRoute } from './proxy-request.js';
+import type { createRequestExecutionContext } from './request-execution-context.js';
+import type { ProxyRequestContext } from './proxy-handler.js';
+
+export type ProxyMessageContext={
+  req: IncomingMessage;
+  res: ServerResponse;
+  context: ProxyRequestContext;
+  route: ProxyRoute;
+  anthropicBody: ProxyAnthropicRequestBody;
+  originalModel: string|undefined;
+  clientModelId: string;
+  clientWantsStream: boolean;
+  relayRequestId: string|undefined;
+  trackedRequestId: string;
+  claudeSessionId: string|undefined;
+  clientAbort: AbortController;
+  requestExecution: ReturnType<typeof createRequestExecutionContext>;
+  tracking: ExecutionTrackingHandle;
+  providerId: string;
+  apiKey: string;
+  upstreamUrl: string;
+  credentialRouteKey: string;
+  credential: ReturnType<ProviderRuntimeCache<LanguageModel>['snapshot']>|undefined;
+  pooledNative: boolean;
+  pooledSdk: boolean;
+};

@@ -74,6 +74,7 @@ Create `src/account-pool.ts`, `src/account-pool-state.ts`, `tests/account-pool.t
 Define `PoolKey` with provider ID, model ID and API or OAuth billing type. Define `CapacityObservation` with account ID, scope, source, observation time, status, optional reset time and optional remaining capacity. Status distinguishes healthy, rate limited, exhausted, authentication failure and unknown. `reserveAccount` accepts pool, optional session ID, accounts, balancing setting, optional pinned account and current time, and returns a reservation or pool exhaustion. `recordObservation` and `releaseReservation` update shared state. Reservations contain opaque ID, account ID and expiry, never credentials.
 
 - [ ] Test equal rotation for unknown capacity, healthy affinity, comparable observed capacity, pinned mode, distinct failure states, evidence-backed shared buckets, reset recovery, removal, expiry and secret-free state. Spawn two fixture processes against one temporary home and assert atomic selection and no lost updates.
+- [ ] Test that stale observations cannot overwrite newer state. When exhaustion has no confirmed reset, allow a bounded recovery attempt on a later incoming request after a local cooldown. Keep that local probe time separate from provider reset information. Do not send standalone prompts to probe quota.
 - [ ] Run `pnpm exec vitest run tests/account-pool.test.ts tests/account-pool-process.test.ts` and confirm failure.
 - [ ] Implement locked read, modify and atomic write with bounded expiring reservations. Associate shared scopes only on verified evidence and never infer balance from token usage. Preserve healthy affinity and reconcile the current registry at selection.
 - [ ] Run the focused tests and confirm all pass, including the multi-process fixture.
@@ -102,7 +103,7 @@ The official [Codex rate-limit parser](https://github.com/openai/codex/blob/main
 
 Exercise the preceding tasks together and make only narrow corrections found in review.
 
-- [ ] Run `pnpm typecheck`, `pnpm lint`, `pnpm test` and `pnpm build`. Record results, fix failures in scope and rerun relevant checks.
+- [ ] Run `pnpm typecheck`, `pnpm lint`, `pnpm exec vitest run --exclude 'tests/live-*.test.ts'` and `pnpm build`. Record results, fix failures in scope and rerun relevant checks. Keep the known baseline installed-binary patch failure separate from account-pool regressions.
 - [ ] Run the fake-upstream suite with two processes, each toggle separately disabled, account removal during an active request and both providers. Verify tests do not contact external services.
 - [ ] Have independent Luna Max QA review migration, locking, safe replay and JSON/SSE delivery against this plan and the spec. Record each finding with file, line, rule and action, fix it and rerun its check.
 - [ ] Run complete GitNexus detect-changes for all work and review affected flows. Commit corrections and identify interactive Claude Code verification as user-run only.

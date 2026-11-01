@@ -86,6 +86,8 @@ export interface ModelAlias extends FavoriteModel {
 export type BridgeMode = 'endpoint' | 'proxy';
 
 export interface UserPreferences {
+  accountPoolBalancing?: boolean;
+  accountPoolFailover?: boolean;
   lastModel?: string;
   lastProvider?: string;
   recentModelsByProvider?: Record<string, string[]>;

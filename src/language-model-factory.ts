@@ -108,7 +108,7 @@ export async function createLanguageModel(spec: ProviderModelSpec): Promise<Lang
         `${revalidation.error ?? 'Custom endpoint URL failed security revalidation.'}${revalidation.hint ? ` ${revalidation.hint}` : ''}`);
     }
   }
-  spec = { ...spec, fetch: openCodeGoFetch(baseURL), headers: openCodeGoHeaders(baseURL,
+  spec = { ...spec, fetch: spec.fetch ?? openCodeGoFetch(baseURL), headers: openCodeGoHeaders(baseURL,
     spec.authType === 'oauth' || !spec.headers ? spec.headers : neutralClientHeaders(spec.headers)) };
   if (spec.providerId === 'github-copilot' || npm === '@github/copilot-sdk') {
     return createCopilotHttpLanguageModel({
