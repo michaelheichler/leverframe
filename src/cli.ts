@@ -14,11 +14,13 @@ import { parseArgs } from './cli-args.js';
 import { rootHelpText, claudeHelpText, serverHelpText, modelsHelpText, patchHelpText, printHelp } from './cli-help.js';
 import { runModelsCommand } from './cli-command-models.js';
 import { runClaudeCommand } from './cli-command-claude.js';
+import { runEvidenceCommand } from './evidence-command.js';
 
 export { parseArgs } from './cli-args.js';
 export { rootHelpText, claudeHelpText, serverHelpText, modelsHelpText, patchHelpText } from './cli-help.js';
 
 export async function main(args: string[] = process.argv.slice(2)): Promise<number> {
+  if (args[0] === 'evidence') return runEvidenceCommand(args.slice(1));
   await installOutboundProxyDispatcher();
 
   if (args[0] === 'executions') {
@@ -47,30 +49,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
   }
 
   if (parsed.command === 'server') {
-    if (parsed.showVersion) {
-      console.log(VERSION);
-      return 0;
-    }
-    if (parsed.showHelp) {
-      printHelp(serverHelpText());
-      return 0;
-    }
-    const bridgeMode = resolveBridgeMode('server', parsed.bridgeMode, {
-      persist: Boolean(parsed.saveBridgeMode),
-    });
-    return runServerCommand({
-      httpProxy: bridgeMode === 'proxy',
-      quick: parsed.serverQuick,
-      listenMode: parsed.serverListenMode,
-      providersMode: parsed.serverProvidersMode,
-      providerIds: parsed.serverProviderIds,
-      maskGatewayIds: parsed.serverMaskGatewayIds,
-      password: parsed.serverPassword ?? process.env['LEVERFRAME_SERVER_PASSWORD'],
-      wsDiagnostics: parsed.serverWsDiagnostics,
-      port: parsed.serverPort,
-      noDiscovery: parsed.serverNoDiscovery,
-      prepareClaude: parsed.serverPrepareClaude,
-    });
+    return runServer(parsed);
   }
 
   if (parsed.command === 'models') {
@@ -154,6 +133,19 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
   }
 
   return runClaudeCommand(parsed);
+}
+
+function runServer(parsed: ReturnType<typeof parseArgs>): Promise<number> | number {
+  if (parsed.showVersion) { console.log(VERSION); return 0; }
+  if (parsed.showHelp) { printHelp(serverHelpText()); return 0; }
+  const bridgeMode = resolveBridgeMode('server', parsed.bridgeMode, { persist: Boolean(parsed.saveBridgeMode) });
+  return runServerCommand({
+    httpProxy: bridgeMode === 'proxy', quick: parsed.serverQuick, listenMode: parsed.serverListenMode,
+    providersMode: parsed.serverProvidersMode, providerIds: parsed.serverProviderIds,
+    maskGatewayIds: parsed.serverMaskGatewayIds, password: parsed.serverPassword ?? process.env['LEVERFRAME_SERVER_PASSWORD'],
+    wsDiagnostics: parsed.serverWsDiagnostics, port: parsed.serverPort, noDiscovery: parsed.serverNoDiscovery,
+    prepareClaude: parsed.serverPrepareClaude,
+  });
 }
 
 function isCliEntryPoint(): boolean {

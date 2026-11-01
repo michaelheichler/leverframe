@@ -35,6 +35,7 @@ import { cancelAllActiveRequestExecutions } from '../request-execution-context.j
 import { handleAnthropicMessages, handleOpenAIChatCompletions } from './inference-routes.js';
 import { readJson, requestHeader, type PLog } from './route-helpers.js';
 import { rememberConfiguredPool } from '../account-pool-dispatch.js';
+import { handleEvidenceRequest } from '../context/evidence-route.js';
 
 export interface ServerOptions {
   host: string;
@@ -148,6 +149,12 @@ async function routeRequest(req: IncomingMessage, res: ServerResponse, options: 
 
     if (!isAuthorized(toRequest(req), options.serverPassword)) {
       sendJson(res, 401, { error: { message: 'Unauthorized' } });
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/v1/leverframe/evidence') {
+      if (options.serverPassword === null) { sendJson(res, 401, { error: { message: 'Unauthorized' } }); return; }
+      await handleEvidenceRequest(req, res);
       return;
     }
 

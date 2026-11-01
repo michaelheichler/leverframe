@@ -15,6 +15,8 @@ import {
   makeProxyLog
 } from './proxy-response.js';
 import { formatAnthropicModelEntry } from './server/models.js';
+import { extractApiKey } from './http-utils.js';
+import { handleEvidenceRequest } from './context/evidence-route.js';
 
 
 export type ProxyRequestContext={
@@ -31,6 +33,11 @@ export type ProxyRequestContext={
 
 export async function handleProxyRequest(req: IncomingMessage, res: ServerResponse, context: ProxyRequestContext): Promise<void> {
   const { proxyToken, byAlias, modelsPayload }=context;
+  if(req.method==='POST'&&req.url==='/v1/leverframe/evidence') {
+    if(extractApiKey(req)!==proxyToken) { anthropicError(res, 401, 'Invalid proxy token'); return; }
+    await handleEvidenceRequest(req, res);
+    return;
+  }
   if(req.method==='HEAD') {
     res.writeHead(200);
     res.end();

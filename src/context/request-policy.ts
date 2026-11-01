@@ -1,5 +1,7 @@
 import { estimateAnthropicInputTokens } from '../anthropic-endpoints.js';
 import { groupAnthropicContext, isJsonShapedAnthropicMessage } from './anthropic-context-groups.js';
+import { reduceDuplicateToolResults } from './deterministic-reduction.js';
+import { openEvidenceStore } from './evidence-runtime.js';
 
 export interface RequestPolicyInput<T extends object> {
   request: T;
@@ -11,7 +13,7 @@ export interface RequestPolicyInput<T extends object> {
 
 export interface RequestPolicyResult<T extends object> {
   request: T;
-  outcome: 'unchanged' | 'unsupported_policy';
+  outcome: 'unchanged' | 'unsupported_policy' | 'reduced';
   reason: string;
   estimatedInputTokens?: number;
 }
@@ -41,7 +43,18 @@ export async function applyRequestContextPolicy<T extends object>(input: Request
     const groups = groupAnthropicContext(body.messages);
     if (groups.diagnostics.length) return unchanged('invalid_context');
     const estimatedInputTokens = estimateAnthropicInputTokens(request);
-    return { request, outcome: 'unchanged', reason: 'reduction_unavailable', estimatedInputTokens };
+    let store: ReturnType<typeof openEvidenceStore> | undefined;
+    const getStore = () => store ??= openEvidenceStore();
+    let storageFailed = false;
+    const useStore = async <R>(operation: (store: Awaited<ReturnType<typeof openEvidenceStore>>) => Promise<R>) => {
+      try { return await operation(await getStore()); } catch (error) { storageFailed = true; throw error; }
+    };
+    const reduced = await reduceDuplicateToolResults({ request, sessionId, signal, store: {
+      put: (session, content) => useStore(evidence => evidence.put(session, content)),
+      get: (session, reference) => useStore(evidence => evidence.get(session, reference)),
+    } });
+    if (signal.aborted) return unchanged('aborted');
+    return { request: reduced.request, outcome: reduced.reduced ? 'reduced' : 'unchanged', reason: reduced.reduced ? 'duplicate_evidence' : storageFailed ? 'evidence_unavailable' : 'no_reduction', estimatedInputTokens };
   } catch {
     return unchanged('policy_unavailable');
   }
