@@ -1,0 +1,48 @@
+src/sdk-request-translation.ts
+  s_8776d7edbe969f::t_30e1522a02e3a8 585-591
+  s_8776d7edbe969f::t_07f4ccf7c3d4c3 558,561
+  s_8776d7edbe969f::t_0dfebea3a29103 509-520,556-557
+tests/codex-session-affinity-server-route.test.ts
+  s_8776d7edbe969f::t_7522c859156d3d 1-61
+tests/codex-session-affinity-proxy-route.test.ts
+  s_8776d7edbe969f::t_2ea76bee763b46 33,40-42,82
+  s_8776d7edbe969f::t_ddd1ee19513bc6 9-13
+  s_8776d7edbe969f::t_8f020640e2c547 15,20-21,57,71-72,83-85,89-91
+  s_8776d7edbe969f::t_ba0e951f7f4909 51-54,56,58-59,61-65,67-70
+  s_8776d7edbe969f::t_7723b0f44f7bd1 4,88
+  s_8776d7edbe969f::t_9a9bab3599badd 86-87
+  s_8776d7edbe969f::t_b8f270c5145bb9 55,60,66
+  s_8776d7edbe969f::t_6d5fc49363a519 1-3,5-8,16-19,22-27,29-32,34-39,43-50,73-81,92
+  s_8776d7edbe969f::t_48d6dfe77d928b 14,28
+tests/codex-session-affinity.test.ts
+  s_8776d7edbe969f::t_4681ac1a0ea233 1-51
+docs/codex-subscription-usage-investigation.md
+  s_8776d7edbe969f::t_1745a92b728008 11-12,15-17
+  s_8776d7edbe969f::t_9b3183fc7c8ad8 1-10,13-14,18,24-37,40-46,48,50
+  s_8776d7edbe969f::t_063b6ed9c3c606 21-22
+  s_8776d7edbe969f::t_5ce63f90cdeb31 49
+  s_8776d7edbe969f::t_1a5db5a0298055 23,47
+  s_8776d7edbe969f::t_5ec81896de092e 19-20,38-39
+  s_8776d7edbe969f::t_3ab6728862ebbe 51-55
+tests/codex-session-affinity-websocket.test.ts
+  s_8776d7edbe969f::t_b7b0aeb52d57ad 1-60,64-66,70-86
+  s_8776d7edbe969f::t_878af90c329319 61-63,67-69
+tests/codex-session-affinity-boundaries.test.ts
+  s_8776d7edbe969f::t_304971e60112c2 1-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1c0d5c273ef1ca061a45d19528dff3b08e0ed840",
+  "prompts": {},
+  "sessions": {
+    "s_8776d7edbe969f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19785-6895-79e1-aee9-8f20d8de9c31",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
