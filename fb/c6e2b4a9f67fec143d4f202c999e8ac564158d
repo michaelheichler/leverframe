@@ -1,0 +1,31 @@
+docs/superpowers/specs/2026-11-01-account-pools-compaction-local-design.md
+  s_8776d7edbe969f::t_faa1d945178dca 41,49,57,69,99
+  s_8776d7edbe969f::t_7683e759798ebd 1-40,42-48,50-56,58-68,70-98
+docs/superpowers/plans/2026-11-01-context-api-optimization.md
+  s_8776d7edbe969f::t_dba4011e840e9d 80
+  s_8776d7edbe969f::t_d1fb2ef53cc91b 1-61,63-79,81-93
+  s_8776d7edbe969f::t_4c245652fd1282 62
+docs/superpowers/plans/2026-11-01-account-pools.md
+  s_8776d7edbe969f::t_d1fb2ef53cc91b 1-89,92-93,95-108
+  s_8776d7edbe969f::t_dba4011e840e9d 90-91,94
+docs/superpowers/plans/2026-11-01-managed-local-inference.md
+  s_8776d7edbe969f::t_dba4011e840e9d 87
+  s_8776d7edbe969f::t_4c245652fd1282 102
+  s_8776d7edbe969f::t_d1fb2ef53cc91b 1-86,88-101,103-116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fbc6e2b4a9f67fec143d4f202c999e8ac564158d",
+  "prompts": {},
+  "sessions": {
+    "s_8776d7edbe969f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19785-6895-79e1-aee9-8f20d8de9c31",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
