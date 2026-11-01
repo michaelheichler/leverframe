@@ -1,0 +1,76 @@
+tests/context-policy-http-safety.test.ts
+  s_8776d7edbe969f::t_c1f1b3180ef4ba 86
+  s_8776d7edbe969f::t_88ac5cfa822b97 1-30,32-53,55-79,81,83,85,87,89-90,92-101,103-113
+  s_8776d7edbe969f::t_6c1c8617807c4a 31,54,80,82,84,88,102
+  s_8776d7edbe969f::t_a17b470dd13607 91
+src/http-proxy/server.ts
+  s_8776d7edbe969f::t_0b1804621e7252 3-4,11-13,15,80-88,93-94,97-99,102,108,110,113,118,120
+src/http-proxy/proxy-server.ts
+  s_8776d7edbe969f::t_4719c8f0226a36 1-112
+src/http-proxy/mitm.ts
+  s_8776d7edbe969f::t_aee3b3db9b1cbc 1-67,69-71,73-122
+  s_8776d7edbe969f::t_7f063ef96fa880 68,72
+tests/context-policy-runtime.test.ts
+  s_8776d7edbe969f::t_c734e088075002 182,190
+  s_8776d7edbe969f::t_5029c29daf54f8 388-405,413-415,419-420,422-424,426-430
+  s_8776d7edbe969f::t_0d54e945371d18 406-412,416-418,421,425
+  s_8776d7edbe969f::t_19e9188bdfe5e9 302,304-319,328-345
+  s_8776d7edbe969f::t_27ce1d2af1ce97 12-15,115-130,150-151
+  s_8776d7edbe969f::t_11bb102a816c31 258-301
+  s_8776d7edbe969f::t_f23fb39a2710e7 303
+  s_8776d7edbe969f::t_08680ad910b8ce 347
+  s_8776d7edbe969f::t_8a88560351967d 171
+  s_8776d7edbe969f::t_0c0c0964da1e45 205,218
+  s_8776d7edbe969f::t_c3f0e0a4e9de2c 1,4-7,9-11,17,19-54,92-112
+  s_8776d7edbe969f::t_383b2de2682453 3,179-181,183,185-189,191-194,196-201
+  s_8776d7edbe969f::t_84fc7c4cc6d79f 114,131-149,152-170,172-178,202-204
+  s_8776d7edbe969f::t_741353c6245338 2,55-63,66-68,72-91,352,355
+  s_8776d7edbe969f::t_7da0f47caacc98 8,113,206-217,219-229
+  s_8776d7edbe969f::t_eec17b14bcb9fe 16,320-327,346
+  s_8776d7edbe969f::t_e6f7fa9bed75e7 348-351,353-354,356-358,361-367,369-375,378-387
+  s_8776d7edbe969f::t_5d909a65be3a34 18,64-65,69-71,184,195,359-360,368,376-377
+  s_8776d7edbe969f::t_8d00eeb26d8549 230-257
+src/http-proxy/forward.ts
+  s_8776d7edbe969f::t_89bba8e4ccffe9 125
+  s_8776d7edbe969f::t_5c7959a3a05cf6 1-124,126-158
+tests/context-policy-safety.test.ts
+  s_8776d7edbe969f::t_a5cf7fe23f8ef5 27-29,41
+  s_8776d7edbe969f::t_4e2f6dacda3159 1-26,30-40,42-57
+src/http-proxy/forward-lifecycle.ts
+  s_8776d7edbe969f::t_b3bd13db7bb18c 1-107
+docs/anthropic-request-evidence.md
+  s_8776d7edbe969f::t_11250ba78b947c 1-12,14-17
+  s_8776d7edbe969f::t_42820932670e68 13
+src/http-proxy/context-policy.ts
+  s_8776d7edbe969f::t_e6502fee20cff1 1,3-5,7,9-20,30-33
+  s_8776d7edbe969f::t_d3ef775c3aaad4 29
+  s_8776d7edbe969f::t_3b13dcdc510da0 2,6,22-28
+  s_8776d7edbe969f::t_5efba5a8016cc0 8,21
+src/context/request-policy.ts
+  s_8776d7edbe969f::t_ee06302c7f3f14 1-28,30-52
+  s_8776d7edbe969f::t_5efba5a8016cc0 29
+src/proxy-messages-handler.ts
+  s_8776d7edbe969f::t_e77874c54efd85 38-39,53,57,59-65,67
+  s_8776d7edbe969f::t_5efba5a8016cc0 58
+  s_8776d7edbe969f::t_d3ef775c3aaad4 66
+src/server/anthropic-inference-route.ts
+  s_8776d7edbe969f::t_5efba5a8016cc0 78
+  s_8776d7edbe969f::t_d3ef775c3aaad4 86
+  s_8776d7edbe969f::t_e77874c54efd85 39-40,77,79-85,102,110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0ed35dc2a71aee0078a024f827518704b0b507cb",
+  "prompts": {},
+  "sessions": {
+    "s_8776d7edbe969f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19785-6895-79e1-aee9-8f20d8de9c31",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
