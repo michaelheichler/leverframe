@@ -58,6 +58,39 @@ function bindingKey(cache: ProviderRuntimeCache<LanguageModel>, route: ProxyRout
   return key;
 }
 
+async function streamPoolResponse(
+  options: Parameters<typeof dispatchSdkPool>[0], model: LanguageModel, params: SdkCallParams,
+): Promise<void> {
+  const { res } = options;
+  const startResponse = () => {
+    if (res.headersSent) return;
+    applyProxyExecutionHeaders(res, options.tracking);
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+  };
+  const heartbeat = createSseHeartbeat(() => {
+    startResponse();
+    options.lifecycle.markOutputEmitted();
+    res.write('event: ping\ndata: {"type":"ping"}\n\n');
+  }, () => !res.writableEnded && !res.destroyed);
+  try {
+    heartbeat.arm();
+    await streamAnthropicResponse(model, params, options.clientModelId, chunk => {
+      startResponse();
+      options.lifecycle.markOutputEmitted();
+      options.tracking.observeAnthropicSseText(chunk);
+      options.onOutput?.(chunk);
+      res.write(chunk);
+      heartbeat.reset();
+    }, undefined, { abortSignal: options.signal, clientAbortSignal: options.signal, lifecycle: options.lifecycle,
+      contextWindow: options.contextWindow, initialInputTokens: options.initialInputTokens,
+      onPart: options.onPart, onUsage: options.onUsage });
+  } finally {
+    heartbeat.clear();
+  }
+  options.lifecycle.complete();
+  res.end();
+}
+
 export async function dispatchSdkPool(options: {
   res: ServerResponse;
   route: ProxyRoute;
@@ -113,27 +146,7 @@ export async function dispatchSdkPool(options: {
       try {
         options.onDispatch?.();
         if (options.stream) {
-          const heartbeat = createSseHeartbeat(() => res.write('event: ping\ndata: {"type":"ping"}\n\n'),
-            () => res.headersSent && !res.writableEnded && !res.destroyed);
-          try {
-            await streamAnthropicResponse(model, params, options.clientModelId, chunk => {
-              if (!res.headersSent) {
-                applyProxyExecutionHeaders(res, options.tracking);
-                res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-              }
-              options.lifecycle.markOutputEmitted();
-              options.tracking.observeAnthropicSseText(chunk);
-              options.onOutput?.(chunk);
-              res.write(chunk);
-              heartbeat.reset();
-            }, undefined, { abortSignal: options.signal, clientAbortSignal: options.signal, lifecycle: options.lifecycle,
-              contextWindow: options.contextWindow, initialInputTokens: options.initialInputTokens,
-              onPart: options.onPart, onUsage: options.onUsage });
-          } finally {
-            heartbeat.clear();
-          }
-          options.lifecycle.complete();
-          res.end();
+          await streamPoolResponse(options, model, params);
         } else {
           const response = await generateAnthropicResponse(model, params, options.clientModelId, {
             forceStream: true, abortSignal: options.signal, lifecycle: options.lifecycle,
@@ -150,11 +163,22 @@ export async function dispatchSdkPool(options: {
         return { kind: 'success' as const, value: undefined };
       } catch (error) {
         const details = sdkUpstreamErrorDetails(error);
-        const observation = !res.headersSent ? classifyPoolFailure({
+        const observation = classifyPoolFailure({
           provider: 'codex', accountId: binding.account.id, statusCode: details?.statusCode,
           body: details?.data ?? details?.errorContent, headers: details?.responseHeaders, now: Date.now(),
-        }) : undefined;
+        });
         if (!observation) throw error;
+        if (res.headersSent) {
+          try {
+            await recordObservation({
+              pool: { providerId: 'openai-oauth', modelId: route.realModelId, billingType: 'oauth' },
+              observation, now: Date.now(), generation: binding.generation,
+            });
+          } catch {
+            console.error('Failed to record account pool observation');
+          }
+          throw error;
+        }
         return { kind: 'failure' as const, value: error, observation };
       }
     },

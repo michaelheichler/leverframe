@@ -13,7 +13,7 @@ export interface StoredObservation extends CapacityObservation {
 export interface PoolState {
   observations: Record<string, StoredObservation>;
   memberships: Record<string, string[]>;
-  reservations: Array<Reservation & { pool: string; probeKeys?: string[] }>;
+  reservations: Array<Reservation & { pool: string; probeKeys?: string[]; recoveryProbes?: Record<string, number> }>;
   affinity: Record<string, { accountId: string; usedAt: number }>;
   rotations: Record<string, { next: number; usedAt: number }>;
   accounts: Record<string, string[]>;

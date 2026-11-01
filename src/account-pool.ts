@@ -128,6 +128,7 @@ function capacity(observations: StoredObservation[]): Map<string, number> | unde
   if (!observations.length) return undefined;
   const values = new Map<string, number>();
   for (const item of observations) {
+    if (item.source === 'pool:recovery' && item.status === 'healthy') continue;
     const remaining = item.remaining;
     if (item.status !== 'healthy' || !remaining || !Number.isFinite(remaining.value)
       || remaining.value < 0 || !remaining.unit) return undefined;
@@ -136,7 +137,7 @@ function capacity(observations: StoredObservation[]): Map<string, number> | unde
     if (values.has(dimension)) return undefined;
     values.set(dimension, remaining.value);
   }
-  return values;
+  return values.size ? values : undefined;
 }
 
 function dominates(candidate: Map<string, number>, other: Map<string, number>): boolean {
@@ -200,12 +201,35 @@ export async function reserveAccount(options: ReserveAccountOptions): Promise<Re
     if (affinityId) state.affinity[affinityId] = { accountId: chosen.account.id, usedAt: now };
     const probeKeys = chosen.observations.filter(observation => isBlocked(observation, now))
       .map(observation => observationKey(pool, observation));
+    const recoveryProbes = Object.fromEntries(chosen.observations.filter(observation =>
+      isBlocked(observation, now) && observation.resetAt === undefined && observation.dimension === undefined
+      && observation.scope.kind === 'pool' && observation.status === 'rate_limited'
+      && observation.source.endsWith(':rejection'))
+      .map(observation => [observationKey(pool, observation), observation.observedAt]));
     for (const observation of chosen.observations) {
       if (isBlocked(observation, now) && observation.resetAt === undefined) observation.probeAfter = now + RECOVERY_COOLDOWN_MS;
     }
     const reservation = { id: randomUUID(), accountId: chosen.account.id, expiresAt: now + RESERVATION_TTL_MS };
-    state.reservations.push({ ...reservation, pool: poolKey(pool), ...(probeKeys.length ? { probeKeys } : {}) });
+    state.reservations.push({ ...reservation, pool: poolKey(pool), ...(probeKeys.length ? { probeKeys } : {}),
+      ...(Object.keys(recoveryProbes).length ? { recoveryProbes } : {}) });
     return { kind: 'reserved', reservation };
+  });
+}
+
+export async function confirmRecovery(options: {
+  pool: PoolKey; reservationId: string; generation?: string; now: number; statePath?: string;
+}): Promise<void> {
+  await updatePoolState(options.statePath, options.now, state => {
+    const reservation = state.reservations.find(item => item.id === options.reservationId && item.pool === poolKey(options.pool));
+    if (!reservation || (options.generation !== undefined
+      && state.generations?.[key(providerKey(options.pool), reservation.accountId)] !== options.generation)) return;
+    for (const [id, observedAt] of Object.entries(reservation.recoveryProbes ?? {})) {
+      const current = state.observations[id];
+      if (!current || current.observedAt !== observedAt || current.status !== 'rate_limited'
+        || current.resetAt !== undefined || current.dimension !== undefined) continue;
+      state.observations[id] = { ...current, source: 'pool:recovery', status: 'healthy',
+        observedAt: Math.max(options.now, current.observedAt + 1), probeAfter: undefined };
+    }
   });
 }
 

@@ -1,7 +1,7 @@
 import { loadPreferences } from './config.js';
 import { resolveProviderAccountAuth } from './env.js';
 import { loadRegistry } from './registry/io.js';
-import { recordObservation, releaseReservation, reserveAccount } from './account-pool.js';
+import { confirmRecovery, recordObservation, releaseReservation, reserveAccount } from './account-pool.js';
 import type { CapacityObservation, PoolKey } from './account-pool.js';
 import type { RegistryAccount } from './registry/types.js';
 import { createHash } from 'node:crypto';
@@ -28,6 +28,10 @@ function record(value: unknown): Record<string, unknown> | undefined {
 }
 
 export function classifyPoolFailure(input: PoolFailure): CapacityObservation | undefined {
+  if (input.statusCode === 401) return {
+    accountId: input.accountId, scope: { kind: 'account' }, source: `${input.provider}:authentication`,
+    dimension: 'authentication', observedAt: input.now, status: 'auth_failure',
+  };
   if (input.statusCode !== 429) return undefined;
   let payload = input.body;
   if (typeof payload === 'string') {
@@ -94,7 +98,10 @@ export type PoolDispatchResult<T> = { kind: 'result'; value: T } | {
 export function poolExhaustionMessage(result: Extract<PoolDispatchResult<unknown>, { kind: 'exhausted' }>): string {
   const resets = result.accounts.flatMap(account => account.resetAt === undefined
     ? [] : [`${account.accountId}: ${new Date(account.resetAt).toISOString()}`]);
-  return `Account pool exhausted. Attempted: ${result.attempted.join(', ') || 'none'}.${resets.length ? ` Confirmed resets: ${resets.join(', ')}.` : ''}`;
+  const failedAuth = result.accounts.filter(account => account.status === 'auth_failure').map(account => account.accountId);
+  const title = failedAuth.length && failedAuth.length === result.accounts.length
+    ? 'Account pool unavailable.' : 'Account pool exhausted.';
+  return `${title} Attempted: ${result.attempted.join(', ') || 'none'}.${resets.length ? ` Confirmed resets: ${resets.join(', ')}.` : ''}${failedAuth.length ? ` Authentication failed for: ${failedAuth.join(', ')}. Repair or replace the affected credentials.` : ''}`;
 }
 
 export async function dispatchWithPool<T>(options: {
@@ -146,8 +153,13 @@ export async function dispatchWithPool<T>(options: {
       const generation = accountGeneration(account);
       await recordPoolActivity(options.pool, account.id, excluded.length > 1);
       const result = await options.dispatch({ account, apiKey: auth.apiKey, oauthAccountId: auth.accountId, providerData: auth.providerData, generation });
-      if (result.kind === 'success' || !result.observation) return { kind: 'result', value: result.value };
+      if (result.kind === 'success') {
+        await confirmRecovery({ pool: options.pool, reservationId: selection.reservation.id, generation, now: Date.now() });
+        return { kind: 'result', value: result.value };
+      }
+      if (!result.observation) return { kind: 'result', value: result.value };
       await recordObservation({ pool: options.pool, observation: result.observation, now: Date.now(), generation });
+      if (result.observation.status === 'auth_failure') return { kind: 'result', value: result.value };
       failures.push({ accountId: account.id, status: result.observation.status,
         ...(result.observation.resetAt === undefined ? {} : { resetAt: result.observation.resetAt }) });
       lastFailure = result.value;
