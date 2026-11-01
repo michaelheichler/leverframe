@@ -1,0 +1,59 @@
+src/account-pool-dispatch.ts
+  s_8776d7edbe969f::t_45fef98ab8cba2 101-104
+  s_8776d7edbe969f::t_4377bd646998fa 4,156-160
+  s_8776d7edbe969f::t_662d3b5be54c60 31-34,162
+src/account-pool-state.ts
+  s_8776d7edbe969f::t_4377bd646998fa 16
+src/account-pool.ts
+  s_8776d7edbe969f::t_4377bd646998fa 131,140,204-208,213-214,219-232
+  s_3b2b0aae9b3746::t_72467d2f638e7d 233-235
+tests/account-pool-recovery.test.ts
+  s_8776d7edbe969f::t_2b836f4258f8fa 156
+  s_8776d7edbe969f::t_b982f9fccd72e7 166-168,173,175
+  s_8776d7edbe969f::t_500feeb34c82a6 6-15,24-32,119-155,157-165,169-172,174,176-207
+  s_8776d7edbe969f::t_b36d5effca8dfd 209-249
+  s_8776d7edbe969f::t_c19ff4e216fa58 100
+  s_8776d7edbe969f::t_1992c59f56cef5 1-5,16-23,33-99,101-118,208
+tests/account-pool-auth.test.ts
+  s_8776d7edbe969f::t_a22c8b7bcbba01 48,63,189,213,216-217
+  s_8776d7edbe969f::t_164aedd7114069 5
+  s_8776d7edbe969f::t_7f93f2e79a0f1b 6,9-15,22,49-62,64-77,110,118-119,181-188,190-211,214-215
+  s_8776d7edbe969f::t_1e9c632778c762 1-4,7-8,16-21,23-47,80,82-109,111-117,120-174,178-180,218-222
+  s_8776d7edbe969f::t_bef8353d50b506 175-177
+  s_8776d7edbe969f::t_a3adc04b1d6363 78-79,81,212
+tests/account-pool-heartbeat.test.ts
+  s_8776d7edbe969f::t_74a3f416805387 178
+  s_8776d7edbe969f::t_ece0a90bf77847 164-170,177
+  s_8776d7edbe969f::t_2e6eddd81a6b4a 141
+  s_8776d7edbe969f::t_a326f6ab001c43 22,35,41,64,84-106,135-136,163,175,180-181,185-186
+  s_8776d7edbe969f::t_1670bf94f5f4a3 1-21,23-34,36-40,42-63,65-83,107-134,137-140,142-162,171-174,176,179,182-184,187-193
+src/account-pool-sdk.ts
+  s_8776d7edbe969f::t_514110d3f9a797 171-176,179,181
+  s_8776d7edbe969f::t_662d3b5be54c60 166,169
+  s_8776d7edbe969f::t_d30ed0f2f589e5 61-93,149
+  s_8776d7edbe969f::t_5650bf015f451f 177-178,180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ec88026413a32c888af2a6ff6de70d479d8e1573",
+  "prompts": {},
+  "sessions": {
+    "s_3b2b0aae9b3746": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "071ca473-7878-4004-b3b2-230dcefb5ec8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    },
+    "s_8776d7edbe969f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19785-6895-79e1-aee9-8f20d8de9c31",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
