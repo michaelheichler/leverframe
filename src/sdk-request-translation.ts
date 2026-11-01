@@ -506,6 +506,18 @@ const CACHE_INCLUSIVE_INPUT_NPMS = new Set([
   VERTEX_ANTHROPIC_NPM,
 ]);
 
+function openAiCacheSettings(npm: string, body: AnthropicRequest, options: TranslateRequestOptions | undefined,
+  sessionId: string | undefined, baseSystem: string | undefined, tools: AnthropicTool[]) {
+  const upstreamModelId = options?.reasoningMetadata?.upstreamModelId ?? body.model;
+  const explicit = !options?.openAiOAuth && supportsOpenAiPromptCacheBreakpoints(
+    upstreamModelId, options?.reasoningMetadata?.supportsPromptCacheBreakpoints,
+  );
+  const key = npm === '@ai-sdk/openai'
+    ? sessionId ? claudeSessionPromptCacheKey(sessionId) : openAiPromptCacheKey(baseSystem, tools)
+    : undefined;
+  return { explicit, key };
+}
+
 export function translateRequest(
   body: AnthropicRequest,
   npm: string,
@@ -541,18 +553,12 @@ export function translateRequest(
     });
   }
 
-  const upstreamModelId = options?.reasoningMetadata?.upstreamModelId ?? body.model;
-  const supportsExplicitOpenAiCaching = !options?.openAiOAuth
-    && supportsOpenAiPromptCacheBreakpoints(
-      upstreamModelId,
-      options?.reasoningMetadata?.supportsPromptCacheBreakpoints,
-    );
-  if (npm === '@ai-sdk/openai') {
+  const { explicit: supportsExplicitOpenAiCaching, key: promptCacheKey } =
+    openAiCacheSettings(npm, body, options, claudeSessionId, baseSystem, upstreamTools);
+  if (promptCacheKey) {
     providerOptions = deepMergeProviderOptions(providerOptions, {
       openai: {
-        promptCacheKey: claudeSessionId
-          ? claudeSessionPromptCacheKey(claudeSessionId)
-          : openAiPromptCacheKey(baseSystem, upstreamTools),
+        promptCacheKey,
         ...(supportsExplicitOpenAiCaching
           ? { promptCacheOptions: { mode: 'implicit', ttl: '30m' } }
           : {}),
@@ -576,10 +582,13 @@ export function translateRequest(
     maxRetries: options?.openAiOAuth
       ? OPENAI_OAUTH_SDK_MAX_RETRIES
       : SDK_MAX_RETRIES_NON_OAUTH,
-    headers: options?.reasoningMetadata?.providerId === 'opencode-go'
-      && claudeSessionId
-      ? { 'x-opencode-session': claudeSessionId }
-      : undefined,
+    headers: (options?.openAiOAuth && promptCacheKey)
+      || (options?.reasoningMetadata?.providerId === 'opencode-go' && claudeSessionId)
+      ? {
+          ...(options?.openAiOAuth && promptCacheKey ? { 'session-id': promptCacheKey } : {}),
+          ...(options?.reasoningMetadata?.providerId === 'opencode-go' && claudeSessionId
+            ? { 'x-opencode-session': claudeSessionId } : {}),
+        } : undefined,
     providerOptions,
     inputTokensIncludeCache: CACHE_INCLUSIVE_INPUT_NPMS.has(npm),
   };
