@@ -76,11 +76,45 @@ export async function runAccountPoolSettings(): Promise<void> {
       options: [
         { value: 'balancing', label: `Account balancing: ${prefs.accountPoolBalancing ? 'on' : 'off'}` },
         { value: 'failover', label: `Quota failover: ${prefs.accountPoolFailover ? 'on' : 'off'}` },
+        { value: 'summary-toggle', label: `Paid summaries: ${prefs.summarySettings?.enabled ? 'on' : 'off'}`, hint: 'Changes block new reservations. Reserved calls may finish.' },
+        { value: 'summary-configure', label: 'Configure summary engine and lifetime spending limit' },
         { value: 'back', label: 'Back' },
       ],
     });
     if (p.isCancel(choice) || choice === 'back') return;
     if (choice === 'balancing') savePreferences({ accountPoolBalancing: !prefs.accountPoolBalancing });
     if (choice === 'failover') savePreferences({ accountPoolFailover: !prefs.accountPoolFailover });
+    if (choice === 'summary-toggle') savePreferences({ summarySettings: { ...prefs.summarySettings, enabled: !prefs.summarySettings?.enabled } });
+    if (choice === 'summary-configure') await configureSummary();
   }
+}
+
+export function parseUsdMicros(value: string): number | undefined {
+  const match = /^(\d+)(?:\.(\d{1,6}))?$/.exec(value.trim());
+  if (!match || match[1].length > 16) return undefined;
+  const micros = BigInt(match[1]) * 1_000_000n + BigInt((match[2] ?? '').padEnd(6, '0'));
+  return micros <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(micros) : undefined;
+}
+
+async function configureSummary(): Promise<void> {
+  p.log.info('Use LEVERFRAME_SUMMARY_API_KEY for the selected API provider. Confirm maximum prices from the provider before enabling summaries.');
+  p.log.info('Turning summaries off or lowering the limit blocks new reservations. Calls already reserved may finish.');
+  const engineId = await p.text({ message: 'Engine (openai:model or anthropic-api:model):' });
+  if (p.isCancel(engineId) || !/^(openai|anthropic-api):\S+$/.test(engineId)) return;
+  const limit = await p.text({ message: 'Lifetime spending limit in USD:' });
+  if (p.isCancel(limit)) return;
+  const limitMicros = parseUsdMicros(limit);
+  if (limitMicros === undefined || limitMicros === 0) return;
+  const input = await p.text({ message: 'Verified maximum input price in USD per million tokens:' });
+  if (p.isCancel(input)) return;
+  const inputMicros = parseUsdMicros(input);
+  if (inputMicros === undefined) return;
+  const output = await p.text({ message: 'Verified maximum output price in USD per million tokens:' });
+  if (p.isCancel(output)) return;
+  const outputMicros = parseUsdMicros(output);
+  if (outputMicros === undefined) return;
+  const provenance = await p.text({ message: 'Source and date of verified maximum prices:' });
+  if (p.isCancel(provenance) || !provenance.trim()) return;
+  const previous = loadPreferences().summarySettings;
+  savePreferences({ summarySettings: { enabled: previous?.enabled === true, engineId, lifetimeLimitMicros: limitMicros, pricing: { inputMicrosPerMillion: inputMicros, outputMicrosPerMillion: outputMicros, provenance } } });
 }

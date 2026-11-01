@@ -29,6 +29,19 @@ function validateLaunchConfig(raw: unknown): UserPreferences['launch'] {
   return { bypassPermissions: candidate.bypassPermissions };
 }
 
+function validateSummarySettings(raw: unknown): NonNullable<UserPreferences['summarySettings']> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { enabled: false };
+  const value = raw as NonNullable<UserPreferences['summarySettings']>;
+  const amount = (item: unknown): item is number => Number.isSafeInteger(item) && (item as number) >= 0;
+  const pricing = value.pricing;
+  return {
+    enabled: value.enabled === true,
+    ...(typeof value.engineId === 'string' && value.engineId.trim() && value.engineId.length <= 256 ? { engineId: value.engineId.trim() } : {}),
+    ...(amount(value.lifetimeLimitMicros) ? { lifetimeLimitMicros: value.lifetimeLimitMicros } : {}),
+    ...(pricing && amount(pricing.inputMicrosPerMillion) && amount(pricing.outputMicrosPerMillion) && typeof pricing.provenance === 'string' && pricing.provenance.trim() && pricing.provenance.length <= 512 ? { pricing: { ...pricing, provenance: pricing.provenance.trim() } } : {}),
+  };
+}
+
 export class CorruptConfigError extends Error {
   readonly configPath: string;
   constructor(configPath: string, options?: { cause?: unknown }) {
@@ -88,6 +101,7 @@ export function loadPreferences(): UserPreferences {
     ? undefined
     : normalizeModelAliases(config.modelAliases);
   return {
+    summarySettings: validateSummarySettings(config.summarySettings),
     accountPoolBalancing: typeof config.accountPoolBalancing === 'boolean' ? config.accountPoolBalancing : true,
     accountPoolFailover: typeof config.accountPoolFailover === 'boolean' ? config.accountPoolFailover : true,
     lastModel: config.lastModel,
@@ -105,9 +119,10 @@ export function loadPreferences(): UserPreferences {
   };
 }
 
-export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastModel' | 'lastProvider' | 'recentModelsByProvider' | 'favoriteModels' | 'modelAliases' | 'claudeBridgeMode' | 'serverBridgeMode' | 'appPathOverrides' | 'recentLaunchFolders' | 'contextCeilingOverrides' | 'accountPoolBalancing' | 'accountPoolFailover'>>): void {
+export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastModel' | 'lastProvider' | 'recentModelsByProvider' | 'favoriteModels' | 'modelAliases' | 'claudeBridgeMode' | 'serverBridgeMode' | 'appPathOverrides' | 'recentLaunchFolders' | 'contextCeilingOverrides' | 'accountPoolBalancing' | 'accountPoolFailover' | 'summarySettings'>>): void {
   withConfigWriteLock(() => {
     const config = readConfig();
+    if (prefs.summarySettings !== undefined) config.summarySettings = validateSummarySettings(prefs.summarySettings);
     if (prefs.accountPoolBalancing !== undefined) config.accountPoolBalancing = prefs.accountPoolBalancing;
     if (prefs.accountPoolFailover !== undefined) config.accountPoolFailover = prefs.accountPoolFailover;
     if (prefs.lastModel !== undefined) config.lastModel = prefs.lastModel;

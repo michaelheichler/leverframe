@@ -86,6 +86,12 @@ export interface ModelAlias extends FavoriteModel {
 export type BridgeMode = 'endpoint' | 'proxy';
 
 export interface UserPreferences {
+  summarySettings?: {
+    enabled: boolean;
+    engineId?: string;
+    lifetimeLimitMicros?: number;
+    pricing?: { inputMicrosPerMillion: number; outputMicrosPerMillion: number; provenance: string };
+  };
   accountPoolBalancing?: boolean;
   accountPoolFailover?: boolean;
   lastModel?: string;
