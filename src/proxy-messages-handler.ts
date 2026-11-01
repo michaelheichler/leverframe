@@ -35,6 +35,8 @@ import {
   extractClaudeSessionId
 } from './sdk-adapter.js';
 import { relayAnthropicMessages, UpstreamUnreachableError } from './upstream-forward.js';
+import { reportedContextWindow } from './context-window.js';
+import { applyRequestContextPolicy, formatRequestPolicyOutcome } from './context/request-policy.js';
 
 
 import type { ProxyRequestContext } from './proxy-handler.js';
@@ -48,10 +50,21 @@ export async function handleProxyMessages(req: IncomingMessage, res: ServerRespo
   }
   const tracked=trackProxyMessage(prepared);
   if(!tracked) return;
-  const { route, anthropicBody, originalModel, clientModelId, clientWantsStream, relayRequestId,
+  const { route, originalModel, clientModelId, clientWantsStream, relayRequestId,
     clientAbort, requestExecution, providerId, apiKey, upstreamUrl, credentialRouteKey, credential,
     pooledNative, pooledSdk, usesSdkAdapter }=prepared;
   const { claudeSessionId, trackedRequestId, tracking }=tracked;
+  const policyStarted=performance.now();
+  const policy=await applyRequestContextPolicy({
+    request: prepared.anthropicBody,
+    sessionId: claudeSessionId,
+    routeIdentity: `${providerId}:${route.realModelId}`,
+    contextWindow: reportedContextWindow(route.contextWindow, route.contextWindowUnconfirmed),
+    signal: clientAbort.signal,
+  });
+  context.plog(() => formatRequestPolicyOutcome(policy, performance.now()-policyStarted));
+  if(clientAbort.signal.aborted) return;
+  const anthropicBody=policy.request;
   if(!apiKey&&!usesSdkAdapter) {
     anthropicError(res, 401, 'Missing API key');
     return;

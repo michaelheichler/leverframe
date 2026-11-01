@@ -36,6 +36,8 @@ import {
   type PLog,
 } from './route-helpers.js';
 import { validateAnthropicMessagesRoute } from './route-validation.js';
+import { reportedContextWindow } from '../context-window.js';
+import { applyRequestContextPolicy, formatRequestPolicyOutcome } from '../context/request-policy.js';
 
 export async function handleAnthropicMessages(
   req: IncomingMessage,
@@ -72,6 +74,16 @@ export async function handleAnthropicMessages(
     requestExecution.startResolving();
     const tracking = beginAnthropicTracking({ req, res, body, model, requestId, executionSessionKey, passthrough });
     if (!tracking) return;
+    const policyStarted = performance.now();
+    const policy = await applyRequestContextPolicy({
+      request: body,
+      sessionId: claudeSessionId,
+      routeIdentity: `${inferenceProvider(model)}:${model.id}`,
+      contextWindow: reportedContextWindow(model.contextWindow, model.contextWindowUnconfirmed),
+      signal: clientAbort.signal,
+    });
+    plog(() => formatRequestPolicyOutcome(policy, performance.now() - policyStarted));
+    if (clientAbort.signal.aborted) return;
     if (options.webSocketDiagnosticsLogPath) {
       writeWebSocketDiagnosticRequestLog(options.webSocketDiagnosticsLogPath, {
         requestId,
@@ -87,7 +99,7 @@ export async function handleAnthropicMessages(
 
     if (passthrough) {
       await handleNativeAnthropicMessages({
-        req, res, options, modelCache, plog, body, model, requestId, claudeSessionId,
+        req, res, options, modelCache, plog, body: policy.request, model, requestId, claudeSessionId,
         clientAbort, requestExecution, tracking,
       });
       return;
@@ -95,7 +107,7 @@ export async function handleAnthropicMessages(
 
     if (model.modelFormat === 'openai' || (model.modelFormat === 'anthropic' && !passthrough)) {
       await handleSdkAnthropicMessages({
-        req, res, options, modelCache, plog, body, model, requestId, claudeSessionId,
+        req, res, options, modelCache, plog, body: policy.request, model, requestId, claudeSessionId,
         clientAbort, requestExecution, tracking,
       });
       return;
