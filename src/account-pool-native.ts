@@ -5,6 +5,7 @@ import { relayAnthropicMessages } from './upstream-forward.js';
 import type { RequestExecutionObserver } from './request-execution-context.js';
 import { recordObservation } from './account-pool.js';
 import { anthropicCapacity } from './account-pool-telemetry.js';
+import type { ResponseUsage } from './http-proxy/response-usage.js';
 
 function reportNativeFailure(options: {
   res: ServerResponse; signal: AbortSignal; lifecycle: RequestExecutionObserver; onFailure?: () => void;
@@ -24,11 +25,13 @@ export async function dispatchNativePool(options: {
   body: Record<string, unknown>;
   stream: boolean;
   inboundBeta?: string;
+  inboundVersion?: string;
   headers?: Record<string, string>;
   signal: AbortSignal;
   lifecycle: RequestExecutionObserver;
   responseModelId?: string;
   onObservedText?: (text: string) => void;
+  onUsage?: (usage: ResponseUsage, upstreamMs: number, accountId: string) => void;
   onFailure?: () => void;
   onUpstreamError?: (statusCode: number, body: string) => void;
 }): Promise<void> {
@@ -37,9 +40,10 @@ export async function dispatchNativePool(options: {
     sessionId: options.sessionId,
     dispatch: async binding => {
       const rejection = await relayAnthropicMessages(options.res, options.targetUrl, options.body, binding.apiKey, options.stream, {
-        inboundBeta: options.inboundBeta, authType: 'api', extraHeaders: options.headers, signal: options.signal,
+        inboundBeta: options.inboundBeta, inboundVersion: options.inboundVersion, authType: 'api', extraHeaders: options.headers, signal: options.signal,
         lifecycle: options.lifecycle, responseModelId: options.responseModelId, deferRejection: true,
         onObservedText: options.onObservedText,
+        onUsage: options.onUsage ? (usage, upstreamMs) => options.onUsage?.(usage, upstreamMs, binding.account.id) : undefined,
         onResponseHeaders: async headers => {
           const now = Date.now();
           for (const observation of anthropicCapacity(headers, binding.account.id, now)) {

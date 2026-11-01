@@ -5,7 +5,7 @@ import { encodeToolUseId, grabRoundTripSignature, type FullStreamPart } from './
 import type { RequestExecutionObserver } from './request-execution-context.js';
 import { estimateAnthropicInputTokens, estimateAnthropicOutputTokens } from './anthropic-endpoints.js';
 import { sanitizeToolInput, toolInputRules, type SdkCallParams } from './sdk-request-translation.js';
-import { type AnthropicUsage, type SdkUsage, type AnthropicUsageTrace, toAnthropicUsage, sdkPromptCacheKeyHash } from './sdk-usage.js';
+import { type AnthropicUsage, type SdkUsage, type AnthropicUsageTrace, toAnthropicUsage, sdkPromptCacheKeyHash, measuredAnthropicUsage } from './sdk-usage.js';
 import {
   streamAbortError,
   forwardAbortSignal,
@@ -156,7 +156,7 @@ export async function generateAnthropicResponse(
   const promptCacheKeyHash = sdkPromptCacheKeyHash(params);
   options?.onUsage?.({
     model: modelId,
-    ...resolvedUsage,
+    ...measuredAnthropicUsage(usage, inputTokensIncludeCache),
     ...(promptCacheKeyHash ? { promptCacheKeyHash } : {}),
   });
   return {

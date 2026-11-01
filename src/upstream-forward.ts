@@ -11,6 +11,7 @@ import { withoutCacheControlScope } from './anthropic-cache-control.js';
 import { neutralAnthropicApiRequest, neutralClientHeaders } from './neutral-client-request.js';
 import { openCodeGoHeaders } from './opencode-go-headers.js';
 import { extractClaudeSessionId } from './client-session.js';
+import { createResponseUsageCapture, observeJsonResponseUsage, type ResponseUsage } from './http-proxy/response-usage.js';
 
 function createBoundaryTransform(onWrite: (chunk: Buffer) => void): Transform {
   return new Transform({
@@ -30,13 +31,15 @@ export function anthropicUpstreamHeaders(
   authType?: 'api' | 'oauth',
   claudeCodeSessionId?: string,
   extraHeaders?: Record<string, string>,
+  inboundVersion?: string,
 ): Record<string, string> {
   const key = sanitizeCredential(apiKey) ?? apiKey.trim();
   const isOAuth = authType === 'oauth';
+  const customHeaders = isOAuth ? extraHeaders ?? {} : neutralClientHeaders(extraHeaders ?? {});
   const headers: Record<string, string> = {
-    ...(isOAuth ? extraHeaders : neutralClientHeaders(extraHeaders ?? {})),
+    ...Object.fromEntries(Object.entries(customHeaders).filter(([name]) => name.toLowerCase() !== 'anthropic-version')),
     'Content-Type': 'application/json',
-    'anthropic-version': '2023-06-01',
+    'anthropic-version': inboundVersion ?? '2023-06-01',
     Authorization: `Bearer ${key}`,
     ...(isOAuth ? {} : { 'x-api-key': key }),
     ...(isOAuth ? { 'User-Agent': CLAUDE_CODE_USER_AGENT, 'x-app': 'cli' } : {}),
@@ -91,6 +94,7 @@ export interface RelayAnthropicOptions {
   deferRejection?: boolean;
   onResponseHeaders?: (headers: Headers) => void | Promise<void>;
   inboundBeta?: string;
+  inboundVersion?: string;
   authType?: 'api' | 'oauth';
   log?: (message: string) => void;
   claudeCodeSessionId?: string;
@@ -104,6 +108,7 @@ export interface RelayAnthropicOptions {
   responseModelId?: string;
 
   onObservedText?: (text: string) => void;
+  onUsage?: (usage: ResponseUsage, upstreamMs: number) => void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -190,6 +195,8 @@ export async function relayAnthropicMessages(
   options: RelayAnthropicOptions = {},
 ): Promise<{ status: number; body: string; headers: Headers } | undefined> {
   const lifecycle = options.lifecycle;
+  const upstreamStarted = performance.now();
+  const onUsage = options.onUsage ? (usage: ResponseUsage) => options.onUsage?.(usage, performance.now() - upstreamStarted) : undefined;
   lifecycle?.startConnecting();
   const payload = JSON.stringify(options.authType === 'oauth'
     ? body : withoutCacheControlScope(neutralAnthropicApiRequest(body)));
@@ -204,6 +211,7 @@ export async function relayAnthropicMessages(
       options.authType,
       options.claudeCodeSessionId,
       extraHeaders,
+      options.inboundVersion,
     ),
     body: payload,
     signal: lifecycle?.abortSignal ?? options.signal,
@@ -241,6 +249,11 @@ export async function relayAnthropicMessages(
       'Connection': 'keep-alive',
     });
     const upstream = Readable.fromWeb(upstreamRes.body as Parameters<typeof Readable.fromWeb>[0]);
+    const usageCapture = onUsage ? createResponseUsageCapture(onUsage) : undefined;
+    if (usageCapture) {
+      upstream.on('data', usageCapture.capture);
+      upstream.once('end', usageCapture.flush);
+    }
     let outputTail = '';
     let atEventBoundary = true;
     const noteWrite = (chunk: Buffer) => {
@@ -339,6 +352,7 @@ export async function relayAnthropicMessages(
     res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'Upstream response was not valid JSON' } }));
     return;
   }
+  if (onUsage) observeJsonResponseUsage(parsed, onUsage);
   const responseText = options.responseModelId && rewriteAnthropicResponseModel(parsed, options.responseModelId)
     ? JSON.stringify(parsed)
     : text;

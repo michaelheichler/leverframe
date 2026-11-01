@@ -156,6 +156,7 @@ export interface InferenceResponseLifecycleLogEntry {
   modelId: string;
   provider: string;
   route: 'passthrough' | 'translated';
+  accountId?: string;
   statusCode?: number;
   phase?: InferenceResponsePhase;
   durationMs?: number;
@@ -173,6 +174,9 @@ export interface InferenceResponseLifecycleLogEntry {
   outputTokens?: number;
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
+  cacheCreation5mInputTokens?: number;
+  cacheCreation1hInputTokens?: number;
+  totalInputTokens?: number;
   promptCacheKeyHash?: string;
   lastPartType?: string;
   errorType?: string;
@@ -363,6 +367,9 @@ export function writeInferenceResponseLifecycleLog(
   const outputTokens = nonNegativeInteger(entry.outputTokens);
   const cacheCreationInputTokens = nonNegativeInteger(entry.cacheCreationInputTokens);
   const cacheReadInputTokens = nonNegativeInteger(entry.cacheReadInputTokens);
+  const cacheCreation5mInputTokens = nonNegativeInteger(entry.cacheCreation5mInputTokens);
+  const cacheCreation1hInputTokens = nonNegativeInteger(entry.cacheCreation1hInputTokens);
+  const totalInputTokens = nonNegativeInteger(entry.totalInputTokens);
   writeSecureLogLine(path, JSON.stringify({
     timestamp: new Date().toISOString(),
     event: entry.event,
@@ -370,6 +377,7 @@ export function writeInferenceResponseLifecycleLog(
     modelId: compactLogValue(entry.modelId),
     provider: compactLogValue(entry.provider, 200),
     route: entry.route,
+    ...(entry.accountId ? { accountId: compactLogValue(entry.accountId, 200) } : {}),
     ...(statusCode !== undefined ? { statusCode } : {}),
     ...(entry.phase ? { phase: entry.phase } : {}),
     ...(durationMs !== undefined ? { durationMs } : {}),
@@ -387,6 +395,9 @@ export function writeInferenceResponseLifecycleLog(
     ...(outputTokens !== undefined ? { outputTokens } : {}),
     ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
     ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
+    ...(cacheCreation5mInputTokens !== undefined ? { cacheCreation5mInputTokens } : {}),
+    ...(cacheCreation1hInputTokens !== undefined ? { cacheCreation1hInputTokens } : {}),
+    ...(totalInputTokens !== undefined ? { totalInputTokens } : {}),
     ...(entry.promptCacheKeyHash
       ? { promptCacheKeyHash: compactLogValue(entry.promptCacheKeyHash, 100) }
       : {}),

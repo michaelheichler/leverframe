@@ -15,6 +15,7 @@ import type { ServerOptions } from './router.js';
 import { applyExecutionHeaders, auditInference, attachAnthropicObserver, getResponseModelId, inferenceProvider, providerRuntimeRouteKey, requestHeader } from './route-helpers.js';
 import type { lookupModel, readJson, PLog } from './route-helpers.js';
 import { upstreamModelId } from './models.js';
+import { nativeUsageLogger } from '../native-usage-log.js';
 
 export type NativeRequestContext = {
   req: IncomingMessage;
@@ -58,7 +59,8 @@ async function executePooledNative(context: NativeRequestContext, messagesUrl: s
   await dispatchNativePool({
     res, providerId: model.providerId!, modelId: upstreamModelId(model), sessionId: claudeSessionId,
     targetUrl: messagesUrl, body: { ...body, model: upstreamModelId(model) }, stream: Boolean(body.stream),
-    inboundBeta: requestHeader(req, 'anthropic-beta'), headers: model.headers,
+    inboundBeta: requestHeader(req, 'anthropic-beta'), inboundVersion: requestHeader(req, 'anthropic-version'), headers: model.headers,
+    onUsage: nativeUsageLogger(options.inferenceLogPath, requestId, body.model, inferenceProvider(model)),
     signal: clientAbort.signal, lifecycle: requestExecution,
     responseModelId: getResponseModelId(body.model, model, options),
     onObservedText: attachAnthropicObserver(tracking, Boolean(body.stream)),
@@ -70,13 +72,15 @@ async function executePooledNative(context: NativeRequestContext, messagesUrl: s
 }
 
 async function executeNativeRelay(context: NativeRequestContext, messagesUrl: string): Promise<void> {
-  const { res, options, modelCache, plog, body, model, requestId, requestExecution, tracking } = context;
+  const { req, res, options, modelCache, plog, body, model, requestId, requestExecution, tracking } = context;
   const { credentialRouteKey, apiKey, forwardBody, clientWantsStream, isOAuth, effectiveBeta, claudeCodeSessionId, refreshToken } = prepareNativeRelay(context);
 
   plog(() => `anthropic-passthrough → ${messagesUrl} oauth=${isOAuth} stream=${clientWantsStream}`);
   applyExecutionHeaders(res, tracking);
   await relayAnthropicMessages(res, messagesUrl, forwardBody, apiKey, clientWantsStream, {
     inboundBeta: effectiveBeta,
+    inboundVersion: requestHeader(req, 'anthropic-version'),
+    onUsage: nativeUsageLogger(options.inferenceLogPath, requestId, body.model, inferenceProvider(model)),
     authType: isOAuth ? 'oauth' : 'api',
     log: message => plog(message),
     claudeCodeSessionId,

@@ -81,5 +81,8 @@ export async function applyRequestContextPolicy<T extends object>(input: Request
 }
 
 export function formatRequestPolicyOutcome(result: RequestPolicyResult<object>, overheadMs: number): string {
-  return `context-policy outcome=${result.outcome} reason=${result.reason} estimated_input_tokens=${result.estimatedInputTokens ?? 'unknown'} summary_input_tokens=${result.summaryUsage?.inputTokens ?? 'unknown'} summary_output_tokens=${result.summaryUsage?.outputTokens ?? 'unknown'} summary_cost_micros=${result.summaryChargedMicros ?? 'unknown'} overhead_ms=${overheadMs}`;
+  let finalEstimate: number | undefined;
+  try { finalEstimate = estimateAnthropicInputTokens(result.request); } catch { finalEstimate = undefined; }
+  const originalEstimate = result.estimatedInputTokens ?? (result.outcome !== 'reduced' ? finalEstimate : undefined);
+  return `context-policy outcome=${result.outcome} reason=${result.reason} estimated_input_tokens=${originalEstimate ?? 'unknown'} final_input_tokens=${finalEstimate ?? 'unknown'} summary_input_tokens=${result.summaryUsage?.inputTokens ?? 'unknown'} summary_output_tokens=${result.summaryUsage?.outputTokens ?? 'unknown'} summary_cost_micros=${result.summaryChargedMicros ?? 'unknown'} overhead_ms=${overheadMs}`;
 }

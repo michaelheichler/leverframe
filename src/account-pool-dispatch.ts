@@ -32,13 +32,19 @@ export function classifyPoolFailure(input: PoolFailure): CapacityObservation | u
     accountId: input.accountId, scope: { kind: 'account' }, source: `${input.provider}:authentication`,
     dimension: 'authentication', observedAt: input.now, status: 'auth_failure',
   };
-  if (input.statusCode !== 429) return undefined;
+  if (input.statusCode !== 429 && !(input.provider === 'anthropic' && input.statusCode === 402)) return undefined;
   let payload = input.body;
   if (typeof payload === 'string') {
     try { payload = JSON.parse(payload); } catch { return undefined; }
   }
   const error = record(record(payload)?.error);
   const type = error?.type ?? error?.code;
+  if (input.provider === 'anthropic' && input.statusCode === 402) {
+    return type === 'billing_error' ? {
+      accountId: input.accountId, scope: { kind: 'account' }, source: 'anthropic:billing',
+      observedAt: input.now, status: 'exhausted',
+    } : undefined;
+  }
   const confirmed = input.provider === 'anthropic'
     ? type === 'rate_limit_error'
     : type === 'usage_limit_reached' || type === 'insufficient_quota';
@@ -92,16 +98,17 @@ export function rememberConfiguredPool(managed: Set<string>, providerId: string,
 
 export type PoolAttempt<T> = { kind: 'success'; value: T } | { kind: 'failure'; value: T; observation?: CapacityObservation };
 export type PoolDispatchResult<T> = { kind: 'result'; value: T } | {
-  kind: 'exhausted'; attempted: string[]; accounts: Array<{ accountId: string; status: string; resetAt?: number }>;
+  kind: 'exhausted'; attempted: string[]; accounts: Array<{ accountId: string; status: string; resetAt?: number; reason?: 'billing' }>;
 };
 
 export function poolExhaustionMessage(result: Extract<PoolDispatchResult<unknown>, { kind: 'exhausted' }>): string {
   const resets = result.accounts.flatMap(account => account.resetAt === undefined
     ? [] : [`${account.accountId}: ${new Date(account.resetAt).toISOString()}`]);
   const failedAuth = result.accounts.filter(account => account.status === 'auth_failure').map(account => account.accountId);
+  const billing = result.accounts.filter(account => account.reason === 'billing').map(account => account.accountId);
   const title = failedAuth.length && failedAuth.length === result.accounts.length
     ? 'Account pool unavailable.' : 'Account pool exhausted.';
-  return `${title} Attempted: ${result.attempted.join(', ') || 'none'}.${resets.length ? ` Confirmed resets: ${resets.join(', ')}.` : ''}${failedAuth.length ? ` Authentication failed for: ${failedAuth.join(', ')}. Repair or replace the affected credentials.` : ''}`;
+  return `${title} Attempted: ${result.attempted.join(', ') || 'none'}.${resets.length ? ` Confirmed resets: ${resets.join(', ')}.` : ''}${failedAuth.length ? ` Authentication failed for: ${failedAuth.join(', ')}. Repair or replace the affected credentials.` : ''}${billing.length ? ` Billing or payment action required for: ${billing.join(', ')}.` : ''}`;
 }
 
 export async function dispatchWithPool<T>(options: {
@@ -111,7 +118,7 @@ export async function dispatchWithPool<T>(options: {
 }): Promise<PoolDispatchResult<T>> {
   const attempted: string[] = [];
   const excluded: string[] = [];
-  const failures: Array<{ accountId: string; status: string; resetAt?: number }> = [];
+  const failures: Array<{ accountId: string; status: string; resetAt?: number; reason?: 'billing' }> = [];
   let lastFailure: T | undefined;
   while (true) {
     const provider = loadRegistry().providers.find(item => item.id === options.pool.providerId && item.enabled);
@@ -161,6 +168,7 @@ export async function dispatchWithPool<T>(options: {
       await recordObservation({ pool: options.pool, observation: result.observation, now: Date.now(), generation });
       if (result.observation.status === 'auth_failure') return { kind: 'result', value: result.value };
       failures.push({ accountId: account.id, status: result.observation.status,
+        ...(result.observation.source === 'anthropic:billing' ? { reason: 'billing' as const } : {}),
         ...(result.observation.resetAt === undefined ? {} : { resetAt: result.observation.resetAt }) });
       lastFailure = result.value;
       if (preferences.accountPoolFailover === false) return { kind: 'result', value: result.value };

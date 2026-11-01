@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,9 +6,17 @@ import * as https from 'node:https';
 import * as net from 'node:net';
 import * as tls from 'node:tls';
 import { once } from 'node:events';
-import { gzipSync } from 'node:zlib';
 import { ensureHttpProxyCertificates } from '../src/http-proxy/ca.js';
 import { startHttpProxy } from '../src/http-proxy/server.js';
+import {
+  assertDiagnostic,
+  assertForwardedRequest,
+  assertUsageLog,
+  firstPartyBody,
+  readInferenceLog,
+  sendFirstPartyRequest,
+  startFirstPartyFixture,
+} from './fixtures/http-proxy-first-party.js';
 
 const testHome = mkdtempSync(join(tmpdir(), 'leverframe-http-proxy-server-'));
 const previousRelayHome = process.env['LEVERFRAME_HOME'];
@@ -54,167 +62,24 @@ afterAll(() => {
   rmSync(testHome, { recursive: true, force: true });
 });
 
-describe('selective HTTP proxy transport first-party', () => {
   it('forwards first-party request bytes and auth unchanged', async () => {
-    const certificates = ensureHttpProxyCertificates();
-    const inferenceLogPath = join(testHome, 'anthropic-inference.jsonl');
-    const webSocketDiagnosticsLogPath = join(testHome, 'websocket-diagnostics.jsonl');
     const previousRequestPreview = process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'];
     process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'] = '1';
-    let receivedBody = Buffer.alloc(0);
-    let receivedAuth: string | undefined;
-    let receivedPath: string | undefined;
-    let receivedRawHeaders: string[] = [];
-    const origin = https.createServer({
-      key: certificates.serverKey,
-      cert: certificates.serverCert,
-    }, async (req, res) => {
-      const chunks: Buffer[] = [];
-      req.on('data', chunk => chunks.push(Buffer.from(chunk)));
-      await once(req, 'end');
-      receivedBody = Buffer.concat(chunks);
-      receivedAuth = req.headers.authorization;
-      receivedPath = req.url;
-      receivedRawHeaders = [...req.rawHeaders];
-      const sse = [
-        'event: message_start',
-        'data: {"type":"message_start","message":{"usage":{"input_tokens":321,"output_tokens":1,"cache_creation_input_tokens":12,"cache_read_input_tokens":210}}}',
-        '',
-        'event: content_block_delta',
-        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"private response text"}}',
-        '',
-        'event: message_delta',
-        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":19,"output_tokens":8,"cache_creation_input_tokens":100,"cache_read_input_tokens":220}}',
-        '',
-        '',
-      ].join('\n');
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Content-Encoding': 'gzip',
-      });
-      res.end(gzipSync(sse));
-    });
-    const originPort = await listen(origin);
-    const proxy = await startHttpProxy({
-      routes: [],
-      inferenceLogPath,
-      webSocketDiagnosticsLogPath,
-      anthropicOrigin: `https://127.0.0.1:${originPort}`,
-      anthropicRejectUnauthorized: false,
-    });
+    const fixture = await startFirstPartyFixture(testHome);
+    const body = firstPartyBody();
 
     try {
-      const body = Buffer.from('{\n  "model" : "claude-sonnet-4-6",\n  "output_config":{"effort":"high"},\n  "messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_1","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"private-image-data"}}]},{"type":"text","text":"identify this Sonnet request","cache_control":{"type":"ephemeral"}}]}],\n  "stream":true\n}\n');
-      const secure = await connectMitm(proxy.port, certificates.caCert, proxy.token);
-      let response = '';
-      secure.on('data', chunk => { response += chunk.toString(); });
-      secure.write([
-        'POST /v1/messages?beta=true HTTP/1.1',
-        'Host: api.anthropic.com',
-        'Authorization: Bearer subscription-oauth-token',
-        'x-api-key: native-api-key',
-        'anthropic-version: 2023-06-01',
-        'anthropic-beta: prompt-caching-2024-07-31',
-        'Anthropic-Beta: context-management-2025-06-27',
-        'Content-Type: application/json',
-        `Content-Length: ${body.length}`,
-        'Connection: close',
-        '',
-        '',
-      ].join('\r\n') + body.toString());
-      await once(secure, 'close');
-
+      const response = await sendFirstPartyRequest(fixture, body);
       expect(response).toContain('200 OK');
-      expect(receivedPath).toBe('/v1/messages?beta=true');
-      expect(receivedAuth).toBe('Bearer subscription-oauth-token');
-      expect(receivedRawHeaders).toEqual(expect.arrayContaining([
-        'Authorization',
-        'Bearer subscription-oauth-token',
-        'x-api-key',
-        'native-api-key',
-        'anthropic-version',
-        '2023-06-01',
-        'anthropic-beta',
-        'prompt-caching-2024-07-31',
-        'Anthropic-Beta',
-        'context-management-2025-06-27',
-      ]));
-      expect(receivedRawHeaders).not.toContain('Proxy-Authorization');
-      expect(receivedBody.equals(body)).toBe(true);
-      const logDeadline = Date.now() + 5000;
-      let inferenceLog = readFileSync(inferenceLogPath, 'utf8');
-      let entries = inferenceLog.trim().split('\n').map(line => JSON.parse(line));
-      while (!entries.some(entry => entry.event === 'response_completed') && Date.now() < logDeadline) {
-        await new Promise(resolve => setTimeout(resolve, 20));
-        inferenceLog = readFileSync(inferenceLogPath, 'utf8');
-        entries = inferenceLog.trim().split('\n').map(line => JSON.parse(line));
-      }
-      expect(entries[0]).toMatchObject({
-        modelId: 'claude-sonnet-4-6',
-        effort: 'high',
-        provider: 'anthropic',
-        route: 'passthrough',
-        requestPreview: 'user: identify this Sonnet request',
-      });
-      const responseStarted = entries.find(entry => entry.event === 'response_started');
-      const messageStartUsage = entries.find(entry => entry.event === 'response_usage' && entry.usageStage === 'message_start');
-      const messageDeltaUsage = entries.find(entry => entry.event === 'response_usage' && entry.usageStage === 'message_delta');
-      const responseCompleted = entries.find(entry => entry.event === 'response_completed');
-      expect(responseStarted).toMatchObject({
-        requestId: entries[0].requestId,
-        statusCode: 200,
-        route: 'passthrough',
-      });
-      expect(messageStartUsage).toMatchObject({
-        event: 'response_usage',
-        requestId: entries[0].requestId,
-        modelId: 'claude-sonnet-4-6',
-        provider: 'anthropic',
-        route: 'passthrough',
-        usageStage: 'message_start',
-        inputTokens: 321,
-        outputTokens: 1,
-        cacheCreationInputTokens: 12,
-        cacheReadInputTokens: 210,
-      });
-      expect(messageDeltaUsage).toMatchObject({
-        event: 'response_usage',
-        requestId: entries[0].requestId,
-        modelId: 'claude-sonnet-4-6',
-        provider: 'anthropic',
-        route: 'passthrough',
-        usageStage: 'message_delta',
-        inputTokens: 19,
-        outputTokens: 8,
-        cacheCreationInputTokens: 100,
-        cacheReadInputTokens: 220,
-      });
-      expect(responseCompleted).toMatchObject({
-        requestId: entries[0].requestId,
-        statusCode: 200,
-        route: 'passthrough',
-      });
-      expect(inferenceLog).not.toContain('private-image-data');
-      expect(inferenceLog).not.toContain('private response text');
-      const diagnosticRaw = readFileSync(webSocketDiagnosticsLogPath, 'utf8');
-      const diagnostic = JSON.parse(diagnosticRaw.trim());
-      expect(diagnostic).toMatchObject({
-        event: 'request_diagnostic',
-        requestId: entries[0].requestId,
-        headers: { authorization: '[REDACTED]' },
-        body: {
-          parameters: { model: 'claude-sonnet-4-6', stream: true },
-          messages: { count: 1 },
-        },
-      });
-      expect(diagnosticRaw).not.toContain('subscription-oauth-token');
-      expect(diagnosticRaw).not.toContain('private-image-data');
-      expect(diagnosticRaw).not.toContain('identify this Sonnet request');
+      assertForwardedRequest(fixture, body);
+      const { raw, entries } = await readInferenceLog(fixture.inferenceLogPath);
+      assertUsageLog(entries, raw);
+      assertDiagnostic(fixture.diagnosticsLogPath, entries[0].requestId);
     } finally {
       if (previousRequestPreview === undefined) delete process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'];
       else process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'] = previousRequestPreview;
-      await proxy.close();
-      await new Promise<void>(resolve => origin.close(() => resolve()));
+      await fixture.proxy.close();
+      await new Promise<void>(resolve => fixture.origin.close(() => resolve()));
     }
   }, 20_000);
 
@@ -265,7 +130,7 @@ describe('selective HTTP proxy transport first-party', () => {
       secure.destroy();
 
       let timeout: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([
+      const closed = await Promise.race([
         upstreamClosed,
         new Promise<never>((_resolve, reject) => {
           timeout = setTimeout(() => reject(new Error('upstream stream was not cancelled')), 1_000);
@@ -273,6 +138,7 @@ describe('selective HTTP proxy transport first-party', () => {
       ]).finally(() => {
         if (timeout) clearTimeout(timeout);
       });
+      expect(closed).toBeUndefined();
     } finally {
       await proxy.close();
       await new Promise<void>(resolve => origin.close(() => resolve()));
@@ -358,4 +224,3 @@ describe('selective HTTP proxy transport first-party', () => {
       await new Promise<void>(resolve => origin.close(() => resolve()));
     }
   }, 20_000);
-});

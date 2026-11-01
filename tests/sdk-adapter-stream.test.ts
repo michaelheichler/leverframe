@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { it, expect, vi } from 'vitest';
 import { writeAnthropicStream } from '../src/sdk-adapter.js';
 
 async function collect(
@@ -32,7 +32,6 @@ function toolInputFromEvents(events: Array<{ event: string; data: SseEventData }
   return JSON.parse(json || '{}') as Record<string, unknown>;
 }
 
-describe('writeAnthropicStream', () => {
   it('emits a well-formed text turn', async () => {
     const { events } = await collect([
       { type: 'start' },
@@ -189,9 +188,7 @@ describe('writeAnthropicStream', () => {
     });
     expect(onUsage).toHaveBeenCalledWith({
       model: 'gpt-test',
-      input_tokens: 0,
       output_tokens: 4,
-      cache_creation_input_tokens: 0,
       cache_read_input_tokens: 80,
       promptCacheKeyHash: '0123456789abcdef',
     });
@@ -483,4 +480,3 @@ describe('writeAnthropicStream', () => {
     expect(start.data.content_block.id).toBe('call_9__ts__U0lHOQ');
     expect(events.find(e => e.event === 'message_delta')!.data.delta.stop_reason).toBe('tool_use');
   });
-});

@@ -26,8 +26,16 @@ describe('response usage decoding', () => {
     });
 
     expect(usages).toEqual([
-      { usageStage: 'message_start', inputTokens: 123, outputTokens: undefined, cacheCreationInputTokens: undefined, cacheReadInputTokens: undefined },
-      { usageStage: 'message_delta', inputTokens: undefined, outputTokens: 9, cacheCreationInputTokens: undefined, cacheReadInputTokens: undefined },
+      {
+        usageStage: 'message_start', inputTokens: 123, outputTokens: undefined,
+        cacheCreationInputTokens: undefined, cacheReadInputTokens: undefined,
+        cacheCreation5mInputTokens: undefined, cacheCreation1hInputTokens: undefined, totalInputTokens: undefined,
+      },
+      {
+        usageStage: 'message_delta', inputTokens: 123, outputTokens: 9,
+        cacheCreationInputTokens: undefined, cacheReadInputTokens: undefined,
+        cacheCreation5mInputTokens: undefined, cacheCreation1hInputTokens: undefined, totalInputTokens: undefined,
+      },
     ]);
   });
 });

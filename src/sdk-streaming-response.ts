@@ -3,21 +3,17 @@ import { streamText } from 'ai';
 import type { LanguageModel } from 'ai';
 import {
   sseChunk,
-  encodeToolUseId,
   type FullStreamPart,
-  grabRoundTripSignature,
-  parseToolArguments,
 } from './proxy-shared.js';
-import { anthropicErrorType, upstreamHttpStatus } from './upstream-error.js';
 import { ProviderTransportError } from './provider-error.js';
 import { emptyCompletionError } from './sdk-completion.js';
 import type { RequestExecutionObserver } from './request-execution-context.js';
-import { estimateAnthropicOutputTokens } from './anthropic-endpoints.js';
-import { sanitizeToolInput, toolInputRules, type SdkCallParams } from './sdk-request-translation.js';
+import { StreamTools } from './sdk-stream-tools.js';
+import { StreamBlocks } from './sdk-stream-blocks.js';
+import { StreamEvents } from './sdk-stream-events.js';
+import { toolInputRules, type SdkCallParams } from './sdk-request-translation.js';
 import {
-  type AnthropicUsage,
   type AnthropicUsageTrace,
-  toAnthropicUsage,
   sdkPromptCacheKeyHash,
 } from './sdk-usage.js';
 
@@ -67,24 +63,6 @@ function safeJson(value: unknown): string {
   } catch {
     return String(value);
   }
-}
-
-function toolJsonRunawayError(options: {
-  modelId: string;
-  toolName: string;
-  bufferedBytes: number;
-  outputEmitted: boolean;
-}): ProviderTransportError {
-  return new ProviderTransportError({
-    provider: 'sdk-adapter',
-    model: options.modelId,
-    phase: 'stream',
-    category: 'tool_call_protocol',
-    retryable: true,
-    outputEmitted: options.outputEmitted,
-    safeMessage: `Tool call ${options.toolName} exceeded the max buffered JSON size `
-      + `(${options.bufferedBytes} bytes)`,
-  });
 }
 
 function outputStallTimeoutError(options: {
@@ -171,321 +149,52 @@ export async function writeAnthropicStream(
   observer?: AnthropicStreamObserver,
   tools?: SdkCallParams['tools'],
 ): Promise<void> {
-  const messageId = 'msg_' + Date.now();
-  const inputRules = toolInputRules(tools);
-  let blockIndex = -1;
-  let started = false;
-  let openType: 'text' | 'thinking' | 'tool' | null = null;
-  let pendingThinkingSig: string | undefined;
-  const idToBlock = new Map<string, number>();
-  const toolNameById = new Map<string, string>();
-  const toolJsonBuffer = new Map<string, string>();
-  const emittedToolLengths = new Map<string, number>();
-  const toolFlushTimers = new Map<string, ReturnType<typeof setInterval>>();
-  const toolOpenedAt = new Map<string, number>();
-  const flushedTools = new Set<string>();
-  let finishReason = 'end_turn';
-  let sdkFinishReason: string | undefined;
-  let rawFinishReason: string | undefined;
-  const seenPartTypes: string[] = [];
-  let usage: AnthropicUsage = {
-    input_tokens: observer?.initialInputTokens ?? 0,
-    output_tokens: 0,
-    cache_creation_input_tokens: 0,
-    cache_read_input_tokens: 0,
-  };
-
-  let outputContentBytes = 0;
-
   const emit = (event: string, data: unknown) => write(sseChunk(event, data));
-
-  const toolCanFlushEarly = (id: string): boolean => {
-    const rules = inputRules.get(toolNameById.get(id) ?? '');
-    return rules === undefined
-      || (rules.required.size === 0
-        && Object.keys(rules.properties).length === 0
-        && rules.omitEmptyArrays.size === 0);
-  };
-
-  const toolExemptFromEarlyFlushOverride = (id: string): boolean => {
-    const rules = inputRules.get(toolNameById.get(id) ?? '');
-    return rules !== undefined && rules.omitEmptyArrays.size > 0;
-  };
-
-  const toolShouldEarlyFlush = (id: string): boolean => {
-    if (toolCanFlushEarly(id)) return true;
-    if (toolExemptFromEarlyFlushOverride(id)) return false;
-    const buffered = toolJsonBuffer.get(id)?.length ?? 0;
-    if (buffered >= toolEarlyFlushByteThreshold()) return true;
-    const openedAt = toolOpenedAt.get(id);
-    return openedAt !== undefined && Date.now() - openedAt >= toolEarlyFlushOpenMs();
-  };
-
-  const clearToolTimer = (id: string): void => {
-    const timer = toolFlushTimers.get(id);
-    if (timer !== undefined) {
-      clearInterval(timer);
-      toolFlushTimers.delete(id);
-    }
-  };
-
-  const clearToolTimers = (): void => {
-    for (const id of toolFlushTimers.keys()) clearToolTimer(id);
-  };
-
-  const emitToolJson = (id: string, json: string): void => {
-    const emittedLength = emittedToolLengths.get(id) ?? 0;
-    const emittedPrefix = toolJsonBuffer.get(id)?.slice(0, emittedLength) ?? '';
-    let output = json;
-    if (!output.startsWith(emittedPrefix)) {
-      const raw = toolJsonBuffer.get(id) ?? '';
-      if (emittedLength === 0 || !raw.startsWith(emittedPrefix)) return;
-      output = raw;
-    }
-    const suffix = output.slice(emittedLength);
-    if (!suffix) return;
-    outputContentBytes += Buffer.byteLength(suffix, 'utf8');
-    emit('content_block_delta', {
-      type: 'content_block_delta', index: idToBlock.get(id) ?? blockIndex,
-      delta: { type: 'input_json_delta', partial_json: suffix },
-    });
-    emittedToolLengths.set(id, output.length);
-    observer?.lifecycle?.markOutputEmitted();
-    observer?.onOutputByte?.();
-  };
-
-  const flushToolJson = (id: string): void => {
-    if (flushedTools.has(id) || !toolShouldEarlyFlush(id)) return;
-    emitToolJson(id, toolJsonBuffer.get(id) ?? '');
-  };
-  const ensureStart = () => {
-    if (started) return;
-    emit('message_start', {
-      type: 'message_start',
-      message: {
-        id: messageId, type: 'message', role: 'assistant', content: [],
-        model: modelId, stop_reason: null, stop_sequence: null,
-        usage: {
-          input_tokens: 0,
-          output_tokens: 0,
-          cache_creation_input_tokens: 0,
-          cache_read_input_tokens: 0,
-        },
-      },
-    });
-    started = true;
-  };
-  const closeOpen = () => {
-    if (openType === 'thinking') {
-      emit('content_block_delta', {
-        type: 'content_block_delta', index: blockIndex,
-        delta: { type: 'signature_delta', signature: pendingThinkingSig ?? '' },
-      });
-      pendingThinkingSig = undefined;
-    }
-    if (openType) emit('content_block_stop', { type: 'content_block_stop', index: blockIndex });
-    openType = null;
-  };
-  const openBlock = (type: 'text' | 'thinking' | 'tool', contentBlock: unknown) => {
-    ensureStart(); closeOpen(); blockIndex++; openType = type === 'tool' ? null : type;
-    emit('content_block_start', { type: 'content_block_start', index: blockIndex, content_block: contentBlock });
-  };
-
-  const closeTool = (id: string, json = toolJsonBuffer.get(id) ?? '') => {
-    if (flushedTools.has(id)) return;
-    clearToolTimer(id);
-    emitToolJson(id, json);
-    flushedTools.add(id);
-    emit('content_block_stop', { type: 'content_block_stop', index: idToBlock.get(id) });
-  };
-  const closeAll = () => {
-    closeOpen();
-    for (const id of idToBlock.keys()) closeTool(id);
-  };
-
-  const clientStillListening = () =>
-    started && observer?.clientAbortSignal !== undefined && !observer.clientAbortSignal.aborted;
-
-  const deliverTruncated = (): boolean => {
-    if (!clientStillListening()) return false;
-    closeAll();
-    emit('message_delta', {
-      type: 'message_delta',
-      delta: { stop_reason: 'max_tokens', stop_sequence: null },
-      usage,
-    });
-    emit('message_stop', { type: 'message_stop' });
-    return true;
-  };
-
+  const blocks = new StreamBlocks(modelId, emit);
+  const inputRules = toolInputRules(tools);
+  const seenPartTypes: string[] = [];
+  let events: StreamEvents;
+  const toolState = new StreamTools({
+    rules: inputRules, threshold: toolEarlyFlushByteThreshold, openMs: toolEarlyFlushOpenMs,
+    emit, currentIndex: () => blocks.index,
+    output: bytes => events.output(bytes),
+    afterOutput: () => {
+      observer?.lifecycle?.markOutputEmitted();
+      observer?.onOutputByte?.();
+    },
+  });
+  events = new StreamEvents({ modelId, blocks, tools: toolState, rules: inputRules, emit, maxToolBytes: toolJsonMaxBytes, observer, log });
   try {
   for await (const part of stream) {
     seenPartTypes.push(part.type);
     observer?.onPart?.(part.type);
     observer?.lifecycle?.markStreamActivity();
     if (observer?.abortSignal?.aborted) {
-      if (!isOutputStallAbort(observer.abortSignal) && deliverTruncated()) return;
+      if (!isOutputStallAbort(observer.abortSignal) && blocks.truncate(toolState, events.usage, observer?.clientAbortSignal)) return;
       throw streamAbortError(observer.abortSignal);
     }
-    switch (part.type) {
-      case 'start': break;
-      case 'abort':
-        if (!isOutputStallAbort(observer?.abortSignal) && deliverTruncated()) return;
-        throw streamAbortError(observer?.abortSignal);
-
-      case 'reasoning-start':
-        closeOpen();
-        break;
-      case 'reasoning-delta':
-        if (!part.text) break;
-        if (openType !== 'thinking') openBlock('thinking', { type: 'thinking', thinking: '', signature: '' });
-        outputContentBytes += Buffer.byteLength(part.text ?? '', 'utf8');
-        emit('content_block_delta', {
-          type: 'content_block_delta', index: blockIndex,
-          delta: { type: 'thinking_delta', thinking: part.text ?? '' },
-        });
-        observer?.onOutputByte?.();
-        break;
-      case 'reasoning-end': {
-        const sig = grabRoundTripSignature(part);
-        if (sig) {
-          if (openType !== 'thinking') openBlock('thinking', { type: 'thinking', thinking: '', signature: '' });
-          pendingThinkingSig = sig;
-        }
-        break;
-      }
-
-      case 'text-start':
-        closeOpen();
-        break;
-      case 'text-delta':
-        if (!part.text) break;
-        if (openType !== 'text') openBlock('text', { type: 'text', text: '' });
-        outputContentBytes += Buffer.byteLength(part.text ?? '', 'utf8');
-        emit('content_block_delta', {
-          type: 'content_block_delta', index: blockIndex,
-          delta: { type: 'text_delta', text: part.text ?? '' },
-        });
-        observer?.lifecycle?.markOutputEmitted();
-        observer?.onOutputByte?.();
-        break;
-      case 'text-end': break;
-
-      case 'tool-input-start': {
-        const sig = grabRoundTripSignature(part);
-        openBlock('tool', {
-          type: 'tool_use', id: encodeToolUseId(part.id ?? '', sig), name: part.toolName, input: {},
-        });
-        const id = part.id ?? '';
-        idToBlock.set(id, blockIndex);
-        toolNameById.set(id, part.toolName ?? '');
-        toolJsonBuffer.set(id, '');
-        emittedToolLengths.set(id, 0);
-        toolOpenedAt.set(id, Date.now());
-        const timer = setInterval(() => flushToolJson(id), 2_000);
-        timer.unref?.();
-        toolFlushTimers.set(id, timer);
-        observer?.lifecycle?.markToolCallEmitted();
-        break;
-      }
-      case 'tool-input-delta': {
-        const id = part.id ?? '';
-        const appended = (toolJsonBuffer.get(id) ?? '') + (part.delta ?? part.text ?? '');
-        if (appended.length > toolJsonMaxBytes()) {
-          throw toolJsonRunawayError({
-            modelId, toolName: toolNameById.get(id) ?? '', bufferedBytes: appended.length, outputEmitted: started,
-          });
-        }
-        toolJsonBuffer.set(id, appended);
-        break;
-      }
-      case 'tool-input-end': break;
-
-      case 'tool-call': {
-        finishReason = 'tool_use';
-        observer?.lifecycle?.markToolCallEmitted();
-        const id = part.toolCallId ?? '';
-        if (!idToBlock.has(id)) {
-          const sig = grabRoundTripSignature(part);
-          openBlock('tool', {
-            type: 'tool_use', id: encodeToolUseId(id, sig), name: part.toolName, input: {},
-          });
-          idToBlock.set(id, blockIndex);
-          toolNameById.set(id, part.toolName ?? '');
-          toolJsonBuffer.set(id, '');
-          emittedToolLengths.set(id, 0);
-        }
-        const json = part.input !== undefined && part.input !== null
-          ? JSON.stringify(sanitizeToolInput(parseToolArguments(part.input), inputRules.get(part.toolName ?? '')))
-          : (toolJsonBuffer.get(id) || '{}');
-        closeTool(id, json);
-        break;
-      }
-
-      case 'finish': {
-        const outputEstimate = estimateAnthropicOutputTokens(outputContentBytes);
-        if (part.totalUsage) {
-          const finalUsage = toAnthropicUsage(
-            part.totalUsage,
-            observer?.inputTokensIncludeCache ?? false,
-          );
-          const hasFinalInputUsage = finalUsage.input_tokens
-            + finalUsage.cache_creation_input_tokens
-            + finalUsage.cache_read_input_tokens > 0;
-          const outputTokens = part.totalUsage.outputTokens === undefined && outputEstimate > 0
-            ? outputEstimate
-            : finalUsage.output_tokens;
-          usage = hasFinalInputUsage
-            ? { ...finalUsage, output_tokens: outputTokens }
-            : { ...usage, output_tokens: outputTokens };
-        } else if (outputEstimate > 0) {
-          usage = { ...usage, output_tokens: outputEstimate };
-        }
-        observer?.onUsage?.({
-          model: modelId,
-          ...usage,
-          ...(observer.promptCacheKeyHash ? { promptCacheKeyHash: observer.promptCacheKeyHash } : {}),
-        });
-        if (part.finishReason === 'length') finishReason = 'max_tokens';
-        else if (part.finishReason === 'tool-calls') finishReason = 'tool_use';
-        else if (part.finishReason === 'stop' && finishReason !== 'tool_use') finishReason = 'end_turn';
-        sdkFinishReason = part.finishReason;
-        rawFinishReason = part.rawFinishReason;
-        break;
-      }
-
-      case 'error': {
-        const e = part.error as { data?: unknown; message?: string } | undefined;
-        const errMsg = e?.message || (typeof part.error === 'string' ? part.error : JSON.stringify(e?.data ?? part.error));
-        const errorType = anthropicErrorType(upstreamHttpStatus(part.error, errMsg));
-        log?.(() => `sdk stream error (${errorType}): ${errMsg}`);
-        closeAll();
-        throw part.error instanceof Error || (part.error && typeof part.error === 'object')
-          ? part.error
-          : new Error(errMsg);
-      }
-
-      default:
-        log?.(() => `sdk stream unrecognized part type=${part.type} keys=${Object.keys(part).join(',')} sample=${safeJson(part)}`);
-        break;
+    if (part.type === 'abort') {
+      if (!isOutputStallAbort(observer?.abortSignal) && blocks.truncate(toolState, events.usage, observer?.clientAbortSignal)) return;
+      throw streamAbortError(observer?.abortSignal);
     }
+    events.handle(part);
   }
   if (observer?.abortSignal?.aborted) {
-    if (!isOutputStallAbort(observer.abortSignal) && deliverTruncated()) return;
+    if (!isOutputStallAbort(observer.abortSignal) && blocks.truncate(toolState, events.usage, observer?.clientAbortSignal)) return;
     throw streamAbortError(observer.abortSignal);
   }
 
-  if (sdkFinishReason === undefined || sdkFinishReason === 'error' || !started) {
-    log?.(() => `sdk stream produced no content: seen part types=${seenPartTypes.join(',')} rawFinishReason=${rawFinishReason}`);
-    throw emptyCompletionError(modelId, usage, observer?.contextWindow, sdkFinishReason, started, rawFinishReason);
+  if (events.sdkFinishReason === undefined || events.sdkFinishReason === 'error' || !blocks.started) {
+    log?.(() => `sdk stream produced no content: seen part types=${seenPartTypes.join(',')} rawFinishReason=${events.rawFinishReason}`);
+    throw emptyCompletionError(modelId, events.usage, observer?.contextWindow, events.sdkFinishReason, blocks.started, events.rawFinishReason);
   }
 
-  closeAll();
-  ensureStart();
-  emit('message_delta', { type: 'message_delta', delta: { stop_reason: finishReason, stop_sequence: null }, usage });
+  blocks.closeAll(toolState);
+  blocks.start();
+  emit('message_delta', { type: 'message_delta', delta: { stop_reason: events.finishReason, stop_sequence: null }, usage: events.usage });
   emit('message_stop', { type: 'message_stop' });
   } finally {
-    clearToolTimers();
+    toolState.clearTimers();
   }
 }
 

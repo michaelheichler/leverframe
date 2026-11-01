@@ -47,9 +47,28 @@ export function toAnthropicUsage(
   };
 }
 
-export interface AnthropicUsageTrace extends AnthropicUsage {
+export interface AnthropicUsageTrace extends Partial<AnthropicUsage> {
   model: string;
   promptCacheKeyHash?: string;
+}
+
+export function measuredAnthropicUsage(usage: SdkUsage | undefined, inputTokensIncludeCache: boolean): Partial<AnthropicUsage> {
+  const valid = (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+  const total = valid(usage?.inputTokens);
+  const read = valid(usage?.inputTokenDetails?.cacheReadTokens ?? usage?.cachedInputTokens);
+  const write = valid(usage?.inputTokenDetails?.cacheWriteTokens);
+  const noCache = valid(usage?.inputTokenDetails?.noCacheTokens);
+  const input = noCache ?? (inputTokensIncludeCache
+    ? total !== undefined && read !== undefined && write !== undefined && total >= read + write ? total - read - write : undefined
+    : total);
+  const output = valid(usage?.outputTokens);
+  return {
+    ...(input === undefined ? {} : { input_tokens: input }),
+    ...(output === undefined ? {} : { output_tokens: output }),
+    ...(write === undefined ? {} : { cache_creation_input_tokens: write }),
+    ...(read === undefined ? {} : { cache_read_input_tokens: read }),
+  };
 }
 
 export function sdkPromptCacheKeyHash(params: SdkCallParams): string | undefined {

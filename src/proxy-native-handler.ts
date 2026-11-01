@@ -16,6 +16,7 @@ import {
   writeInferenceResponseErrorLog
 } from './trace-log.js';
 import { relayAnthropicMessages, UpstreamUnreachableError } from './upstream-forward.js';
+import { nativeUsageLogger } from './native-usage-log.js';
 
 
 import type { ProxyMessageContext } from './proxy-message-context.js';
@@ -23,7 +24,7 @@ import type { ProxyMessageContext } from './proxy-message-context.js';
 export async function handleProxyNative(state: ProxyMessageContext): Promise<void> {
   const { req, res, route, anthropicBody, originalModel, clientModelId, clientWantsStream,
     clientAbort, requestExecution, tracking, apiKey,
-    upstreamUrl, credentialRouteKey, pooledNative, context }=state;
+    upstreamUrl, credentialRouteKey, pooledNative, context, trackedRequestId, providerId }=state;
   const { providerRuntimeCache, plog, inferenceLogPath }=context;
   if(!await revalidateUpstreamUrl(upstreamUrl)) {
     anthropicError(res, 400, 'Custom endpoint URL failed security revalidation.');
@@ -46,6 +47,8 @@ export async function handleProxyNative(state: ProxyMessageContext): Promise<voi
     applyProxyExecutionHeaders(res, tracking);
     await relayAnthropicMessages(res, targetUrl, forwardBody, apiKey, clientWantsStream, {
       inboundBeta: effectiveBeta,
+      onUsage: nativeUsageLogger(inferenceLogPath, trackedRequestId, clientModelId, providerId),
+      inboundVersion: Array.isArray(req.headers['anthropic-version']) ? req.headers['anthropic-version'][0] : req.headers['anthropic-version'],
       authType: isOAuth? 'oauth':'api',
       log: message => plog(message),
       claudeCodeSessionId,
@@ -110,13 +113,15 @@ function prepareProxyNativeIdentity(state: ProxyMessageContext, forwardBody: Rec
 }
 
 async function executePooledProxyNative(state: ProxyMessageContext, targetUrl: string, forwardBody: Record<string, unknown>, inboundBeta: string|undefined): Promise<void> {
-  const { res, route, originalModel, clientModelId, clientWantsStream, claudeSessionId,
+  const { req, res, route, originalModel, clientModelId, clientWantsStream, claudeSessionId, trackedRequestId,
     clientAbort, requestExecution, tracking, providerId, context }=state;
   const { inferenceLogPath }=context;
   applyProxyExecutionHeaders(res, tracking);
   await dispatchNativePool({
     res, providerId, modelId: route.realModelId, sessionId: claudeSessionId, targetUrl,
     body: forwardBody, stream: clientWantsStream, inboundBeta, headers: route.headers,
+    inboundVersion: Array.isArray(req.headers['anthropic-version']) ? req.headers['anthropic-version'][0] : req.headers['anthropic-version'],
+    onUsage: nativeUsageLogger(inferenceLogPath, trackedRequestId, clientModelId, providerId),
     signal: clientAbort.signal, lifecycle: requestExecution, responseModelId: originalModel,
     onObservedText: text => {
       if(clientWantsStream) tracking.observeAnthropicSseText(text);

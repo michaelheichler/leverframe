@@ -10,10 +10,13 @@ export type ResponseUsage = {
   outputTokens?: number;
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
+  cacheCreation5mInputTokens?: number;
+  cacheCreation1hInputTokens?: number;
+  totalInputTokens?: number;
 };
 
 function numericUsage(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
 function responseUsageFromSseBlock(block: string): ResponseUsage | undefined {
@@ -35,12 +38,18 @@ function responseUsageFromSseBlock(block: string): ResponseUsage | undefined {
       : undefined;
     const usage = (type === 'message_start' ? message?.usage : parsed.usage) as Record<string, unknown> | undefined;
     if (!usage) return undefined;
+    const creation = usage.cache_creation as Record<string, unknown> | undefined;
+    const five = numericUsage(creation?.ephemeral_5m_input_tokens);
+    const hour = numericUsage(creation?.ephemeral_1h_input_tokens);
     return {
       usageStage: type,
       inputTokens: numericUsage(usage.input_tokens),
       outputTokens: numericUsage(usage.output_tokens),
       cacheCreationInputTokens: numericUsage(usage.cache_creation_input_tokens),
       cacheReadInputTokens: numericUsage(usage.cache_read_input_tokens),
+      cacheCreation5mInputTokens: five,
+      cacheCreation1hInputTokens: hour,
+      totalInputTokens: undefined,
     };
   } catch {
     return undefined;
@@ -52,10 +61,12 @@ type ResponseUsageCapture = {
   flush: () => void;
 };
 
-function createResponseUsageCapture(
+export function createResponseUsageCapture(
   onUsage: (usage: ResponseUsage) => void,
 ): ResponseUsageCapture {
   let buffered = '';
+  let cumulative: ResponseUsage | undefined;
+  let aggregateObserved = false;
   const processBuffer = (flush: boolean) => {
     let boundary: number;
     while ((boundary = buffered.indexOf('\n\n')) >= 0) {
@@ -63,17 +74,31 @@ function createResponseUsageCapture(
       buffered = buffered.slice(boundary + 2);
       if (Buffer.byteLength(block) > MAX_USAGE_SSE_BLOCK_BYTES) continue;
       const usage = responseUsageFromSseBlock(block);
-      if (usage) onUsage(usage);
+      if (usage) emitUsage(usage);
     }
     if (flush && buffered.length > 0) {
       const block = buffered;
       buffered = '';
       if (Buffer.byteLength(block) <= MAX_USAGE_SSE_BLOCK_BYTES) {
         const usage = responseUsageFromSseBlock(block);
-        if (usage) onUsage(usage);
+        if (usage) emitUsage(usage);
       }
     }
     if (Buffer.byteLength(buffered) > MAX_USAGE_SSE_BLOCK_BYTES) buffered = '';
+  };
+
+  const emitUsage = (usage: ResponseUsage) => {
+    const known = Object.fromEntries(Object.entries(usage).filter(([, value]) => value !== undefined));
+    if (usage.cacheCreationInputTokens !== undefined) aggregateObserved = true;
+    cumulative = { ...usage, ...cumulative, ...known, usageStage: usage.usageStage };
+    if (!aggregateObserved
+      && cumulative.cacheCreation5mInputTokens !== undefined && cumulative.cacheCreation1hInputTokens !== undefined) {
+      cumulative.cacheCreationInputTokens = numericUsage(cumulative.cacheCreation5mInputTokens + cumulative.cacheCreation1hInputTokens);
+    }
+    const { inputTokens, cacheCreationInputTokens, cacheReadInputTokens } = cumulative;
+    cumulative.totalInputTokens = inputTokens !== undefined && cacheCreationInputTokens !== undefined && cacheReadInputTokens !== undefined
+      ? numericUsage(inputTokens + cacheCreationInputTokens + cacheReadInputTokens) : undefined;
+    onUsage({ ...cumulative });
   };
 
   return {
@@ -83,6 +108,13 @@ function createResponseUsageCapture(
     },
     flush: () => processBuffer(true),
   };
+}
+
+export function observeJsonResponseUsage(value: unknown, onUsage: (usage: ResponseUsage) => void): void {
+  if (!value || typeof value !== 'object' || !('usage' in value)) return;
+  const capture = createResponseUsageCapture(onUsage);
+  capture.capture(Buffer.from(`data: ${JSON.stringify({ type: 'message_delta', usage: value.usage })}\n\n`));
+  capture.flush();
 }
 
 export function observeResponseUsage(

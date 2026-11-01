@@ -19,7 +19,7 @@ export type Reservation = { id: string; accountId: string; expiresAt: number };
 export type ReserveResult =
   | { kind: 'reserved'; reservation: Reservation }
   | { kind: 'exhausted'; reason: 'no_eligible_account' | 'pinned_account_unavailable' | 'capacity_unavailable';
-      accounts: Array<{ accountId: string; status: CapacityStatus; resetAt?: number }> };
+      accounts: Array<{ accountId: string; status: CapacityStatus; resetAt?: number; reason?: 'billing' }> };
 export interface ReserveAccountOptions {
   pool: PoolKey;
   sessionId?: string;
@@ -62,7 +62,7 @@ function isBlocked(observation: StoredObservation, now: number): boolean {
 }
 
 function blockedSummary(accountId: string, observations: StoredObservation[], now: number): {
-  accountId: string; status: CapacityStatus; resetAt?: number;
+  accountId: string; status: CapacityStatus; resetAt?: number; reason?: 'billing';
 } {
   const blocked = observations.filter(observation => isBlocked(observation, now));
   const status = blocked.find(observation => observation.status === 'auth_failure')?.status
@@ -70,7 +70,8 @@ function blockedSummary(accountId: string, observations: StoredObservation[], no
     ?? blocked[0]?.status ?? 'unknown';
   const resetAt = blocked.length > 0 && blocked.every(observation => observation.resetAt !== undefined)
     ? Math.max(...blocked.map(observation => observation.resetAt!)) : undefined;
-  return { accountId, status, ...(resetAt === undefined ? {} : { resetAt }) };
+  const billing = blocked.some(observation => observation.source === 'anthropic:billing');
+  return { accountId, status, ...(resetAt === undefined ? {} : { resetAt }), ...(billing ? { reason: 'billing' as const } : {}) };
 }
 
 function reconcile(state: PoolState, pool: PoolKey, accounts: readonly PoolAccount[]): void {
@@ -203,8 +204,10 @@ export async function reserveAccount(options: ReserveAccountOptions): Promise<Re
       .map(observation => observationKey(pool, observation));
     const recoveryProbes = Object.fromEntries(chosen.observations.filter(observation =>
       isBlocked(observation, now) && observation.resetAt === undefined && observation.dimension === undefined
-      && observation.scope.kind === 'pool' && observation.status === 'rate_limited'
-      && observation.source.endsWith(':rejection'))
+      && ((observation.scope.kind === 'pool' && observation.status === 'rate_limited'
+        && observation.source.endsWith(':rejection'))
+        || (observation.scope.kind === 'account' && observation.status === 'exhausted'
+          && observation.source === 'anthropic:billing')))
       .map(observation => [observationKey(pool, observation), observation.observedAt]));
     for (const observation of chosen.observations) {
       if (isBlocked(observation, now) && observation.resetAt === undefined) observation.probeAfter = now + RECOVERY_COOLDOWN_MS;
@@ -225,7 +228,8 @@ export async function confirmRecovery(options: {
       && state.generations?.[key(providerKey(options.pool), reservation.accountId)] !== options.generation)) return;
     for (const [id, observedAt] of Object.entries(reservation.recoveryProbes ?? {})) {
       const current = state.observations[id];
-      if (!current || current.observedAt !== observedAt || current.status !== 'rate_limited'
+      if (!current || current.observedAt !== observedAt || (current.status !== 'rate_limited'
+        && !(current.status === 'exhausted' && current.source === 'anthropic:billing' && current.scope.kind === 'account'))
         || current.resetAt !== undefined || current.dimension !== undefined) continue;
       state.observations[id] = { ...current, source: 'pool:recovery', status: 'healthy',
         observedAt: Math.max(options.now, current.observedAt + 1), probeAfter: undefined };

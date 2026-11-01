@@ -198,6 +198,7 @@ async function handleProxyTokenCount(prepared: PreparedProxyMessage): Promise<vo
   try {
     await relayAnthropicMessages(res, targetUrl, forwardBody, apiKey, false, {
       inboundBeta,
+      inboundVersion: Array.isArray(req.headers['anthropic-version']) ? req.headers['anthropic-version'][0] : req.headers['anthropic-version'],
       authType: isOAuth? 'oauth':'api',
       log: message => plog(message),
       extraHeaders: route.headers,

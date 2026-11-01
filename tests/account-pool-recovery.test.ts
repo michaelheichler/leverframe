@@ -151,6 +151,27 @@ it('keeps a newer rejection after an older recovery probe succeeds', async () =>
   expect(nextRequest).toMatchObject({ kind: 'exhausted', reason: 'capacity_unavailable' });
 });
 
+it('recovers an account scoped billing rejection after a successful held probe', async () => {
+  const poolKey = pool();
+  const accounts = [{ id: 'alpha', enabled: true }];
+  await recordObservation({
+    pool: poolKey,
+    observation: {
+      accountId: 'alpha', scope: { kind: 'account' }, source: 'anthropic:billing',
+      observedAt: 100, status: 'exhausted',
+    },
+    now: 100,
+  });
+  const probeTime = 100 + RECOVERY_COOLDOWN_MS;
+  const probe = reservation(await reserveAccount({ pool: poolKey, accounts, balancing: false, now: probeTime }));
+
+  await confirmRecovery({ pool: poolKey, reservationId: probe.id, now: probeTime + 1 });
+  await releaseReservation({ pool: poolKey, reservationId: probe.id, now: probeTime + 1 });
+  const nextRequest = await reserveAccount({ pool: poolKey, accounts, balancing: false, now: probeTime + 1 });
+
+  expect(nextRequest.kind).toBe('reserved');
+});
+
 it('leaves independently dimensioned capacity blocked after generic recovery', async () => {
   const poolKey = pool();
   const probeTime = 101 + RECOVERY_COOLDOWN_MS;
