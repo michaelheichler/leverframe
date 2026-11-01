@@ -1,0 +1,24 @@
+src/claude-bundle-repack-native.ts
+  h_6d55d4af8df372 4,391
+src/elf-bun-segment.ts
+  h_6d55d4af8df372 1-20
+src/patch-agent-model-schema.ts
+  h_6d55d4af8df372 1-12
+src/patch-transforms.ts
+  h_6d55d4af8df372 7,13,297,299,315-321
+tests/elf-bun-segment.test.ts
+  h_6d55d4af8df372 1-49
+tests/patch-transforms-claude-2-1-226.test.ts
+  h_6d55d4af8df372 14-45,89-152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c6ecfd4e5cb0e61d843a6011d6135287fb5e8bde",
+  "prompts": {},
+  "humans": {
+    "h_6d55d4af8df372": {
+      "author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
