@@ -1,0 +1,19 @@
+.github/workflows/commitlint.yml
+  s_a50f20be06e662::t_3ea878414f490f 16,18,31,35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "091a345ae4afafe48d79bc4d07dc4ab2f41219e6",
+  "prompts": {},
+  "sessions": {
+    "s_a50f20be06e662": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_061647258ffeheMEkhCp3Rs7UG",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}

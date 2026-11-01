@@ -1,0 +1,27 @@
+dist/cli.js
+  s_eb32249fd90042::t_62f8309dd3c529 15057-15059,15303-15305,15343
+docs/stabilization-and-upstream-plan.md
+  s_eb32249fd90042::t_befaf57a864692 1148,1157
+src/patch-classify.ts
+  s_eb32249fd90042::t_c33c5660c4e850 70-74
+src/patch-reconcile.ts
+  s_eb32249fd90042::t_d2aec14227c1f6 32-37,250-254,306
+tests/patch-legacy-recovery.test.ts
+  s_eb32249fd90042::t_94535a9b258d2b 23,61,85,240-263,444-470
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "002d0aaeb4684df8453f305987ff0932c8cb6d85",
+  "prompts": {},
+  "sessions": {
+    "s_eb32249fd90042": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4167494f-6602-49e9-829b-b3f7c840b06a",
+        "model": "unknown"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}

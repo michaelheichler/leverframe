@@ -1,0 +1,25 @@
+tests/live-claude-haiku.test.ts
+  s_7fd621581b3f0d::t_2c07d52ca7a70b 1-21
+docs/TESTING.md
+  s_7fd621581b3f0d::t_2c07d52ca7a70b 25-32
+tests/proxy.test.ts
+  s_7fd621581b3f0d::t_2c07d52ca7a70b 666-684,686-687,711-747,750,753-755
+  s_7fd621581b3f0d::t_774ef42d57150a 685,688-710,751-752
+  s_7fd621581b3f0d::t_f471dd2bad645a 748-749
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "3195563032c9fcb3b64db5aa7b485f057a6c5387",
+  "prompts": {},
+  "sessions": {
+    "s_7fd621581b3f0d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fe67b-1cb9-77b3-9914-dd7516b8b334",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}

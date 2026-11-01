@@ -1,0 +1,23 @@
+docs/IMPROVE-CODE-QUALITY-PLAN.md
+  s_7fd621581b3f0d::t_7633f200e7d7bb 19,28,51,55-56
+docs/TECH-DEBT.md
+  s_7fd621581b3f0d::t_7633f200e7d7bb 7,10,17
+docs/superpowers/plans/2026-08-09-compaction-phase1-2-closure.md
+  s_7fd621581b3f0d::t_409089b3d24376 134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "a4b0879660fc21fc2d52f25b72d70585c2f057f5",
+  "prompts": {},
+  "sessions": {
+    "s_7fd621581b3f0d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fe67b-1cb9-77b3-9914-dd7516b8b334",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}

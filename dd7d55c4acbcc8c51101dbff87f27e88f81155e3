@@ -1,0 +1,71 @@
+tests/request-lifecycle.test.ts
+  s_63a915f6ba7802::t_99f3aac0b77b14 37-55
+tests/sdk-adapter.test.ts
+  s_63a915f6ba7802::t_5c4add9cc861c3 1276
+  s_63a915f6ba7802::t_948ef981f38574 1254-1255,1257-1275,1277-1280,1282,1284-1289
+  s_63a915f6ba7802::t_bfe23735d12d61 10
+  s_63a915f6ba7802::t_7e3e7137dc6595 1212-1213
+  s_63a915f6ba7802::t_f97f920021ec63 1240
+  s_63a915f6ba7802::t_ccab7e7742a785 1314-1315
+  s_63a915f6ba7802::t_06f6f423e23a6c 1194-1196,1220-1239,1241-1253
+  s_63a915f6ba7802::t_4f57feb5d8239a 1256
+  s_63a915f6ba7802::t_7056b6bd49f144 1281,1283
+  s_63a915f6ba7802::t_9f0eeb14eeab49 1290-1313,1316-1320
+  s_63a915f6ba7802::t_e58a56fdd4a292 1337
+  s_63a915f6ba7802::t_421636e387c9b3 18-34
+  s_63a915f6ba7802::t_98191d33fa4ff0 1197-1211,1214-1219
+tests/request-lifecycle-error-mapping.test.ts
+  s_63a915f6ba7802::t_01e8c381003bb5 61
+  s_63a915f6ba7802::t_41983e86ada4e0 54
+src/sdk-adapter.ts
+  s_63a915f6ba7802::t_0b2bf3c8166e10 1187
+  s_63a915f6ba7802::t_c0da4d13860784 1146
+  s_63a915f6ba7802::t_7f4093c200b880 936-939
+  s_63a915f6ba7802::t_2a8ee29d3284cb 987-993,997
+  s_63a915f6ba7802::t_090979feb0644f 759
+  s_63a915f6ba7802::t_d9bb22737f5071 834-840,842-848,854-856,864-868,870,872-875
+  s_63a915f6ba7802::t_a7b379c183e54e 1073
+  s_63a915f6ba7802::t_c569d9fab1c698 932,1094-1096
+  s_63a915f6ba7802::t_0cfb562bffc3e2 904-905
+  s_63a915f6ba7802::t_d5f601f0f9bae9 917-918,920-930
+  s_63a915f6ba7802::t_070a5584397aa2 1251,1253-1254
+  s_63a915f6ba7802::t_b3c8922c50ada3 1108
+  s_63a915f6ba7802::t_07415be9ac78bb 1019,1023,1032-1039
+  s_63a915f6ba7802::t_8356f869c3ca4c 755,764,766-768
+  s_63a915f6ba7802::t_7e1cbfea79e5e9 760-763
+  s_63a915f6ba7802::t_d8db95fb710edd 850-852
+  s_63a915f6ba7802::t_c1714bb3f5c3a1 771-773
+  s_63a915f6ba7802::t_1be3c17b18655d 1085-1088
+  s_63a915f6ba7802::t_c96225a94495b9 994-996
+  s_63a915f6ba7802::t_6cae5366b75fd7 950
+  s_63a915f6ba7802::t_8addfb05f82695 754,758,765,770,833,841,849,853,871,916,919
+  s_63a915f6ba7802::t_7bba328023e44d 816,820-821
+  s_63a915f6ba7802::t_a393c9806b143d 857-863,869
+  s_63a915f6ba7802::t_2e09ce4f82494c 769
+src/request-lifecycle.ts
+  s_63a915f6ba7802::t_8addfb05f82695 67
+  s_63a915f6ba7802::t_f9bd9030fb7cf2 68,73,76-79
+  s_63a915f6ba7802::t_eb0d93bde66153 69-72
+src/server/router.ts
+  s_63a915f6ba7802::t_a60e67805ed6e6 813
+src/request-lifecycle-error-mapping.ts
+  s_63a915f6ba7802::t_c8de650ab684f7 63
+src/proxy.ts
+  s_63a915f6ba7802::t_689d671b7bd8eb 867
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.20",
+  "base_commit_sha": "dd7d55c4acbcc8c51101dbff87f27e88f81155e3",
+  "prompts": {},
+  "sessions": {
+    "s_63a915f6ba7802": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e3993345-27b8-4dbe-ae60-39083e976d3d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}

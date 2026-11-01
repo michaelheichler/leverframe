@@ -1,0 +1,39 @@
+README.md
+  s_eb32249fd90042::t_cd0f6ec21ab7ea 131
+dist/cli.js
+  s_eb32249fd90042::t_9ce49c5ca4720d 7185,7194,7205,7234,14172-14173,14468,14811-14815,14825-14836,14838,14854-14867,14869-14870,14872-14875,15082-15094,15096-15171,15197,15232-15239,15243,15258-15265,15276-15277,15281-15283,15290,15305,15311,15313,15336,15347-15354,15356,15363-15365,15367,15372,15380-15388,15426-15427,15432,15486-15490,15492-15493,15496,15528,15540,15596
+docs/stabilization-and-upstream-plan.md
+  s_eb32249fd90042::t_964872c43fc669 1093,1136-1157
+src/patch-diagnostics.ts
+  s_eb32249fd90042::t_85a9ce1d515fb6 15-19,78,85-88,93-101,117,138,146-151,207-217,219,254
+src/patch-legacy-recovery.ts
+  s_eb32249fd90042::t_469f9495f73eb0 1-176
+src/patch-reconcile.ts
+  s_eb32249fd90042::t_61154290ac48be 12,33-37,40-42,134-135,147-154,159-164,180-187,205,209-217,219,222-226,234,250-252,258,260,295,309-323,326
+src/patch-transaction.ts
+  s_eb32249fd90042::t_b810675e697a61 162-166,172-176,194-201,207-211,215-242,256,274-291,293-294,296-299
+src/patcher.ts
+  s_eb32249fd90042::t_fb58ab64614347 25
+tests/patch-legacy-recovery.test.ts
+  s_eb32249fd90042::t_d9aff306aa87c9 1-462
+tests/patch-lifecycle-fixture.test.ts
+  s_eb32249fd90042::t_41ad5fb8c899c4 654,666,694,700,704-706,714-715,719,721
+tests/patch-v2.test.ts
+  s_eb32249fd90042::t_f4832dfed2fe51 35,444,453,468,485,498,613-622,625,627
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "d2997a9474091e6eeba33fa45b02f990c650aafc",
+  "prompts": {},
+  "sessions": {
+    "s_eb32249fd90042": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4167494f-6602-49e9-829b-b3f7c840b06a",
+        "model": "unknown"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}

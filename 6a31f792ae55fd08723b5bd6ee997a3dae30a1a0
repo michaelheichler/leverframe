@@ -1,0 +1,25 @@
+dist/cli.js
+  s_7fd621581b3f0d::t_9552a185e4dc4e 70
+package.json
+  s_7fd621581b3f0d::t_9552a185e4dc4e 3
+dist/chunk-WKZYZJ5L.js
+  s_7fd621581b3f0d::t_9552a185e4dc4e 1-2608
+dist/claude-wrapper.js
+  s_7fd621581b3f0d::t_9552a185e4dc4e 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "6a31f792ae55fd08723b5bd6ee997a3dae30a1a0",
+  "prompts": {},
+  "sessions": {
+    "s_7fd621581b3f0d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fe67b-1cb9-77b3-9914-dd7516b8b334",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}

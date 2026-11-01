@@ -1,0 +1,29 @@
+dist/cli.js
+  s_a50f20be06e662::t_bae44fd544195a 1-12690
+package.json
+  s_a50f20be06e662::t_b0a528fd6667da 69-73
+  s_a50f20be06e662::t_8bb0d6be0dea72 26,78
+  s_a50f20be06e662::t_01b4a629bfe83c 37
+.gitignore
+  s_a50f20be06e662::t_2d36afeb39a13c 1-7
+dist/chunk-2ETKXX74.js
+  s_a50f20be06e662::t_bae44fd544195a 1-1899
+dist/claude-wrapper.js
+  s_a50f20be06e662::t_bae44fd544195a 1-127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "b8f1f109bc4d26b437a71c83140ba635ef5381eb",
+  "prompts": {},
+  "sessions": {
+    "s_a50f20be06e662": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_061647258ffeheMEkhCp3Rs7UG",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}

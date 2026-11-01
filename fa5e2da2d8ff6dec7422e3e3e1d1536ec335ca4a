@@ -1,0 +1,27 @@
+.claude/skills/project-conventions/SKILL.md
+  s_769841def7b2d1::t_062841a3c2eb37 2
+  s_769841def7b2d1::t_dd107cfab83705 1
+  s_769841def7b2d1::t_eb38d326f14a11 3-5
+  s_769841def7b2d1::t_809fda42bbf9ea 6-22
+.gitignore
+  s_769841def7b2d1::t_0d4def493e3213 24-25
+  s_769841def7b2d1::t_17c5ecf0faaeb0 26-28
+.craftsman-baseline.json
+  s_769841def7b2d1::t_7568c371e4d9c1 1-133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.20",
+  "base_commit_sha": "fa5e2da2d8ff6dec7422e3e3e1d1536ec335ca4a",
+  "prompts": {},
+  "sessions": {
+    "s_769841def7b2d1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c884f834-7285-4cbe-a9e4-b025eb3f74d0",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}

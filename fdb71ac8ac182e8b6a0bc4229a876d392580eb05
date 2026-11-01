@@ -1,0 +1,51 @@
+src/credential-store.ts
+  s_ec6ed663cb9d8c::t_6b28d261de424e 259-270
+  s_ec6ed663cb9d8c::t_c235d6367fa2e2 14
+  s_ec6ed663cb9d8c::t_6f33692df01e7e 377-391,396
+  s_ec6ed663cb9d8c::t_b0acf6948e4e96 410-411
+  s_ec6ed663cb9d8c::t_319bbe464b32ab 648-651
+  s_ec6ed663cb9d8c::t_af230932ce7e96 717-728
+  s_ec6ed663cb9d8c::t_a2c98f3b000e9e 15
+tests/credential-durability.test.ts
+  s_ec6ed663cb9d8c::t_80dd7666bff282 166-218
+src/cli.ts
+  s_ec6ed663cb9d8c::t_f10ec00ec78f64 284-305
+  s_ec6ed663cb9d8c::t_9a0c3b3ba5aa50 1539-1550
+  s_ec6ed663cb9d8c::t_f723b5f4741cff 56
+README.md
+  s_ec6ed663cb9d8c::t_b391fa51f52edc 148-157
+src/keyring-command.ts
+  s_ec6ed663cb9d8c::t_24072fb9ece038 7
+  s_ec6ed663cb9d8c::t_7560f5e1c3779f 1-6,8-29,31-40,42-63
+  s_ec6ed663cb9d8c::t_9a10217401897a 41
+  s_ec6ed663cb9d8c::t_e28741218243f7 30
+src/types.ts
+  s_ec6ed663cb9d8c::t_4f706038de9ad3 149-150
+  s_ec6ed663cb9d8c::t_3fe75e92144b6b 7
+dist/chunk-SWDLQKF7.js
+  s_ec6ed663cb9d8c::t_93aea44fdf5b12 1-2700
+tests/zai-verification.test.ts
+  s_ec6ed663cb9d8c::t_f17a0c348e4df0 2-4
+  s_ec6ed663cb9d8c::t_1d213770796928 20-23
+  s_ec6ed663cb9d8c::t_787e26cff2cfd3 43-44
+dist/claude-wrapper.js
+  s_ec6ed663cb9d8c::t_93aea44fdf5b12 7
+dist/cli.js
+  s_ec6ed663cb9d8c::t_93aea44fdf5b12 16,42,47,70,73,14174-14227,14737,14750,14753,16034-16059,16116,16119,16130,16134,16143,16153,16163,16166,16171,16183,16190,16196,16204,16208,16221,16223-16224,16227,16232,16247,16259,16262,16271,16282,16286,16291,16299,16302,16311,16321,16327,16333,16338,16346,16357,16379,16478,16496,16502,16524,16529,16558,16561,16628,16644,16750,16772,16783,16798,16808,16816,16920,16922-16926,16928,16945,16947-16951,16953,17027,17065,17143-17153,17196
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "fdb71ac8ac182e8b6a0bc4229a876d392580eb05",
+  "prompts": {},
+  "sessions": {
+    "s_ec6ed663cb9d8c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "944a1147-9b18-4505-9dae-cb9b284cab78",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}

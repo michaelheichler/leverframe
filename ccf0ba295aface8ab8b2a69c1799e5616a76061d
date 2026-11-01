@@ -1,0 +1,42 @@
+.vbw-planning/PROJECT.md
+  s_769841def7b2d1::t_4720f1e6537a86 1-15
+.vbw-planning/STATE.md
+  s_769841def7b2d1::t_fa9973b1287d09 26-32
+  s_769841def7b2d1::t_77648d200c64ad 33-34,37-38
+  s_769841def7b2d1::t_f9e71443df76a1 35-36
+  s_769841def7b2d1::t_b3e6d072c13f58 3-20,39-41
+  s_769841def7b2d1::t_4d79921597e073 1-2
+  s_769841def7b2d1::t_52c23736a92a0c 21-25
+.vbw-planning/todo-details.json
+  s_769841def7b2d1::t_b3e6d072c13f58 1
+.vbw-planning/conventions.json
+  s_769841def7b2d1::t_5525dbb1de3779 1-16
+.vbw-planning/ROADMAP.md
+  s_769841def7b2d1::t_75708be1ee3be9 1-113
+.vbw-planning/REQUIREMENTS.md
+  s_769841def7b2d1::t_f8483893f4f27f 1-55
+CLAUDE.md
+  s_769841def7b2d1::t_21a228e3417e6a 1-85
+.vbw-planning/config.json
+  s_769841def7b2d1::t_5cc153d804c099 1-186
+.vbw-planning/.agent-spawn-guard.log
+  s_769841def7b2d1::t_863299bc81c358 1-4
+.vbw-planning/.gitignore
+  s_769841def7b2d1::t_77850873a29bf5 1-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "ccf0ba295aface8ab8b2a69c1799e5616a76061d",
+  "prompts": {},
+  "sessions": {
+    "s_769841def7b2d1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c884f834-7285-4cbe-a9e4-b025eb3f74d0",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Michael Heichler <iam@michaelheichler.eu>"
+    }
+  }
+}
