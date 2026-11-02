@@ -1,0 +1,41 @@
+.claude/hooks/caliber-freshness-notify.sh
+  s_8776d7edbe969f::t_e294d5ab3a64c1 1-14
+.claude/hooks/caliber-session-freshness.sh
+  s_8776d7edbe969f::t_44374f9a4990eb 1-14
+.claude/hooks/caliber-sync-agents.sh
+  s_8776d7edbe969f::t_f3a27b7b061148 1-19
+.claude/hooks/caliber-sync-on-edit.sh
+  s_8776d7edbe969f::t_ec9269e96e58aa 1-19
+.claude/settings.json
+  s_8776d7edbe969f::t_d2356dfd660902 1-106
+.claude/skills/jev-compaction/SKILL.md
+  s_8776d7edbe969f::t_0aa7faf35be2d0 1-111
+src/claude-bundle-repack-native.ts
+  s_8776d7edbe969f::t_6114556d8368ed 4,391
+src/elf-bun-segment.ts
+  s_8776d7edbe969f::t_9c182991987281 1-20
+src/patch-agent-model-schema.ts
+  s_8776d7edbe969f::t_3f400ebf642612 1-12
+src/patch-transforms.ts
+  s_8776d7edbe969f::t_45c9fe434fab10 7,13,297,299,315-321
+tests/elf-bun-segment.test.ts
+  s_8776d7edbe969f::t_ac66341b1b6a6b 1-49
+tests/patch-transforms-claude-2-1-226.test.ts
+  s_8776d7edbe969f::t_08e2a31b1e8d16 14-45,89-152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ea517bbd0f2db618ab5ed3c8de878a10b5c845d5",
+  "prompts": {},
+  "sessions": {
+    "s_8776d7edbe969f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19785-6895-79e1-aee9-8f20d8de9c31",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
