@@ -1,0 +1,106 @@
+{
+  "hooks": {
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "caliber learn finalize --auto",
+            "description": "Caliber: finalizing session learnings"
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "caliber refresh --quiet",
+            "description": "Caliber: auto-refreshing docs based on code changes"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "caliber learn observe",
+            "description": "Caliber: recording tool usage for session learning"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/caliber-sync-on-edit.sh\"",
+            "description": "Caliber: mirror a skill or rule edit to the other agents"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "caliber learn observe --failure",
+            "description": "Caliber: recording tool failure for session learning"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "caliber learn observe --prompt",
+            "description": "Caliber: recording user prompt for correction detection"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/caliber-session-freshness.sh\"",
+            "description": "Caliber: check config freshness on session start"
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/caliber-sync-agents.sh\"",
+            "description": "Caliber: mirror skills and rules across agents on session start"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/caliber-freshness-notify.sh\"",
+            "description": "Caliber: warn when agent configs are stale"
+          }
+        ]
+      }
+    ]
+  }
+}
