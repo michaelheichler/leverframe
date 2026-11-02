@@ -1,0 +1,390 @@
+tests/sdk-adapter-stream.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1
+package.json
+  s_8776d7edbe969f::t_c4324b3e805835 3
+tests/account-pool-affinity-quota-activity.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-143
+tests/account-pool-heartbeat.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-193
+tests/context-coding-session-comparison.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-197
+src/context/request-policy.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-88
+tests/anthropic-cache-control-external-transport.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-68
+src/proxy-messages-handler.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-274
+tests/anthropic-cache-control-recursive-protocol.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-240
+tests/fixtures/account-pool-process-worker.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-39
+tests/account-pool-quota-threshold.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-331
+docs/account-pools.md
+  s_8776d7edbe969f::t_c4324b3e805835 1-46
+tests/compatible-cache-usage.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-390
+src/server/anthropic-native-route.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-149
+src/patch-transforms-model-knowledge.ts
+  s_8776d7edbe969f::t_dd5e7c7bf9f655 11
+src/proxy-native-handler.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-139
+src/account-pool-state.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-62
+tests/openai-chat-session-affinity.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-95
+src/trace-log.ts
+  s_8776d7edbe969f::t_c4324b3e805835 159,177-179,370-372,380,398-400
+docs/superpowers/plans/2026-11-01-context-api-optimization.md
+  s_8776d7edbe969f::t_91e13a52f1639c 1-4,9-23,27-57,59-66,68-78,80-83,86-98
+  s_8776d7edbe969f::t_0b2e5e80937d6f 24-26
+  s_8776d7edbe969f::t_b3515cc94c919f 5-8
+  s_8776d7edbe969f::t_c4324b3e805835 58,67,79,84-85
+src/server/openai-inference-route.ts
+  s_8776d7edbe969f::t_c4324b3e805835 19-24,38,42-43,70,74-83,85-166,168-173,175-183,185-197,199-276,282,284-285,287-322,324-327,329-349
+tests/context-summary-spend.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-100
+tests/copilot-anthropic-cache-wire.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-155
+tests/context-evidence-proxy.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-140
+tests/account-pool-quota-threshold-dispatch.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-156
+tests/account-pool-oauth-retirement.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-240
+tests/account-pool-anthropic-billing.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-35
+src/context/deterministic-reduction.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-56
+src/registry/migrate.ts
+  s_8776d7edbe969f::t_c4324b3e805835 3-12
+src/anthropic-cache-transport.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-108
+tests/account-pool-quota-telemetry.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-71
+src/account-pool-threshold.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-45
+tests/context-summary-runtime.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-388
+docs/local-catalog-candidates.md
+  s_8776d7edbe969f::t_c4324b3e805835 1-78
+tests/context-summary-cache.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-166
+src/http-proxy/mitm.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-122
+src/providers-command-crud.ts
+  s_8776d7edbe969f::t_c4324b3e805835 41-42,247,255-280,282-283,286-288,317-329,333,337-341,343,378,411-412,414
+  s_8776d7edbe969f::t_205bb8ef129688 413
+tests/http-proxy-response-usage.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 29-38
+tests/openai-cache-key-endpoint-provenance.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-154
+tests/account-pool-oauth-proxy.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-589
+tests/native-response-usage-audit.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-84
+src/http-proxy/server.ts
+  s_8776d7edbe969f::t_c4324b3e805835 3-4,11-13,15,80-88,93-94,97-99,102,108,110,113,118,120
+tests/context-policy-safety.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-57
+tests/fixtures/context-evidence.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-12
+src/account-pool-sdk.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-199
+docs/provider-capacity-and-local-evidence.md
+  s_8776d7edbe969f::t_c4324b3e805835 1-49
+tests/fixtures/account-pool-proxy.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-220
+tests/anthropic-cache-control-validation-route.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-107
+src/openai-request-translation.ts
+  s_8776d7edbe969f::t_c4324b3e805835 5-6,32-33,107-108,176-183,190,193,209-211
+src/registry/io.ts
+  s_8776d7edbe969f::t_c4324b3e805835 10,18,51-69,80-81,92-95,252-254,259-261,275
+tests/context-policy-runtime.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-430
+src/cache-ttl-evidence.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-16
+src/account-pool-telemetry.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-98
+src/http-proxy/forward.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-159
+tests/context-evidence.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-83
+tests/deterministic-reduction.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-151
+src/sdk-stream-blocks.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-57
+tests/anthropic-cache-control-validation-proxy.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-64
+tests/openai-adapter.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 78,81-82
+tests/summary-usd-micros.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-17
+tests/anthropic-cache-control-validation.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-41
+src/language-model-builtins.ts
+  s_8776d7edbe969f::t_c4324b3e805835 8-9,45,52-56,77-79,81
+src/server/openai-pool.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-107
+src/http-proxy/response-usage.ts
+  s_8776d7edbe969f::t_c4324b3e805835 13-15,19,41-43,50-52,64,68-69,77,84,90-103,113-117
+  s_8776d7edbe969f::t_3e3e4a1f186b05 118-119
+tests/codex-session-affinity.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-51
+src/registry/crud.ts
+  s_8776d7edbe969f::t_c4324b3e805835 30,39-40,42-46,64
+tests/account-pool-process.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-99
+src/registry/types.ts
+  s_8776d7edbe969f::t_c4324b3e805835 80-85,92-93
+tests/opencode-go-usage-partition.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-194
+tests/fixtures/http-proxy-first-party.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-179
+src/account-management-prompts.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-136
+src/proxy-sdk-handler.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-360
+src/cli-help.ts
+  s_8776d7edbe969f::t_789c15d67af74e 232
+  s_8776d7edbe969f::t_c4324b3e805835 16,32-35
+tests/fixtures/summary-spend-ts-loader.mjs
+  s_8776d7edbe969f::t_c4324b3e805835 1-22
+tests/anthropic-cache-control-block-fidelity.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-240
+docs/superpowers/plans/2026-11-01-account-pools.md
+  s_8776d7edbe969f::t_b3515cc94c919f 5-8
+  s_8776d7edbe969f::t_c4324b3e805835 81,95-96,98-99,110
+  s_8776d7edbe969f::t_5d649e19cd0e5b 1-4,9-80,82-94,97,100-109,111-113
+src/anthropic-sdk-cache.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-128
+src/context/summary-cache.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-42
+src/upstream-error.ts
+  s_8776d7edbe969f::t_c4324b3e805835 38-39,85,113-114
+tests/context-evidence-route.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-118
+tests/fixtures/context-summary-fixtures.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-53
+src/account-management.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-97
+src/config.ts
+  s_8776d7edbe969f::t_c4324b3e805835 13-16,36-48,108-112,128-129,132-135
+src/http-proxy/forward-lifecycle.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-107
+src/registry/credential-lifecycle.ts
+  s_8776d7edbe969f::t_c4324b3e805835 8,34-68
+src/sdk-stream-finish.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-32
+tests/openai-public-pool-route.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-466
+src/context/evidence-store.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-84
+tests/account-pool-pinned-quota-exhaustion.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-101
+tests/account-pool.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-468
+tests/context-policy-http-safety.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-113
+tests/account-registry.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-264
+dist/cli.js
+  s_8776d7edbe969f::t_9b8aa028d17f84 373
+  s_8776d7edbe969f::t_4866313f94df62 110
+  s_8776d7edbe969f::t_79df8819d03243 2-14,16-32,34-38,42,44-45,47,50-51,53,55,58-62,64-68,71-72,74-76,78,82,84,86-88,90-92,97,99,101,103,105-109,111-114,118,120,122,130,136,139,144,150,153,158,161,169,173,177,181,185-188,190,200,207,210,215,227,234,237,239,248,252,262,264-265,268,273,288,300,304,313,324,328,333,338,341,350,353,363,370,379,387,399,408,410,413,415,417,419-420
+src/evidence-command.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-16
+src/provider-runtime-cache.ts
+  s_8776d7edbe969f::t_c4324b3e805835 89-96
+tests/context-summary-proxy.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-284
+src/context/paid-summary-engine.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-30
+tests/anthropic-cache-control-thinking-route.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-127
+tests/http-proxy-forward-anthropic-cache.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-71
+tests/openai-public-pool-cache-key-provenance.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-123
+tests/paid-summary-engine.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-219
+src/types.ts
+  s_8776d7edbe969f::t_c4324b3e805835 89-97
+src/account-pool.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-314
+tests/anthropic-context-acceptance.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-49
+tests/account-pool-native-usage-audit.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-103
+src/env.ts
+  s_8776d7edbe969f::t_c4324b3e805835 18,237-256
+  s_8776d7edbe969f::t_bb37ebce3170c9 257-258
+docs/model-summaries.md
+  s_8776d7edbe969f::t_c4324b3e805835 1-23
+src/context/evidence-runtime.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-16
+src/cli.ts
+  s_8776d7edbe969f::t_c4324b3e805835 17,23,52,138-148
+  s_8776d7edbe969f::t_5c09fee408cbfc 149-150
+src/openai-endpoint-provenance.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-14
+src/proxy-message-context.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-31
+tests/account-pool-quota-settings.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-46
+tests/account-pool-recovery.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-270
+tests/codex-session-affinity-server-route.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-61
+tests/account-pool-anthropic-billing-route.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-125
+src/context/summary-engine.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-174
+src/http-proxy/proxy-server.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-112
+docs/superpowers/plans/2026-11-01-backend-cache-reliability.md
+  s_8776d7edbe969f::t_c4324b3e805835 1-37,40-42
+  s_8776d7edbe969f::t_b3515cc94c919f 38-39
+src/native-usage-log.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-12
+docs/context-evidence.md
+  s_8776d7edbe969f::t_c4324b3e805835 1-25
+tests/compatible-cache-usage-route.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-79
+tests/http-proxy-response-usage-audit.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-77
+tests/trace-log-usage-audit.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-38
+src/server/anthropic-sdk-route.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-236
+src/context/evidence-route.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-22
+src/sdk-streaming-response.ts
+  s_8776d7edbe969f::t_c4324b3e805835 11-15,153-154,157-167,174,177-179,181,184,188-190,193-195,198,210
+src/registry/provider-auth.ts
+  s_8776d7edbe969f::t_c4324b3e805835 8,25,114-118,210-216
+tests/account-management.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-487
+tests/anthropic-cache-control-nested-wire.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-234
+src/context/summary-spend.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-52
+src/server/router.ts
+  s_8776d7edbe969f::t_c4324b3e805835 37-38,57,94-100,155-157,159
+  s_8776d7edbe969f::t_f659c168172c00 158,160
+tests/context-summary-policy.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-28
+tests/provider-factory-models.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 157,180,202,206-207,239-242,266-269,291,369-372,397-400
+tests/anthropic-cache-control-nested-route.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-90
+tests/account-pool-auth.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-222
+tests/codex-session-affinity-boundaries.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-24
+src/language-model-factory.ts
+  s_8776d7edbe969f::t_c4324b3e805835 9,112,124-125,127,131
+src/sdk-stream-events.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-125
+src/server/anthropic-inference-route.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-3,39-41,50-52,76-87,102-104,110-112,122-177
+src/account-pool-dispatch.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-181
+docs/anthropic-request-evidence.md
+  s_8776d7edbe969f::t_c4324b3e805835 1-20
+src/http-proxy/context-policy.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-33
+src/proxy-shared.ts
+  s_8776d7edbe969f::t_c4324b3e805835 22
+src/sdk-stream-tools.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-69
+tests/account-pool-proxy.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-687
+tests/account-pool-server.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-422
+tests/codex-session-affinity-proxy-route.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-92
+tests/codex-session-affinity-websocket.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-86
+docs/codex-subscription-usage-investigation.md
+  s_8776d7edbe969f::t_eb7e08fb0dc1cb 29,49,53-55
+  s_8776d7edbe969f::t_9257f076fce025 37
+  s_8776d7edbe969f::t_c4324b3e805835 1-28,30-36,38-48,50-52,56-57
+src/proxy-handler.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-82
+src/copilot/provider.ts
+  s_8776d7edbe969f::t_c4324b3e805835 4,25-26
+tests/context-evidence-retention.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-106
+docs/backend-caching.md
+  s_8776d7edbe969f::t_c4324b3e805835 1-38
+docs/superpowers/plans/2026-11-01-managed-local-inference.md
+  s_8776d7edbe969f::t_45fbb8520b5bb2 1-86,88-94,96-101,103-109,111-115
+  s_8776d7edbe969f::t_c4324b3e805835 87,95,102,110,116
+docs/superpowers/specs/2026-11-01-account-pools-compaction-local-design.md
+  s_8776d7edbe969f::t_27a62e91b9ce4e 7-8,14-16,20-22,77
+  s_8776d7edbe969f::t_e8bd1b9d4ca952 61,99
+  s_8776d7edbe969f::t_83c054c411e4d0 1-2,4-6,9-13,17-19,23-40,42-48,50-56,58-60,62-68,70-76,78-92,95-98,100
+  s_8776d7edbe969f::t_c4324b3e805835 3,41,49,57,69,93-94,101
+src/sdk-request-translation.ts
+  s_8776d7edbe969f::t_c4324b3e805835 2,24,39,48,52,63,147-150,309,315,320,327,330-333,340-349,363,375-376,380,385-386,396,474,479-480,521-532,538,569-573,576,585,587-588,592,601-607
+src/upstream-forward.ts
+  s_8776d7edbe969f::t_c4324b3e805835 14,34,38,40,42,94-95,97,111,196,198-199,214,233,242-244,252-256,355
+tests/context-summary-config.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-47
+tests/fixtures/summary-spend-process.mjs
+  s_8776d7edbe969f::t_c4324b3e805835 1-8
+tests/openai-public-pool-balancing-toggle.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-110
+src/compatible-cache-usage.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-95
+src/sdk-usage.ts
+  s_8776d7edbe969f::t_c4324b3e805835 50,53-73
+tests/neutral-anthropic-request.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 105-139
+scripts/verify-package-contents.mjs
+  s_8776d7edbe969f::t_c4324b3e805835 63-65
+src/sdk-non-streaming-response.ts
+  s_8776d7edbe969f::t_c4324b3e805835 8,17-18,38,44,96-97,135,166-167
+tests/http-proxy-server.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1,11-19,68-69,72,74-77,81-82,133,141
+tests/account-pool-codex-ranking.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-155
+src/proxy.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-3,5,7-8,11-12,16-19,21-22,25-26,28-32,34,55,68,72,83,89-91,94,124-173
+  s_8776d7edbe969f::t_6b3c6ffd5a3837 174
+tests/account-pool-quota-settings-ui.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-56
+src/account-pool-activity.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-53
+tests/sdk-usage-audit.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-47
+src/account-pool-native.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-80
+tests/openai-chat-session-affinity-route.test.ts
+  s_8776d7edbe969f::t_c4324b3e805835 1-232
+dist/chunk-B2VNFKLR.js
+  s_8776d7edbe969f::t_2a843e1533c427 2-6
+dist/claude-bundle-native-NWK2OJNW.js
+  s_8776d7edbe969f::t_cc56bec087129a 2-3,5,7-8
+dist/claude-wrapper.js
+  s_8776d7edbe969f::t_8fa2d560576466 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "78d884561cd4bd70340131ace7559e4bb894f1b3",
+  "prompts": {},
+  "sessions": {
+    "s_8776d7edbe969f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19785-6895-79e1-aee9-8f20d8de9c31",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
