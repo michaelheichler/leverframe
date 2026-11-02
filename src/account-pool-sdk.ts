@@ -1,6 +1,6 @@
 import type { ServerResponse } from 'node:http';
 import type { LanguageModel } from 'ai';
-import { classifyPoolFailure, dispatchWithPool, poolExhaustionMessage, type PoolBinding } from './account-pool-dispatch.js';
+import { classifyPoolFailure, dispatchWithPool, poolExhaustionMessage, poolExhaustionStatus, type PoolBinding } from './account-pool-dispatch.js';
 import { createLanguageModel, isOpenAiOAuth } from './provider-factory.js';
 import type { ProviderRuntimeCache } from './provider-runtime-cache.js';
 import type { ProxyRoute } from './proxy-request.js';
@@ -178,7 +178,7 @@ export async function dispatchSdkPool(options: {
         if (res.headersSent) {
           try {
             await recordObservation({
-              pool: { providerId: 'openai-oauth', modelId: route.realModelId, billingType: 'oauth' },
+              pool: { providerId: route.providerId!, modelId: route.realModelId, billingType: route.authType === 'oauth' ? 'oauth' : 'api' },
               observation, now: Date.now(), generation: binding.generation,
             });
           } catch {
@@ -195,7 +195,7 @@ export async function dispatchSdkPool(options: {
     options.tracking.fail(undefined);
     options.onExhausted?.();
     applyProxyExecutionHeaders(res, options.tracking);
-    anthropicError(res, 429, poolExhaustionMessage(result));
+    anthropicError(res, poolExhaustionStatus(result), poolExhaustionMessage(result));
   } else if (result.value !== undefined) {
     throw result.value;
   }

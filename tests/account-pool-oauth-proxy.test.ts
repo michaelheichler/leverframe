@@ -212,116 +212,6 @@ it('preserves execution identity headers when every pooled OAuth account is exha
   }
 });
 
-it('keeps an exhausted Codex secondary window despite healthy primary telemetry', async () => {
-  saveChatGptOAuthProvider();
-  const resetAt = String(Math.floor(Date.now() / 1000) + 3600);
-  const upstream = await startOpenAiUpstream((call, response) => {
-    if (call.authorization === 'Bearer oauth-alpha-access') {
-      openAiSuccessResponse(response, {
-        'x-codex-primary-used-percent': '5',
-        'x-codex-primary-window-minutes': '300',
-        'x-codex-primary-reset-at': resetAt,
-        'x-codex-secondary-used-percent': '100',
-        'x-codex-secondary-window-minutes': '10080',
-        'x-codex-secondary-reset-at': resetAt,
-      });
-      return;
-    }
-    openAiSuccessResponse(response, {
-      'x-codex-primary-used-percent': '50',
-      'x-codex-primary-window-minutes': '300',
-      'x-codex-primary-reset-at': resetAt,
-      'x-codex-secondary-used-percent': '50',
-      'x-codex-secondary-window-minutes': '10080',
-      'x-codex-secondary-reset-at': resetAt,
-    });
-  });
-  vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
-    forwardSdkFetchToLocal(input, init, upstream.port));
-  const route = chatGptRoute();
-  const proxy = await startProxyCatalog([route], route.aliasId, false);
-
-  try {
-    const first = await postMessages(proxy.port, proxy.token, route.aliasId);
-    const second = await postMessages(proxy.port, proxy.token, route.aliasId);
-    const third = await postMessages(proxy.port, proxy.token, route.aliasId);
-
-    expect([first.status, second.status, third.status]).toEqual([200, 200, 200]);
-    expect(upstream.calls.map(call => call.authorization)).toEqual([
-      'Bearer oauth-alpha-access', 'Bearer oauth-beta-access', 'Bearer oauth-beta-access',
-    ]);
-  } finally {
-    await proxy.close();
-    await upstream.close();
-  }
-});
-
-it('retains exhausted windows reported under a dynamic Codex header prefix', async () => {
-  saveChatGptOAuthProvider();
-  const resetAt = String(Math.floor(Date.now() / 1000) + 3600);
-  const upstream = await startOpenAiUpstream((call, response) => {
-    const alpha = call.authorization === 'Bearer oauth-alpha-access';
-    openAiSuccessResponse(response, {
-      'x-codex-extra-primary-used-percent': alpha ? '5' : '50',
-      'x-codex-extra-primary-window-minutes': '300',
-      'x-codex-extra-primary-reset-at': resetAt,
-      'x-codex-extra-secondary-used-percent': alpha ? '100' : '50',
-      'x-codex-extra-secondary-window-minutes': '10080',
-      'x-codex-extra-secondary-reset-at': resetAt,
-    });
-  });
-  vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
-    forwardSdkFetchToLocal(input, init, upstream.port));
-  const route = chatGptRoute();
-  const proxy = await startProxyCatalog([route], route.aliasId, false);
-
-  try {
-    await postMessages(proxy.port, proxy.token, route.aliasId);
-    await postMessages(proxy.port, proxy.token, route.aliasId);
-    await postMessages(proxy.port, proxy.token, route.aliasId);
-
-    expect(upstream.calls.map(call => call.authorization)).toEqual([
-      'Bearer oauth-alpha-access', 'Bearer oauth-beta-access', 'Bearer oauth-beta-access',
-    ]);
-  } finally {
-    await proxy.close();
-    await upstream.close();
-  }
-});
-
-it('uses Codex rate-limit events when selecting after a successful OAuth response', async () => {
-  saveChatGptOAuthProvider();
-  const resetAt = Math.floor(Date.now() / 1000) + 3600;
-  const upstream = await startOpenAiUpstream((call, response) => {
-    const alpha = call.authorization === 'Bearer oauth-alpha-access';
-    openAiSuccessResponse(response, {}, [{
-      type: 'codex.rate_limits',
-      rate_limits: {
-        primary: { used_percent: alpha ? 5 : 50, window_minutes: 300, reset_at: resetAt },
-        secondary: { used_percent: alpha ? 100 : 50, window_minutes: 10080, reset_at: resetAt },
-      },
-      metered_limit_name: 'fixture subscription',
-    }]);
-  });
-  vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
-    forwardSdkFetchToLocal(input, init, upstream.port));
-  const route = chatGptRoute();
-  const proxy = await startProxyCatalog([route], route.aliasId, false);
-
-  try {
-    await postMessages(proxy.port, proxy.token, route.aliasId);
-    await postMessages(proxy.port, proxy.token, route.aliasId);
-    await postMessages(proxy.port, proxy.token, route.aliasId);
-
-    expect(upstream.calls.map(call => call.authorization)).toEqual([
-      'Bearer oauth-alpha-access', 'Bearer oauth-beta-access', 'Bearer oauth-beta-access',
-    ]);
-  } finally {
-    await proxy.close();
-    await upstream.close();
-  }
-});
-
 it('does not replay a translated OAuth request after the upstream stream emits partial content', async () => {
   saveChatGptOAuthProvider();
   const upstream = await startOpenAiUpstream((_call, response) => {
@@ -440,11 +330,15 @@ it('sends a heartbeat during a pooled OAuth stream and stops writing after clien
   }
 }, 15_000);
 
-it('does not fail over a translated OAuth request for an unclassified 429', async () => {
+it('fails over a translated OAuth request after an upstream HTTP 429', async () => {
   saveChatGptOAuthProvider();
-  const upstream = await startOpenAiUpstream((_call, response) => {
-    response.writeHead(429, { 'Content-Type': 'application/json' });
-    response.end(JSON.stringify({ error: { type: 'server_error', message: 'unclassified rejection' } }));
+  const upstream = await startOpenAiUpstream((call, response) => {
+    if (call.authorization === 'Bearer oauth-alpha-access') {
+      response.writeHead(429, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ error: { type: 'server_error', message: 'upstream rejected this request' } }));
+      return;
+    }
+    openAiSuccessResponse(response);
   });
   vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
     forwardSdkFetchToLocal(input, init, upstream.port));
@@ -452,12 +346,13 @@ it('does not fail over a translated OAuth request for an unclassified 429', asyn
   const proxy = await startProxyCatalog([route], route.aliasId, false);
 
   try {
-    await postMessages(proxy.port, proxy.token, route.aliasId);
+    const result = await postMessages(proxy.port, proxy.token, route.aliasId);
 
-    expect(upstream.calls).toEqual([{
-      authorization: 'Bearer oauth-alpha-access', accountId: 'oauth-alpha-account',
-      model: 'gpt-4o-mini', path: expect.stringContaining('/responses'),
-    }]);
+    expect(result.status).toBe(200);
+    expect(result.body).toContain('OAuth fixture response');
+    expect(upstream.calls.map(call => call.authorization)).toEqual([
+      'Bearer oauth-alpha-access', 'Bearer oauth-beta-access',
+    ]);
   } finally {
     await proxy.close();
     await upstream.close();

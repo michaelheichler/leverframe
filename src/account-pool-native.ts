@@ -1,5 +1,5 @@
 import type { ServerResponse } from 'node:http';
-import { classifyPoolFailure, dispatchWithPool, poolExhaustionMessage } from './account-pool-dispatch.js';
+import { classifyPoolFailure, dispatchWithPool, poolExhaustionMessage, poolExhaustionStatus } from './account-pool-dispatch.js';
 import { anthropicError } from './proxy-response.js';
 import { relayAnthropicMessages } from './upstream-forward.js';
 import type { RequestExecutionObserver } from './request-execution-context.js';
@@ -71,8 +71,9 @@ export async function dispatchNativePool(options: {
     options.lifecycle.fail(new Error('Account pool exhausted'));
     options.onFailure?.();
     const message = poolExhaustionMessage(result);
-    options.onUpstreamError?.(429, message);
-    anthropicError(options.res, 429, message);
+    const status = poolExhaustionStatus(result);
+    options.onUpstreamError?.(status, message);
+    anthropicError(options.res, status, message);
   } else if (result.value) {
     options.lifecycle.fail(new Error(`Upstream returned HTTP ${result.value.status}`));
     options.onFailure?.();

@@ -28,6 +28,7 @@ try {
     'dist/cli.js',
     'dist/keyring-child.mjs',
     'docs/background-agents.md',
+    'docs/assets/leverframe-orange-slate-logo.png',
     'docs/model-picker.png',
     'package.json',
     'scripts/claudeplus.py',

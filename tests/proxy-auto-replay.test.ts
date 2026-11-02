@@ -1,6 +1,6 @@
 
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import http from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -75,31 +75,30 @@ function serverFailure(): Error {
   return Object.assign(new Error('service unavailable'), { statusCode: 503 });
 }
 
-describe('SDK stream auto-replay', () => {
-  let home: string;
-  const previousHome = process.env['LEVERFRAME_HOME'];
-  const previousMaxRetries = process.env['LEVERFRAME_AUTO_REPLAY_MAX_RETRIES'];
-  const previousHeartbeat = process.env['LEVERFRAME_SSE_HEARTBEAT_MS'];
+let home: string;
+const previousHome = process.env['LEVERFRAME_HOME'];
+const previousMaxRetries = process.env['LEVERFRAME_AUTO_REPLAY_MAX_RETRIES'];
+const previousHeartbeat = process.env['LEVERFRAME_SSE_HEARTBEAT_MS'];
 
-  const restoreHeartbeat = () => {
-    if (previousHeartbeat === undefined) delete process.env['LEVERFRAME_SSE_HEARTBEAT_MS'];
-    else process.env['LEVERFRAME_SSE_HEARTBEAT_MS'] = previousHeartbeat;
-  };
+const restoreHeartbeat = () => {
+  if (previousHeartbeat === undefined) delete process.env['LEVERFRAME_SSE_HEARTBEAT_MS'];
+  else process.env['LEVERFRAME_SSE_HEARTBEAT_MS'] = previousHeartbeat;
+};
 
-  beforeEach(() => {
-    home = mkdtempSync(join(tmpdir(), 'leverframe-auto-replay-'));
-    process.env['LEVERFRAME_HOME'] = home;
-    streamMock.mockReset();
-  });
+beforeEach(() => {
+  home = mkdtempSync(join(tmpdir(), 'leverframe-auto-replay-'));
+  process.env['LEVERFRAME_HOME'] = home;
+  streamMock.mockReset();
+});
 
-  afterEach(() => {
-    if (previousHome === undefined) delete process.env['LEVERFRAME_HOME'];
-    else process.env['LEVERFRAME_HOME'] = previousHome;
-    if (previousMaxRetries === undefined) delete process.env['LEVERFRAME_AUTO_REPLAY_MAX_RETRIES'];
-    else process.env['LEVERFRAME_AUTO_REPLAY_MAX_RETRIES'] = previousMaxRetries;
-    restoreHeartbeat();
-    rmSync(home, { recursive: true, force: true });
-  });
+afterEach(() => {
+  if (previousHome === undefined) delete process.env['LEVERFRAME_HOME'];
+  else process.env['LEVERFRAME_HOME'] = previousHome;
+  if (previousMaxRetries === undefined) delete process.env['LEVERFRAME_AUTO_REPLAY_MAX_RETRIES'];
+  else process.env['LEVERFRAME_AUTO_REPLAY_MAX_RETRIES'] = previousMaxRetries;
+  restoreHeartbeat();
+  rmSync(home, { recursive: true, force: true });
+});
 
   it('replays a transient pre-output failure and persists the retry count', async () => {
     streamMock
@@ -185,4 +184,3 @@ describe('SDK stream auto-replay', () => {
       proxy.close();
     }
   });
-});

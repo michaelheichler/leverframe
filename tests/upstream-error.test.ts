@@ -15,6 +15,7 @@ import {
 } from '../src/upstream-error.js';
 import { anthropicPromptTooLongMessage } from '../src/anthropic-endpoints.js';
 import { APICallError, RetryError } from 'ai';
+import { AntigravityError } from '../src/antigravity/types.js';
 
 describe('typed provider transport errors', () => {
   const error = new ProviderTransportError({
@@ -83,6 +84,21 @@ describe('typed provider transport errors', () => {
       'X-Provider-Request-Id': 'provider-request-123',
     });
   });
+});
+
+it('normalizes Antigravity quota errors into safe SDK status and retry metadata', () => {
+  const error = new AntigravityError('raw upstream details must not reach the client', 429, 'RESOURCE_EXHAUSTED', 1_000);
+  const details = sdkUpstreamErrorDetails(error);
+
+  expect(details).toMatchObject({
+    statusCode: 429,
+    isRetryable: true,
+    attemptCount: 1,
+    retryAfterMs: 1_000,
+  });
+  expect(details?.errorContent).not.toContain('raw upstream details');
+  expect(sdkUpstreamResponseHeaders(details)).toMatchObject({ 'Retry-After': '1' });
+  expect(upstreamHttpStatus(error, formatUpstreamError(error))).toBe(429);
 });
 
 describe('terminal usage limit surfacing', () => {

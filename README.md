@@ -1,287 +1,120 @@
+<p align="center">
+  <img src="docs/assets/leverframe-orange-slate-logo.png" alt="Leverframe Orange Slate logo" width="640">
+</p>
+
 # Leverframe
 
-Leverframe bridges Claude Code to external model providers through Anthropic and OpenAI-compatible APIs. It preserves tools, skills, agents, prompt caching, model switching, and auto-compaction.
+[![Release](https://img.shields.io/github/v/tag/michaelheichler/leverframe?sort=semver&label=release&color=ff9f43)](https://github.com/michaelheichler/leverframe/tags)
+[![CI](https://github.com/michaelheichler/leverframe/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/michaelheichler/leverframe/actions/workflows/ci.yml)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-334155)](https://nodejs.org/)
+[![License MIT](https://img.shields.io/badge/license-MIT-334155)](LICENSE)
 
-Supported provider setups include subscriptions and API credentials.
+Use Claude Code with models from other providers. Leverframe handles authentication, model discovery, and request translation while Claude Code manages the conversation, tools, skills, and agents. It also serves local Anthropic and OpenAI-compatible endpoints for other clients.
 
-| Subscription login or plan | API credentials |
-| --- | --- |
-| ChatGPT/Codex OAuth | OpenAI |
-| GitHub Copilot OAuth | Anthropic |
-| Antigravity OAuth (experimental) | Moonshot |
-| OpenCode Go | Custom OpenAI-compatible endpoints |
-| Kimi Coding Plan | |
-| z.ai Coding Plan | |
+## What it does
 
-Leverframe can also run as a local Anthropic-format or OpenAI-compatible endpoint for other clients.
+- Discover models and context limits from provider or supplier metadata. Missing limits stay unconfirmed.
+- Add multiple accounts for any supported provider, with names and unique 3 to 4 character tags.
+- Select an account directly or use an explicit `[AUTO]` pool with configurable balancing and quota failover.
+- Display account tags in Leverframe and Claude Code, with orange badges where supported and readable text labels.
+- Retain native Claude subscription authentication while external models use their own provider credentials.
 
-![Model picker](./docs/model-picker.png)
+![Claude Code model picker](docs/model-picker.png)
 
-## Install from a checkout
+## Install
 
-Use Node.js 22 or newer and pnpm.
+Use Node.js 22 or newer and pnpm 10.34.5. Install Claude Code separately to use its harness, and bring your own provider access.
 
 ```bash
-pnpm install
+git clone https://github.com/michaelheichler/leverframe.git
+cd leverframe
+pnpm install --frozen-lockfile
 pnpm build
-npm link
+npm link --ignore-scripts
 leverframe --version
 ```
 
-The package name is `@michaelheichler/leverframe`. It installs the `leverframe` and `leverframe-claude` bins. There is no old-name executable alias.
+The package name is `@michaelheichler/leverframe`. It provides `leverframe`, `leverframe-claude`, and `claudeplus`. Install this fork from the repository or a verified package built from it.
 
-## Quick start
+## Get started
 
-### ChatGPT/Codex plan
+```bash
+leverframe providers add
+leverframe models
+leverframe claude
+```
+
+Choose a provider, complete sign-in or enter its API key, then browse discovered models. Use `/model` in Claude Code to switch models. Default proxy mode exposes the freshly available external catalog and retains native Claude models.
+
+For direct OAuth setup, use the relevant command.
 
 ```bash
 leverframe providers auth openai
-leverframe models
-leverframe models --alias sol=leverframe:openai-oauth:gpt-5.6-sol
-leverframe patch
-leverframe claude
-```
-
-ChatGPT/Codex model context limits come from positive finite `context_window` values reported by the authenticated provider. Missing or invalid values remain unconfirmed. Leverframe does not present a seed or heuristic as a provider limit. An unconfirmed limit omits the `[1m]` suffix and the `CLAUDE_CODE_MAX_CONTEXT_TOKENS` override.
-
-The same provider metadata can also report `max_context_window`.
-
-In a normal `leverframe claude` proxy session, choose an external model through `/model`, then choose its default or maximum context when both are available and distinct. Limits come from fresh account metadata. See [context selection](docs/CONTEXT-SELECTION.md) for selection and cancellation behavior.
-
-### GitHub Copilot subscription
-
-```bash
 leverframe providers auth github-copilot
-leverframe models
-leverframe models --alias copilot=leverframe:github-copilot:<model-id>
-leverframe patch
-leverframe claude --proxy
-```
-Device authorization uses Leverframe's public OAuth App client ID. Each user signs in with their own GitHub account.
-
-Leverframe keeps the GitHub token in the OS credential store and sends it directly to `https://api.githubcopilot.com`. It uses HTTP requests without the GitHub Copilot SDK or a companion executable.
-
-Model refresh reads the authenticated `/models` catalog. Confirmed endpoint metadata selects Chat Completions or Responses for OpenAI endpoints and Anthropic Messages for Anthropic endpoints. Missing capabilities and limits remain unconfirmed.
-
-There is no fixed Copilot model allowlist. `leverframe models` and enabled-provider model browsing refresh the catalog before displaying it. Failed refreshes show cached models as stale, with the last fetch time and failure reason. Cached browsing results do not authorize execution routes.
-
-Live models with unknown context limits remain selectable without a context override. Leverframe excludes models with missing or unsupported inference endpoint metadata and explains why. It does not assume they support Chat Completions. Malformed individual records do not discard other valid live models.
-
-Claude Code retains conversation control and executes tools. Leverframe does not create Copilot sessions or load GitHub tools and instructions. Standard HTTP adapters carry the complete request history and tool results.
-
-A rejected GitHub token requires GitHub login, not OpenAI token refresh. Reauthorize with `leverframe providers auth github-copilot`.
-
-This integration uses Copilot backend endpoints rather than a documented public inference API. See [provider contracts](docs/PROVIDER-CONTRACTS.md) for the authentication and metadata rules.
-
-Use `leverframe claude --endpoint` instead of `--proxy` to use the same alias through endpoint mode.
-### Antigravity subscription (experimental)
-
-```bash
 leverframe providers auth antigravity
-leverframe models
-leverframe models --alias gemini=leverframe:antigravity:<account-model-id>
-leverframe patch
-leverframe claude --proxy
 ```
 
-Browser login stores Google credentials in the OS credential store. Leverframe discovers account Gemini models and sends subscription requests directly to Google's Antigravity backend. It requires no Google desktop app, companion CLI, API key, or runtime download.
+`claudeplus` prepares a private proxy for each session. Plain `claude` retains its normal routing. Run `leverframe patch` after updating Claude Code. Inspect the integration without network access using `leverframe patch --diagnose --json`.
 
-Context windows and output limits come from the authenticated account catalog. Missing or invalid limits stay unconfirmed. Browsing, proxy routes, and the Claude Code picker share this metadata.
+## Providers
 
-The patched harness retains conversation history, context management, tools, and subagents. Identity normalization removes harness identity declarations while retaining task instructions. Durable tool references preserve signed and unsigned calls across restart.
+| Provider | Authentication |
+| --- | --- |
+| ChatGPT / Codex | Browser OAuth |
+| GitHub Copilot | Device authorization |
+| Google Antigravity, experimental | Browser OAuth |
+| OpenAI | API key |
+| Anthropic API | API key, separate from the Claude subscription |
+| OpenCode Go | Subscription API key |
+| Kimi Coding Plan | Plan API key |
+| Moonshot | API key |
+| z.ai Coding Plan | Plan API key |
+| Custom OpenAI-compatible endpoint | API key or anonymous configuration |
 
-Quota errors stop the request. Leverframe omits credit controls and blocks further requests after reported credit consumption, without switching model, account, or billing route. Signing in again requires an explicit billing review to clear that block. Interactive backend verification remains open.
+Availability depends on the account, plan, and advertised endpoints. Copilot and Antigravity use backend interfaces that can change. Antigravity interactive tool continuation checks remain open. See [provider contracts](docs/PROVIDER-CONTRACTS.md) and [Antigravity verification](docs/ANTIGRAVITY-VERIFICATION.md).
 
-See [verification status](docs/ANTIGRAVITY-VERIFICATION.md) for remaining release checks.
+## Accounts and context
 
-### API-key providers
+Open **Add or manage accounts** beside a configured provider in `leverframe providers add`, or choose **Manage accounts** in its details. Enter a name and a tag such as `WORK`, or leave the tag blank for automatic assignment. Rename either later without changing saved account identities.
 
-Every configured provider offers **Add or manage accounts** in `leverframe providers add` and **Manage accounts** in the provider detail menu. API-key providers, supported OAuth providers, and anonymous custom endpoints share account names and unique 3 to 4 character tags. Enter a tag such as `WORK`, or leave it blank for automatic assignment. Use **Rename account or change tag** to edit either label later.
+Selecting `[WORK]` binds requests to that account without silent alternatives. `[AUTO]` uses eligible accounts according to pool settings. Each account keeps its own credentials, model catalog, and reported limits.
 
-Account model choices show their tag in Leverframe and Claude Code. Selecting `[WORK]` binds the request to that account without automatic alternatives. The separate `[AUTO]` choice follows your balancing and failover settings. Each account keeps its own discovered models and context limits. See [account management](docs/account-pools.md).
+With failover enabled, Auto handles confirmed credit or quota failures internally and tries another eligible account before exposing an error. It uses real requests, without standalone account probes. Confirmed empty accounts stay blocked until their credential generation changes. If all eligible accounts have confirmed billing exhaustion, Leverframe reports a dedicated message such as “Both accounts are empty.” Unrelated request errors do not establish an empty balance.
 
-```bash
-leverframe providers add
-leverframe models
-leverframe claude
-```
+Context metadata flows through browsing, routes, and the Claude Code picker. Proxy mode offers default and maximum context when the provider confirms distinct sizes. Auto uses the smallest confirmed context among participating account catalogs, or leaves it unknown when any participating catalog omits it.
 
-`providers add` supports OpenAI, Anthropic API, OpenCode Go, Kimi Coding Plan, Moonshot, z.ai Coding Plan, and custom OpenAI-compatible endpoints. Credentials stay separate because each provider has its own endpoint and billing arrangement.
+See [account management](docs/account-pools.md) and [context selection](docs/CONTEXT-SELECTION.md).
 
-### OpenCode Go subscription
+## Routes, aliases, and local servers
 
-```bash
-leverframe providers add
-leverframe models
-leverframe claude
-```
-
-Adding OpenCode Go validates the key and loads current model metadata. Run `leverframe providers refresh-models opencode-go` later to update it.
-
-Leverframe gets available models from the authenticated OpenCode Go models API and context windows and capabilities from [models.dev](https://models.dev/providers/opencode-go/). It reads protocols, prices, and included usage from [OpenCode's Go documentation](https://opencode.ai/docs/go/).
-
-Leverframe fetches Go metadata at refresh time. It calculates usage multipliers from the current monthly plan price and each model's included usage. Model choices show context and multiplier in brackets. Missing supplier values appear as `unconfirmed`.
-
-## Model routes
-
-The public route format is:
-
-```text
-leverframe:<provider-id>:<model-id>
-```
-
-Examples:
-
-```text
-leverframe:openai:gpt-5.4
-leverframe:openai-oauth:gpt-5.6-sol
-leverframe:anthropic-api:<model-id>
-leverframe:github-copilot:<model-id>
-leverframe:kimi:k3
-leverframe:moonshot:kimi-k3
-leverframe:zai:glm-5.2
-leverframe:opencode-go:<model-id>
-```
-
-Save an alias with `leverframe models --alias`, then use it in place of the full route.
-
-## Bridge modes
-
-Both `leverframe claude` and `leverframe server` default to proxy mode. A mode flag applies only to the current run unless paired with `--save-mode`.
-
-Normal Claude proxy launch exposes all freshly available external models from configured providers. Favorites and aliases do not restrict that catalog. Native Anthropic models stay selectable through Claude Code.
-
-- `--proxy`: selectively intercepts requests to `api.anthropic.com`. Anthropic models and Claude Code credentials pass through untouched. `leverframe:` routes and saved aliases go to their configured providers.
-- `--endpoint`: runs a local Anthropic-format gateway and launches Claude Code with `ANTHROPIC_BASE_URL` pointed at it.
-
-The Claude endpoint-mode picker remains limited to the starting model and saved favorites (up to 20 routes). Use proxy mode to expose the full freshly discovered external catalog.
-
-Leverframe preserves the Anthropic passthrough base URL. Gateway and proxy responses echo the requesting client's exact model id.
+External routes use `leverframe:<provider-id>:<model-id>`. Select exact IDs from the discovered catalog. Account choices carry their account identity in the model ID. Save an alias with `leverframe models --alias name=leverframe:provider-id:model-id`, replacing the example provider and model with a discovered route.
 
 ```bash
 leverframe claude --proxy
 leverframe claude --endpoint
-leverframe server --proxy
 leverframe server --endpoint --quick
 ```
 
-Endpoint-mode defaults:
+Endpoint mode serves `http://127.0.0.1:17645/anthropic` and `http://127.0.0.1:17645/openai/v1` by default. Network listening requires the configured server password. The Claude endpoint picker contains the starting model and saved favorites, up to 20 routes. Context metadata may retain startup values after a live switch in endpoint mode.
 
-```text
-ANTHROPIC_BASE_URL=http://127.0.0.1:17645/anthropic
-OPENAI_BASE_URL=http://127.0.0.1:17645/openai/v1
-```
+For launch settings, environment variables, patch diagnostics, and Keychain repair, read the [Claude Code guide](docs/claude-code.md).
 
-Use any API key for a local-only endpoint. Network listen mode requires the configured server password.
-
-## Commands
-
-```text
-leverframe claude [options] [claude-flags]
-leverframe server [options]
-leverframe patch [--restore] [--target <path>]
-leverframe patch --diagnose [--json] [--target <path>]
-leverframe models
-leverframe favorites
-leverframe providers [add|auth|list|remove|refresh-models]
-leverframe executions [list|show|reconcile]
-```
-
-`leverframe patch` makes your provider catalog models, favorites, and aliases first-class Claude Code models. It patches the same model set as `leverframe claude`, so `leverframe patch --diagnose` reports the same state after either command. It updates model validation, the `/model` picker, aliases, context-window metadata, and supported effort levels.
-
-### Bypass permissions by default
-
-`leverframe claude -- --dangerously-skip-permissions` passes the flag through for a single run. To make every `leverframe claude` launch start in bypass-permissions mode, set it in `~/.leverframe/config.json`:
-
-```json
-{
-  "launch": { "bypassPermissions": true }
-}
-```
-
-This only affects `leverframe claude` launches. A `--permission-mode` or `--dangerously-skip-permissions` flag you pass explicitly always wins over the saved setting.
-
-### Agent launch routing notice
-
-Claude Code 2.1.266 displays a notice for each new local Agent.
-
-```text
-Agent <agentType> · Model <modelDisplay> · Effort <effort>
-```
-
-The values are dynamic. `<modelDisplay>` resolves from configured Leverframe model metadata, then Claude Code's native display name, then the raw model identity. Claude's request resolver applies child permission layers, inherited settings, environment overrides, and model limits. `<effort>` reflects its output. An omitted request effort appears as `default`. The child description also includes the model and effort.
-
-The values use Claude Code's bold suggestion and success theme roles. The sentence retains its full meaning without color, including in screen-reader mode. The notice appears once per subagent launch. Resumed subagents do not emit a duplicate. Background subagents, the default since Claude Code v2.1.198, show it at launch, not at completion.
-
-Leverframe's Claude Code binary patch displays the notice without extra configuration. The notice stays in the Claude Code UI and preserves machine-readable output such as `--output-format json`.
-
-Binary patching requires Claude Code 2.1.223 or newer. Native-binary tests verify the current integration on 2.1.295, with regression coverage for earlier layouts. Known Agent launch sites require a working routing notice. An incompatible required site blocks patch publication and reports the failing capability. Re-run `leverframe patch` after a Claude Code update. Transform version 26 adds account badges and refreshes existing patches on the next Leverframe launch.
-
-Leverframe can rebuild a lost V2 manifest only from an independently verified pristine legacy backup. It never patches on top of unowned injected bytes.
-
-`leverframe patch --diagnose` prints a read-only, network-free report. The report covers the resolved installation, patch and manifest state, pending transaction, and exact legacy recovery mode. Its model set comes from the cached catalog. It also names each provider with an expired OAuth credential. `--target` pins discovery to one binary for patching and diagnostics.
-
-`leverframe executions` inspects logs of interrupted or ambiguous provider executions in `~/.leverframe/state/executions`. The `list` and `show <scope-hash> <execution-id>` commands only display records.
-
-`leverframe executions reconcile <scope-hash> <execution-id> --tool-call <id>|--all --executed|--not-executed` records a human-confirmed outcome for a tool call with an ambiguous client-side status. Leverframe never executes tools or guesses this outcome. Every proxy or server startup reports reconciled and expired executions without resolving them automatically.
-
-For agents view and background-agent setup, see [docs/background-agents.md](docs/background-agents.md).
-
-### claudeplus
-
-The packaged `claudeplus` command runs Claude Code through a private Leverframe HTTP proxy for each session. Native Claude models use the existing Anthropic subscription login. External models use Leverframe routes and aliases. Plain `claude` keeps its normal routing.
+## Development
 
 ```bash
-claudeplus --dangerously-skip-permissions
+pnpm typecheck
+pnpm lint
+LEVERFRAME_SKIP_LIVE_PROVIDER_SMOKE=1 pnpm test \
+  --exclude tests/live-provider-claude-smoke.test.ts \
+  --exclude tests/live-claude-haiku.test.ts
+pnpm build
+pnpm check:package
 ```
 
-The launcher resolves `claude` and `leverframe` from PATH. Set `CLAUDEPLUS_CLAUDE_PATH` or `CLAUDEPLUS_LEVERFRAME_PATH` to select another executable. It respects `LEVERFRAME_HOME`.
+These commands exclude live Claude conversation suites. See [testing](docs/TESTING.md), [background agents](docs/background-agents.md), and [technical debt](docs/TECH-DEBT.md) for detailed coverage and integration limits.
 
-It starts `leverframe server --proxy --prepare-claude` to prepare Claude and proxy routes from the same fresh catalog before accepting requests. Each invocation has its own resources. A startup lock prevents concurrent launches from patching Claude or selecting ports at the same time. Private session settings pin the proxy connection and Leverframe CA. Startup prints the log path.
+## Help and releases
 
-The launcher removes inherited `CLAUDE_CODE_MAX_CONTEXT_TOKENS` overrides and masks settings-supplied overrides in its private session settings, without rewriting your saved configuration. Context limits remain provider-controlled rather than globally forced. The proxy allows 600 seconds between output chunks.
+Read the [changelog](CHANGELOG.md) for version history. [Open an issue](https://github.com/michaelheichler/leverframe/issues) with the Leverframe version, platform, and redacted diagnostics. Keep API keys, tokens, and credential files private.
 
-## Configuration and compatibility
-
-`LEVERFRAME_HOME` sets the configuration directory, which defaults to `~/.leverframe`. This directory also holds logs, runtime discovery, locks, patch state, certificates, and fallback credential data.
-
-`LEVERFRAME_CLAUDE_PATH` overrides Claude Code binary discovery. `LEVERFRAME_NO_DISCOVERY=1` prevents a standalone server from registering in `~/.leverframe/server-runtime.json`.
-
-Credentials use the OS credential store service `leverframe`. Provider-specific environment keys use `LEVERFRAME_KEY_<PROVIDER_ID>`.
-
-Streaming controls:
-
-- `LEVERFRAME_AUTO_REPLAY_MAX_RETRIES` caps automatic replays of streams that fail before any output reached the client (default 2, max 10).
-- `LEVERFRAME_TOOL_EARLY_FLUSH_BYTES` (default 8000) and `LEVERFRAME_TOOL_EARLY_FLUSH_MS` (default 5000) let a still-open tool call's buffered JSON flush progressively to the client once it crosses either threshold, instead of waiting for the call to finish.
-- `LEVERFRAME_TOOL_JSON_MAX_BYTES` (default 2,000,000) bounds a single tool call's buffered input JSON. Exceeding it fails the request.
-- `LEVERFRAME_OUTPUT_IDLE_TIMEOUT_MS` (default 45000) aborts a stream that has produced no client-visible output (text, reasoning, or tool JSON) for this long, even while the provider keeps sending other stream activity.
-
-On the first normal run, if `~/.leverframe` does not exist, Leverframe copies persisted state from legacy `~/.clodex` without changing or deleting the source. It can also read older relay-ai state. Credential lookup checks the `leverframe` keychain service, then legacy `clodex`, then `relay-ai`, and copies the first legacy hit into `leverframe`.
-
-### Keychain prompts or integrity errors on macOS
-
-Keychain approval prompts bind to the node binary, so a node upgrade makes macOS re-ask for every leverframe Keychain item once. Choose "Always Allow" on each prompt. If startup reports `keyring integrity error` or favorites show as missing credentials afterward, run:
-
-```bash
-leverframe keyring repair
-```
-
-It rebuilds each account's credential journal from the published credential. It clears entries only when it cannot read their credentials and tells you which ones to re-add.
-
-## Context infrastructure status
-
-The repository includes tested building blocks for context budgeting, request compaction, trusted metadata, encrypted memory, local inference profiling, summaries, and worker supervision. These modules are not connected to the production request path yet. Leverframe does not claim automatic custom compaction until that integration and its stream fixtures are complete.
-
-See [docs/TESTING.md](docs/TESTING.md) for the current safety net and [docs/TECH-DEBT.md](docs/TECH-DEBT.md) for the remaining integration work.
-
-## Known limitations
-
-Claude Code applies its own pricing table, so its displayed cost can be inaccurate for non-Anthropic models.
-
-In endpoint mode, Claude Code fetches context metadata at startup and may not refresh it after a live `/model` switch.
-
-ChatGPT/Codex OAuth requires `store: false` upstream. OAuth routes omit some OpenAI cache controls because compatibility testing found empty responses with them.
-
-## Provenance and license
-
-Leverframe is MIT-derived from [clodex](https://github.com/bman654/clodex) and [relay-ai](https://github.com/jacob-bd/relay-ai). See [LICENSE](LICENSE) for the license and required copyright notices.
+Michael Heichler maintains this fork. Leverframe derives from [clodex](https://github.com/bman654/clodex) and [relay-ai](https://github.com/jacob-bd/relay-ai). It uses the [MIT license](LICENSE), with upstream notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

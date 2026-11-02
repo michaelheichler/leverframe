@@ -151,25 +151,36 @@ it('keeps a newer rejection after an older recovery probe succeeds', async () =>
   expect(nextRequest).toMatchObject({ kind: 'exhausted', reason: 'capacity_unavailable' });
 });
 
-it('recovers an account scoped billing rejection after a successful held probe', async () => {
+it('keeps a confirmed billing account blocked until its credential generation changes', async () => {
   const poolKey = pool();
-  const accounts = [{ id: 'alpha', enabled: true }];
+  const account = { id: 'alpha', enabled: true, generation: 'credential-before-renewal' };
+  const accounts = [account];
+  const initial = reservation(await reserveAccount({ pool: poolKey, accounts, balancing: false, now: 99 }));
+  await releaseReservation({ pool: poolKey, reservationId: initial.id, now: 99 });
   await recordObservation({
     pool: poolKey,
     observation: {
       accountId: 'alpha', scope: { kind: 'account' }, source: 'anthropic:billing',
       observedAt: 100, status: 'exhausted',
     },
-    now: 100,
+    now: 100, generation: account.generation,
   });
-  const probeTime = 100 + RECOVERY_COOLDOWN_MS;
-  const probe = reservation(await reserveAccount({ pool: poolKey, accounts, balancing: false, now: probeTime }));
+  const afterCooldown = 100 + RECOVERY_COOLDOWN_MS + 1;
+  const stillBlocked = await reserveAccount({ pool: poolKey, accounts, balancing: false, now: afterCooldown });
 
-  await confirmRecovery({ pool: poolKey, reservationId: probe.id, now: probeTime + 1 });
-  await releaseReservation({ pool: poolKey, reservationId: probe.id, now: probeTime + 1 });
-  const nextRequest = await reserveAccount({ pool: poolKey, accounts, balancing: false, now: probeTime + 1 });
+  expect(stillBlocked).toMatchObject({
+    kind: 'exhausted', reason: 'capacity_unavailable',
+    accounts: [{ accountId: 'alpha', status: 'exhausted', reason: 'billing' }],
+  });
 
-  expect(nextRequest.kind).toBe('reserved');
+  const afterCredentialChange = await reserveAccount({
+    pool: poolKey,
+    accounts: [{ ...account, generation: 'credential-after-renewal' }],
+    balancing: false,
+    now: afterCooldown + 1,
+  });
+
+  expect(afterCredentialChange.kind).toBe('reserved');
 });
 
 it('leaves independently dimensioned capacity blocked after generic recovery', async () => {

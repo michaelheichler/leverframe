@@ -258,11 +258,15 @@ it('preserves execution identity headers when the server OAuth pool is exhausted
   }
 });
 
-it('does not fail over a server translated OAuth request for an unclassified 429', async () => {
+it('fails over a server translated OAuth request after an upstream HTTP 429', async () => {
   saveOAuthAccounts();
-  const upstream = await startOpenAiUpstream((_call, response) => {
-    response.writeHead(429, { 'Content-Type': 'application/json' });
-    response.end(JSON.stringify({ error: { type: 'server_error', message: 'unclassified rejection' } }));
+  const upstream = await startOpenAiUpstream((call, response) => {
+    if (call.authorization === 'Bearer oauth-alpha-access') {
+      response.writeHead(429, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ error: { type: 'server_error', message: 'upstream rejected this request' } }));
+      return;
+    }
+    openAiSuccessResponse(response);
   });
   const gatewayFetch = globalThis.fetch;
   vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
@@ -278,15 +282,16 @@ it('does not fail over a server translated OAuth request for an unclassified 429
   });
 
   try {
-    await gatewayFetch(`${server.url}/anthropic/v1/messages`, {
+    const response = await gatewayFetch(`${server.url}/anthropic/v1/messages`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'gpt-4o-mini', max_tokens: 20, messages: [{ role: 'user', content: 'fixture' }] }),
     });
 
-    expect(upstream.calls).toEqual([{
-      authorization: 'Bearer oauth-alpha-access', accountId: 'oauth-alpha-account',
-      model: 'gpt-4o-mini', path: expect.stringContaining('/responses'),
-    }]);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('OAuth fixture response');
+    expect(upstream.calls.map(call => call.authorization)).toEqual([
+      'Bearer oauth-alpha-access', 'Bearer oauth-beta-access',
+    ]);
   } finally {
     await server.close();
     await upstream.close();

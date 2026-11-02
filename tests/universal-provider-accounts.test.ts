@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { stripVTControlCharacters } from 'node:util';
 import type { RegistryProvider } from '../src/registry/types.js';
 import { accountTag } from '../src/account-identity.js';
 import { addOAuthProviderAccount, addProviderAccount, formatProviderAccounts, renameProviderAccount } from '../src/account-management.js';
@@ -76,7 +77,7 @@ it('shows the account tag and chosen name together in the provider list', () => 
   entry.accounts![0]!.name = 'Personal';
   entry.accounts![0]!.tag = 'HOME';
 
-  expect(formatProviderAccounts(entry)).toEqual(['[HOME] Personal (enabled)']);
+  expect(formatProviderAccounts(entry).map(stripVTControlCharacters)).toEqual(['[HOME] Personal (enabled)']);
 });
 
 it.each(['kimi', 'zai', 'openai', 'custom-local'])('adds API credentials without replacing the first account for %s', async providerId => {

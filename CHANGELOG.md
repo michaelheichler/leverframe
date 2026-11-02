@@ -6,6 +6,17 @@ This changelog records notable changes to Leverframe.
 
 ## [Unreleased]
 
+### Changed
+
+- The README includes the Orange Slate logo and release badges, with a shorter setup guide and links to detailed documentation.
+- Focused module extractions resolve file-size warnings without changing translation or model metadata behavior.
+
+### Fixed
+
+- Auto suppresses confirmed account credit and quota rejections while trying another eligible account. Confirmed empty accounts remain blocked without blind recovery calls, and a dedicated Leverframe message reports when every eligible account is empty.
+- Google and Antigravity quota failures retain the status and retry metadata needed for automatic account failover. Streaming failures record capacity against the selected provider.
+- Automated tests use private temporary parents on Linux and compare account-label text independently of terminal color settings.
+
 ## [0.5.1] - 2026-11-02
 
 ### Added

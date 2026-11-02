@@ -33,30 +33,30 @@ export function classifyPoolFailure(input: PoolFailure): CapacityObservation | u
     accountId: input.accountId, scope: { kind: 'account' }, source: `${input.provider}:authentication`,
     dimension: 'authentication', observedAt: input.now, status: 'auth_failure',
   };
-  if (input.statusCode !== 429 && !(input.provider === 'anthropic' && input.statusCode === 402)) return undefined;
+  if (input.statusCode !== 429 && input.statusCode !== 400 && input.statusCode !== 402) return undefined;
   let payload = input.body;
   if (typeof payload === 'string') {
-    try { payload = JSON.parse(payload); } catch { return undefined; }
+    try { payload = JSON.parse(payload); } catch { payload = undefined; }
   }
   const error = record(record(payload)?.error);
-  const type = error?.type ?? error?.code;
-  if (input.provider === 'anthropic' && input.statusCode === 402) {
-    return type === 'billing_error' ? {
-      accountId: input.accountId, scope: { kind: 'account' }, source: 'anthropic:billing',
+  const types = [error?.type, error?.code, error?.status];
+  const lowCredit = input.statusCode === 400 && error?.type === 'invalid_request_error'
+    && typeof error?.message === 'string'
+    && /^Your credit balance is too low to access the Anthropic API\./i.test(error.message);
+  if (lowCredit || input.statusCode === 402
+    || (input.statusCode === 429 && types.includes('insufficient_quota'))) {
+    return {
+      accountId: input.accountId, scope: { kind: 'account' }, source: `${input.provider}:billing`,
       observedAt: input.now, status: 'exhausted',
-    } : undefined;
+    };
   }
-  const confirmed = input.provider === 'anthropic'
-    ? type === 'rate_limit_error'
-    : type === 'usage_limit_reached' || type === 'insufficient_quota'
-      || (input.provider !== 'codex' && type === 'rate_limit_error');
-  if (!confirmed) return undefined;
+  if (input.statusCode !== 429) return undefined;
   const retry = header(input.headers, 'retry-after');
   const seconds = retry && /^\d+(?:\.\d+)?$/.test(retry) ? Number(retry) : undefined;
   const retryTime = seconds === undefined ? NaN : input.now + seconds * 1000;
   const retryAt = Number.isFinite(retryTime) && retryTime <= 8.64e15 ? retryTime : undefined;
-  const blocked = input.provider === 'anthropic' ? ['requests', 'input-tokens', 'output-tokens']
-    .filter(unit => header(input.headers, `anthropic-ratelimit-${unit}-remaining`) === '0') : [];
+  const blocked = ['requests', 'input-tokens', 'output-tokens']
+    .filter(unit => header(input.headers, `anthropic-ratelimit-${unit}-remaining`) === '0');
   const resets = blocked.map(unit => Date.parse(header(input.headers, `anthropic-ratelimit-${unit}-reset`) ?? ''));
   const headers = input.headers instanceof Headers ? input.headers : new Headers(
     Object.entries(input.headers ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
@@ -102,7 +102,16 @@ export type PoolDispatchResult<T> = { kind: 'result'; value: T } | {
   kind: 'exhausted'; attempted: string[]; accounts: Array<{ accountId: string; status: string; resetAt?: number; reason?: 'billing' }>;
 };
 
+export function poolExhaustionStatus(result: Extract<PoolDispatchResult<unknown>, { kind: 'exhausted' }>): 400 | 429 {
+  return result.accounts.length > 0 && result.accounts.every(account => account.reason === 'billing') ? 400 : 429;
+}
+
 export function poolExhaustionMessage(result: Extract<PoolDispatchResult<unknown>, { kind: 'exhausted' }>): string {
+  if (poolExhaustionStatus(result) === 400) {
+    const count = result.accounts.length;
+    const subject = count === 1 ? 'The account is empty' : count === 2 ? 'Both accounts are empty' : `All ${count} accounts are empty`;
+    return `Leverframe: ${subject}. No eligible account remains for this model. Accounts: ${result.accounts.map(account => account.accountId).join(', ')}.`;
+  }
   const resets = result.accounts.flatMap(account => account.resetAt === undefined
     ? [] : [`${account.accountId}: ${new Date(account.resetAt).toISOString()}`]);
   const failedAuth = result.accounts.filter(account => account.status === 'auth_failure').map(account => account.accountId);
@@ -182,7 +191,7 @@ export async function dispatchWithPool<T>(options: {
       await recordObservation({ pool: options.pool, observation: result.observation, now: Date.now(), generation });
       if (result.observation.status === 'auth_failure') return { kind: 'result', value: result.value };
       failures.push({ accountId: account.id, status: result.observation.status,
-        ...(result.observation.source === 'anthropic:billing' ? { reason: 'billing' as const } : {}),
+        ...(result.observation.source.endsWith(':billing') ? { reason: 'billing' as const } : {}),
         ...(result.observation.resetAt === undefined ? {} : { resetAt: result.observation.resetAt }) });
       lastFailure = result.value;
       if (explicit || preferences.accountPoolFailover === false) return { kind: 'result', value: result.value };

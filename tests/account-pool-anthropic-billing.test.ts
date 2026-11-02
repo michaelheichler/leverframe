@@ -10,13 +10,24 @@ it('classifies a confirmed provider billing rejection as account scoped exhausti
   expect(result).toMatchObject({ accountId: 'fixture-account', scope: { kind: 'account' }, status: 'exhausted' });
 });
 
-it.each([400, 402])('does not classify an ambiguous HTTP %s response as pool capacity', statusCode => {
+it('does not infer billing from an ambiguous HTTP 400 response', () => {
   const result = classifyPoolFailure({
-    provider: 'anthropic', accountId: 'fixture-account', statusCode,
+    provider: 'anthropic', accountId: 'fixture-account', statusCode: 400,
     body: { error: { type: 'invalid_request_error' } }, now: 100,
   });
 
   expect(result).toBeUndefined();
+});
+
+it('treats HTTP 402 as payment-required billing regardless of vendor error shape', () => {
+  const result = classifyPoolFailure({
+    provider: 'anthropic', accountId: 'fixture-account', statusCode: 402,
+    body: { error: { type: 'invalid_request_error' } }, now: 100,
+  });
+
+  expect(result).toMatchObject({
+    accountId: 'fixture-account', scope: { kind: 'account' }, status: 'exhausted',
+  });
 });
 
 it('distinguishes a billing block from a quota reset in pool exhaustion output', () => {

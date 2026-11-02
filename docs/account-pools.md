@@ -27,11 +27,13 @@ The separate `[AUTO]` choice follows **Account pool settings**. Existing unquali
 | Off | On | Prefer the pinned or first enabled account, allowing another account when confirmed quota blocks it. |
 | Off | Off | Use the pinned or first enabled account without automatic alternatives. |
 
-Auto alternatives stay within the same provider, model, and billing type. Explicit account choices stay fixed. When a provider reports comparable quota measurements, Auto uses them to guide selection and otherwise rotates fairly among eligible accounts. Token usage alone cannot establish remaining allowance.
+Auto alternatives keep the same provider and model. Billing type also stays fixed. Explicit account choices stay fixed. When a provider reports comparable quota measurements, Auto uses them to guide selection and otherwise rotates fairly among eligible accounts. Token usage alone cannot establish remaining allowance.
+
+With failover enabled, Auto handles confirmed credit or quota rejections inside the same request before sending any output to the client. A successful alternative hides the intermediate error. A confirmed empty account stays blocked until its credential generation changes. Leverframe sends no standalone account probes. When every eligible account has confirmed billing exhaustion, the client receives a dedicated Leverframe error with the account count rather than the raw provider credit error.
 
 ## Model catalogs and context
 
-Leverframe refreshes each account separately and retains its exact model IDs, capabilities, and limits. It does not copy one account's catalog into another account. If a refresh fails, browsing can retain that account's cached models, while fresh execution discovery excludes its stale routes.
+Leverframe refreshes each account separately and retains its exact model IDs. Capabilities and limits remain bound to that account. It does not copy one account's catalog into another account. If a refresh fails, browsing can retain that account's cached models, while fresh execution discovery excludes its stale routes.
 
 Context windows come from provider or supplier metadata. Missing or invalid limits stay unknown. Auto uses the smallest confirmed context among eligible account catalogs for that model, and leaves the limit unknown when any participating catalog omits it. Explicit account choices retain their own reported limits and supported context modes.
 

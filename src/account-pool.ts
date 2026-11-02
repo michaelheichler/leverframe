@@ -72,7 +72,7 @@ function blockedSummary(accountId: string, observations: StoredObservation[], no
     ?? blocked[0]?.status ?? 'unknown';
   const resetAt = blocked.length > 0 && blocked.every(observation => observation.resetAt !== undefined)
     ? Math.max(...blocked.map(observation => observation.resetAt!)) : undefined;
-  const billing = blocked.some(observation => observation.source === 'anthropic:billing');
+  const billing = blocked.some(observation => observation.source.endsWith(':billing'));
   return { accountId, status, ...(resetAt === undefined ? {} : { resetAt }), ...(billing ? { reason: 'billing' as const } : {}) };
 }
 
@@ -122,7 +122,7 @@ function reconcile(state: PoolState, pool: PoolKey, accounts: readonly PoolAccou
 
 function available(state: PoolState, pool: PoolKey, observations: StoredObservation[], now: number): boolean {
   return observations.every(observation => !isBlocked(observation, now)
-    || (observation.status !== 'auth_failure' && observation.resetAt === undefined
+    || (observation.status !== 'auth_failure' && !observation.source.endsWith(':billing') && observation.resetAt === undefined
       && (observation.probeAfter ?? observation.observedAt + RECOVERY_COOLDOWN_MS) <= now
       && !state.reservations.some(reservation => reservation.probeKeys?.includes(observationKey(pool, observation)))));
 }
@@ -216,10 +216,8 @@ export async function reserveAccount(options: ReserveAccountOptions): Promise<Re
       .map(observation => observationKey(pool, observation));
     const recoveryProbes = Object.fromEntries(chosen.observations.filter(observation =>
       isBlocked(observation, now) && observation.resetAt === undefined && observation.dimension === undefined
-      && ((observation.scope.kind === 'pool' && observation.status === 'rate_limited'
-        && observation.source.endsWith(':rejection'))
-        || (observation.scope.kind === 'account' && observation.status === 'exhausted'
-          && observation.source === 'anthropic:billing')))
+      && observation.scope.kind === 'pool' && observation.status === 'rate_limited'
+      && observation.source.endsWith(':rejection'))
       .map(observation => [observationKey(pool, observation), observation.observedAt]));
     for (const observation of chosen.observations) {
       if (isBlocked(observation, now) && observation.resetAt === undefined) observation.probeAfter = now + RECOVERY_COOLDOWN_MS;
@@ -241,8 +239,7 @@ export async function confirmRecovery(options: {
       && state.generations?.[key(providerKey(options.pool), reservation.accountId)] !== options.generation)) return;
     for (const [id, observedAt] of Object.entries(reservation.recoveryProbes ?? {})) {
       const current = state.observations[id];
-      if (!current || current.observedAt !== observedAt || (current.status !== 'rate_limited'
-        && !(current.status === 'exhausted' && current.source === 'anthropic:billing' && current.scope.kind === 'account'))
+      if (!current || current.observedAt !== observedAt || current.status !== 'rate_limited'
         || current.resetAt !== undefined || current.dimension !== undefined) continue;
       state.observations[id] = { ...current, source: 'pool:recovery', status: 'healthy',
         observedAt: Math.max(options.now, current.observedAt + 1), probeAfter: undefined };

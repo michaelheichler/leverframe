@@ -1,6 +1,7 @@
 
 
 import { APICallError, RetryError } from 'ai';
+import { AntigravityError } from './antigravity/types.js';
 import {
   ProviderTransportError,
   ToolResultImageError,
@@ -68,9 +69,32 @@ function completionDiagnostic(error: ProviderTransportError): SdkCompletionDiagn
   return Object.keys(diagnostic).length > 0 ? diagnostic : undefined;
 }
 
+function antigravityErrorDetails(error: AntigravityError, attemptCount: number): SdkUpstreamErrorDetails {
+  const statusCode = Number.isInteger(error.statusCode) && error.statusCode >= 400 && error.statusCode <= 599
+    ? error.statusCode : 502;
+  const reason = typeof error.reason === 'string' && /^[A-Z_]{1,64}$/.test(error.reason)
+    ? error.reason : undefined;
+  const retryAfterMs = error.retryAfterMs !== undefined && Number.isFinite(error.retryAfterMs)
+    && error.retryAfterMs >= 0 && error.retryAfterMs <= 604_800_000
+    ? error.retryAfterMs : undefined;
+  const data = { error: { message: 'Antigravity request failed.', ...(reason ? { status: reason } : {}) } };
+  return {
+    statusCode,
+    errorContent: JSON.stringify(data),
+    isRetryable: statusCode === 429 || statusCode >= 500,
+    attemptCount,
+    data,
+    ...(retryAfterMs === undefined ? {} : {
+      retryAfterMs,
+      responseHeaders: { 'retry-after': String(retryAfterMs / 1_000) },
+    }),
+  };
+}
+
 export function sdkUpstreamErrorDetails(err: unknown): SdkUpstreamErrorDetails | undefined {
   const retry = RetryError.isInstance(err) ? err : undefined;
   const inner = retry?.lastError ?? err;
+  if (inner instanceof AntigravityError) return antigravityErrorDetails(inner, retry?.errors.length ?? 1);
   if (ProviderTransportError.isInstance(inner)) {
     const completion = completionDiagnostic(inner);
     return {

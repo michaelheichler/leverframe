@@ -1,14 +1,13 @@
 
 import { applyRoutingNoticeTransform } from './patch-transforms-routing-notice.js';
 import { applyNativeContextPicker } from './patch-transforms-picker.js';
-import { applyModelPickerOptions } from './patch-model-picker-options.js';
-import { applySelectBadge } from './patch-select-badge.js';
-import { ANTHROPIC_API_PROVIDER_ID } from './provider-templates.js';
 import { resolveAgentModelArray } from './patch-agent-model-schema.js';
-const ANTHROPIC_API_IDENTITY_PREFIX = `leverframe:${ANTHROPIC_API_PROVIDER_ID}:`;
 import { applyNativeModelKnowledge } from './patch-transforms-model-knowledge.js';
 import { applyNativeContextWindow } from './patch-transforms-context-window.js';
 import { ONE_M_CONTEXT_WINDOW } from './context-model-id.js';
+import { applyConfiguredModelPicker, projectNativeEffort, shortDisplayName } from './patch-model-options.js';
+
+export { projectNativeEffort, shortDisplayName } from './patch-model-options.js';
 
 export const PATCH_TRANSFORMS_VERSION = 26;
 
@@ -39,35 +38,9 @@ export type PatchScriptModelConfig = Record<string, PatchScriptModelEntry>;
 
 const RESERVED_MODEL_ALIASES = new Set(['sonnet', 'opus', 'haiku', 'fable', 'opusplan', 'best', 'default']);
 
-const NATIVE_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
-
-const BASE_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
-
 const PATCH_COMMENT_START = '/' + '*';
 const PATCH_COMMENT_END = '*' + '/';
 
-
-export function projectNativeEffort(effort: PatchScriptEffort | undefined): PatchScriptEffort | undefined {
-  if (!effort || !Array.isArray(effort.levels) || typeof effort.defaultLevel !== 'string') return undefined;
-  const declared = new Set(effort.levels);
-  if (!BASE_EFFORT_LEVELS.every(level => declared.has(level))) return undefined;
-  const levels = NATIVE_EFFORT_LEVELS.filter(level => declared.has(level));
-
-  if (!levels.some(level => level === effort.defaultLevel)) return undefined;
-  return { levels, defaultLevel: 'high' };
-}
-
-/** Because the provider suffix repeats on every Agent tool listing entry. */
-export function shortDisplayName(display: string | undefined): string | undefined {
-  const trimmed = display?.trim();
-  if (!trimmed?.endsWith(')')) return trimmed;
-  let depth = 0;
-  for (let index = trimmed.length - 1; index >= 0; index -= 1) {
-    if (trimmed[index] === ')') depth += 1;
-    else if (trimmed[index] === '(' && --depth === 0) return trimmed.slice(0, index).trim() || trimmed;
-  }
-  return trimmed;
-}
 
 export type PatchSiteStatus = 'OK' | 'SKIP' | 'FAIL';
 
@@ -244,10 +217,6 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
   const MODELS = Object.keys(MODEL_CONFIG);
   if (MODELS.length === 0) fail('leverframe patch: MODEL_CONFIG is empty');
 
-  function displayFor(identity: string, fallbackId: string): string {
-    return DISPLAY_BY_IDENTITY[identity] || 'Custom model (' + fallbackId + ')';
-  }
-
   const reEsc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const q = (s: string) => JSON.stringify(s);
 
@@ -350,35 +319,11 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
   }
 
   {
-    const pickerIdentities = [...new Set(IDENTITIES)];
-    const pickerOptions = pickerIdentities.map(identity => {
-      const canonicalId = ALIAS_TO_ID[identity] ?? identity;
-      const display = DISPLAY_BY_IDENTITY[identity] ?? DISPLAY_BY_IDENTITY[canonicalId];
-      const isAlias = ALIAS_TO_ID[identity] !== undefined;
-      const accountTag = MODEL_CONFIG[canonicalId.replace(/(?:\[(?:default|maximum|1m)\])+$/i, '')]?.accountTag;
-      const badge = accountTag ? { badge: accountTag, badgeColor: '#ff9f43' }
-        : canonicalId.startsWith(ANTHROPIC_API_IDENTITY_PREFIX) ? { badge: 'API' } : {};
-      return {
-        ...badge,
-        value: identity,
-        label: isAlias
-          ? identity.charAt(0).toUpperCase() + identity.slice(1)
-          : display ?? canonicalId,
-        description: isAlias
-          ? displayFor(identity, canonicalId)
-          : display
-            ? 'Model ID: ' + canonicalId
-            : displayFor(identity, canonicalId),
-      };
+    const picker = applyConfiguredModelPicker(js, {
+      identities: IDENTITIES, aliases: ALIAS_TO_ID, displays: DISPLAY_BY_IDENTITY, models: MODEL_CONFIG,
     });
-    const picker = applyModelPickerOptions(js, pickerOptions);
     js = picker.content;
-    report.push(picker.result);
-    if (pickerOptions.some(option => 'badge' in option)) {
-      const badged = applySelectBadge(js);
-      js = badged.content;
-      report.push(badged.result);
-    }
+    report.push(...picker.results);
   }
 
   {

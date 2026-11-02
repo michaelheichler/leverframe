@@ -1,6 +1,6 @@
 import type { ServerResponse } from 'node:http';
 import type { LanguageModel } from 'ai';
-import { classifyPoolFailure, dispatchWithPool, poolExhaustionMessage, type PoolBinding } from '../account-pool-dispatch.js';
+import { classifyPoolFailure, dispatchWithPool, poolExhaustionMessage, poolExhaustionStatus, type PoolBinding } from '../account-pool-dispatch.js';
 import { getPooledCodexModel } from '../account-pool-sdk.js';
 import { createLanguageModel } from '../provider-factory.js';
 import { recordObservation } from '../account-pool.js';
@@ -77,7 +77,8 @@ export async function dispatchOpenAiPool(options: {
   });
   if (result.kind === 'exhausted') {
     options.onExhausted();
-    sendJson(options.res, 429, { error: { message: poolExhaustionMessage(result), type: 'rate_limit_error' } });
+    const status = poolExhaustionStatus(result);
+    sendJson(options.res, status, { error: { message: poolExhaustionMessage(result), type: status === 400 ? 'invalid_request_error' : 'rate_limit_error' } });
   } else if (result.value !== undefined) {
     throw result.value;
   }
@@ -99,7 +100,8 @@ export async function dispatchOpenAiDirectPool(options: {
   } });
   if (result.kind === 'exhausted') {
     options.onExhausted();
-    sendJson(options.res, 429, { error: { message: poolExhaustionMessage(result), type: 'rate_limit_error' } });
+    const status = poolExhaustionStatus(result);
+    sendJson(options.res, status, { error: { message: poolExhaustionMessage(result), type: status === 400 ? 'invalid_request_error' : 'rate_limit_error' } });
   } else if (result.value) {
     options.onFailure(result.value.status, result.value.body);
     options.res.writeHead(result.value.status, { 'Content-Type': result.value.headers.get('content-type') ?? 'application/json' });

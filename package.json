@@ -27,6 +27,7 @@
     "dist/*.js",
     "dist/*.mjs",
     "docs/background-agents.md",
+    "docs/assets/leverframe-orange-slate-logo.png",
     "docs/model-picker.png",
     "scripts/claudeplus.py",
     "THIRD_PARTY_NOTICES.md",
