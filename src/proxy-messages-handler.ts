@@ -38,6 +38,7 @@ import { relayAnthropicMessages, UpstreamUnreachableError } from './upstream-for
 import { reportedContextWindow } from './context-window.js';
 import { applyRequestContextPolicy, formatRequestPolicyOutcome } from './context/request-policy.js';
 import { validAnthropicCacheControls } from './anthropic-sdk-cache.js';
+import { resolveAccountRoute } from './account-route-auth.js';
 
 
 import type { ProxyRequestContext } from './proxy-handler.js';
@@ -120,16 +121,20 @@ async function prepareProxyMessage(req: IncomingMessage, res: ServerResponse, co
     anthropicError(res, 404, `Unknown model: ${originalModel}`);
     return;
   }
-  const route=resolvedRoute??defaultRoute;
+  let route=resolvedRoute??defaultRoute;
+  if(messagesEndpoint==='count_tokens'&&route.accountId) {
+    try { route=await resolveAccountRoute(route); }
+    catch { anthropicError(res, 401, 'The selected account is unavailable.'); return; }
+  }
   if(messagesEndpoint==='messages' && route.modelFormat!=='anthropic' && route.npm==='@ai-sdk/anthropic'
     && isSdkMigratedNpm(route.npm, route.providerId) && !validAnthropicCacheControls(anthropicBody)) {
     anthropicError(res, 400, 'Invalid Anthropic cache_control');
     return;
   }
-  const pooledNative=messagesEndpoint==='messages'&&route.providerId==='anthropic-api'
-    &&route.authType==='api'&&route.modelFormat==='anthropic'&&rememberConfiguredPool(managedPools, route.providerId, 'api');
-  const pooledSdk=messagesEndpoint==='messages'&&route.providerId==='openai-oauth'
-    &&route.authType==='oauth'&&rememberConfiguredPool(managedPools, route.providerId, 'oauth');
+  const pooledNative=messagesEndpoint==='messages'&&!!route.providerId
+    &&route.authType!=='oauth'&&route.modelFormat==='anthropic'&&(!!route.accountTag||rememberConfiguredPool(managedPools, route.providerId, 'api'));
+  const pooledSdk=messagesEndpoint==='messages'&&!!route.providerId&&route.modelFormat==='openai'
+    &&(!!route.accountTag||rememberConfiguredPool(managedPools, route.providerId, route.authType==='oauth'?'oauth':'api'));
   const credentialRouteKey=proxyRuntimeRouteKey(route);
   let credential=pooledNative||pooledSdk? undefined:providerRuntimeCache.snapshot(credentialRouteKey, route.apiKey);
   if(credential&&route.authType!=='oauth'&&credential.credential!==route.apiKey) {
@@ -205,7 +210,7 @@ async function handleProxyTokenCount(prepared: PreparedProxyMessage): Promise<vo
     await relayAnthropicMessages(res, targetUrl, forwardBody, apiKey, false, {
       inboundBeta,
       inboundVersion: Array.isArray(req.headers['anthropic-version']) ? req.headers['anthropic-version'][0] : req.headers['anthropic-version'],
-      authType: isOAuth? 'oauth':'api',
+      authType: route.authType === 'none' ? 'none' : isOAuth? 'oauth':'api',
       log: message => plog(message),
       extraHeaders: route.headers,
       refreshToken: route.refreshToken,

@@ -82,6 +82,11 @@ export interface RegistryAccount {
   id: string;
   authRef: string;
   enabled: boolean;
+  name?: string;
+  tag?: string;
+  modelsCache?: RegistryProvider['modelsCache'];
+  modelDiscoveryError?: string;
+  modelDiscoveryGeneration?: string;
 }
 
 export interface RegistryProvider {

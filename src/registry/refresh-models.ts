@@ -30,6 +30,7 @@ import {
 } from '../copilot/models.js';
 import { COPILOT_API_BASE_URL, fetchCopilotModels } from '../copilot/backend.js';
 import { refreshAntigravityProviderModels } from '../antigravity/refresh-models.js';
+import { refreshConfiguredAccounts } from './account-discovery.js';
 
 export interface RefreshProviderResult {
   id: string;
@@ -43,6 +44,7 @@ export interface RefreshProviderResult {
   failureKind?: CopilotModelFailureKind;
   failureReason?: string;
   skippedModels?: CopilotModelSkipDiagnostic[];
+  accountResults?: Array<{ accountId: string; ok: boolean; reason?: string }>;
 }
 
 export interface RefreshModelsResult {
@@ -170,7 +172,7 @@ function readCapabilityFlags(m: Record<string, unknown>): Pick<OpenAiModelEntry,
 }
 
 function confirmedContextWindow(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
 function parseOpenAiModelEntries(body: unknown): OpenAiModelEntry[] {
@@ -317,7 +319,7 @@ async function refreshApiListProvider(
   const templateDefault = catalogTemplate?.defaultBaseUrl?.trim();
   if (configuredUrl && configuredUrl !== templateDefault) {
     const urlCheck = await validateCustomEndpointUrl(baseUrl, {
-      allowInsecureLocal: catalogTemplate?.apiKeyOptional === true,
+      allowInsecureLocal: catalogTemplate?.apiKeyOptional === true || provider.authType === 'none',
     });
     if (!urlCheck.ok || !urlCheck.normalizedUrl) {
       return { models: [], error: `${urlCheck.error ?? 'Invalid API base URL.'} ${urlCheck.hint ?? ''}`.trim() };
@@ -504,7 +506,7 @@ async function discoverOAuthProviderModels(provider: RegistryProvider, apiKey: s
 
 async function discoverApiProviderModels(provider: RegistryProvider, apiKey: string | null): Promise<DiscoveredProviderModels | RefreshProviderResult> {
   const identity = { id: provider.id, name: provider.name };
-  const keyOptional = resolveProviderTemplate(provider)?.apiKeyOptional === true;
+  const keyOptional = provider.authType === 'none' || resolveProviderTemplate(provider)?.apiKeyOptional === true;
   const key = keyOptional && isLikelyPlaceholderKey(apiKey) ? '' : apiKey;
   if (!keyOptional && isLikelyPlaceholderKey(key)) {
     return cachedModelCount(provider) > 0
@@ -557,6 +559,11 @@ export async function refreshProviderModels(
   registry = loadRegistry(),
 ): Promise<RefreshProviderResult> {
   try {
+    const configured = registry.providers.find(entry => entry.id === providerId);
+    if (configured && ((configured.accounts?.length ?? 0) > 1 || configured.accounts?.some(account => account.name || account.tag))) {
+      return await refreshConfiguredAccounts(configured, (source, key) => source.authType === 'oauth'
+        ? discoverOAuthProviderModels(source, key) : discoverApiProviderModels(source, key));
+    }
     let result = providerId === 'antigravity'
       ? await refreshAntigravityProviderModels(registry.providers.find(entry => entry.id === providerId))
       : await refreshProviderModelsInner(providerId, apiKey, registry);

@@ -1,6 +1,7 @@
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import type { ConflictInfo, LocalProvider, LocalProviderModel } from './types.js';
+import { formatAccountTag } from './account-display.js';
 
 export function formatModelLabel(model: Pick<LocalProviderModel, 'id' | 'name'>): string {
   const trimmed = model.name.trim();
@@ -89,9 +90,10 @@ export function leverframeOutro(status: string, detail?: string): void {
 }
 
 export function fmtModel(label: string, id?: string): string {
-  return id
-    ? `${pc.cyan(pc.bold(label))} ${pc.dim(`(${id})`)}`
-    : pc.cyan(pc.bold(label));
+  const tag = / \[([A-Z0-9]{3,4})\]$/.exec(label);
+  const display = tag
+    ? `${pc.cyan(pc.bold(label.slice(0, tag.index)))} ${formatAccountTag(tag[1]!)}` : pc.cyan(pc.bold(label));
+  return id ? `${display} ${pc.dim(`(${id})`)}` : display;
 }
 
 export function fmtProvider(name: string): string {
@@ -153,10 +155,11 @@ export function providerSelectOption(provider: Pick<LocalProvider, 'id' | 'name'
 export function modelSelectOption(model: LocalProviderModel, hint?: string) {
   const label = formatModelLabel(model);
   const defaultHint = hint
-    ?? (model.name !== model.id ? model.id : model.brand || model.family || '');
+    ?? (model.accountName ? `${model.accountName} · ${model.upstreamModelId}`
+      : model.name !== model.id ? model.id : model.brand || model.family || '');
   return {
     value: model.id,
-    label: `${fmtModel(label)} ${pc.dim(formatModelCapabilities(model))}`,
+    label: `${fmtModel(model.accountTag ? label.replace(/ \[[A-Z0-9]{3,4}\]$/, '') : label)}${model.accountTag ? ` ${formatAccountTag(model.accountTag)}` : ''} ${pc.dim(formatModelCapabilities(model))}`,
     hint: hint === 'recent' ? fmtRecentHint() : defaultHint,
   };
 }

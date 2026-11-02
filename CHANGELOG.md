@@ -6,7 +6,32 @@ This changelog records notable changes to Leverframe.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-02
+
+### Added
+
+- Add and manage multiple named accounts for every supported API provider, OAuth provider, and custom endpoint. Accounts have editable names and unique 3 to 4 character tags, with automatic tag assignment available.
+- Select account-specific models or an explicit Auto pool. Leverframe displays orange account tags, and Claude Code retains account labels with orange badges where its picker supports them.
+- Google Antigravity subscription sign-in, account model discovery, streaming, and durable tool-signature continuation. This integration remains experimental, with interactive tool continuation checks pending.
+
 ### Fixed
+
+- Antigravity context and output limits now reach model browsing and execution from authenticated metadata. Provider-discovered limits remain dynamic, and missing values stay unconfirmed.
+- Adding another account preserves existing credentials and catalogs. Named account requests stay bound to the selected account without silent failover.
+- Account catalogs retain independent model availability and limits. Auto excludes undiscovered accounts and accounts that do not offer the requested model once catalog evidence exists.
+- Concurrent model refreshes cannot replace a newer catalog with an older result. Removing a secondary anonymous configuration preserves the primary catalog, and removing the primary promotes only the replacement account catalog.
+
+## [0.5.0] - 2026-11-02
+
+### Added
+
+- Quota-aware account pools with session affinity, capacity observations, and explicit balancing and failover settings.
+- Optional context summaries, encrypted evidence reuse, and local inference catalog candidates.
+
+### Fixed
+
+- Native Claude model integration, account routing, provider caching, and ChatGPT request-scoped cache affinity survive current Claude Code layouts.
+- Native Anthropic requests preserve API versions and report measured usage without inventing unknown fields.
 
 - Subagents on translated provider routes receive neutral runtime instructions, including agents using the CLI and Agent SDK identity variants. Delegated task constraints and native Anthropic subscription identity remain intact.
 

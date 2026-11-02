@@ -21,6 +21,8 @@ export async function dispatchNativePool(options: {
   providerId: string;
   modelId: string;
   sessionId?: string;
+  accountId?: string;
+  authType?: 'api' | 'none';
   targetUrl: string;
   body: Record<string, unknown>;
   stream: boolean;
@@ -38,9 +40,10 @@ export async function dispatchNativePool(options: {
   const result = await dispatchWithPool({
     pool: { providerId: options.providerId, modelId: options.modelId, billingType: 'api' },
     sessionId: options.sessionId,
+    accountId: options.accountId,
     dispatch: async binding => {
       const rejection = await relayAnthropicMessages(options.res, options.targetUrl, options.body, binding.apiKey, options.stream, {
-        inboundBeta: options.inboundBeta, inboundVersion: options.inboundVersion, authType: 'api', extraHeaders: options.headers, signal: options.signal,
+        inboundBeta: options.inboundBeta, inboundVersion: options.inboundVersion, authType: options.authType ?? 'api', extraHeaders: options.headers, signal: options.signal,
         lifecycle: options.lifecycle, responseModelId: options.responseModelId, deferRejection: true,
         onObservedText: options.onObservedText,
         onUsage: options.onUsage ? (usage, upstreamMs) => options.onUsage?.(usage, upstreamMs, binding.account.id) : undefined,

@@ -36,8 +36,8 @@ describe('Antigravity account model catalog', () => {
       modelFormat: 'cloud-code',
       npm: '@ai-sdk/google',
       outputTokenLimit: 65_536,
-      contextWindow: undefined,
-      contextWindowUnconfirmed: true,
+      contextWindow: 1_000_000,
+      contextWindowUnconfirmed: undefined,
     });
     expect(model).not.toHaveProperty('isFree');
     expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -47,7 +47,7 @@ describe('Antigravity account model catalog', () => {
     expect(JSON.parse(String(init?.body))).toEqual({ project: 'project-a' });
   });
 
-  it('does not report maxTokens as a verified input context window', async () => {
+  it('uses the catalog context limit without assigning it as an input token limit', async () => {
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => catalogResponse({
       'gemini-3.1-pro-low': {
         apiProvider: 'API_PROVIDER_GOOGLE_GEMINI', maxTokens: 1_000_000, maxOutputTokens: 65_536,
@@ -56,7 +56,11 @@ describe('Antigravity account model catalog', () => {
 
     const [model] = await fetchAntigravityModels(auth, { fetchImpl });
 
-    expect(model).toMatchObject({ contextWindow: undefined, contextWindowUnconfirmed: true });
+    expect(model).toMatchObject({
+      contextWindow: 1_000_000,
+      contextWindowUnconfirmed: undefined,
+    });
+    expect(model).not.toHaveProperty('inputTokenLimit');
   });
 
   it('rejects an invalid or empty model map', async () => {

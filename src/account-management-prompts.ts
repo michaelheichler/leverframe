@@ -1,19 +1,25 @@
 import * as p from '@clack/prompts';
 import { loadPreferences, savePreferences } from './config.js';
-import { addProviderAccount, formatProviderAccounts, importProviderAccount, pinProviderAccount } from './account-management.js';
+import { formatProviderAccounts, importProviderAccount, pinProviderAccount } from './account-management.js';
 import { removeProviderAccount } from './registry/credential-lifecycle.js';
 import { loadRegistry } from './registry/io.js';
-import { runProvidersAuth } from './providers-command-auth.js';
+import { renameAccount, setupProviderAccount } from './account-setup.js';
 import { readLatestPoolActivity } from './account-pool-activity.js';
 
-async function manageExistingAccount(providerId: string, choice: 'pin' | 'remove', accounts: import('./registry/types.js').RegistryAccount[]): Promise<void> {
+async function manageExistingAccount(providerId: string, choice: 'pin' | 'remove' | 'rename', accounts: import('./registry/types.js').RegistryAccount[]): Promise<void> {
   const eligible = choice === 'pin' ? accounts.filter(account => account.enabled) : accounts;
   if (eligible.length === 0) {
     p.log.warn('No eligible accounts found.');
     return;
   }
-  const account = await p.select({ message: 'Select account', options: eligible.map(item => ({ value: item.id, label: item.id })) });
+  const account = await p.select({ message: 'Select account', options: eligible.map(item => ({ value: item.id, label: item.name ?? item.id, hint: item.tag })) });
   if (p.isCancel(account)) return;
+  if (choice === 'rename') {
+    const provider = loadRegistry().providers.find(item => item.id === providerId);
+    const selected = provider?.accounts?.find(item => item.id === account);
+    if (provider && selected) await renameAccount(provider, selected);
+    return;
+  }
   if (choice === 'pin') {
     if (!pinProviderAccount(providerId, account)) p.log.warn(`Could not pin account ${account}.`);
     return;
@@ -35,8 +41,9 @@ export async function runAccountManagement(providerId: string): Promise<void> {
     const choice = await p.select({
       message: 'Manage accounts',
       options: [
-        { value: 'add', label: providerId === 'openai-oauth' ? 'Sign in to another ChatGPT account' : 'Add API key' },
-        { value: 'import', label: providerId === 'openai-oauth' ? 'Import from ~/.codex/auth.json' : 'Import ANTHROPIC_API_KEY' },
+        { value: 'add', label: provider.authType === 'oauth' ? 'Sign in to another account' : provider.authType === 'none' ? 'Add named configuration' : 'Add API key' },
+        ...(['openai-oauth', 'anthropic-api'].includes(providerId) ? [{ value: 'import', label: providerId === 'openai-oauth' ? 'Import from ~/.codex/auth.json' : 'Import ANTHROPIC_API_KEY' }] : []),
+        { value: 'rename', label: 'Rename account or change tag' },
         { value: 'pin', label: 'Pin account' },
         { value: 'remove', label: 'Remove account' },
         { value: 'back', label: 'Back' },
@@ -44,14 +51,8 @@ export async function runAccountManagement(providerId: string): Promise<void> {
     });
     if (p.isCancel(choice) || choice === 'back') return;
     try {
-      if (choice === 'add' && providerId === 'openai-oauth') {
-        await runProvidersAuth(providerId);
-      } else if (choice === 'add') {
-        const key = await p.password({ message: 'Anthropic API key:' });
-        if (!p.isCancel(key) && key) {
-          const id = await p.text({ message: 'Account name (optional):' });
-          if (!p.isCancel(id)) await addProviderAccount(providerId, key, id);
-        }
+      if (choice === 'add') {
+        await setupProviderAccount(provider);
       } else if (choice === 'import') {
         const confirmed = await p.confirm({ message: providerId === 'openai-oauth'
           ? 'Import credentials from ~/.codex/auth.json?' : 'Import ANTHROPIC_API_KEY?', initialValue: false });
@@ -59,7 +60,7 @@ export async function runAccountManagement(providerId: string): Promise<void> {
           const id = await p.text({ message: 'Account name (optional):' });
           if (!p.isCancel(id)) await importProviderAccount(providerId, providerId === 'openai-oauth' ? 'codex' : 'anthropic-env', id);
         }
-      } else if (choice === 'pin' || choice === 'remove') {
+      } else if (choice === 'pin' || choice === 'remove' || choice === 'rename') {
         await manageExistingAccount(providerId, choice, provider.accounts ?? []);
       }
     } catch (error) {

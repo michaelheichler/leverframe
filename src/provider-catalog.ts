@@ -74,7 +74,9 @@ export function filterFreshProviderCatalog(
       return [];
     }
 
-    const liveExternal = externalModels.map(model => hasConfirmedContext(model) ? model : {
+    const liveExternal = externalModels.filter(model => !model.accountId || !result.accountResults
+      || result.accountResults.some(account => account.accountId === model.accountId && account.ok))
+      .map(model => hasConfirmedContext(model) ? model : {
       ...model,
       contextWindow: undefined,
       maxContextWindow: undefined,
@@ -254,6 +256,9 @@ export function localProvidersToServerModels(localProviders: LocalProvider[]): S
       providerLabel: provider.name,
       providerId: provider.id,
       sourceBackend: provider.id,
+      accountId: model.accountId,
+      accountTag: model.accountTag,
+      accountName: model.accountName,
       modelFormat: model.modelFormat,
       upstreamModelId: model.upstreamModelId,
       cost: model.cost,

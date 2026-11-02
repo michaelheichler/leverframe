@@ -31,7 +31,7 @@ export function applySelectBadge(source: string) {
 function insertBadge(source: string, match: RegExpExecArray): string {
   const [cell, head = '', createElement, text, row] = match;
   const description = cell.slice(head.length);
-  const badge = `${row}.option.badge&&${createElement}(${text},{color:"${BADGE_COLOR}",children:[${row}.option.badge," "]})`;
+  const badge = `${row}.option.badge&&${createElement}(${text},{color:${row}.option.badgeColor??"${BADGE_COLOR}",children:[${row}.option.badge," "]})`;
   const end = match.index + cell.length;
   return source.slice(0, match.index) + `${head}[${MARKER}${badge},${description}]` + source.slice(end);
 }

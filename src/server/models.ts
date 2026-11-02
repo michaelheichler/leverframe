@@ -15,6 +15,9 @@ export type ServerModelSource = string;
 
 export interface ServerModelInfo {
   id: string;
+  accountId?: string;
+  accountTag?: string;
+  accountName?: string;
   name: string;
   isFree: boolean;
   freeStatus?: FreeStatus;

@@ -35,8 +35,8 @@ export type NativeRequestContext = {
 export async function handleNativeAnthropicMessages(context: NativeRequestContext): Promise<void> {
   const { options, model } = context;
   const messagesUrl = `${model.baseUrl}/v1/messages`;
-  if (model.providerId === 'anthropic-api' && model.authType === 'api'
-    && rememberConfiguredPool(options.managedPools ?? new Set(), model.providerId, 'api')) {
+  if (model.providerId && model.authType !== 'oauth'
+    && (model.accountTag || rememberConfiguredPool(options.managedPools ?? new Set(), model.providerId, 'api'))) {
     const { body, requestId, claudeSessionId } = context;
     auditInference(options, {
       requestId,
@@ -57,7 +57,8 @@ async function executePooledNative(context: NativeRequestContext, messagesUrl: s
   const { req, res, options, body, model, requestId, claudeSessionId, clientAbort, requestExecution, tracking } = context;
   applyExecutionHeaders(res, tracking);
   await dispatchNativePool({
-    res, providerId: model.providerId!, modelId: upstreamModelId(model), sessionId: claudeSessionId,
+    res, providerId: model.providerId!, modelId: upstreamModelId(model), sessionId: claudeSessionId, accountId: model.accountId,
+    authType: model.authType === 'none' ? 'none' : 'api',
     targetUrl: messagesUrl, body: { ...body, model: upstreamModelId(model) }, stream: Boolean(body.stream),
     inboundBeta: requestHeader(req, 'anthropic-beta'), inboundVersion: requestHeader(req, 'anthropic-version'), headers: model.headers,
     onUsage: nativeUsageLogger(options.inferenceLogPath, requestId, body.model, inferenceProvider(model)),
@@ -81,7 +82,7 @@ async function executeNativeRelay(context: NativeRequestContext, messagesUrl: st
     inboundBeta: effectiveBeta,
     inboundVersion: requestHeader(req, 'anthropic-version'),
     onUsage: nativeUsageLogger(options.inferenceLogPath, requestId, body.model, inferenceProvider(model)),
-    authType: isOAuth ? 'oauth' : 'api',
+    authType: model.authType === 'none' ? 'none' : isOAuth ? 'oauth' : 'api',
     log: message => plog(message),
     claudeCodeSessionId,
     extraHeaders: model.headers,

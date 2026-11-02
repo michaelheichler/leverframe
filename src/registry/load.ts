@@ -1,12 +1,16 @@
 import { UnstableCredentialSnapshotError } from '../credential-store.js';
 import {
   resolveProviderAuth,
+  resolveProviderAccountAuth,
+  resolveStoredAccountCredential,
   resolveStoredProviderCredential,
 } from '../env.js';
 import type { CompatibilityAgent } from '../model-compatibility.js';
 import type { LocalProvider } from '../types.js';
 import { materializeRegistry } from './materialize.js';
 import { loadRegistry } from './io.js';
+import { expandAccountModels } from '../account-models.js';
+import { hasAccountCatalog, loadAccountProvider } from './account-loading.js';
 
 export async function loadRegistryProviders(
   diag?: (msg: string) => void,
@@ -16,11 +20,19 @@ export async function loadRegistryProviders(
   const keys = new Map<string, string>();
   const oauthAccountIds = new Map<string, string>();
   const oauthProviderData = new Map<string, Record<string, unknown>>();
+  const accountProviders: LocalProvider[] = [];
   for (const provider of registry.providers) {
     if (!provider.enabled) continue;
+    if (hasAccountCatalog(provider)) {
+      const loaded = await loadAccountProvider(provider, account => resolveProviderAccountAuth(provider.id, account, diag)
+        .catch(() => ({ apiKey: null })), opts);
+      if (loaded) accountProviders.push(loaded);
+      continue;
+    }
     try {
       const auth = await resolveProviderAuth(provider.id, provider.authRef, diag);
-      if (provider.id === 'antigravity' && (!auth.accountId || provider.modelsCache?.oauthAccountId !== auth.accountId)) continue;
+      if (provider.id === 'antigravity' && (provider.accounts?.length ?? 0) < 2
+        && (!auth.accountId || provider.modelsCache?.oauthAccountId !== auth.accountId)) continue;
       if (auth.apiKey) keys.set(provider.id, auth.apiKey);
       if (provider.authType === 'oauth') {
         if (auth.accountId) oauthAccountIds.set(provider.id, auth.accountId);
@@ -30,12 +42,13 @@ export async function loadRegistryProviders(
       diag?.(`${provider.id}: credential unavailable: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  return materializeRegistry(registry, provider => keys.get(provider.id) ?? null, opts)
+  return [...materializeRegistry({ ...registry, providers: registry.providers.filter(provider => !hasAccountCatalog(provider)) }, provider => keys.get(provider.id) ?? null, opts)
     .map(provider => ({
       ...provider,
+      models: expandAccountModels(registry.providers.find(item => item.id === provider.id)!, provider.models, opts?.agent),
       oauthAccountId: oauthAccountIds.get(provider.id),
       providerData: oauthProviderData.get(provider.id),
-    }));
+    })), ...accountProviders];
 }
 
 export interface StoredRegistryCatalog {
@@ -52,7 +65,23 @@ export async function loadStoredRegistryProviders(
   const keys = new Map<string, string>();
   const refreshDue: string[] = [];
   const unstable: string[] = [];
+  const accountProviders: LocalProvider[] = [];
   for (const provider of registry.providers) {
+    if (!provider.enabled) continue;
+    if (hasAccountCatalog(provider)) {
+      const loaded = await loadAccountProvider(provider, async account => {
+        try {
+          const stored = await resolveStoredAccountCredential(provider.id, account);
+          if (stored.refreshDue && !refreshDue.includes(provider.id)) refreshDue.push(provider.id);
+          return { apiKey: stored.value, accountId: stored.accountId, providerData: stored.providerData };
+        } catch (error) {
+          if (error instanceof UnstableCredentialSnapshotError && !unstable.includes(provider.id)) unstable.push(provider.id);
+          return { apiKey: null };
+        }
+      }, opts);
+      if (loaded) accountProviders.push(loaded);
+      continue;
+    }
     const stored = await resolveStoredProviderCredential(provider.id, provider.authRef)
       .catch((error: unknown) => {
         if (error instanceof UnstableCredentialSnapshotError) unstable.push(provider.id);
@@ -62,7 +91,8 @@ export async function loadStoredRegistryProviders(
     if (stored.value) keys.set(provider.id, stored.value);
     if (stored.refreshDue) refreshDue.push(provider.id);
   }
-  const providers = materializeRegistry(registry, provider => keys.get(provider.id) ?? null, opts);
+  const providers = [...materializeRegistry({ ...registry, providers: registry.providers.filter(provider => !hasAccountCatalog(provider)) }, provider => keys.get(provider.id) ?? null, opts)
+    .map(provider => ({ ...provider, models: expandAccountModels(registry.providers.find(item => item.id === provider.id)!, provider.models, opts?.agent) })), ...accountProviders];
   return { providers, refreshDue, unstable };
 }
 

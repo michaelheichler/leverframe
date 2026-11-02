@@ -127,7 +127,8 @@ export async function handleContextSelectionRequest(
   const wantedIds = new Set(routeModelIds(route).concat(contextModelIdCandidates(bareModelId)));
   const provider = freshCatalog.providers.find(candidate => candidate.id === providerId);
   const freshModel = provider?.models.find(candidate =>
-    [candidate.id, candidate.upstreamModelId].some(id => matchesModelId(wantedIds, id)),
+    candidate.accountId === route.accountId
+    && [candidate.id, candidate.upstreamModelId].some(id => matchesModelId(wantedIds, id)),
   );
   const unavailable = freshCatalog.unavailable.some(item =>
     item.providerId === providerId

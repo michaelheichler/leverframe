@@ -5,6 +5,7 @@ interface PickerOption {
   label: string;
   description: string;
   badge?: string;
+  badgeColor?: string;
 }
 
 const MARKER = '/*ccpatch:model-picker-options*/';

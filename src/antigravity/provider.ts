@@ -7,6 +7,7 @@ import { ANTIGRAVITY_ORIGIN, AntigravityError } from './types.js';
 export function createAntigravityLanguageModel(input: {
   modelId: string;
   expectedAccountId: string;
+  registryAccountId?: string;
   fetchImpl?: typeof fetch;
 }): LanguageModel {
   if (!input.expectedAccountId) throw new AntigravityError('Antigravity requires a subscription account.', 401);
@@ -15,7 +16,7 @@ export function createAntigravityLanguageModel(input: {
     fetch: createAntigravityFetch({
       fetchImpl: input.fetchImpl,
       resolveAuth: async () => {
-        const auth = await resolveAntigravityAuth(input.expectedAccountId);
+        const auth = await resolveAntigravityAuth(input.expectedAccountId, { registryAccountId: input.registryAccountId });
         if (auth.accountId !== input.expectedAccountId) throw new AntigravityError('Antigravity account changed. Select a model again.', 409);
         return auth;
       },

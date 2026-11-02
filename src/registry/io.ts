@@ -17,6 +17,7 @@ import {
 } from './lock.js';
 import { migrateOAuthOpenAiProvider, migrateProviderAccounts } from './migrate.js';
 import { isValidProviderId } from './validate.js';
+import { parseAccountMetadata } from './account-schema.js';
 
 const MAX_REGISTRY_BYTES = 16 * 1024 * 1024;
 
@@ -52,6 +53,7 @@ function parseAccounts(raw: unknown): RegistryAccount[] | null {
   if (!Array.isArray(raw)) return null;
   const ids = new Set<string>();
   const refs = new Set<string>();
+  const tags = new Set<string>();
   const accounts: RegistryAccount[] = [];
   for (const item of raw) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
@@ -59,10 +61,13 @@ function parseAccounts(raw: unknown): RegistryAccount[] | null {
     if (typeof account.id !== 'string' || !isValidProviderId(account.id)
       || typeof account.authRef !== 'string' || !account.authRef
       || typeof account.enabled !== 'boolean'
-      || ids.has(account.id) || refs.has(account.authRef)) return null;
+      || ids.has(account.id) || (account.authRef !== 'none:anonymous' && refs.has(account.authRef))) return null;
+    const metadata = parseAccountMetadata(account);
+    if (!metadata || (metadata.tag && tags.has(metadata.tag))) return null;
+    if (metadata.tag) tags.add(metadata.tag);
     ids.add(account.id);
     refs.add(account.authRef);
-    accounts.push({ id: account.id, authRef: account.authRef, enabled: account.enabled });
+    accounts.push({ ...metadata, id: account.id, authRef: account.authRef, enabled: account.enabled });
   }
   return accounts;
 }

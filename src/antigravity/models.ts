@@ -13,12 +13,13 @@ function catalogModel(id: string, value: unknown): CachedModel | undefined {
   const effort = /-(low|medium|high)$/.exec(id)?.[1];
   const quota = objectRecord(entry.quotaInfo);
   const fraction = quota?.remainingFraction;
+  const contextWindow = positiveLimit(entry.maxTokens);
   return {
     id, upstreamModelId: id,
     name: typeof entry.displayName === 'string' && entry.displayName.trim() ? entry.displayName : id,
     family: 'gemini', brand: 'Google', modelFormat: 'cloud-code', npm: '@ai-sdk/google',
     apiUrl: ANTIGRAVITY_ORIGIN,
-    contextWindow: undefined, contextWindowUnconfirmed: true,
+    contextWindow, contextWindowUnconfirmed: contextWindow === undefined ? true : undefined,
     outputTokenLimit: positiveLimit(entry.maxOutputTokens),
     supportedParameters: ['tools', 'tool_choice'],
     ...(effort ? { reasoning: true, supportedReasoningEfforts: [effort], defaultReasoningEffort: effort } : {}),

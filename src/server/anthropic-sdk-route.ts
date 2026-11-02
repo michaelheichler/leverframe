@@ -19,8 +19,8 @@ export async function handleSdkAnthropicMessages(context: NativeRequestContext):
   const prepared = prepareSdkRequest(context);
   const { apiKey, params, clientWantsStream, responseModelId, onUsage } = prepared;
   try {
-    if (model.providerId === 'openai-oauth' && model.authType === 'oauth'
-      && rememberConfiguredPool(options.managedPools ?? new Set(), model.providerId, 'oauth')) {
+    if (model.providerId
+      && (model.accountTag || rememberConfiguredPool(options.managedPools ?? new Set(), model.providerId, model.authType === 'oauth' ? 'oauth' : 'api'))) {
       await dispatchSdkPool({
         res, params, cache: modelCache, sessionId: claudeSessionId, signal: clientAbort.signal,
         clientModelId: responseModelId, stream: clientWantsStream, lifecycle: requestExecution, tracking,
@@ -30,6 +30,7 @@ export async function handleSdkAnthropicMessages(context: NativeRequestContext):
           aliasId: model.id, realModelId: upstreamModelId(model), displayName: model.name,
           upstreamUrl: model.baseUrl ?? '', apiKey, modelFormat: 'openai', npm: model.npm,
           providerId: model.providerId, authType: model.authType, baseURL: model.apiBaseUrl,
+          accountId: model.accountId,
           headers: model.headers, useResponsesLite: model.useResponsesLite,
           minimalClientVersion: model.minimalClientVersion,
         },

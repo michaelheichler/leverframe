@@ -149,7 +149,7 @@ export function oauthProviderKeyringAccount(providerId: string): string {
 
 function oauthProviderIdFromAccount(account: string): string | null {
   const prefix = 'oauth:provider:';
-  return account.startsWith(prefix) ? account.slice(prefix.length) : null;
+  return account.startsWith(prefix) ? account.slice(prefix.length).split(':')[0] || null : null;
 }
 
 const oauthRefreshInflight = new Map<string, Promise<string | null>>();
@@ -236,6 +236,18 @@ export interface ResolvedProviderAuth {
   providerData?: Record<string, unknown>;
 }
 
+export async function resolveStoredAccountCredential(providerId: string, account: RegistryAccount): Promise<StoredProviderCredential> {
+  const parsed = parseAuthRef(account.authRef);
+  if (!parsed) return { value: null, refreshDue: false };
+  if (parsed.kind === 'none') return { value: 'anonymous', refreshDue: false };
+  if (parsed.kind === 'env') return { value: readEnvCredential(parsed.varName), refreshDue: false };
+  const raw = await peekStoredCredential(parsed.account);
+  const credential = parseStoredOAuthCredential(raw);
+  return { value: decodeProviderSecret(raw), refreshDue: credential !== null && oauthCredentialShouldRefresh(credential, providerId),
+    ...(credential?.accountId ? { accountId: credential.accountId } : {}),
+    ...(credential?.providerData ? { providerData: credential.providerData } : {}) };
+}
+
 export async function resolveProviderAccountAuth(
   providerId: string,
   account: RegistryAccount,
@@ -301,7 +313,7 @@ export async function resolveStoredProviderCredential(
   const raw = await peekStoredCredential(parsed.account);
   if (providerId === 'antigravity') {
     const credential = parseStoredOAuthCredential(raw);
-    if (namespaced || parsed.account !== 'oauth:provider:antigravity' || !credential?.accountId) {
+    if (namespaced || oauthProviderIdFromAccount(parsed.account) !== 'antigravity' || !credential?.accountId) {
       return { value: null, refreshDue: false };
     }
     return {

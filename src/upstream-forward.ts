@@ -28,7 +28,7 @@ export function anthropicUpstreamHeaders(
   apiKey: string,
   stream = false,
   inboundBeta?: string,
-  authType?: 'api' | 'oauth',
+  authType?: 'api' | 'oauth' | 'none',
   claudeCodeSessionId?: string,
   extraHeaders?: Record<string, string>,
   inboundVersion?: string,
@@ -37,11 +37,11 @@ export function anthropicUpstreamHeaders(
   const isOAuth = authType === 'oauth';
   const customHeaders = isOAuth ? extraHeaders ?? {} : neutralClientHeaders(extraHeaders ?? {});
   const headers: Record<string, string> = {
-    ...Object.fromEntries(Object.entries(customHeaders).filter(([name]) => name.toLowerCase() !== 'anthropic-version')),
+    ...Object.fromEntries(Object.entries(customHeaders).filter(([name]) => name.toLowerCase() !== 'anthropic-version'
+      && (authType !== 'none' || !['authorization', 'x-api-key', 'api-key', 'x-goog-api-key'].includes(name.toLowerCase())))),
     'Content-Type': 'application/json',
     'anthropic-version': inboundVersion ?? '2023-06-01',
-    Authorization: `Bearer ${key}`,
-    ...(isOAuth ? {} : { 'x-api-key': key }),
+    ...(authType === 'none' ? {} : { Authorization: `Bearer ${key}`, ...(isOAuth ? {} : { 'x-api-key': key }) }),
     ...(isOAuth ? { 'User-Agent': CLAUDE_CODE_USER_AGENT, 'x-app': 'cli' } : {}),
     ...(isOAuth && claudeCodeSessionId ? { 'X-Claude-Code-Session-Id': claudeCodeSessionId } : {}),
     ...(stream ? { Accept: 'text/event-stream' } : {}),
@@ -95,7 +95,7 @@ export interface RelayAnthropicOptions {
   onResponseHeaders?: (headers: Headers) => void | Promise<void>;
   inboundBeta?: string;
   inboundVersion?: string;
-  authType?: 'api' | 'oauth';
+  authType?: 'api' | 'oauth' | 'none';
   log?: (message: string) => void;
   claudeCodeSessionId?: string;
   extraHeaders?: Record<string, string>;

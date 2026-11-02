@@ -39,8 +39,8 @@ function accountBase(account: string): string | null {
 function isManagedAccount(account: string): boolean {
   const base = accountBase(account);
   if (!base) return false;
-  const oauth = /^oauth:provider:(.+)$/.exec(base);
-  if (oauth) return isValidProviderId(oauth[1]!);
+  const oauth = /^oauth:provider:([^:]+)(?::(.+))?$/.exec(base);
+  if (oauth) return isValidProviderId(oauth[1]!) && (oauth[2] === undefined || UUID_PATTERN.test(oauth[2]));
   const provider = /^provider:([^:]+)(?::(.+))?$/.exec(base);
   if (!provider || !isValidProviderId(provider[1]!)) return false;
   const suffix = provider[2];

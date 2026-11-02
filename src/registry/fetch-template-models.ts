@@ -32,6 +32,12 @@ interface ProviderModelListRow {
   context_length?: number;
   contextWindow?: number;
   context_window?: number;
+  max_context_window?: unknown;
+  inputTokenLimit?: unknown;
+  outputTokenLimit?: unknown;
+  max_input_tokens?: unknown;
+  max_output_tokens?: unknown;
+  limit?: { context?: unknown; input?: unknown; output?: unknown };
   isFree?: boolean;
   pricing?: Record<string, string | number | undefined>;
   use_responses_lite?: boolean;
@@ -104,13 +110,19 @@ function parseNativePricing(pricing: ProviderModelListRow['pricing']): CachedMod
   return cost;
 }
 
+function positiveTokenCount(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
 function parseModelList(body: OpenAiModelListResponse, npm: string): CachedModel[] {
-  const rows = body.data ?? body.models ?? [];
+  const rows = Array.isArray(body.data) ? body.data : Array.isArray(body.models) ? body.models : [];
   const format = modelFormatForNpm(npm);
   const models: CachedModel[] = [];
 
   for (const row of rows) {
-    const rawId = row.id?.trim();
+    if (!row || typeof row !== 'object') continue;
+    const rawId = typeof row.id === 'string' ? row.id.trim()
+      : npm === '@ai-sdk/google' && typeof row.name === 'string' ? row.name.trim() : undefined;
     if (!rawId) continue;
     const { id, upstreamModelId } = normalizeGoogleModelId(rawId, npm);
     const family = id.split(/[-/:]/)[0] ?? id;
@@ -119,10 +131,11 @@ function parseModelList(body: OpenAiModelListResponse, npm: string): CachedModel
       model: { cost, isFree: row.isFree },
     });
 
-    const contextWindow =
-      row.context_length ??
-      row.contextWindow ??
-      row.context_window;
+    const contextWindow = positiveTokenCount(row.context_length ?? row.contextWindow ?? row.context_window
+      ?? row.limit?.context ?? (npm === '@ai-sdk/google' ? row.inputTokenLimit : undefined));
+    const maximum = positiveTokenCount(row.max_context_window);
+    const input = positiveTokenCount(row.inputTokenLimit ?? row.max_input_tokens ?? row.limit?.input);
+    const output = positiveTokenCount(row.outputTokenLimit ?? row.max_output_tokens ?? row.limit?.output);
     models.push({
       id,
       name: normalizeGoogleDisplayName(row.name, id),
@@ -130,6 +143,9 @@ function parseModelList(body: OpenAiModelListResponse, npm: string): CachedModel
       family,
       brand: deriveBrand(family),
       contextWindow,
+      ...(maximum === undefined ? {} : { maxContextWindow: maximum }),
+      ...(input === undefined ? {} : { inputTokenLimit: input }),
+      ...(output === undefined ? {} : { outputTokenLimit: output }),
       cost,
       isFree: isFreeStatus(freeStatus),
       freeStatus,
@@ -146,7 +162,7 @@ function parseModelList(body: OpenAiModelListResponse, npm: string): CachedModel
 
 function markUnconfirmedContextWindows(models: CachedModel[]): CachedModel[] {
   return models.map(model => (
-    typeof model.contextWindow === 'number' && model.contextWindow > 0
+    positiveTokenCount(model.contextWindow) !== undefined
       ? model
       : { ...model, contextWindow: undefined, contextWindowUnconfirmed: true }
   ));
@@ -172,14 +188,14 @@ async function applyDynamicSupplierMetadata(
     const supplied = supplier?.get(model.id);
     const npm = supplied?.npm ?? providerModel?.provider?.npm ?? provider.npm ?? model.npm;
 
-    const contextWindow = model.contextWindow ?? capabilities?.limit?.context;
+    const contextWindow = positiveTokenCount(model.contextWindow) ?? positiveTokenCount(capabilities?.limit?.context);
     const supportedReasoningEfforts = modelsDevReasoningEfforts(capabilities);
     return {
       ...model,
       name: capabilities?.name ?? model.name,
       family: capabilities?.family ?? model.family,
       contextWindow,
-      contextWindowUnconfirmed: model.contextWindowUnconfirmed === true || contextWindow === undefined,
+      contextWindowUnconfirmed: contextWindow === undefined,
       npm,
       modelFormat: modelFormatForNpm(npm ?? template.npm),
       cost: supplied?.cost ?? providerModel?.cost ?? model.cost,

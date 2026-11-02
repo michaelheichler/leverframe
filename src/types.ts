@@ -15,6 +15,9 @@ export interface ModelCost {
 
 export interface LocalProviderModel {
   id: string;
+  accountId?: string;
+  accountTag?: string;
+  accountName?: string;
   name: string;
   family: string;
   brand: string;

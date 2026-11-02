@@ -49,7 +49,7 @@ export async function handleProxyNative(state: ProxyMessageContext): Promise<voi
       inboundBeta: effectiveBeta,
       onUsage: nativeUsageLogger(inferenceLogPath, trackedRequestId, clientModelId, providerId),
       inboundVersion: Array.isArray(req.headers['anthropic-version']) ? req.headers['anthropic-version'][0] : req.headers['anthropic-version'],
-      authType: isOAuth? 'oauth':'api',
+      authType: route.authType === 'none' ? 'none' : isOAuth? 'oauth':'api',
       log: message => plog(message),
       claudeCodeSessionId,
       extraHeaders: route.headers,
@@ -118,7 +118,8 @@ async function executePooledProxyNative(state: ProxyMessageContext, targetUrl: s
   const { inferenceLogPath }=context;
   applyProxyExecutionHeaders(res, tracking);
   await dispatchNativePool({
-    res, providerId, modelId: route.realModelId, sessionId: claudeSessionId, targetUrl,
+    res, providerId, modelId: route.realModelId, sessionId: claudeSessionId, accountId: route.accountId, targetUrl,
+    authType: route.authType === 'none' ? 'none' : 'api',
     body: forwardBody, stream: clientWantsStream, inboundBeta, headers: route.headers,
     inboundVersion: Array.isArray(req.headers['anthropic-version']) ? req.headers['anthropic-version'][0] : req.headers['anthropic-version'],
     onUsage: nativeUsageLogger(inferenceLogPath, trackedRequestId, clientModelId, providerId),

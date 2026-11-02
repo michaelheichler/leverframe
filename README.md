@@ -86,6 +86,8 @@ leverframe claude --proxy
 
 Browser login stores Google credentials in the OS credential store. Leverframe discovers account Gemini models and sends subscription requests directly to Google's Antigravity backend. It requires no Google desktop app, companion CLI, API key, or runtime download.
 
+Context windows and output limits come from the authenticated account catalog. Missing or invalid limits stay unconfirmed. Browsing, proxy routes, and the Claude Code picker share this metadata.
+
 The patched harness retains conversation history, context management, tools, and subagents. Identity normalization removes harness identity declarations while retaining task instructions. Durable tool references preserve signed and unsigned calls across restart.
 
 Quota errors stop the request. Leverframe omits credit controls and blocks further requests after reported credit consumption, without switching model, account, or billing route. Signing in again requires an explicit billing review to clear that block. Interactive backend verification remains open.
@@ -93,6 +95,10 @@ Quota errors stop the request. Leverframe omits credit controls and blocks furth
 See [verification status](docs/ANTIGRAVITY-VERIFICATION.md) for remaining release checks.
 
 ### API-key providers
+
+Every configured provider offers **Add or manage accounts** in `leverframe providers add` and **Manage accounts** in the provider detail menu. API-key providers, supported OAuth providers, and anonymous custom endpoints share account names and unique 3 to 4 character tags. Enter a tag such as `WORK`, or leave it blank for automatic assignment. Use **Rename account or change tag** to edit either label later.
+
+Account model choices show their tag in Leverframe and Claude Code. Selecting `[WORK]` binds the request to that account without automatic alternatives. The separate `[AUTO]` choice follows your balancing and failover settings. Each account keeps its own discovered models and context limits. See [account management](docs/account-pools.md).
 
 ```bash
 leverframe providers add
@@ -209,7 +215,7 @@ The values use Claude Code's bold suggestion and success theme roles. The senten
 
 Leverframe's Claude Code binary patch displays the notice without extra configuration. The notice stays in the Claude Code UI and preserves machine-readable output such as `--output-format json`.
 
-Binary patching requires Claude Code 2.1.223 or newer. Native-binary tests verify the current integration on 2.1.295, with regression coverage for earlier layouts. Known Agent launch sites require a working routing notice. An incompatible required site blocks patch publication and reports the failing capability. Re-run `leverframe patch` after a Claude Code update. Transform version 24 refreshes existing patches on the next Leverframe launch.
+Binary patching requires Claude Code 2.1.223 or newer. Native-binary tests verify the current integration on 2.1.295, with regression coverage for earlier layouts. Known Agent launch sites require a working routing notice. An incompatible required site blocks patch publication and reports the failing capability. Re-run `leverframe patch` after a Claude Code update. Transform version 26 adds account badges and refreshes existing patches on the next Leverframe launch.
 
 Leverframe can rebuild a lost V2 manifest only from an independently verified pristine legacy backup. It never patches on top of unowned injected bytes.
 

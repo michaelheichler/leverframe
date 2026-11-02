@@ -11,6 +11,7 @@ import { loadRegistry, saveRegistry } from '../src/registry/io.js';
 import { removeProviderFromRegistry } from '../src/registry/crud.js';
 import * as durableIO from '../src/durable-io.js';
 import { saveNativeOAuthCredential } from '../src/registry/provider-auth.js';
+import { accountTag } from '../src/account-identity.js';
 import {
   addProviderAccount,
   formatProviderAccounts,
@@ -196,13 +197,17 @@ it('accepts zero input and output prices', async () => {
 
 it('adds an API account without replacing the provider first account', async () => {
   const original = provider();
+  const firstAccount = original.accounts![0]!;
+  const firstTag = accountTag(firstAccount, original.accounts!);
   const accountId = 'secondary';
   saveRegistry(registry([original]), getProvidersPath());
 
   const added = await addProviderAccount('anthropic-api', 'new-api-key', accountId);
   const saved = loadRegistry().providers[0]!;
 
-  expect(saved.accounts?.[0]).toEqual(original.accounts?.[0]);
+  expect(saved.accounts?.[0]).toMatchObject({
+    id: firstAccount.id, authRef: firstAccount.authRef, enabled: firstAccount.enabled, tag: firstTag,
+  });
   expect(saved.accounts).toContainEqual(added);
   expect(added.id).toBe(accountId);
   expect(added.authRef).not.toBe(original.accounts?.[0]?.authRef);
@@ -252,7 +257,10 @@ it('does not publish a pin when registry persistence fails', () => {
 });
 
 it('imports a Codex OAuth account without replacing the existing ChatGPT account', async () => {
-  saveRegistry(registry([oauthProvider()]), getProvidersPath());
+  const original = oauthProvider();
+  const firstAccount = original.accounts![0]!;
+  const firstTag = accountTag(firstAccount, original.accounts!);
+  saveRegistry(registry([original]), getProvidersPath());
   const authPath = join(homedir(), '.codex', 'auth.json');
   mkdirSync(join(homedir(), '.codex'), { recursive: true });
   writeFileSync(authPath, JSON.stringify({
@@ -264,15 +272,19 @@ it('imports a Codex OAuth account without replacing the existing ChatGPT account
   const saved = loadRegistry().providers.find(item => item.id === 'openai-oauth')!;
   const resolved = await resolveProviderAccountAuth('openai-oauth', imported);
 
-  expect(saved.accounts?.[0]).toEqual(oauthProvider().accounts?.[0]);
+  expect(saved.accounts?.[0]).toMatchObject({
+    id: firstAccount.id, authRef: firstAccount.authRef, enabled: firstAccount.enabled, tag: firstTag,
+  });
   expect(saved.accounts).toContainEqual(imported);
   expect(imported.authRef).not.toBe(saved.accounts?.[0]?.authRef);
   expect(resolved).toMatchObject({ apiKey: 'codex-import-access', accountId: 'codex-account' });
 });
 
 it('routes a second ChatGPT sign-in to a distinct account credential', async () => {
-  saveRegistry(registry([oauthProvider()]), getProvidersPath());
-  const firstAccount = oauthProvider().accounts![0]!;
+  const initialProvider = oauthProvider();
+  const firstAccount = initialProvider.accounts![0]!;
+  const firstTag = accountTag(firstAccount, initialProvider.accounts!);
+  saveRegistry(registry([initialProvider]), getProvidersPath());
 
   await saveNativeOAuthCredential('openai-oauth', {
     access_token: 'second-login-access', refresh_token: 'second-login-refresh', expires_in: 3600,
@@ -283,7 +295,9 @@ it('routes a second ChatGPT sign-in to a distinct account credential', async () 
   const resolved = await resolveProviderAccountAuth('openai-oauth', secondAccount);
 
   expect(saved.accounts).toHaveLength(2);
-  expect(saved.accounts).toContainEqual(firstAccount);
+  expect(saved.accounts).toContainEqual(expect.objectContaining({
+    id: firstAccount.id, authRef: firstAccount.authRef, enabled: firstAccount.enabled, tag: firstTag,
+  }));
   expect(secondAccount.authRef).not.toBe(firstAccount.authRef);
   expect(resolved).toMatchObject({ apiKey: 'second-login-access', accountId: 'second-login-account' });
 });

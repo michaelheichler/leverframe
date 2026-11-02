@@ -104,7 +104,8 @@ export async function createLanguageModel(spec: ProviderModelSpec): Promise<Lang
   const { npm, modelId, apiKey, baseURL } = spec;
   if (spec.providerId === 'antigravity') {
     if (spec.authType !== 'oauth' || !spec.oauthAccountId) throw new TypeError('Antigravity requires subscription OAuth.');
-    return createAntigravityLanguageModel({ modelId, expectedAccountId: spec.oauthAccountId, fetchImpl: spec.fetch });
+    return createAntigravityLanguageModel({ modelId, expectedAccountId: spec.oauthAccountId, fetchImpl: spec.fetch,
+      registryAccountId: typeof spec.providerData?.leverframeAccountId === 'string' ? spec.providerData.leverframeAccountId : undefined });
   }
   if (baseURL) {
     const isHttp = baseURL.trim().toLowerCase().startsWith('http://');

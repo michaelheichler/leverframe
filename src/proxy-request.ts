@@ -75,6 +75,9 @@ export function proxyToolResults(body: unknown): Array<{ toolUseId: string; cont
 
 export interface ProxyRoute {
   aliasId: string;
+  accountId?: string;
+  accountTag?: string;
+  accountName?: string;
   realModelId: string;
   displayName: string;
   upstreamUrl: string;
@@ -117,7 +120,7 @@ export interface ProxyRoute {
 }
 
 export function aliasModelId(realId: string, providerId: string): string {
-  if (realId.startsWith('claude-')) return realId;
+  if (realId.startsWith('claude-') && !realId.includes('@')) return realId;
   const sanitized = providerId.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   return `anthropic-${sanitized}__${realId}`;
 }

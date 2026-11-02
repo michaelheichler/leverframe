@@ -8,6 +8,8 @@ import {
 import { loadRegistryStrict, updateRegistryAsync } from './io.js';
 import { withCredentialMutationLock, withRegistryWriteLock } from './lock.js';
 import type { ProviderRegistry } from './types.js';
+import { withAccountTags } from '../account-identity.js';
+import { primaryRegistryAccountId } from './account-cache.js';
 
 export { cancelCredentialDelete, queueCredentialDelete } from './credential-cleanup-journal.js';
 
@@ -47,10 +49,22 @@ export async function removeProviderAccount(
       const provider = registry.providers.find(item => item.id === providerId);
       const index = provider?.accounts?.findIndex(item => item.id === accountId) ?? -1;
       if (!provider?.accounts || index < 0) return false;
+      const primaryAccountId = primaryRegistryAccountId(provider);
+      provider.accounts = withAccountTags(provider.accounts);
       const [account] = provider.accounts.splice(index, 1);
       if (provider.pinnedAccountId === accountId) delete provider.pinnedAccountId;
-      if (provider.authRef === account!.authRef) {
+      if (primaryAccountId === accountId) {
         provider.authRef = provider.accounts[0]?.authRef ?? 'none:anonymous';
+        const cache = provider.accounts[0]?.modelsCache;
+        if (cache) {
+          provider.modelsCache = cache;
+          provider.refreshedAt = cache.fetchedAt;
+        } else {
+          delete provider.modelsCache;
+          delete provider.refreshedAt;
+        }
+        delete provider.modelDiscoveryError;
+        delete provider.modelDiscoveryWarnings;
       }
       if (isStoredCredentialRef(account!.authRef) && !credentialIsReferenced(registry, account!.authRef)) {
         await journalCredentialWrite(account!.authRef);

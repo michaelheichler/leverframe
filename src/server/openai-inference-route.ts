@@ -121,6 +121,7 @@ async function relayOpenAiChat({ res, options, body, model, openAiTracking, open
   const directStream = Boolean(body.stream);
   const relayOptions = {
     extraHeaders: model.headers,
+    authType: model.authType === 'none' ? 'none' as const : undefined,
     responseModelId: getResponseModelId(body.model, model, options),
     onObservedText: (text: string) => {
       if (directStream) {
@@ -148,7 +149,7 @@ async function relayOpenAiChat({ res, options, body, model, openAiTracking, open
   };
   const kind = configuredOpenAiPool(model, options);
   if (kind) {
-    const pool = { providerId: model.providerId!, modelId: upstreamModelId(model), billingType: kind === 'codex' ? 'oauth' as const : 'api' as const };
+    const pool = { providerId: model.providerId!, modelId: upstreamModelId(model), billingType: model.authType === 'oauth' ? 'oauth' as const : 'api' as const };
     await dispatchOpenAiDirectPool({ res, model, kind,
       sessionId: extractClaudeSessionId(body, requestHeader(req, 'x-claude-code-session-id')),
       onExhausted: () => { openAiExecution.fail(new Error('Account pool exhausted')); openAiTracking.fail(undefined); },
@@ -160,7 +161,8 @@ async function relayOpenAiChat({ res, options, body, model, openAiTracking, open
       run: binding => relayAnthropicMessages(res, completionsUrl, forwardBody, binding.apiKey, directStream, {
         ...relayOptions, deferRejection: true, onResponseHeaders: async headers => {
           const now = Date.now();
-          const observations = kind === 'codex' ? codexCapacity(headers, binding.account.id, now) : anthropicCapacity(headers, binding.account.id, now);
+          const observations = kind === 'codex' ? codexCapacity(headers, binding.account.id, now)
+            : kind === 'anthropic' ? anthropicCapacity(headers, binding.account.id, now) : [];
           for (const observation of observations) await recordObservation({ pool, observation, now, generation: binding.generation });
         },
       }),
@@ -239,23 +241,23 @@ async function executeOpenAiSdk(
 
 function pooledOpenAiParams(
   params: ReturnType<typeof translateOpenAiRequest>, body: OpenAiRouteContext['body'], model: LanguageModel,
-  kind: 'codex' | 'anthropic',
+  kind: 'codex' | 'anthropic' | 'provider',
 ): ReturnType<typeof translateOpenAiRequest> {
   return {
     ...params,
     maxRetries: 0,
-    ...(kind === 'anthropic' && hasCanonicalOpenAiEndpoint(model) && typeof body.prompt_cache_key === 'string'
+    ...(kind !== 'codex' && hasCanonicalOpenAiEndpoint(model) && typeof body.prompt_cache_key === 'string'
       ? { providerOptions: { ...params.providerOptions, openai: { ...params.providerOptions?.openai, promptCacheKey: body.prompt_cache_key } } }
       : {}),
   };
 }
 
-function configuredOpenAiPool(model: OpenAiRouteContext['model'], options: ServerOptions): 'codex' | 'anthropic' | undefined {
-  if (model.providerId === 'openai-oauth' && model.authType === 'oauth'
-    && rememberConfiguredPool(options.managedPools ?? new Set(), model.providerId, 'oauth')) return 'codex';
-  if (model.providerId === 'anthropic-api' && model.authType === 'api'
-    && rememberConfiguredPool(options.managedPools ?? new Set(), model.providerId, 'api')) return 'anthropic';
-  return undefined;
+function configuredOpenAiPool(model: OpenAiRouteContext['model'], options: ServerOptions): 'codex' | 'anthropic' | 'provider' | undefined {
+  if (!model.providerId || (!model.accountTag && !rememberConfiguredPool(options.managedPools ?? new Set(), model.providerId,
+    model.authType === 'oauth' ? 'oauth' : 'api'))) return undefined;
+  if (isOpenAiOAuth(model.npm, model.authType, model.providerId)) return 'codex';
+  if (model.modelFormat === 'anthropic' || model.npm === '@ai-sdk/anthropic') return 'anthropic';
+  return 'provider';
 }
 
 async function runOpenAiSdkResponse(

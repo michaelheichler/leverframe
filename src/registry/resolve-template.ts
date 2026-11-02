@@ -41,6 +41,7 @@ export function syntheticTemplate(provider: RegistryProvider, baseUrl?: string):
     id: provider.id,
     name: provider.name,
     authType: 'api',
+    apiKeyOptional: provider.authType === 'none',
     npm,
     defaultBaseUrl: baseUrl,
     modelSource: 'api-list',

@@ -10,9 +10,10 @@ import { applyNativeModelKnowledge } from './patch-transforms-model-knowledge.js
 import { applyNativeContextWindow } from './patch-transforms-context-window.js';
 import { ONE_M_CONTEXT_WINDOW } from './context-model-id.js';
 
-export const PATCH_TRANSFORMS_VERSION = 25;
+export const PATCH_TRANSFORMS_VERSION = 26;
 
 export interface PatchScriptModelEntry {
+  accountTag?: string;
   alias?: string;
   context?: number;
   contextSelection?: boolean;
@@ -354,7 +355,9 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
       const canonicalId = ALIAS_TO_ID[identity] ?? identity;
       const display = DISPLAY_BY_IDENTITY[identity] ?? DISPLAY_BY_IDENTITY[canonicalId];
       const isAlias = ALIAS_TO_ID[identity] !== undefined;
-      const badge = canonicalId.startsWith(ANTHROPIC_API_IDENTITY_PREFIX) ? { badge: 'API' } : {};
+      const accountTag = MODEL_CONFIG[canonicalId.replace(/(?:\[(?:default|maximum|1m)\])+$/i, '')]?.accountTag;
+      const badge = accountTag ? { badge: accountTag, badgeColor: '#ff9f43' }
+        : canonicalId.startsWith(ANTHROPIC_API_IDENTITY_PREFIX) ? { badge: 'API' } : {};
       return {
         ...badge,
         value: identity,

@@ -54,6 +54,7 @@ export interface DesiredPatchConfig {
 }
 
 export interface PatchModelMeta {
+  accountTag?: string;
   contextWindow?: number;
 
   maxContextWindow?: number;
@@ -78,6 +79,7 @@ export interface PatchModelConfigOptions {
 
 interface PatchMetadataModel {
   id: string;
+  accountTag?: string;
   name: string;
   modelFormat: CachedModel['modelFormat'];
   contextWindow?: number;
@@ -98,6 +100,7 @@ function buildPatchModelMeta(
   effort?: PatchScriptEffort,
 ): PatchModelMeta {
   return {
+    accountTag: model.accountTag,
     contextWindow: !model.contextWindowUnconfirmed && model.contextWindow && model.contextWindow > 0
       ? model.contextWindow
       : undefined,
@@ -162,6 +165,7 @@ export function buildPatchModelConfig(
     const meta = modelMetaFor(favorite.providerId, favorite.modelId);
     const alias = aliasByFavorite.get(`${favorite.providerId}:${favorite.modelId}`);
     const entry: PatchScriptModelConfig[string] = {};
+    if (meta?.accountTag) entry.accountTag = meta.accountTag;
     if (alias) entry.alias = alias;
     const { context, provenance: contextProvenance } = resolveContextForPatch(meta);
     if (context !== undefined) entry.context = context;
@@ -219,6 +223,7 @@ export function computePatchConfigHash(
       entry.effort ? [entry.effort.levels, entry.effort.defaultLevel] : null,
       entry.contextSelection === true,
       entry.pickerOnly === true,
+      entry.accountTag ?? null,
     ];
   });
   return createHash('sha256')
@@ -241,15 +246,14 @@ export function buildDesiredPatchConfig(
     for (const provider of freshProviders) {
       const registryProvider = registry.providers.find(candidate => candidate.id === provider.id);
       for (const model of provider.models) {
-        const cachedModel = registryProvider?.modelsCache?.models.find(candidate => candidate.id === model.id);
         meta.set(
           `${provider.id}:${model.id}`,
           buildPatchModelMeta(
             provider.id,
             provider.name,
             model,
-            registryProvider && cachedModel
-              ? reasoningEffortForPatch(registryProvider, cachedModel)
+            registryProvider
+              ? reasoningEffortForPatch(registryProvider, { ...model, apiUrl: model.apiBaseUrl })
               : undefined,
           ),
         );

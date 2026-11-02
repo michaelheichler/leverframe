@@ -5,7 +5,7 @@ import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import open from 'open';
 import { saveProviderCredential } from '../env.js';
-import { addOAuthProviderAccount } from '../account-management.js';
+import { addOAuthProviderAccount, type AccountIdentity } from '../account-management.js';
 import { diagnoseCredentialStorage } from '../credential-store.js';
 import {
   githubCopilotTokensToStoredCredential,
@@ -36,6 +36,7 @@ export type ProviderAuthMethod = 'native';
 export interface ProviderAuthOptions {
   method?: ProviderAuthMethod;
   signal?: AbortSignal;
+  accountIdentity?: AccountIdentity;
 }
 
 export interface ProviderAuthResult {
@@ -228,8 +229,8 @@ async function authenticateProviderInner(
   const nativeDiagnostics: string[] = [];
   const authRef = oauthAuthRef(registryId);
   let registryProvider: RegistryProvider;
-  if (registryId === 'openai-oauth' && loadRegistry().providers.some(provider => provider.id === registryId)) {
-    await addOAuthProviderAccount(registryId, oauthCredentialToKeychainJson(cred));
+  if ((registryId === 'openai-oauth' || options.accountIdentity) && loadRegistry().providers.some(provider => provider.id === registryId)) {
+    await addOAuthProviderAccount(registryId, oauthCredentialToKeychainJson(cred), undefined, options.accountIdentity);
     registryProvider = loadRegistry().providers.find(provider => provider.id === registryId)!;
   } else {
     registryProvider = await persistOAuthProvider(providerId, cred, authRef, nativeDiagnostics);

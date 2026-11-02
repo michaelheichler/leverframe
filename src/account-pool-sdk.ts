@@ -1,7 +1,7 @@
 import type { ServerResponse } from 'node:http';
 import type { LanguageModel } from 'ai';
 import { classifyPoolFailure, dispatchWithPool, poolExhaustionMessage, type PoolBinding } from './account-pool-dispatch.js';
-import { createLanguageModel } from './provider-factory.js';
+import { createLanguageModel, isOpenAiOAuth } from './provider-factory.js';
 import type { ProviderRuntimeCache } from './provider-runtime-cache.js';
 import type { ProxyRoute } from './proxy-request.js';
 import type { SdkCallParams } from './sdk-request-translation.js';
@@ -20,6 +20,7 @@ import { loadRegistry } from './registry/io.js';
 
 interface RuntimeBinding {
   key: string;
+  providerId: string;
   accountId: string;
   generation: string;
 }
@@ -29,12 +30,12 @@ const runtimeBindings = new WeakMap<ProviderRuntimeCache<LanguageModel>, Map<str
 function reconcileBindings(cache: ProviderRuntimeCache<LanguageModel>): void {
   const bindings = runtimeBindings.get(cache);
   if (!bindings) return;
-  const provider = loadRegistry().providers.find(item => item.id === 'openai-oauth' && item.enabled && item.authType === 'oauth');
-  const active = new Map((provider?.accounts ?? []).filter(account => account.enabled).map(account => [
-    account.id, createHash('sha256').update(account.authRef).digest('hex'),
-  ]));
+  const active = new Map(loadRegistry().providers.filter(provider => provider.enabled).flatMap(provider =>
+    (provider.accounts ?? []).filter(account => account.enabled).map(account => [
+      `${provider.id}:${account.id}`, createHash('sha256').update(account.authRef).digest('hex'),
+    ])));
   for (const [slot, binding] of bindings) {
-    if (active.get(binding.accountId) === binding.generation) continue;
+    if (active.get(`${binding.providerId}:${binding.accountId}`) === binding.generation) continue;
     cache.forget(binding.key);
     bindings.delete(slot);
   }
@@ -45,7 +46,7 @@ function bindingKey(cache: ProviderRuntimeCache<LanguageModel>, route: ProxyRout
   const fingerprint = createHash('sha256').update(JSON.stringify([
     binding.generation, binding.apiKey, binding.oauthAccountId, binding.providerData,
   ])).digest('hex');
-  const slot = ['openai-oauth', binding.account.id, route.realModelId, route.baseURL ?? ''].join('\x1f');
+  const slot = [route.providerId, binding.account.id, route.npm, route.realModelId, route.baseURL ?? ''].join('\x1f');
   const key = `${slot}\x1f${fingerprint}`;
   let bindings = runtimeBindings.get(cache);
   if (!bindings) {
@@ -54,7 +55,7 @@ function bindingKey(cache: ProviderRuntimeCache<LanguageModel>, route: ProxyRout
   }
   const previous = bindings.get(slot);
   if (previous && previous.key !== key) cache.forget(previous.key);
-  bindings.set(slot, { key, accountId: binding.account.id, generation: binding.generation });
+  bindings.set(slot, { key, providerId: route.providerId!, accountId: binding.account.id, generation: binding.generation });
   return key;
 }
 
@@ -62,12 +63,13 @@ export async function getPooledCodexModel(cache: ProviderRuntimeCache<LanguageMo
   const key = bindingKey(cache, route, binding);
   const credential = cache.snapshot(key, binding.apiKey);
   return cache.getHandle(key, credential, snapshot => createLanguageModel({
-    npm: route.npm!, modelId: route.realModelId, apiKey: snapshot.credential,
+    npm: route.npm!, modelId: route.realModelId, apiKey: route.authType === 'none' ? '' : snapshot.credential,
     baseURL: route.baseURL, providerId: route.providerId, authType: route.authType,
-    oauthAccountId: binding.oauthAccountId, providerData: binding.providerData,
+    oauthAccountId: binding.oauthAccountId, providerData: { ...binding.providerData, leverframeAccountId: binding.account.id },
     headers: route.headers, useResponsesLite: route.useResponsesLite, preferWebSockets: false,
     fetch: async (input, init) => {
       const response = await fetch(input, init);
+      if (route.providerId !== 'openai-oauth') return response;
       if (response.ok) {
         const now = Date.now();
         for (const observation of codexCapacity(response.headers, binding.account.id, now)) {
@@ -142,8 +144,9 @@ export async function dispatchSdkPool(options: {
   const { route, res } = options;
   reconcileBindings(options.cache);
   const result = await dispatchWithPool({
-    pool: { providerId: 'openai-oauth', modelId: route.realModelId, billingType: 'oauth' },
+    pool: { providerId: route.providerId!, modelId: route.realModelId, billingType: route.authType === 'oauth' ? 'oauth' : 'api' },
     sessionId: options.sessionId,
+    accountId: route.accountId,
     dispatch: async binding => {
       const model = await getPooledCodexModel(options.cache, route, binding);
       const params = { ...options.params, maxRetries: 0 };
@@ -153,7 +156,7 @@ export async function dispatchSdkPool(options: {
           await streamPoolResponse(options, model, params);
         } else {
           const response = await generateAnthropicResponse(model, params, options.clientModelId, {
-            forceStream: true, abortSignal: options.signal, lifecycle: options.lifecycle,
+            forceStream: isOpenAiOAuth(route.npm, route.authType, route.providerId), abortSignal: options.signal, lifecycle: options.lifecycle,
             contextWindow: options.contextWindow, onPart: options.onPart, onUsage: options.onUsage,
           });
           options.onOutput?.(JSON.stringify(response));
@@ -168,7 +171,7 @@ export async function dispatchSdkPool(options: {
       } catch (error) {
         const details = sdkUpstreamErrorDetails(error);
         const observation = classifyPoolFailure({
-          provider: 'codex', accountId: binding.account.id, statusCode: details?.statusCode,
+          provider: route.providerId === 'openai-oauth' ? 'codex' : route.providerId!, accountId: binding.account.id, statusCode: details?.statusCode,
           body: details?.data ?? details?.errorContent, headers: details?.responseHeaders, now: Date.now(),
         });
         if (!observation) throw error;

@@ -170,9 +170,18 @@ interface AddMenuItem {
   hint?: string;
 }
 
-function buildProvidersAddOptions(configuredIds: Iterable<string>): AddMenuItem[] {
-  const configured = new Set(configuredIds);
+function buildProvidersAddOptions(providers: import('./registry/types.js').RegistryProvider[]): AddMenuItem[] {
+  const configured = new Set(providers.map(provider => provider.id));
   const options: AddMenuItem[] = [];
+
+  for (const provider of providers) {
+    options.push({
+      value: `account:${provider.id}`,
+      label: `${provider.name}: add or manage accounts`,
+      hint: provider.authType === 'oauth' ? 'Sign in to another account'
+        : provider.authType === 'none' ? 'Add a named configuration' : 'Add another API key',
+    });
+  }
 
   const oauthTemplates = listVisibleOAuthTemplates(configured);
   for (const tpl of oauthTemplates) {
@@ -200,8 +209,7 @@ function buildProvidersAddOptions(configuredIds: Iterable<string>): AddMenuItem[
 
 export async function runProvidersAdd(): Promise<number> {
   const registry = loadRegistry();
-  const configuredIds = registry.providers.map(p => p.id);
-  const options = buildProvidersAddOptions(configuredIds);
+  const options = buildProvidersAddOptions(registry.providers);
 
   const choice = await p.select({ message: 'Add a provider', options });
   if (p.isCancel(choice)) {
@@ -210,6 +218,10 @@ export async function runProvidersAdd(): Promise<number> {
   }
 
   if (choice === 'custom:openai') return runCustomEndpointAddFlow();
+  if (choice.startsWith('account:')) {
+    await runAccountManagement(choice.slice('account:'.length));
+    return 0;
+  }
   if (choice.startsWith('oauth:')) return runProvidersAuth(choice.slice('oauth:'.length));
   if (choice.startsWith('api:')) return runTemplateAddFlow(choice.slice('api:'.length));
   return 0;
@@ -283,9 +295,7 @@ function providerDetailOptions(provider: import('./registry/types.js').RegistryP
   const id = provider.id;
   const modelCount = provider.modelsCache?.models.length ?? 0;
   const detailOptions: Array<{ value: string; label: string; hint?: string }> = [];
-  if (id === 'anthropic-api' || id === 'openai-oauth') {
-    detailOptions.push({ value: 'accounts', label: 'Manage accounts' });
-  }
+  detailOptions.push({ value: 'accounts', label: 'Manage accounts' });
   if (provider.enabled || modelCount > 0) {
     detailOptions.push({
       value: 'browse',
@@ -324,9 +334,7 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed'> {
   const modelCount = provider.modelsCache?.models.length ?? 0;
   const authLabel = formatRegistryAuthLabel(provider);
   printProviderDetailPanel(provider.name, modelCount, authLabel, provider.modelDiscoveryError?.reason);
-  if (id === 'anthropic-api' || id === 'openai-oauth') {
-    for (const line of formatProviderAccounts(provider)) p.log.info(line);
-  }
+  for (const line of formatProviderAccounts(provider)) p.log.info(line);
 
   const action = await p.select({
     message: 'What would you like to do?',

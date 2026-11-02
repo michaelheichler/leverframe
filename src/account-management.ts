@@ -8,14 +8,25 @@ import { loadRegistry, updateRegistry } from './registry/io.js';
 import { withCredentialMutationLock } from './registry/lock.js';
 import { isValidProviderId } from './registry/validate.js';
 import type { RegistryAccount, RegistryProvider } from './registry/types.js';
+import { accountTag, normalizeAccountTag, validateAccountName, withAccountTags } from './account-identity.js';
+import { parseStoredOAuthCredential } from './oauth/types.js';
+import { formatAccountTag } from './account-display.js';
 
-async function storeAccount(providerId: string, credential: string, id?: string): Promise<RegistryAccount> {
+export interface AccountIdentity {
+  name?: string;
+  tag?: string;
+}
+
+async function storeAccount(providerId: string, credential: string, id?: string, identity?: AccountIdentity): Promise<RegistryAccount> {
   const accountId = id?.trim() || randomUUID();
   if (!isValidProviderId(accountId)) throw new Error('Invalid account ID.');
   const provider = loadRegistry().providers.find(item => item.id === providerId);
   if (!provider) throw new Error(`Provider not found: ${providerId}`);
-  const authRef = `keyring:provider:${providerId}:${randomUUID()}`;
-  const account = { id: accountId, authRef, enabled: true };
+  const authRef = provider.authType === 'oauth'
+    ? `keyring:oauth:provider:${providerId}:${randomUUID()}` : `keyring:provider:${providerId}:${randomUUID()}`;
+  const account: RegistryAccount = { id: accountId, authRef, enabled: true,
+    name: validateAccountName(identity?.name || id || `Account ${(provider.accounts?.length ?? 0) + 1}`) };
+  account.tag = identity?.tag ? normalizeAccountTag(identity.tag) : accountTag(account, [...withAccountTags(provider.accounts ?? []), account]);
   try {
     await withCredentialMutationLock(authRef, async () => {
       await journalCredentialWrite(authRef);
@@ -24,7 +35,13 @@ async function storeAccount(providerId: string, credential: string, id?: string)
         const current = registry.providers.find(item => item.id === providerId);
         if (!current) throw new Error(`Provider not found: ${providerId}`);
         if (current.accounts?.some(item => item.id === accountId)) throw new Error('Account ID already exists.');
-        current.accounts = [...(current.accounts ?? []), account];
+        const tagged = withAccountTags(current.accounts ?? []);
+        if (!identity?.tag) {
+          const seed = { ...account, tag: undefined };
+          account.tag = accountTag(seed, [...tagged, seed]);
+        }
+        if (tagged.some(item => item.tag === account.tag)) throw new Error('Account tag already exists.');
+        current.accounts = [...tagged, account];
       });
       await cancelCredentialDelete(authRef);
     });
@@ -34,11 +51,13 @@ async function storeAccount(providerId: string, credential: string, id?: string)
   }
 }
 
-export async function addProviderAccount(providerId: string, credential: string, id?: string): Promise<RegistryAccount> {
-  if (providerId !== 'anthropic-api' || !credential.trim() || credential.trim().startsWith('sk-ant-oat')) {
-    throw new Error('An Anthropic API key is required.');
+export async function addProviderAccount(providerId: string, credential: string, id?: string, identity?: AccountIdentity): Promise<RegistryAccount> {
+  const provider = loadRegistry().providers.find(item => item.id === providerId);
+  if (!provider || provider.id === 'anthropic' || (provider.authType ?? 'api') !== 'api' || !credential.trim()
+    || ((provider.api.npm === '@ai-sdk/anthropic' || providerId === 'anthropic-api') && credential.trim().startsWith('sk-ant-oat'))) {
+    throw new Error('A valid API key for this provider is required.');
   }
-  return storeAccount(providerId, credential.trim(), id);
+  return storeAccount(providerId, credential.trim(), id, identity);
 }
 
 function codexCredential(): string {
@@ -71,9 +90,40 @@ export async function importProviderAccount(providerId: string, source: 'codex' 
   throw new Error('Credential source is not supported for this provider.');
 }
 
-export async function addOAuthProviderAccount(providerId: string, credential: string, id?: string): Promise<RegistryAccount> {
-  if (providerId !== 'openai-oauth') throw new Error('OAuth account pooling is only supported for ChatGPT.');
-  return storeAccount(providerId, credential, id);
+export async function addOAuthProviderAccount(providerId: string, credential: string, id?: string, identity?: AccountIdentity): Promise<RegistryAccount> {
+  const provider = loadRegistry().providers.find(item => item.id === providerId);
+  if (provider?.authType !== 'oauth' || !parseStoredOAuthCredential(credential)) throw new Error('Valid OAuth credentials for this provider are required.');
+  return storeAccount(providerId, credential, id, identity);
+}
+
+export function renameProviderAccount(providerId: string, accountId: string, identity: AccountIdentity): boolean {
+  const name = identity.name === undefined ? undefined : validateAccountName(identity.name);
+  const tag = identity.tag?.trim() ? normalizeAccountTag(identity.tag) : undefined;
+  return updateRegistry(registry => {
+    const provider = registry.providers.find(item => item.id === providerId);
+    const tagged = withAccountTags(provider?.accounts ?? []);
+    const account = tagged.find(item => item.id === accountId);
+    if (!account || !provider?.accounts) return false;
+    if (tag && tagged.some(item => item.id !== accountId && item.tag === tag)) return false;
+    provider.accounts = tagged;
+    if (name !== undefined) account.name = name;
+    account.tag = tag ?? account.tag;
+    return true;
+  });
+}
+
+export function addNamedProviderConfiguration(providerId: string, identity: AccountIdentity): RegistryAccount {
+  return updateRegistry(registry => {
+    const provider = registry.providers.find(item => item.id === providerId);
+    if (provider?.authType !== 'none') throw new Error('This provider requires credentials.');
+    const account: RegistryAccount = { id: randomUUID(), authRef: 'none:anonymous', enabled: true,
+      name: validateAccountName(identity.name || `Configuration ${(provider.accounts?.length ?? 0) + 1}`) };
+    const tagged = withAccountTags(provider.accounts ?? []);
+    account.tag = identity.tag ? normalizeAccountTag(identity.tag) : accountTag(account, [...tagged, account]);
+    if (tagged.some(item => item.tag === account.tag)) throw new Error('Account tag already exists.');
+    provider.accounts = [...tagged, account];
+    return account;
+  });
 }
 
 export function pinProviderAccount(providerId: string, accountId: string): boolean {
@@ -90,7 +140,7 @@ export function formatProviderAccounts(provider: RegistryProvider, state?: { act
     const flags = [account.enabled ? 'enabled' : 'disabled'];
     if (provider.pinnedAccountId === account.id) flags.push('pinned');
     if (state?.activeAccountId === account.id) flags.push('active');
-    return `${account.id} (${flags.join(', ')})`;
+    return `${formatAccountTag(accountTag(account, provider.accounts ?? []))} ${account.name ?? account.id} (${flags.join(', ')})`;
   });
   if (state?.switchReason) lines.push(`Latest switch: ${state.switchReason}`);
   return lines;

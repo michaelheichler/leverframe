@@ -7,9 +7,10 @@ import type { RegistryAccount } from './registry/types.js';
 import { createHash } from 'node:crypto';
 import { codexCapacity } from './account-pool-telemetry.js';
 import { recordPoolActivity } from './account-pool-activity.js';
+import { accountModelsCache } from './registry/account-cache.js';
 
 export interface PoolFailure {
-  provider: 'anthropic' | 'codex';
+  provider: string;
   accountId: string;
   statusCode?: number;
   body?: unknown;
@@ -47,7 +48,8 @@ export function classifyPoolFailure(input: PoolFailure): CapacityObservation | u
   }
   const confirmed = input.provider === 'anthropic'
     ? type === 'rate_limit_error'
-    : type === 'usage_limit_reached' || type === 'insufficient_quota';
+    : type === 'usage_limit_reached' || type === 'insufficient_quota'
+      || (input.provider !== 'codex' && type === 'rate_limit_error');
   if (!confirmed) return undefined;
   const retry = header(input.headers, 'retry-after');
   const seconds = retry && /^\d+(?:\.\d+)?$/.test(retry) ? Number(retry) : undefined;
@@ -84,10 +86,9 @@ function accountGeneration(account: RegistryAccount): string {
 }
 
 export function isConfiguredPool(providerId: string, billingType: 'api' | 'oauth'): boolean {
-  if ((providerId !== 'anthropic-api' || billingType !== 'api')
-    && (providerId !== 'openai-oauth' || billingType !== 'oauth')) return false;
   const provider = loadRegistry().providers.find(item => item.id === providerId);
-  return provider?.authType === billingType && Array.isArray(provider.accounts);
+  return provider !== undefined && provider.id !== 'anthropic'
+    && (provider.authType === 'none' ? 'api' : provider.authType ?? 'api') === billingType && Array.isArray(provider.accounts);
 }
 
 export function rememberConfiguredPool(managed: Set<string>, providerId: string, billingType: 'api' | 'oauth'): boolean {
@@ -114,6 +115,7 @@ export function poolExhaustionMessage(result: Extract<PoolDispatchResult<unknown
 export async function dispatchWithPool<T>(options: {
   pool: PoolKey;
   sessionId?: string;
+  accountId?: string;
   dispatch: (binding: PoolBinding) => Promise<PoolAttempt<T>>;
 }): Promise<PoolDispatchResult<T>> {
   const attempted: string[] = [];
@@ -123,28 +125,37 @@ export async function dispatchWithPool<T>(options: {
   while (true) {
     const provider = loadRegistry().providers.find(item => item.id === options.pool.providerId && item.enabled);
     const accounts = provider?.accounts ?? [];
+    const explicit = options.accountId !== undefined;
+    const catalogued = !!provider?.modelsCache || accounts.some(account => account.modelsCache);
+    const unavailable = accounts.filter(account => {
+      const cache = provider && accountModelsCache(provider, account);
+      return account.modelDiscoveryError || (explicit && account.id !== options.accountId)
+        || (catalogued && !cache)
+        || (cache && !cache.models.some(model => model.upstreamModelId === options.pool.modelId || model.id === options.pool.modelId));
+    }).map(account => account.id);
     const preferences = loadPreferences();
     const selection = await reserveAccount({
-      pool: options.pool, sessionId: options.sessionId,
+      pool: options.pool, sessionId: explicit ? undefined : options.sessionId,
       accounts: accounts.map(account => ({ ...account, generation: accountGeneration(account) })),
-      balancing: preferences.accountPoolBalancing !== false, pinnedAccountId: provider?.pinnedAccountId,
-      quotaThresholdPercent: preferences.accountPoolFailover === false ? 0 : preferences.accountPoolQuotaThresholdPercent,
-      now: Date.now(), excludeAccountIds: excluded,
+      balancing: explicit ? false : preferences.accountPoolBalancing !== false,
+      pinnedAccountId: explicit ? options.accountId : provider?.pinnedAccountId,
+      quotaThresholdPercent: explicit || preferences.accountPoolFailover === false ? 0 : preferences.accountPoolQuotaThresholdPercent,
+      now: Date.now(), excludeAccountIds: [...excluded, ...unavailable],
     });
     if (selection.kind === 'exhausted') {
       const pinned = selection.accounts.find(item => item.accountId === provider?.pinnedAccountId);
-      if (preferences.accountPoolFailover !== false && pinned
+      if (!explicit && preferences.accountPoolFailover !== false && pinned
         && (pinned.status === 'rate_limited' || pinned.status === 'exhausted')
         && !excluded.includes(pinned.accountId)) {
         failures.push(pinned);
         excluded.push(pinned.accountId);
         continue;
       }
-      if (lastFailure !== undefined && preferences.accountPoolFailover === false) return { kind: 'result', value: lastFailure };
+      if (lastFailure !== undefined && (explicit || preferences.accountPoolFailover === false)) return { kind: 'result', value: lastFailure };
       return { kind: 'exhausted', attempted, accounts: [...failures, ...selection.accounts] };
     }
     const latest = loadRegistry().providers.find(item => item.id === options.pool.providerId && item.enabled);
-    const account = latest?.authType === options.pool.billingType
+    const account = latest && (latest.authType === 'none' ? 'api' : latest.authType ?? 'api') === options.pool.billingType
       ? latest.accounts?.find(item => item.id === selection.reservation.accountId && item.enabled)
       : undefined;
     try {
@@ -155,7 +166,8 @@ export async function dispatchWithPool<T>(options: {
       }
       const selected = accounts.find(item => item.id === account.id);
       if (!selected || accountGeneration(selected) !== accountGeneration(account)) continue;
-      const auth = await resolveProviderAccountAuth(options.pool.providerId, account);
+      const auth = latest?.authType === 'none' && account.authRef === 'none:anonymous'
+        ? { apiKey: 'anonymous' } : await resolveProviderAccountAuth(options.pool.providerId, account);
       if (!auth.apiKey) throw new Error(`Credential unavailable for account ${account.id}`);
       attempted.push(account.id);
       excluded.push(account.id);
@@ -173,7 +185,7 @@ export async function dispatchWithPool<T>(options: {
         ...(result.observation.source === 'anthropic:billing' ? { reason: 'billing' as const } : {}),
         ...(result.observation.resetAt === undefined ? {} : { resetAt: result.observation.resetAt }) });
       lastFailure = result.value;
-      if (preferences.accountPoolFailover === false) return { kind: 'result', value: result.value };
+      if (explicit || preferences.accountPoolFailover === false) return { kind: 'result', value: result.value };
     } finally {
       await releaseReservation({ pool: options.pool, reservationId: selection.reservation.id, now: Date.now() });
     }

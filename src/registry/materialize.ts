@@ -112,10 +112,12 @@ function materializeOne(
   if (!isValidProviderId(provider.id)) return null;
 
   const freeOnly = provider.subscriptionFilter === 'free';
-  const apiKey = resolveCredential(provider) ?? '';
+  const apiKey = resolveCredential(provider) ?? (provider.authType === 'none' ? 'anonymous' : '');
   const anonymousFreeOnly = !apiKey.trim() && providerAllowsAnonymousFreeModels(provider);
   const models: LocalProviderModel[] = [];
-  for (const cached of provider.modelsCache?.models ?? []) {
+  const catalogModels = [...(provider.modelsCache?.models ?? []), ...((provider.accounts?.length ?? 0) > 1
+    ? provider.accounts!.filter(account => account.enabled).flatMap(account => account.modelsCache?.models ?? []) : [])];
+  for (const cached of catalogModels) {
     const freeStatus = classifyFreeStatus({
       model: cached,
       providerId: provider.id,

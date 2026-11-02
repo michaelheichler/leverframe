@@ -11,15 +11,15 @@ import type { ServerModelInfo } from './models.js';
 import { upstreamModelId } from './models.js';
 import { sendJson } from '../http-utils.js';
 
-type PoolKind = 'codex' | 'anthropic';
+type PoolKind = 'codex' | 'anthropic' | 'provider';
 
-function poolKey(model: ServerModelInfo, kind: PoolKind) {
-  return { providerId: kind === 'codex' ? 'openai-oauth' : 'anthropic-api',
-    modelId: upstreamModelId(model), billingType: kind === 'codex' ? 'oauth' as const : 'api' as const };
+function poolKey(model: ServerModelInfo) {
+  return { providerId: model.providerId!, modelId: upstreamModelId(model),
+    billingType: model.authType === 'oauth' ? 'oauth' as const : 'api' as const };
 }
 
 async function anthropicModel(model: ServerModelInfo, binding: PoolBinding): Promise<LanguageModel> {
-  const pool = poolKey(model, 'anthropic');
+  const pool = poolKey(model);
   return createLanguageModel({
     npm: model.npm || '@ai-sdk/anthropic', modelId: upstreamModelId(model), apiKey: binding.apiKey,
     baseURL: model.modelFormat === 'anthropic' ? model.baseUrl : model.apiBaseUrl,
@@ -52,9 +52,10 @@ export async function dispatchOpenAiPool(options: {
   sessionId?: string; run: (model: LanguageModel, binding: PoolBinding) => Promise<void>;
   onExhausted: () => void;
 }): Promise<void> {
-  const pool = poolKey(options.model, options.kind);
+  const pool = poolKey(options.model);
   const result = await dispatchWithPool({
     pool, sessionId: options.sessionId,
+    accountId: options.model.accountId,
     dispatch: async binding => {
       try {
         const model = await pooledModel(options.model, binding, options.cache, options.kind);
@@ -88,8 +89,8 @@ export async function dispatchOpenAiDirectPool(options: {
   onExhausted: () => void;
   onFailure: (status: number, body: string) => void;
 }): Promise<void> {
-  const pool = poolKey(options.model, options.kind);
-  const result = await dispatchWithPool({ pool, sessionId: options.sessionId, dispatch: async binding => {
+  const pool = poolKey(options.model);
+  const result = await dispatchWithPool({ pool, sessionId: options.sessionId, accountId: options.model.accountId, dispatch: async binding => {
     const rejection = await options.run(binding);
     if (!rejection) return { kind: 'success' as const, value: undefined };
     const observation = classifyPoolFailure({ provider: options.kind, accountId: binding.account.id,
