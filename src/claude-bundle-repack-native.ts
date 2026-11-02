@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import LIEF from 'node-lief';
+import { selectBunLoadSegment } from './elf-bun-segment.js';
 
 function atomicWriteBinary(
   binary: LIEF.ELF.Binary | LIEF.PE.Binary | LIEF.MachO.Binary,
@@ -361,16 +362,6 @@ export function findUniqueBunCompiledPointer(
   return first;
 }
 
-function writableLoadSegment(elfBinary: LIEF.ELF.Binary): LIEF.ELF.Segment {
-  const rwSegment = elfBinary
-    .segments()
-    .find(s => s.type === 'LOAD' && (s.flags & 2) !== 0);
-  if (!rwSegment) {
-    throw new Error('No writable ELF PT_LOAD segment found');
-  }
-  return rwSegment;
-}
-
 function topmostLoadEndAboveWritable(elfBinary: LIEF.ELF.Binary, rwVirtualAddress: bigint): bigint {
   const loadSegments = elfBinary.segments().filter(s => s.type === 'LOAD');
   if (loadSegments.some(s => BigInt(s.virtualAddress) > rwVirtualAddress)) {
@@ -397,7 +388,7 @@ export function repackELFSection(
       throw new Error('.bun section not found');
     }
 
-    const rwSegment = writableLoadSegment(elfBinary);
+    const rwSegment = selectBunLoadSegment(elfBinary.segments(), { vaddr: BigInt(bunSection.virtualAddress), size: BigInt(bunSection.size) });
     const newSectionData = buildSectionData(newBunBuffer, sectionHeaderSize);
     const newContentSize = BigInt(newSectionData.length);
     const bunCompiledVaddr = findUniqueBunCompiledPointer(

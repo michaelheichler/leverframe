@@ -4,13 +4,13 @@ import { applyNativeContextPicker } from './patch-transforms-picker.js';
 import { applyModelPickerOptions } from './patch-model-picker-options.js';
 import { applySelectBadge } from './patch-select-badge.js';
 import { ANTHROPIC_API_PROVIDER_ID } from './provider-templates.js';
-
+import { resolveAgentModelArray } from './patch-agent-model-schema.js';
 const ANTHROPIC_API_IDENTITY_PREFIX = `leverframe:${ANTHROPIC_API_PROVIDER_ID}:`;
 import { applyNativeModelKnowledge } from './patch-transforms-model-knowledge.js';
 import { applyNativeContextWindow } from './patch-transforms-context-window.js';
 import { ONE_M_CONTEXT_WINDOW } from './context-model-id.js';
 
-export const PATCH_TRANSFORMS_VERSION = 24;
+export const PATCH_TRANSFORMS_VERSION = 25;
 
 export interface PatchScriptModelEntry {
   alias?: string;
@@ -294,9 +294,9 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
 
   applyOnce(
     'PATCH 1: Agent tool model enum',
-    /((?:\.enum|:[A-Za-z_$][\w$]*)\()(\["sonnet","opus","haiku","fable"(?:,"[^"]+")*\])(\)\.optional\(\)\.describe\(`Optional model override for this agent)/,
+    /((?:\.enum|:[A-Za-z_$][\w$]*)\()(\["sonnet","opus","haiku","fable"(?:,"[^"]+")*\]|[A-Za-z_$][\w$]*)(\)\.optional\(\)\.describe\(`Optional model override for this agent)/,
     (_m, constructorHead = '', arr = '', descriptionHead = '') =>
-      constructorHead + extendAliasArray(arr, AGENT_IDENTITIES) + descriptionHead,
+      constructorHead + extendAliasArray(resolveAgentModelArray(js, arr), AGENT_IDENTITIES) + descriptionHead,
     { required: true, noopIsSkip: true }
   );
 
@@ -312,6 +312,13 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     const RESUME_MODEL_NAME = 'PATCH 11: session-restore model family allowlist';
     if (!js.includes('?"unknown_family":')) {
       log('SKIP', RESUME_MODEL_NAME, 'not present in this Claude Code version');
+    } else if (/![\w$]+\?"unknown_family":/.test(js)) {
+      applyOnce(
+        RESUME_MODEL_NAME,
+        /!([\w$]+)\?"unknown_family":!([\w$]+)\(([\w$]+)\)&&!([\w$]+)\(\3\)\?"not_allowed":([\w$]+)\(\3\)\?"retired":void 0;/,
+        (_m, condition, allowed, model, custom, retired) => `!(${condition}||${RESUME_MODEL_MARKER}${custom}(${model}))?"unknown_family":!${allowed}(${model})&&!${custom}(${model})?"not_allowed":${retired}(${model})?"retired":void 0;`,
+        { marker: RESUME_MODEL_MARKER, required: true }
+      );
     } else {
       applyOnce(
         RESUME_MODEL_NAME,
