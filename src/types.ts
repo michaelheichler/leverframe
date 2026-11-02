@@ -94,6 +94,7 @@ export interface UserPreferences {
   };
   accountPoolBalancing?: boolean;
   accountPoolFailover?: boolean;
+  accountPoolQuotaThresholdPercent?: number;
   lastModel?: string;
   lastProvider?: string;
   recentModelsByProvider?: Record<string, string[]>;

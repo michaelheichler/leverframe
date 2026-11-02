@@ -11,6 +11,7 @@ import type { RequestExecutionObserver } from './request-execution-context.js';
 import { StreamTools } from './sdk-stream-tools.js';
 import { StreamBlocks } from './sdk-stream-blocks.js';
 import { StreamEvents } from './sdk-stream-events.js';
+import { assertAnthropicCacheTransport } from './anthropic-cache-transport.js';
 import { toolInputRules, type SdkCallParams } from './sdk-request-translation.js';
 import {
   type AnthropicUsageTrace,
@@ -206,6 +207,7 @@ export async function streamAnthropicResponse(
   log?: LogFn,
   observer?: AnthropicStreamObserver,
 ): Promise<void> {
+  assertAnthropicCacheTransport(model, params.messages);
   const { inputTokensIncludeCache = false, ...sdkParams } = params;
   const idleTimeoutMs = observer?.idleTimeoutMs ?? sdkStreamIdleTimeoutMs();
   const idleAbort = new AbortController();

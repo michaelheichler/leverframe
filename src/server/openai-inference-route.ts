@@ -16,6 +16,12 @@ import { supportsDirectOpenAIChatCompletions, upstreamModelId } from './models.j
 import { validateOpenAiChatRoute } from './route-validation.js';
 import { createTrackedSseResponse } from './sse-response.js';
 import { isOpenAiOAuth } from '../provider-factory.js';
+import { hasCanonicalOpenAiEndpoint } from '../openai-endpoint-provenance.js';
+import { rememberConfiguredPool } from '../account-pool-dispatch.js';
+import { extractClaudeSessionId } from '../client-session.js';
+import { dispatchOpenAiPool, dispatchOpenAiDirectPool } from './openai-pool.js';
+import { recordObservation } from '../account-pool.js';
+import { anthropicCapacity, codexCapacity } from '../account-pool-telemetry.js';
 export async function handleOpenAIChatCompletions(
   req: IncomingMessage,
   res: ServerResponse,
@@ -29,45 +35,12 @@ export async function handleOpenAIChatCompletions(
     return;
   }
 
-  if (!Array.isArray(body.messages)) {
-    sendJson(res, 400, { error: { message: 'messages must be an array', type: 'invalid_request_error' } });
-    return;
-  }
-  const model = lookupModel(res, options.catalog, body.model);
+  const model = await validateOpenAiRoute(res, options, body);
   if (!model) return;
-  const routeValidation = await validateOpenAiChatRoute(model);
-  if (routeValidation) {
-    sendJson(res, 400, { error: { message: routeValidation } });
-    return;
-  }
 
-  const openAiSessionKey = resolveExecutionSessionKey({
-    claudeSessionId: typeof body.user === 'string' ? body.user : requestHeader(req, 'x-claude-code-session-id'),
-    provider: inferenceProvider(model),
-    model: model.id,
-  });
-  reconcileIncomingToolResults({ sessionKey: openAiSessionKey, toolResults: extractOpenAiToolResults(body) });
   const openAiRequestId = randomUUID();
-  let openAiTracking: ExecutionTrackingHandle;
-  try {
-    openAiTracking = beginExecutionTracking({
-      sessionKey: openAiSessionKey,
-      executionId: requestHeader(req, EXECUTION_ID_HEADER),
-      requestId: openAiRequestId,
-      provider: inferenceProvider(model),
-      model: body.model,
-      route: supportsDirectOpenAIChatCompletions(model) ? 'passthrough' : 'translated',
-      messages: toDigestableMessages(body),
-      toolResults: extractOpenAiToolResults(body),
-      capabilities: executionCapabilities(model, body),
-    });
-  } catch (error) {
-    if (error instanceof ExecutionRecoveryBlockedError) {
-      respondExecutionRecoveryBlocked({ res, sessionKey: openAiSessionKey, requestedExecutionId: requestHeader(req, EXECUTION_ID_HEADER), error });
-      return;
-    }
-    throw error;
-  }
+  const openAiTracking = startOpenAiTracking(req, res, body, model, openAiRequestId);
+  if (!openAiTracking) return;
 
   const openAiClientAbort = new AbortController();
   const abortOpenAiClientRequest = () => {
@@ -94,130 +67,11 @@ export async function handleOpenAIChatCompletions(
 
   try {
     if (supportsDirectOpenAIChatCompletions(model)) {
-      const completionsUrl = model.completionsUrl!;
-      const apiKey = model.apiKey ?? options.apiKey;
-      const forwardBody = body.model === upstreamModelId(model) ? body : { ...body, model: upstreamModelId(model) };
-      auditInference(options, {
-        modelId: body.model,
-        effort: openAiEffort(body),
-        provider: inferenceProvider(model),
-        route: 'passthrough',
-        requestPreview: getLatestMessagePreview(body.messages, body.system),
-      });
-      applyExecutionHeaders(res, openAiTracking);
-      const directStream = Boolean(body.stream);
-      await relayAnthropicMessages(res, completionsUrl, forwardBody, apiKey, directStream, {
-        extraHeaders: model.headers,
-        responseModelId: getResponseModelId(body.model, model, options),
-        onObservedText: text => {
-          if (directStream) {
-            openAiTracking.observeOpenAiSseText(text);
-            return;
-          }
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(text);
-          } catch {
-            return;
-          }
-          openAiTracking.observeNonStreamOpenAi(parsed);
-        },
-        onUpstreamError: options.inferenceLogPath
-          ? (statusCode, errorContent) => writeInferenceResponseErrorLog(options.inferenceLogPath!, {
-              modelId: body.model,
-              provider: inferenceProvider(model),
-              route: 'passthrough',
-              statusCode,
-              errorContent,
-            })
-          : undefined,
-        lifecycle: openAiExecution,
-      });
-      if (openAiExecution.finish()) openAiTracking.fail(undefined);
+      await relayOpenAiChat({ res, options, body, model, openAiTracking, openAiExecution }, req);
       return;
     }
 
-    const npm = model.npm || (model.modelFormat === 'anthropic' ? '@ai-sdk/anthropic' : undefined);
-    if (!npm) {
-      sendJson(res, 400, { error: { message: `No SDK provider for model: ${model.id}` } });
-      return;
-    }
-
-    const apiKey = model.apiKey ?? options.apiKey;
-    auditInference(options, {
-      modelId: body.model,
-      effort: openAiEffort(body),
-      provider: inferenceProvider(model),
-      route: 'translated',
-      requestPreview: getLatestMessagePreview(body.messages, body.system),
-    });
-    const baseURL = model.modelFormat === 'anthropic' ? model.baseUrl : model.apiBaseUrl;
-    const languageModel = await getOrInitLanguageModel(modelCache, model, npm, baseURL, apiKey);
-    const openAiOAuth = isOpenAiOAuth(npm, model.authType, model.providerId);
-    const params = translateOpenAiRequest(body as unknown as OpenAiRequest, { openAiOAuth });
-    const clientWantsStream = Boolean(body.stream);
-    const responseModelId = getResponseModelId(body.model, model, options);
-
-    plog(() => `sdk-openai npm=${npm} upstream=${upstreamModelId(model)} responseModel=${responseModelId} stream=${clientWantsStream}`);
-
-    try {
-      if (clientWantsStream) {
-        const sse = createTrackedSseResponse({
-          res,
-          clientAbortSignal: openAiClientAbort.signal,
-          applyHeaders: () => applyExecutionHeaders(res, openAiTracking),
-          observeChunk: openAiTracking.observeOpenAiSseText,
-        });
-        sse.start();
-        try {
-          await streamOpenAiResponse(languageModel, params, responseModelId, sse.writeChunk, {
-            abortSignal: openAiClientAbort.signal,
-            lifecycle: openAiExecution,
-          });
-          openAiExecution.markStreamActivity();
-          openAiExecution.complete();
-          if (!res.headersSent) sse.writeChunk('');
-          res.end();
-        } finally {
-          sse.stop();
-        }
-      } else {
-
-        const response = await generateOpenAiResponse(languageModel, params, responseModelId, {
-          forceStream: openAiOAuth,
-          abortSignal: openAiClientAbort.signal,
-          lifecycle: openAiExecution,
-          onWarning: plog,
-        });
-        openAiExecution.markStreamActivity();
-        openAiExecution.markOutputEmitted();
-        openAiExecution.complete();
-        openAiTracking.observeNonStreamOpenAi(response);
-        applyExecutionHeaders(res, openAiTracking);
-        sendJson(res, 200, response);
-      }
-    } catch (err) {
-      if (openAiClientAbort.signal.aborted) return;
-      openAiExecution.fail(err);
-      openAiTracking.fail(undefined);
-      const message = formatUpstreamError(err);
-      const details = sdkUpstreamErrorDetails(err);
-      const status = auditSdkError(options, body.model, model, err, message);
-      plog(() => `sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message}${details?.errorContent ? `, body: ${details.errorContent}` : ''}`);
-      if (!res.headersSent) {
-        sendJson(res, status === 500 ? 502 : status, { error: { message } });
-      } else {
-        res.write(`data: ${JSON.stringify({
-          error: {
-            message,
-            type: 'upstream_error',
-            code: status,
-            ...(details?.retryAfterMs !== undefined ? { retry_after: Math.ceil(details.retryAfterMs / 1_000) } : {}),
-          },
-        })}\n\n`);
-        res.end();
-      }
-    }
+    await executeOpenAiSdk({ res, options, body, model, openAiTracking, openAiExecution }, req, modelCache, plog, openAiClientAbort);
   } catch (error) {
     openAiExecution.fail(error);
     openAiTracking.fail(undefined);
@@ -225,5 +79,273 @@ export async function handleOpenAIChatCompletions(
   } finally {
     req.removeListener('aborted', abortOpenAiClientRequest);
     res.removeListener('close', abortOpenAiClosedResponse);
+  }
+}
+
+async function validateOpenAiRoute(res: ServerResponse, options: ServerOptions, body: NonNullable<Awaited<ReturnType<typeof readJson>>>) {
+  if (!Array.isArray(body.messages)) {
+    sendJson(res, 400, { error: { message: 'messages must be an array', type: 'invalid_request_error' } });
+    return null;
+  }
+  const model = lookupModel(res, options.catalog, body.model);
+  if (!model) return null;
+  const routeValidation = await validateOpenAiChatRoute(model);
+  if (routeValidation) {
+    sendJson(res, 400, { error: { message: routeValidation } });
+    return null;
+  }
+  return model;
+}
+
+interface OpenAiRouteContext {
+  res: ServerResponse;
+  options: ServerOptions;
+  body: NonNullable<Awaited<ReturnType<typeof readJson>>>;
+  model: NonNullable<ReturnType<typeof lookupModel>>;
+  openAiTracking: ExecutionTrackingHandle;
+  openAiExecution: ReturnType<typeof createRequestExecutionContext>;
+}
+
+async function relayOpenAiChat({ res, options, body, model, openAiTracking, openAiExecution }: OpenAiRouteContext, req: IncomingMessage): Promise<void> {
+  const completionsUrl = model.completionsUrl!;
+  const apiKey = model.apiKey ?? options.apiKey;
+  const forwardBody = body.model === upstreamModelId(model) ? body : { ...body, model: upstreamModelId(model) };
+  auditInference(options, {
+    modelId: body.model,
+    effort: openAiEffort(body),
+    provider: inferenceProvider(model),
+    route: 'passthrough',
+    requestPreview: getLatestMessagePreview(body.messages, body.system),
+  });
+  applyExecutionHeaders(res, openAiTracking);
+  const directStream = Boolean(body.stream);
+  const relayOptions = {
+    extraHeaders: model.headers,
+    responseModelId: getResponseModelId(body.model, model, options),
+    onObservedText: (text: string) => {
+      if (directStream) {
+        openAiTracking.observeOpenAiSseText(text);
+        return;
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        return;
+      }
+      openAiTracking.observeNonStreamOpenAi(parsed);
+    },
+    onUpstreamError: options.inferenceLogPath
+      ? (statusCode: number, errorContent: string) => writeInferenceResponseErrorLog(options.inferenceLogPath!, {
+          modelId: body.model,
+          provider: inferenceProvider(model),
+          route: 'passthrough',
+          statusCode,
+          errorContent,
+        })
+      : undefined,
+    lifecycle: openAiExecution,
+  };
+  const kind = configuredOpenAiPool(model, options);
+  if (kind) {
+    const pool = { providerId: model.providerId!, modelId: upstreamModelId(model), billingType: kind === 'codex' ? 'oauth' as const : 'api' as const };
+    await dispatchOpenAiDirectPool({ res, model, kind,
+      sessionId: extractClaudeSessionId(body, requestHeader(req, 'x-claude-code-session-id')),
+      onExhausted: () => { openAiExecution.fail(new Error('Account pool exhausted')); openAiTracking.fail(undefined); },
+      onFailure: (status, errorContent) => {
+        openAiExecution.fail(new Error(`Upstream returned HTTP ${status}`));
+        openAiTracking.fail(undefined);
+        relayOptions.onUpstreamError?.(status, errorContent);
+      },
+      run: binding => relayAnthropicMessages(res, completionsUrl, forwardBody, binding.apiKey, directStream, {
+        ...relayOptions, deferRejection: true, onResponseHeaders: async headers => {
+          const now = Date.now();
+          const observations = kind === 'codex' ? codexCapacity(headers, binding.account.id, now) : anthropicCapacity(headers, binding.account.id, now);
+          for (const observation of observations) await recordObservation({ pool, observation, now, generation: binding.generation });
+        },
+      }),
+    });
+  } else {
+    await relayAnthropicMessages(res, completionsUrl, forwardBody, apiKey, directStream, relayOptions);
+  }
+  if (openAiExecution.finish()) openAiTracking.fail(undefined);
+  return;
+}
+
+async function executeOpenAiSdk(
+  { res, options, body, model, openAiTracking, openAiExecution }: OpenAiRouteContext,
+  req: IncomingMessage, modelCache: ProviderRuntimeCache<LanguageModel>, plog: PLog, openAiClientAbort: AbortController,
+): Promise<void> {
+  const npm = model.npm || (model.modelFormat === 'anthropic' ? '@ai-sdk/anthropic' : undefined);
+  if (!npm) {
+    sendJson(res, 400, { error: { message: `No SDK provider for model: ${model.id}` } });
+    return;
+  }
+
+  const apiKey = model.apiKey ?? options.apiKey;
+  auditInference(options, {
+    modelId: body.model,
+    effort: openAiEffort(body),
+    provider: inferenceProvider(model),
+    route: 'translated',
+    requestPreview: getLatestMessagePreview(body.messages, body.system),
+  });
+  const kind = configuredOpenAiPool(model, options);
+  if (kind) {
+    const params = translateOpenAiRequest(body as unknown as OpenAiRequest, {
+      openAiOAuth: kind === 'codex', claudeSessionId: requestHeader(req, 'x-claude-code-session-id'),
+    });
+    try {
+      await dispatchOpenAiPool({ res, model, cache: modelCache, kind,
+        sessionId: extractClaudeSessionId(body, requestHeader(req, 'x-claude-code-session-id')),
+        onExhausted: () => {
+          openAiExecution.fail(new Error('Account pool exhausted'));
+          openAiTracking.fail(undefined);
+          applyExecutionHeaders(res, openAiTracking);
+        },
+        run: languageModel => runOpenAiSdkResponse({ res, options, body, model, openAiTracking, openAiExecution },
+          languageModel, pooledOpenAiParams(params, body, languageModel, kind), openAiClientAbort, plog, kind === 'codex') });
+    } catch (err) {
+      if (openAiClientAbort.signal.aborted) return;
+      openAiExecution.fail(err);
+      openAiTracking.fail(undefined);
+      respondOpenAiSdkError({ res, options, body, model, openAiTracking, openAiExecution }, plog, err);
+    }
+    return;
+  }
+  const baseURL = model.modelFormat === 'anthropic' ? model.baseUrl : model.apiBaseUrl;
+  const languageModel = await getOrInitLanguageModel(modelCache, model, npm, baseURL, apiKey);
+  const openAiOAuth = isOpenAiOAuth(npm, model.authType, model.providerId);
+  const params = translateOpenAiRequest(body as unknown as OpenAiRequest, {
+    openAiOAuth,
+    openAiProvider: hasCanonicalOpenAiEndpoint(languageModel),
+    claudeSessionId: requestHeader(req, 'x-claude-code-session-id'),
+  });
+  const clientWantsStream = Boolean(body.stream);
+  const responseModelId = getResponseModelId(body.model, model, options);
+
+  plog(() => `sdk-openai npm=${npm} upstream=${upstreamModelId(model)} responseModel=${responseModelId} stream=${clientWantsStream}`);
+
+  try {
+    await runOpenAiSdkResponse({ res, options, body, model, openAiTracking, openAiExecution }, languageModel, params,
+      openAiClientAbort, plog, openAiOAuth);
+  } catch (err) {
+    if (openAiClientAbort.signal.aborted) return;
+    openAiExecution.fail(err);
+    openAiTracking.fail(undefined);
+    respondOpenAiSdkError({ res, options, body, model, openAiTracking, openAiExecution }, plog, err);
+  }
+}
+
+function pooledOpenAiParams(
+  params: ReturnType<typeof translateOpenAiRequest>, body: OpenAiRouteContext['body'], model: LanguageModel,
+  kind: 'codex' | 'anthropic',
+): ReturnType<typeof translateOpenAiRequest> {
+  return {
+    ...params,
+    maxRetries: 0,
+    ...(kind === 'anthropic' && hasCanonicalOpenAiEndpoint(model) && typeof body.prompt_cache_key === 'string'
+      ? { providerOptions: { ...params.providerOptions, openai: { ...params.providerOptions?.openai, promptCacheKey: body.prompt_cache_key } } }
+      : {}),
+  };
+}
+
+function configuredOpenAiPool(model: OpenAiRouteContext['model'], options: ServerOptions): 'codex' | 'anthropic' | undefined {
+  if (model.providerId === 'openai-oauth' && model.authType === 'oauth'
+    && rememberConfiguredPool(options.managedPools ?? new Set(), model.providerId, 'oauth')) return 'codex';
+  if (model.providerId === 'anthropic-api' && model.authType === 'api'
+    && rememberConfiguredPool(options.managedPools ?? new Set(), model.providerId, 'api')) return 'anthropic';
+  return undefined;
+}
+
+async function runOpenAiSdkResponse(
+  { res, options, body, model, openAiTracking, openAiExecution }: OpenAiRouteContext,
+  languageModel: LanguageModel, params: ReturnType<typeof translateOpenAiRequest>, openAiClientAbort: AbortController,
+  plog: PLog, openAiOAuth: boolean,
+): Promise<void> {
+  const responseModelId = getResponseModelId(body.model, model, options);
+  if (body.stream) {
+      const sse = createTrackedSseResponse({
+        res,
+        clientAbortSignal: openAiClientAbort.signal,
+        applyHeaders: () => applyExecutionHeaders(res, openAiTracking),
+        observeChunk: openAiTracking.observeOpenAiSseText,
+      });
+      sse.start();
+      try {
+        await streamOpenAiResponse(languageModel, params, responseModelId, sse.writeChunk, {
+          abortSignal: openAiClientAbort.signal,
+          lifecycle: openAiExecution,
+        });
+        openAiExecution.markStreamActivity();
+        openAiExecution.complete();
+        if (!res.headersSent) sse.writeChunk('');
+        res.end();
+      } finally {
+        sse.stop();
+      }
+  } else {
+
+      const response = await generateOpenAiResponse(languageModel, params, responseModelId, {
+        forceStream: openAiOAuth,
+        abortSignal: openAiClientAbort.signal,
+        lifecycle: openAiExecution,
+        onWarning: plog,
+      });
+      openAiExecution.markStreamActivity();
+      openAiExecution.markOutputEmitted();
+      openAiExecution.complete();
+      openAiTracking.observeNonStreamOpenAi(response);
+      applyExecutionHeaders(res, openAiTracking);
+      sendJson(res, 200, response);
+  }
+}
+
+function startOpenAiTracking(req: IncomingMessage, res: ServerResponse, body: OpenAiRouteContext['body'], model: OpenAiRouteContext['model'], openAiRequestId: string): ExecutionTrackingHandle | null {
+  const openAiSessionKey = resolveExecutionSessionKey({
+    claudeSessionId: typeof body.user === 'string' ? body.user : requestHeader(req, 'x-claude-code-session-id'),
+    provider: inferenceProvider(model),
+    model: model.id,
+  });
+  reconcileIncomingToolResults({ sessionKey: openAiSessionKey, toolResults: extractOpenAiToolResults(body) });
+  try {
+    return beginExecutionTracking({
+      sessionKey: openAiSessionKey,
+      executionId: requestHeader(req, EXECUTION_ID_HEADER),
+      requestId: openAiRequestId,
+      provider: inferenceProvider(model),
+      model: body.model,
+      route: supportsDirectOpenAIChatCompletions(model) ? 'passthrough' : 'translated',
+      messages: toDigestableMessages(body),
+      toolResults: extractOpenAiToolResults(body),
+      capabilities: executionCapabilities(model, body),
+    });
+  } catch (error) {
+    if (error instanceof ExecutionRecoveryBlockedError) {
+      respondExecutionRecoveryBlocked({ res, sessionKey: openAiSessionKey, requestedExecutionId: requestHeader(req, EXECUTION_ID_HEADER), error });
+      return null;
+    }
+    throw error;
+  }
+
+}
+
+function respondOpenAiSdkError({ res, options, body, model }: OpenAiRouteContext, plog: PLog, err: unknown): void {
+  const message = formatUpstreamError(err);
+  const details = sdkUpstreamErrorDetails(err);
+  const status = auditSdkError(options, body.model, model, err, message);
+  plog(() => `sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message}${details?.errorContent ? `, body: ${details.errorContent}` : ''}`);
+  if (!res.headersSent) {
+    sendJson(res, status === 500 ? 502 : status, { error: { message } });
+  } else {
+    res.write(`data: ${JSON.stringify({
+      error: {
+        message,
+        type: 'upstream_error',
+        code: status,
+        ...(details?.retryAfterMs !== undefined ? { retry_after: Math.ceil(details.retryAfterMs / 1_000) } : {}),
+      },
+    })}\n\n`);
+    res.end();
   }
 }

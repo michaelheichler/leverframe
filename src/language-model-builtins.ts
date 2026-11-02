@@ -5,6 +5,8 @@ import { CODEX_RESPONSES_LITE_VERSION, CODEX_RESPONSES_LITE_WS_URL } from './con
 import { extractOpenAiAccountId } from './oauth/openai.js';
 import { createResponsesWebSocketFetch } from './oauth/responses-websocket.js';
 import { CLAUDE_CODE_USER_AGENT, injectClaudeIdentity } from './oauth/claude-identity.js';
+import { createAnthropicCacheTransport } from './anthropic-cache-transport.js';
+import { recordOpenAiEndpoint } from './openai-endpoint-provenance.js';
 
 /** Because version headers require numeric components. */
 function validResponsesLiteVersion(value: unknown): string | undefined {
@@ -47,8 +49,11 @@ function openAiOptions(spec: ProviderModelSpec, useResponsesEndpoint: boolean) {
 /** Because OpenAI keeps distinct chat and Responses APIs. */
 export async function createBuiltinOpenAiModel(spec: ProviderModelSpec, useResponsesEndpoint: boolean): Promise<LanguageModel> {
   const { createOpenAI } = await import('@ai-sdk/openai');
-  const openai = createOpenAI(openAiOptions(spec, useResponsesEndpoint));
-  return useResponsesEndpoint ? openai.responses(spec.modelId) : openai.chat(spec.modelId);
+  const options = openAiOptions(spec, useResponsesEndpoint);
+  const openai = createOpenAI(options);
+  const model = useResponsesEndpoint ? openai.responses(spec.modelId) : openai.chat(spec.modelId);
+  if (spec.authType !== 'oauth') recordOpenAiEndpoint(model, options.baseURL);
+  return model;
 }
 
 /** Because Anthropic OAuth must retain Claude identity. */
@@ -69,8 +74,9 @@ export async function createBuiltinAnthropicModel(spec: ProviderModelSpec): Prom
       }
     : { apiKey };
   if (spec.headers) options.headers = { ...options.headers, ...spec.headers };
-  if (spec.fetch) options.fetch = spec.fetch;
-  if (!root || root === 'https://api.anthropic.com') return createAnthropic(options)(modelId);
+  const transport = createAnthropicCacheTransport(spec.fetch ?? globalThis.fetch);
+  options.fetch = transport.fetch;
+  if (!root || root === 'https://api.anthropic.com') return transport.wrap(createAnthropic(options)(modelId));
   const sdkBase = baseURL!.endsWith('/v1') ? baseURL : `${root}/v1`;
-  return createAnthropic({ ...options, baseURL: sdkBase })(modelId);
+  return transport.wrap(createAnthropic({ ...options, baseURL: sdkBase })(modelId));
 }

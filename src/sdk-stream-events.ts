@@ -7,6 +7,7 @@ import type { AnthropicUsage } from './sdk-usage.js';
 import type { AnthropicStreamObserver } from './sdk-streaming-response.js';
 import type { StreamBlocks } from './sdk-stream-blocks.js';
 import type { StreamTools } from './sdk-stream-tools.js';
+import { cacheTtlEvidence, type CacheTtlEvidence } from './cache-ttl-evidence.js';
 
 export class StreamEvents {
   finishReason = 'end_turn';
@@ -14,6 +15,7 @@ export class StreamEvents {
   rawFinishReason: string | undefined;
   outputContentBytes = 0;
   usage: AnthropicUsage;
+  private cacheTtlEvidence: CacheTtlEvidence = {};
 
   constructor(private options: {
     modelId: string; blocks: StreamBlocks; tools: StreamTools; rules: ReturnType<typeof toolInputRules>;
@@ -30,6 +32,7 @@ export class StreamEvents {
     if (['reasoning-start', 'reasoning-delta', 'reasoning-end', 'text-start', 'text-delta', 'text-end'].includes(part.type)) return this.content(part);
     if (['tool-input-start', 'tool-input-delta', 'tool-input-end', 'tool-call'].includes(part.type)) return this.tool(part);
     if (part.type === 'finish') return this.finish(part);
+    if (part.type === 'finish-step') { this.cacheTtlEvidence = cacheTtlEvidence(part.providerMetadata); return; }
     if (part.type === 'error') return this.error(part);
     if (part.type !== 'start') this.options.log?.(() => `sdk stream unrecognized part type=${part.type} keys=${Object.keys(part).join(',')} sample=${safeJson(part)}`);
   }
@@ -98,6 +101,7 @@ export class StreamEvents {
     const { observer, modelId } = this.options;
     this.usage = finishStreamUsage({ usage: this.usage, providerUsage: part.totalUsage, outputContentBytes: this.outputContentBytes,
       inputTokensIncludeCache: observer?.inputTokensIncludeCache ?? false, modelId,
+      cacheTtlEvidence: this.cacheTtlEvidence,
       promptCacheKeyHash: observer?.promptCacheKeyHash, onUsage: observer?.onUsage });
     if (part.finishReason === 'length') this.finishReason = 'max_tokens';
     else if (part.finishReason === 'tool-calls') this.finishReason = 'tool_use';

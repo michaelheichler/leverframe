@@ -57,7 +57,6 @@ describe('streamOpenAiResponse', () => {
   });
 });
 
-describe('translateOpenAiRequest OAuth shaping', () => {
   it('moves the system prompt into providerOptions and drops the output limit for OAuth routes', async () => {
     const params = translateOpenAiRequest({
       model: 'gpt-test',
@@ -76,8 +75,11 @@ describe('translateOpenAiRequest OAuth shaping', () => {
         store: false,
         include: ['reasoning.encrypted_content'],
         instructions: 'Be terse.',
+        promptCacheKey: expect.any(String),
       },
     });
+    const cacheKey = (params.providerOptions as { openai?: { promptCacheKey?: string } }).openai?.promptCacheKey;
+    expect(params.headers).toEqual({ 'session-id': cacheKey });
   });
 
   it('defaults OAuth instructions when the request has no system prompt', async () => {
@@ -173,7 +175,6 @@ describe('translateOpenAiRequest OAuth shaping', () => {
       { role: 'user', content: 'second' },
     ]);
   });
-});
 
 describe('collectOpenAiStream', () => {
   it('aggregates text deltas, tool calls, finish reason, and usage', async () => {

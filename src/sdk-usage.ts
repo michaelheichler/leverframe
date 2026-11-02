@@ -50,6 +50,8 @@ export function toAnthropicUsage(
 export interface AnthropicUsageTrace extends Partial<AnthropicUsage> {
   model: string;
   promptCacheKeyHash?: string;
+  cache_creation_5m_input_tokens?: number;
+  cache_creation_1h_input_tokens?: number;
 }
 
 export function measuredAnthropicUsage(usage: SdkUsage | undefined, inputTokensIncludeCache: boolean): Partial<AnthropicUsage> {

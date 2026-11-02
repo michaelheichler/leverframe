@@ -38,6 +38,7 @@ import {
 import { validateAnthropicMessagesRoute } from './route-validation.js';
 import { reportedContextWindow } from '../context-window.js';
 import { applyRequestContextPolicy, formatRequestPolicyOutcome } from '../context/request-policy.js';
+import { validAnthropicCacheControls } from '../anthropic-sdk-cache.js';
 
 export async function handleAnthropicMessages(
   req: IncomingMessage,
@@ -132,6 +133,12 @@ async function readAnthropicRoute(req: IncomingMessage, res: ServerResponse, opt
   const model = lookupModel(res, options.catalog, body.model);
   if (!model) {
     plog(`model not found: ${body.model}`);
+    return;
+  }
+  if (model.npm === '@ai-sdk/anthropic' && (model.modelFormat === 'openai'
+    || (model.modelFormat === 'anthropic' && model.providerId === 'github-copilot'))
+    && !validAnthropicCacheControls(body)) {
+    sendJson(res, 400, { type: 'error', error: { type: 'invalid_request_error', message: 'Invalid Anthropic cache_control' } });
     return;
   }
   const routeValidation = await validateAnthropicMessagesRoute(model);

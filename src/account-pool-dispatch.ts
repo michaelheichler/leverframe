@@ -128,6 +128,7 @@ export async function dispatchWithPool<T>(options: {
       pool: options.pool, sessionId: options.sessionId,
       accounts: accounts.map(account => ({ ...account, generation: accountGeneration(account) })),
       balancing: preferences.accountPoolBalancing !== false, pinnedAccountId: provider?.pinnedAccountId,
+      quotaThresholdPercent: preferences.accountPoolFailover === false ? 0 : preferences.accountPoolQuotaThresholdPercent,
       now: Date.now(), excludeAccountIds: excluded,
     });
     if (selection.kind === 'exhausted') {
@@ -135,6 +136,7 @@ export async function dispatchWithPool<T>(options: {
       if (preferences.accountPoolFailover !== false && pinned
         && (pinned.status === 'rate_limited' || pinned.status === 'exhausted')
         && !excluded.includes(pinned.accountId)) {
+        failures.push(pinned);
         excluded.push(pinned.accountId);
         continue;
       }
@@ -158,7 +160,7 @@ export async function dispatchWithPool<T>(options: {
       attempted.push(account.id);
       excluded.push(account.id);
       const generation = accountGeneration(account);
-      await recordPoolActivity(options.pool, account.id, excluded.length > 1);
+      await recordPoolActivity(options.pool, account.id, excluded.length > 1, selection.switchReason);
       const result = await options.dispatch({ account, apiKey: auth.apiKey, oauthAccountId: auth.accountId, providerData: auth.providerData, generation });
       if (result.kind === 'success') {
         await confirmRecovery({ pool: options.pool, reservationId: selection.reservation.id, generation, now: Date.now() });

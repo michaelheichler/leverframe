@@ -60,7 +60,9 @@ try {
   execFileSync(
     npm,
     ['install', '--ignore-scripts', '--no-audit', '--no-fund', archive],
-    { cwd: consumer, stdio: 'pipe' },
+    { cwd: consumer, stdio: 'pipe', env: Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => key.toLowerCase() !== 'npm_config_allow_scripts'),
+    ) },
   );
   const installedCli = join(
     consumer,

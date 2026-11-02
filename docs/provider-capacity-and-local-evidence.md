@@ -40,6 +40,8 @@ The [Qwen3.8-27B publisher card](https://huggingface.co/Qwen/Qwen3.8-27B) descri
 
 [vLLM releases](https://github.com/vllm-project/vllm/releases) lists 0.32.0 as latest at verification time. Its [Codex integration](https://docs.vllm.ai/en/latest/serving/integrations/codex/) and [tool-calling guide](https://docs.vllm.ai/en/latest/features/tool_calling/) provide a possible NVIDIA runtime path with explicit tool parser configuration. This is a candidate library dependency, not a requirement for users to manage a separate service. Real Linux/GPU validation remains outstanding.
 
+The pinned [MLX LM dependency metadata](https://github.com/ml-explore/mlx-lm/blob/v0.32.2/pyproject.toml) also exposes CUDA 12 and CUDA 13 extras. Official [MLX installation guidance](https://ml-explore.github.io/mlx/build/html/install.html#cuda) describes the CUDA backend and its hardware and driver requirements. This supplies another NVIDIA runtime candidate that could share the MLX model format. The current guidance renders for MLX 0.32.4, so verify the exact pinned backend before selecting it. Neither candidate has hardware acceptance on this host.
+
 ## Verification boundary
 
 The development host reports Apple Silicon arm64 and 64 GiB physical RAM. Default Python does not have mlx-lm installed. Do not infer model eligibility or quality from total RAM. Use measured memory pressure and validated runtime evidence before launch.

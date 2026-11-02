@@ -6,15 +6,18 @@ export function anthropicCapacity(headers: Headers, accountId: string, now: numb
     if (raw === null || !/^\d+$/.test(raw)) return [];
     const value = Number(raw);
     if (!Number.isSafeInteger(value)) return [];
+    const rawLimit = headers.get(`anthropic-ratelimit-${unit}-limit`);
+    const parsedLimit = rawLimit && /^\d+$/.test(rawLimit) ? Number(rawLimit) : NaN;
+    const limit = Number.isSafeInteger(parsedLimit) && parsedLimit > 0 && value <= parsedLimit ? parsedLimit : undefined;
     const reset = headers.get(`anthropic-ratelimit-${unit}-reset`);
     const parsedReset = reset === null ? NaN : Date.parse(reset);
-    return [{ unit, value, resetAt: Number.isFinite(parsedReset) ? parsedReset : undefined }];
+    return [{ unit, value, limit, resetAt: Number.isFinite(parsedReset) ? parsedReset : undefined }];
   });
   return windows.map(window => ({
     accountId, scope: { kind: 'pool' }, source: 'anthropic:headers', observedAt: now,
     dimension: `anthropic:${window.unit}`,
     status: window.value === 0 ? 'rate_limited' : 'healthy',
-    remaining: { value: window.value, unit: `anthropic:${window.unit}` },
+    remaining: { value: window.value, unit: `anthropic:${window.unit}`, ...(window.limit === undefined ? {} : { limit: window.limit }) },
     ...(window.resetAt === undefined ? {} : { resetAt: window.resetAt }),
   }));
 }
@@ -38,7 +41,7 @@ export function codexCapacity(headers: Headers, accountId: string, now: number):
     return [{
       accountId, scope: { kind: 'pool' as const }, source: 'codex:headers', observedAt: now,
       dimension, status: percent === 100 ? 'rate_limited' as const : 'healthy' as const,
-      remaining: { value: 100 - percent, unit: dimension },
+      remaining: { value: 100 - percent, unit: dimension, limit: 100 },
       ...(Number.isSafeInteger(reset) && reset <= 8.64e15 ? { resetAt: reset } : {}),
     }];
   }));
@@ -69,7 +72,7 @@ export function codexEventCapacity(payload: string, accountId: string, now: numb
     return [{
       accountId, scope: { kind: 'pool' as const }, source: 'codex:event', observedAt: now, dimension,
       status: used === 100 ? 'rate_limited' as const : 'healthy' as const,
-      remaining: { value: 100 - used, unit: dimension },
+      remaining: { value: 100 - used, unit: dimension, limit: 100 },
       ...(Number.isSafeInteger(reset) && reset >= 0 && reset <= 8.64e15 ? { resetAt: reset } : {}),
     }];
   });

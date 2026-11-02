@@ -123,6 +123,7 @@ export function forwardToAdapter(
       headers: {
         'Content-Type': 'application/json', 'Content-Length': String(rawBody.length), 'x-api-key': adapter.token,
         ...(typeof req.headers['anthropic-beta'] === 'string' ? { 'anthropic-beta': req.headers['anthropic-beta'] } : {}),
+        ...(typeof req.headers['anthropic-version'] === 'string' ? { 'anthropic-version': req.headers['anthropic-version'] } : {}),
         ...(typeof req.headers['x-claude-code-session-id'] === 'string' ? { 'x-claude-code-session-id': req.headers['x-claude-code-session-id'] } : {}),
         ...(log ? { 'x-relay-request-id': log.requestId } : {}),
       },

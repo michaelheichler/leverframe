@@ -1,5 +1,6 @@
 import { estimateAnthropicOutputTokens } from './anthropic-endpoints.js';
 import { measuredAnthropicUsage, toAnthropicUsage, type AnthropicUsage, type AnthropicUsageTrace, type SdkUsage } from './sdk-usage.js';
+import type { CacheTtlEvidence } from './cache-ttl-evidence.js';
 
 export function finishStreamUsage(options: {
   usage: AnthropicUsage;
@@ -9,6 +10,7 @@ export function finishStreamUsage(options: {
   modelId: string;
   promptCacheKeyHash?: string;
   onUsage?: (usage: AnthropicUsageTrace) => void;
+  cacheTtlEvidence?: CacheTtlEvidence;
 }): AnthropicUsage {
   const { providerUsage, inputTokensIncludeCache } = options;
   const estimate = estimateAnthropicOutputTokens(options.outputContentBytes);
@@ -23,6 +25,7 @@ export function finishStreamUsage(options: {
   }
   options.onUsage?.({
     model: options.modelId, ...measuredAnthropicUsage(providerUsage, inputTokensIncludeCache),
+    ...options.cacheTtlEvidence,
     ...(options.promptCacheKeyHash ? { promptCacheKeyHash: options.promptCacheKeyHash } : {}),
   });
   return usage;

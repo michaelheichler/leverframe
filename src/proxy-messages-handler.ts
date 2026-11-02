@@ -37,6 +37,7 @@ import {
 import { relayAnthropicMessages, UpstreamUnreachableError } from './upstream-forward.js';
 import { reportedContextWindow } from './context-window.js';
 import { applyRequestContextPolicy, formatRequestPolicyOutcome } from './context/request-policy.js';
+import { validAnthropicCacheControls } from './anthropic-sdk-cache.js';
 
 
 import type { ProxyRequestContext } from './proxy-handler.js';
@@ -120,6 +121,11 @@ async function prepareProxyMessage(req: IncomingMessage, res: ServerResponse, co
     return;
   }
   const route=resolvedRoute??defaultRoute;
+  if(messagesEndpoint==='messages' && route.modelFormat!=='anthropic' && route.npm==='@ai-sdk/anthropic'
+    && isSdkMigratedNpm(route.npm, route.providerId) && !validAnthropicCacheControls(anthropicBody)) {
+    anthropicError(res, 400, 'Invalid Anthropic cache_control');
+    return;
+  }
   const pooledNative=messagesEndpoint==='messages'&&route.providerId==='anthropic-api'
     &&route.authType==='api'&&route.modelFormat==='anthropic'&&rememberConfiguredPool(managedPools, route.providerId, 'api');
   const pooledSdk=messagesEndpoint==='messages'&&route.providerId==='openai-oauth'

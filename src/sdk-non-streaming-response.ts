@@ -14,6 +14,8 @@ import {
   safeJson,
 } from './sdk-streaming-response.js';
 import { emptyCompletionError } from './sdk-completion.js';
+import { assertAnthropicCacheTransport } from './anthropic-cache-transport.js';
+import { cacheTtlEvidence, type CacheTtlEvidence } from './cache-ttl-evidence.js';
 
 type LogFn = (msg: () => string) => void;
 
@@ -33,11 +35,13 @@ export async function generateAnthropicResponse(
     log?: LogFn;
   },
 ): Promise<Record<string, unknown>> {
+  assertAnthropicCacheTransport(model, params.messages);
   let text: string;
   let toolCalls: Array<{ toolCallId: string; toolName: string; input: unknown }>;
   let finishReason: string | undefined;
   let rawFinishReason: string | undefined;
   let usage: SdkUsage | undefined;
+  let ttlEvidence: CacheTtlEvidence = {};
   const seenPartTypes: string[] = [];
   const { inputTokensIncludeCache = false, ...sdkParams } = params;
 
@@ -89,6 +93,8 @@ export async function generateAnthropicResponse(
             input: part.input,
           });
           options.lifecycle?.markToolCallEmitted();
+        } else if (part.type === 'finish-step') {
+          ttlEvidence = cacheTtlEvidence(part.providerMetadata);
         } else if (part.type === 'finish') {
           streamedFinishReason = part.finishReason ?? streamedFinishReason;
           rawFinishReason = part.rawFinishReason;
@@ -126,6 +132,7 @@ export async function generateAnthropicResponse(
       if (r.text) options?.lifecycle?.markOutputEmitted();
       if (r.toolCalls?.length) options?.lifecycle?.markToolCallEmitted();
       ({ text, toolCalls, finishReason, rawFinishReason, usage } = r);
+      ttlEvidence = cacheTtlEvidence(r.providerMetadata);
     } finally {
       stopForwardingAbort();
       clearTimeout(totalTimer);
@@ -157,6 +164,7 @@ export async function generateAnthropicResponse(
   options?.onUsage?.({
     model: modelId,
     ...measuredAnthropicUsage(usage, inputTokensIncludeCache),
+    ...ttlEvidence,
     ...(promptCacheKeyHash ? { promptCacheKeyHash } : {}),
   });
   return {

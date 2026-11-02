@@ -10,6 +10,10 @@ export { ConfigLockBusyError, _configLockInternals } from './config-lock.js';
 
 const CONFIG_FILE_MODE = 0o600;
 
+function validQuotaThreshold(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value < 100;
+}
+
 function validateContextCeilingOverrides(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw)) return undefined;
   const seen = new Set<string>();
@@ -104,6 +108,8 @@ export function loadPreferences(): UserPreferences {
     summarySettings: validateSummarySettings(config.summarySettings),
     accountPoolBalancing: typeof config.accountPoolBalancing === 'boolean' ? config.accountPoolBalancing : true,
     accountPoolFailover: typeof config.accountPoolFailover === 'boolean' ? config.accountPoolFailover : true,
+    accountPoolQuotaThresholdPercent: config.accountPoolQuotaThresholdPercent === undefined
+      ? 10 : validQuotaThreshold(config.accountPoolQuotaThresholdPercent) ? config.accountPoolQuotaThresholdPercent : 0,
     lastModel: config.lastModel,
     lastProvider: config.lastProvider,
     recentModelsByProvider: config.recentModelsByProvider,
@@ -119,12 +125,14 @@ export function loadPreferences(): UserPreferences {
   };
 }
 
-export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastModel' | 'lastProvider' | 'recentModelsByProvider' | 'favoriteModels' | 'modelAliases' | 'claudeBridgeMode' | 'serverBridgeMode' | 'appPathOverrides' | 'recentLaunchFolders' | 'contextCeilingOverrides' | 'accountPoolBalancing' | 'accountPoolFailover' | 'summarySettings'>>): void {
+export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastModel' | 'lastProvider' | 'recentModelsByProvider' | 'favoriteModels' | 'modelAliases' | 'claudeBridgeMode' | 'serverBridgeMode' | 'appPathOverrides' | 'recentLaunchFolders' | 'contextCeilingOverrides' | 'accountPoolBalancing' | 'accountPoolFailover' | 'accountPoolQuotaThresholdPercent' | 'summarySettings'>>): void {
+  if (prefs.accountPoolQuotaThresholdPercent !== undefined && !validQuotaThreshold(prefs.accountPoolQuotaThresholdPercent)) throw new RangeError('Invalid account pool quota threshold');
   withConfigWriteLock(() => {
     const config = readConfig();
     if (prefs.summarySettings !== undefined) config.summarySettings = validateSummarySettings(prefs.summarySettings);
     if (prefs.accountPoolBalancing !== undefined) config.accountPoolBalancing = prefs.accountPoolBalancing;
     if (prefs.accountPoolFailover !== undefined) config.accountPoolFailover = prefs.accountPoolFailover;
+    if (prefs.accountPoolQuotaThresholdPercent !== undefined) config.accountPoolQuotaThresholdPercent = prefs.accountPoolQuotaThresholdPercent;
     if (prefs.lastModel !== undefined) config.lastModel = prefs.lastModel;
     if (prefs.lastProvider !== undefined) config.lastProvider = prefs.lastProvider;
     if (prefs.recentModelsByProvider !== undefined) config.recentModelsByProvider = prefs.recentModelsByProvider;

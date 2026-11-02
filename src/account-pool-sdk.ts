@@ -58,6 +58,34 @@ function bindingKey(cache: ProviderRuntimeCache<LanguageModel>, route: ProxyRout
   return key;
 }
 
+export async function getPooledCodexModel(cache: ProviderRuntimeCache<LanguageModel>, route: ProxyRoute, binding: PoolBinding): Promise<LanguageModel> {
+  const key = bindingKey(cache, route, binding);
+  const credential = cache.snapshot(key, binding.apiKey);
+  return cache.getHandle(key, credential, snapshot => createLanguageModel({
+    npm: route.npm!, modelId: route.realModelId, apiKey: snapshot.credential,
+    baseURL: route.baseURL, providerId: route.providerId, authType: route.authType,
+    oauthAccountId: binding.oauthAccountId, providerData: binding.providerData,
+    headers: route.headers, useResponsesLite: route.useResponsesLite, preferWebSockets: false,
+    fetch: async (input, init) => {
+      const response = await fetch(input, init);
+      if (response.ok) {
+        const now = Date.now();
+        for (const observation of codexCapacity(response.headers, binding.account.id, now)) {
+          await recordObservation({ pool: { providerId: 'openai-oauth', modelId: route.realModelId, billingType: 'oauth' },
+            observation, now, generation: binding.generation });
+        }
+      }
+      return observeCodexEvents(response, async payload => {
+        const now = Date.now();
+        for (const observation of codexEventCapacity(payload, binding.account.id, now)) {
+          await recordObservation({ pool: { providerId: 'openai-oauth', modelId: route.realModelId, billingType: 'oauth' },
+            observation, now, generation: binding.generation });
+        }
+      });
+    },
+  }));
+}
+
 async function streamPoolResponse(
   options: Parameters<typeof dispatchSdkPool>[0], model: LanguageModel, params: SdkCallParams,
 ): Promise<void> {
@@ -117,31 +145,7 @@ export async function dispatchSdkPool(options: {
     pool: { providerId: 'openai-oauth', modelId: route.realModelId, billingType: 'oauth' },
     sessionId: options.sessionId,
     dispatch: async binding => {
-      const key = bindingKey(options.cache, route, binding);
-      const credential = options.cache.snapshot(key, binding.apiKey);
-      const model = await options.cache.getHandle(key, credential, snapshot => createLanguageModel({
-        npm: route.npm!, modelId: route.realModelId, apiKey: snapshot.credential,
-        baseURL: route.baseURL, providerId: route.providerId, authType: route.authType,
-        oauthAccountId: binding.oauthAccountId, providerData: binding.providerData,
-        headers: route.headers, useResponsesLite: route.useResponsesLite, preferWebSockets: false,
-        fetch: async (input, init) => {
-          const response = await fetch(input, init);
-          if (response.ok) {
-            const now = Date.now();
-            for (const observation of codexCapacity(response.headers, binding.account.id, now)) {
-              await recordObservation({ pool: { providerId: 'openai-oauth', modelId: route.realModelId, billingType: 'oauth' },
-                observation, now, generation: binding.generation });
-            }
-          }
-          return observeCodexEvents(response, async payload => {
-            const now = Date.now();
-            for (const observation of codexEventCapacity(payload, binding.account.id, now)) {
-              await recordObservation({ pool: { providerId: 'openai-oauth', modelId: route.realModelId, billingType: 'oauth' },
-                observation, now, generation: binding.generation });
-            }
-          });
-        },
-      }));
+      const model = await getPooledCodexModel(options.cache, route, binding);
       const params = { ...options.params, maxRetries: 0 };
       try {
         options.onDispatch?.();

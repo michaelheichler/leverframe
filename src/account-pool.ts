@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { key, poolKey, providerKey, sessionKey, updatePoolState } from './account-pool-state.js';
 import type { PoolState, StoredObservation } from './account-pool-state.js';
+import { thresholdAlternative } from './account-pool-threshold.js';
 
 export type PoolKey = { providerId: string; modelId: string; billingType: 'api' | 'oauth' };
 export type CapacityStatus = 'healthy' | 'rate_limited' | 'exhausted' | 'auth_failure' | 'unknown';
@@ -12,12 +13,12 @@ export type CapacityObservation = {
   observedAt: number;
   status: CapacityStatus;
   resetAt?: number;
-  remaining?: { value: number; unit: string };
+  remaining?: { value: number; unit: string; limit?: number };
 };
 export type PoolAccount = { id: string; enabled: boolean; generation?: string };
 export type Reservation = { id: string; accountId: string; expiresAt: number };
 export type ReserveResult =
-  | { kind: 'reserved'; reservation: Reservation }
+  | { kind: 'reserved'; reservation: Reservation; switchReason?: 'quota threshold' | 'quota failover' }
   | { kind: 'exhausted'; reason: 'no_eligible_account' | 'pinned_account_unavailable' | 'capacity_unavailable';
       accounts: Array<{ accountId: string; status: CapacityStatus; resetAt?: number; reason?: 'billing' }> };
 export interface ReserveAccountOptions {
@@ -25,6 +26,7 @@ export interface ReserveAccountOptions {
   sessionId?: string;
   accounts: readonly PoolAccount[];
   balancing: boolean;
+  quotaThresholdPercent?: number;
   pinnedAccountId?: string;
   now: number;
   excludeAccountIds?: readonly string[];
@@ -154,6 +156,8 @@ function dominates(candidate: Map<string, number>, other: Map<string, number>): 
 export async function reserveAccount(options: ReserveAccountOptions): Promise<ReserveResult> {
   validatePool(options.pool);
   if (!Number.isFinite(options.now) || options.accounts.length > 1024) throw new Error('Invalid account pool request');
+  const threshold = options.quotaThresholdPercent === undefined ? 10 : options.quotaThresholdPercent;
+  if (typeof threshold !== 'number' || !Number.isFinite(threshold) || threshold < 0 || threshold >= 100) throw new Error('Invalid quota threshold');
   for (const account of options.accounts) {
     validateText(account.id);
     if (account.generation !== undefined) validateText(account.generation);
@@ -183,6 +187,9 @@ export async function reserveAccount(options: ReserveAccountOptions): Promise<Re
         accounts: [blockedSummary(options.pinnedAccountId, item?.observations ?? [], now)] };
     }
     let chosen = (!options.balancing && pinned) || eligible.find(item => item.account.id === affinity);
+    const alternative = options.balancing && chosen && affinity === chosen.account.id
+      ? thresholdAlternative(chosen, eligible, threshold, now) : undefined;
+    if (alternative) chosen = alternative;
     if (!chosen && !options.balancing) chosen = eligible[0];
     if (!chosen) {
       const measures = eligible.map(item => capacity(item.observations));
@@ -199,6 +206,11 @@ export async function reserveAccount(options: ReserveAccountOptions): Promise<Re
       chosen = leastBusy[rotation % leastBusy.length];
       state.rotations[poolKey(pool)] = { next: (rotation + 1) % 1_000_000, usedAt: now };
     }
+    const blockedAffinity = statuses.find(item => item.account.id === affinity && item.account.id !== chosen.account.id
+      && !eligible.includes(item));
+    const blocked = blockedAffinity?.observations.filter(observation => isBlocked(observation, now)) ?? [];
+    const quotaFailover = blocked.some(observation => observation.status === 'rate_limited' || observation.status === 'exhausted')
+      && !blocked.some(observation => observation.status === 'auth_failure');
     if (affinityId) state.affinity[affinityId] = { accountId: chosen.account.id, usedAt: now };
     const probeKeys = chosen.observations.filter(observation => isBlocked(observation, now))
       .map(observation => observationKey(pool, observation));
@@ -215,7 +227,8 @@ export async function reserveAccount(options: ReserveAccountOptions): Promise<Re
     const reservation = { id: randomUUID(), accountId: chosen.account.id, expiresAt: now + RESERVATION_TTL_MS };
     state.reservations.push({ ...reservation, pool: poolKey(pool), ...(probeKeys.length ? { probeKeys } : {}),
       ...(Object.keys(recoveryProbes).length ? { recoveryProbes } : {}) });
-    return { kind: 'reserved', reservation };
+    return { kind: 'reserved', reservation, ...(alternative ? { switchReason: 'quota threshold' as const }
+      : quotaFailover ? { switchReason: 'quota failover' as const } : {}) };
   });
 }
 
@@ -266,7 +279,9 @@ export async function recordObservation(options: {
     if ((state.observations[id]?.observedAt ?? -Infinity) >= observation.observedAt) return;
     const remaining = observation.remaining;
     const safeRemaining = remaining && Number.isFinite(remaining.value) && remaining.value >= 0 && remaining.unit && remaining.unit.length <= 256
-      ? { value: remaining.value, unit: remaining.unit } : undefined;
+      ? { value: remaining.value, unit: remaining.unit,
+        ...(typeof remaining.limit === 'number' && Number.isFinite(remaining.limit) && remaining.limit > 0 && remaining.value <= remaining.limit
+          ? { limit: remaining.limit } : {}) } : undefined;
     const scope = observation.scope.kind === 'shared'
       ? { kind: 'shared' as const, bucketId: observation.scope.bucketId, evidence: 'provider' as const }
       : { kind: observation.scope.kind };

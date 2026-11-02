@@ -34,12 +34,18 @@ export function readLatestPoolActivity(providerId: string): { activeAccountId: s
   return latest && { activeAccountId: latest.activeAccountId, switchReason: latest.switchReason };
 }
 
-export async function recordPoolActivity(pool: PoolKey, activeAccountId: string, switched: boolean): Promise<void> {
+export async function recordPoolActivity(pool: PoolKey, activeAccountId: string, switched: boolean, reason?: 'quota threshold' | 'quota failover'): Promise<void> {
   const path = activityPath();
   await withRegistryWriteLock(() => {
-    const entries = readActivities().filter(item => item.pool.providerId !== pool.providerId
+    const previous = readActivities();
+    const prior = previous.find(item => item.pool.providerId === pool.providerId
+      && item.pool.modelId === pool.modelId && item.pool.billingType === pool.billingType);
+    const retained = !switched && prior?.activeAccountId === activeAccountId
+      && (prior.switchReason === 'quota threshold' || prior.switchReason === 'quota failover') ? prior.switchReason : undefined;
+    const entries = previous.filter(item => item.pool.providerId !== pool.providerId
       || item.pool.modelId !== pool.modelId || item.pool.billingType !== pool.billingType);
-    entries.push({ pool, activeAccountId, switchReason: switched ? 'quota failover' : 'account selected', selectedAt: Date.now() });
+    entries.push({ pool, activeAccountId, switchReason: reason ?? (switched ? 'quota failover' : retained ?? 'account selected'),
+      selectedAt: retained && reason === undefined ? prior!.selectedAt : Date.now() });
     entries.sort((a, b) => b.selectedAt - a.selectedAt);
     assertRegistryWriteOwnership(path);
     atomicWriteJsonSync(path, entries.slice(0, 256));

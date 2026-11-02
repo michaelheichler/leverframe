@@ -2,6 +2,8 @@ import { tool, jsonSchema, type ModelMessage, type UserContent } from 'ai';
 import { parseToolArguments } from './proxy-shared.js';
 import type { SdkCallParams } from './sdk-adapter.js';
 import { neutralClientInstructions } from './neutral-client-request.js';
+import { extractClaudeSessionId } from './client-session.js';
+import { claudeSessionPromptCacheKey, openAiPromptCacheKey } from './sdk-request-translation.js';
 
 export interface OpenAiMessage {
   role: 'system' | 'developer' | 'user' | 'assistant' | 'tool';
@@ -27,6 +29,8 @@ export interface OpenAiRequest {
   max_tokens?: number;
   max_completion_tokens?: number;
   stream?: boolean;
+  metadata?: unknown;
+  prompt_cache_key?: string;
 }
 
 function translateImageContent(image: Record<string, unknown>): Exclude<UserContent, string>[number] {
@@ -100,6 +104,8 @@ export function translateOpenAiRequest(
   options?: {
 
     openAiOAuth?: boolean;
+    openAiProvider?: boolean;
+    claudeSessionId?: string;
   },
 ): SdkCallParams {
   body = neutralClientInstructions(body);
@@ -167,14 +173,24 @@ export function translateOpenAiRequest(
   if (options?.openAiOAuth) {
 
     const instructions = system?.trim() || 'You are a coding assistant.';
+    const sessionId = extractClaudeSessionId(body, options.claudeSessionId);
+    const promptCacheKey = sessionId
+      ? claudeSessionPromptCacheKey(sessionId)
+      : openAiPromptCacheKey(system, body.tools?.filter(t => t.type === 'function' && t.function?.name).map(t => ({
+          name: t.function.name,
+          description: t.function.description,
+          input_schema: t.function.parameters ?? {},
+        })));
     return {
       messages,
       tools,
       toolChoice: sdkToolChoice,
       temperature: body.temperature,
       maxRetries: 0,
+      headers: { 'session-id': promptCacheKey },
       providerOptions: {
         openai: {
+          promptCacheKey,
           store: false,
           include: ['reasoning.encrypted_content'],
           instructions,
@@ -190,5 +206,8 @@ export function translateOpenAiRequest(
     toolChoice: sdkToolChoice,
     temperature: body.temperature,
     maxOutputTokens: body.max_completion_tokens ?? body.max_tokens,
+    ...(options?.openAiProvider && typeof body.prompt_cache_key === 'string'
+      ? { providerOptions: { openai: { promptCacheKey: body.prompt_cache_key } } }
+      : {}),
   };
 }

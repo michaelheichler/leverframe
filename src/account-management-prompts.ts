@@ -76,6 +76,7 @@ export async function runAccountPoolSettings(): Promise<void> {
       options: [
         { value: 'balancing', label: `Account balancing: ${prefs.accountPoolBalancing ? 'on' : 'off'}` },
         { value: 'failover', label: `Quota failover: ${prefs.accountPoolFailover ? 'on' : 'off'}` },
+        { value: 'threshold', label: `Remaining quota threshold: ${prefs.accountPoolQuotaThresholdPercent ?? 10}%`, hint: 'Switch to a verified better account at or below this level. 0 disables switching.' },
         { value: 'summary-toggle', label: `Paid summaries: ${prefs.summarySettings?.enabled ? 'on' : 'off'}`, hint: 'Changes block new reservations. Reserved calls may finish.' },
         { value: 'summary-configure', label: 'Configure summary engine and lifetime spending limit' },
         { value: 'back', label: 'Back' },
@@ -84,9 +85,24 @@ export async function runAccountPoolSettings(): Promise<void> {
     if (p.isCancel(choice) || choice === 'back') return;
     if (choice === 'balancing') savePreferences({ accountPoolBalancing: !prefs.accountPoolBalancing });
     if (choice === 'failover') savePreferences({ accountPoolFailover: !prefs.accountPoolFailover });
+    if (choice === 'threshold') await configureQuotaThreshold(prefs.accountPoolQuotaThresholdPercent ?? 10);
     if (choice === 'summary-toggle') savePreferences({ summarySettings: { ...prefs.summarySettings, enabled: !prefs.summarySettings?.enabled } });
     if (choice === 'summary-configure') await configureSummary();
   }
+}
+
+async function configureQuotaThreshold(current: number): Promise<void> {
+  const value = await p.text({
+    message: 'Remaining quota threshold in percent (0 disables switching):',
+    initialValue: String(current),
+    validate: input => {
+      const trimmed = input.trim();
+      const number = Number(trimmed);
+      return !/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(trimmed) || !Number.isFinite(number) || number < 0 || number >= 100
+        ? 'Enter a number from 0 to less than 100.' : undefined;
+    },
+  });
+  if (!p.isCancel(value)) savePreferences({ accountPoolQuotaThresholdPercent: Number(value.trim()) });
 }
 
 export function parseUsdMicros(value: string): number | undefined {
