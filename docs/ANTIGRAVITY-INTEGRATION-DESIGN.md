@@ -1,10 +1,10 @@
 # Antigravity subscription integration direction
 
-Proposed implementation direction, 2026-10-31. The user requested investigation and a plan. Product implementation and live verification have not started.
+Implementation direction, 2026-10-31. The main checkout now contains the adapter and deterministic fixtures. See [verification status](ANTIGRAVITY-VERIFICATION.md) for remaining interactive checks.
 
 ## Intent and confirmed requirements
 
-Leverframe supplies Google subscription models to its patched Claude Code binary. Claude Code retains context management, permissions, tool execution, compaction, and delegation. Leverframe owns browser authentication, model discovery, and direct HTTP inference.
+Leverframe supplies Google subscription models to its patched Claude Code binary. Claude Code retains context management, permissions, tool execution, compaction, and delegation. Leverframe handles browser login and model discovery before sending inference requests directly over HTTP.
 
 - Use existing Antigravity subscription allowance.
 - Require no API keys, separate inference billing, Google app, Google CLI, or runtime download.
@@ -72,7 +72,7 @@ The SSE transform unwraps subscription response envelopes into Google response e
 
 Call the existing instruction normalization before Google serialization, preserving tool descriptions, task rules, user code, and results while replacing harness identity text. Keep the rest of the system prompt. Verify wire requests for both main and delegated agents.
 
-Google signatures must survive a tool turn and proxy restart, so add an optional codec at the existing translation/stream boundary and persist opaque signature references with private, atomic storage under account/session scope. Stop resume if a reference fails validation. The error must explain the missing history state, without substituting dummy signatures or sharing references across accounts.
+Google signatures must survive a tool turn and proxy restart. The implementation persists opaque call references with private, atomic storage under account/session scope at the Antigravity wire boundary. It records unsigned parallel calls too, preserving their absence of a signature without accepting SDK placeholders. Stop resume if a reference fails validation. The error explains missing history state without sharing references across accounts.
 
 ## Billing and failure contract
 

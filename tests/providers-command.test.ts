@@ -78,7 +78,7 @@ describe('parseProvidersArgs', () => {
     expect(help).toContain('providers add');
     expect(help).toContain('providers remove');
     expect(help).toContain('refresh-models');
-    expect(help).toContain('auth openai');
+    expect(help).toContain('providers auth <id>');
     expect(help).not.toContain('import');
     expect(help).not.toContain('OpenCode');
   });
@@ -90,10 +90,11 @@ describe('parseProvidersArgs', () => {
     expect(help).not.toContain('Add OpenAI with an API key');
   });
 
-  it('shows OpenAI and GitHub Copilot as native OAuth providers', () => {
+  it('shows each native OAuth provider in the login help', () => {
     const help = providerAuthHelpText();
     expect(help).toContain('auth openai');
     expect(help).toContain('auth github-copilot');
+    expect(help).toContain('auth antigravity');
     expect(help).not.toContain('xai');
   });
 
@@ -189,6 +190,7 @@ describe('providers add menu', () => {
     const options = selectMock.mock.calls[0]?.[0].options.map((option: { value: string }) => option.value);
     expect(options).toEqual([
       'oauth:github-copilot',
+      'oauth:antigravity',
       'oauth:openai-oauth',
       `api:${ANTHROPIC_API_PROVIDER_ID}`,
       'api:kimi',
@@ -211,6 +213,7 @@ describe('providers add menu', () => {
     const options = selectMock.mock.calls[0]?.[0].options.map((option: { value: string }) => option.value);
     expect(options).toEqual([
       'oauth:github-copilot',
+      'oauth:antigravity',
       'oauth:openai-oauth',
       `api:${ANTHROPIC_API_PROVIDER_ID}`,
       'api:kimi',

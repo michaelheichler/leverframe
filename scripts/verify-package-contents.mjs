@@ -1,4 +1,4 @@
-/** @file Because GitHub runtimes must not ship. */
+/** Because vendor agent runtimes must not ship. */
 
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -82,11 +82,11 @@ try {
     cwd: consumer, encoding: 'utf8',
   }).trim().split(/\r?\n/);
   // Because installed paths use either slash style.
-  if (dependencies.some(path => /[\\/]node_modules[\\/]@github[\\/]copilot(?:[-\\/]|$)/.test(path))) {
-    throw new Error('The installed package contains a GitHub Copilot runtime dependency');
+  if (dependencies.some(path => /[\\/]node_modules[\\/](?:@github[\\/]copilot(?:[-\\/]|$)|google-antigravity(?:[\\/]|$)|@google[\\/]antigravity(?:[-\\/]|$))/.test(path))) {
+    throw new Error('The installed package contains a vendor agent runtime dependency');
   }
 
-  console.log(`Package contains no Copilot runtime dependencies (${actual.length} files, ${records[0].unpackedSize} bytes)`);
+  console.log(`Package contains no vendor agent runtime dependencies (${actual.length} files, ${records[0].unpackedSize} bytes)`);
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

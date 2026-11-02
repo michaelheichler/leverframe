@@ -62,12 +62,12 @@ ${pc.bold('Usage:')}
   leverframe providers list
   leverframe providers remove <id>
   leverframe providers refresh-models [id]
-  leverframe providers auth openai
+  leverframe providers auth <id>
 
 ${pc.bold('Subcommands:')}
   (none)      Provider hub wizard
-  add         Add a supported provider with an API key
-  auth        Sign in with ChatGPT/Codex-plan OAuth (device code)
+  add         Add a provider with browser sign-in, device code, or API key
+  auth        Sign in with OAuth (run providers auth for provider ids)
   list        Show configured providers
   remove      Remove a provider by id
   refresh-models  Update cached model lists`;

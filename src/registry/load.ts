@@ -20,6 +20,7 @@ export async function loadRegistryProviders(
     if (!provider.enabled) continue;
     try {
       const auth = await resolveProviderAuth(provider.id, provider.authRef, diag);
+      if (provider.id === 'antigravity' && (!auth.accountId || provider.modelsCache?.oauthAccountId !== auth.accountId)) continue;
       if (auth.apiKey) keys.set(provider.id, auth.apiKey);
       if (provider.authType === 'oauth') {
         if (auth.accountId) oauthAccountIds.set(provider.id, auth.accountId);
@@ -55,8 +56,9 @@ export async function loadStoredRegistryProviders(
     const stored = await resolveStoredProviderCredential(provider.id, provider.authRef)
       .catch((error: unknown) => {
         if (error instanceof UnstableCredentialSnapshotError) unstable.push(provider.id);
-        return { value: null, refreshDue: false };
+        return { value: null, refreshDue: false, accountId: undefined };
       });
+    if (provider.id === 'antigravity' && (!stored.accountId || provider.modelsCache?.oauthAccountId !== stored.accountId)) continue;
     if (stored.value) keys.set(provider.id, stored.value);
     if (stored.refreshDue) refreshDue.push(provider.id);
   }

@@ -226,6 +226,8 @@ export async function resolveProviderCredential(
 export interface StoredProviderCredential {
   value: string | null;
   refreshDue: boolean;
+  accountId?: string;
+  providerData?: Record<string, unknown>;
 }
 
 export interface ResolvedProviderAuth {
@@ -294,9 +296,19 @@ export async function resolveStoredProviderCredential(
   const parsed = parseAuthRef(authRef);
   if (!parsed || parsed.kind === 'none') return { value: null, refreshDue: false };
   const namespaced = readEnvCredential(leverframeKeyEnvVar(providerId));
-  if (namespaced) return { value: namespaced, refreshDue: false };
+  if (namespaced) return { value: providerId === 'antigravity' ? null : namespaced, refreshDue: false };
   if (parsed.kind === 'env') return { value: readEnvCredential(parsed.varName), refreshDue: false };
   const raw = await peekStoredCredential(parsed.account);
+  if (providerId === 'antigravity') {
+    const credential = parseStoredOAuthCredential(raw);
+    if (namespaced || parsed.account !== 'oauth:provider:antigravity' || !credential?.accountId) {
+      return { value: null, refreshDue: false };
+    }
+    return {
+      value: credential.access, refreshDue: oauthCredentialShouldRefresh(credential, providerId),
+      accountId: credential.accountId, providerData: credential.providerData,
+    };
+  }
   return { value: decodeProviderSecret(raw), refreshDue: storedOAuthRefreshDue(parsed.account, providerId, raw) };
 }
 

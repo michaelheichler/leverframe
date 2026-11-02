@@ -163,4 +163,15 @@ Although the October 30 graph matches HEAD `75bbbd6`, it omits current edits and
 
 ## Plan self-review
 
-The tasks cover every confirmed requirement. Shared type names match across tasks. Review-focus failures each have an owning test task. Proposed scope and timeout values live in the design, while external claims and commit links live in the research note. Task 7 distinguishes local correctness from live backend evidence. No production implementation, dependency installation, live account call, or model execution formed part of writing this plan.
+The plan assigns every requirement and review-focus failure to a task, with shared type names matching across tasks. Proposed scope and timeout values live in the design, while the research note holds external claims and source links. Task 7 separates local correctness from live backend evidence. Planning involved no production edits, dependency installation, live account call, or model execution.
+# Execution status
+
+The main checkout now contains the implementation and deterministic fixtures from
+`feat/antigravity-subscription`. The checklist preserves the
+original planning sequence above. [Verification status](../../ANTIGRAVITY-VERIFICATION.md)
+records remaining interactive checks and tooling limits.
+
+The implementation keeps signature persistence at the Antigravity wire
+boundary, including unsigned parallel calls. It avoids adding a codec to
+shared SDK call parameters. The test-write gate requires a dedicated test
+writer. Commits remain pending because the existing hook invokes a model.

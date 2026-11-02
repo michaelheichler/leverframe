@@ -99,9 +99,10 @@ function parseProvider(raw: unknown): RegistryProvider | null {
   }
   if (typeof p.refreshedAt === 'string') provider.refreshedAt = p.refreshedAt;
   if (p.modelsCache && typeof p.modelsCache === 'object' && !Array.isArray(p.modelsCache)) {
-    const cache = p.modelsCache as { fetchedAt?: string; models?: unknown[] };
+    const cache = p.modelsCache as { fetchedAt?: string; models?: unknown[]; oauthAccountId?: unknown };
     if (typeof cache.fetchedAt === 'string' && Array.isArray(cache.models)) {
       provider.modelsCache = {
+        ...(typeof cache.oauthAccountId === 'string' && cache.oauthAccountId ? { oauthAccountId: cache.oauthAccountId } : {}),
         fetchedAt: cache.fetchedAt,
         models: cache.models.filter(m => m && typeof m === 'object' && !Array.isArray(m)) as NonNullable<RegistryProvider['modelsCache']>['models'],
       };
@@ -156,6 +157,7 @@ function strictOptionalFields(raw: unknown): boolean {
     const cache = provider.modelsCache;
     if (!cache || typeof cache !== 'object' || Array.isArray(cache)) return false;
     const fields = cache as Record<string, unknown>;
+    if (hasOwn(fields, 'oauthAccountId') && (typeof fields.oauthAccountId !== 'string' || !fields.oauthAccountId)) return false;
     if (typeof fields.fetchedAt !== 'string' || !Array.isArray(fields.models)) return false;
     if (fields.models.some(model => !model || typeof model !== 'object' || Array.isArray(model))) return false;
   }

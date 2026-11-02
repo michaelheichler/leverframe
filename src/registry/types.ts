@@ -23,6 +23,7 @@ export interface ModelDiscoverySkipDiagnostic {
 }
 
 export interface CachedModel {
+  subscriptionQuota?: { remainingFraction?: number; resetTime?: string };
   id: string;
   name: string;
   upstreamModelId: string;
@@ -101,6 +102,7 @@ export interface RegistryProvider {
     headers?: Record<string, string>;
   };
   modelsCache?: {
+    oauthAccountId?: string;
     fetchedAt: string;
     models: CachedModel[];
   };

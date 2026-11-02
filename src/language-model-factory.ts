@@ -1,6 +1,7 @@
 /** Because Copilot must bypass vendor agent runtimes. */
 import type { LanguageModel } from 'ai';
 import { createCopilotHttpLanguageModel } from './copilot/provider.js';
+import { createAntigravityLanguageModel } from './antigravity/provider.js';
 import { createBuiltinAnthropicModel, createBuiltinOpenAiModel } from './language-model-builtins.js';
 import type { ResponsesWebSocketDiagnosticEvent } from './oauth/responses-websocket.js';
 import { revalidateCustomEndpointUrl } from './registry/url-security.js';
@@ -101,6 +102,10 @@ export class EndpointUrlValidationError extends Error {
 /** Because Copilot OAuth must not use another backend. */
 export async function createLanguageModel(spec: ProviderModelSpec): Promise<LanguageModel> {
   const { npm, modelId, apiKey, baseURL } = spec;
+  if (spec.providerId === 'antigravity') {
+    if (spec.authType !== 'oauth' || !spec.oauthAccountId) throw new TypeError('Antigravity requires subscription OAuth.');
+    return createAntigravityLanguageModel({ modelId, expectedAccountId: spec.oauthAccountId, fetchImpl: spec.fetch });
+  }
   if (baseURL) {
     const isHttp = baseURL.trim().toLowerCase().startsWith('http://');
     const revalidation = await revalidateCustomEndpointUrl(baseURL, { allowInsecureLocal: isHttp });

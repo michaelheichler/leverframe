@@ -29,6 +29,7 @@ import {
   type CopilotModelSkipDiagnostic,
 } from '../copilot/models.js';
 import { COPILOT_API_BASE_URL, fetchCopilotModels } from '../copilot/backend.js';
+import { refreshAntigravityProviderModels } from '../antigravity/refresh-models.js';
 
 export interface RefreshProviderResult {
   id: string;
@@ -470,171 +471,83 @@ function copilotDiscoveryFailureMessage(
   return `GitHub Copilot model discovery failed${detail}.${cache} Try refreshing again later.`;
 }
 
-async function refreshProviderModelsInner(
-  providerId: string,
-  apiKey: string | null,
-  registry = loadRegistry(),
-): Promise<RefreshProviderResult> {
+interface DiscoveredProviderModels {
+  models: CachedModel[];
+  baseUrl?: string;
+  modelSource: RefreshProviderResult['modelSource'];
+  reason?: string;
+  skippedModels?: CopilotModelSkipDiagnostic[];
+}
+
+async function discoverOAuthProviderModels(provider: RegistryProvider, apiKey: string | null): Promise<DiscoveredProviderModels | RefreshProviderResult> {
+  const identity = { id: provider.id, name: provider.name };
+  if (!apiKey) return { ...identity, ok: false, reason: 'OAuth token not available. Sign in again with leverframe providers auth.', failureKind: 'authentication' };
+  const result = await refreshOAuthProvider(provider, apiKey);
+  const skippedModels = result.skippedModels === undefined ? undefined : safeCopilotSkippedModels(result.skippedModels, apiKey);
+  const detail = result.failureReason ? ` (${result.failureReason})` : '';
+  if (result.source === 'cache') {
+    const reason = result.failureKind === 'schema'
+      ? `Copilot returned unexpected model data${detail}. Kept your existing cached model list. Update Leverframe before retrying.`
+      : `Live model discovery failed${detail}. Kept your existing cached model list. Try refreshing again later.`;
+    return { ...skipWithCachedModels(provider, reason), failureKind: result.failureKind, failureReason: result.failureReason, modelSource: 'cache', skippedModels };
+  }
+  if (result.source === 'seed' && cachedModelCount(provider) > 0) {
+    return skipWithCachedModels(provider, `Live model discovery failed${detail}. Kept your existing cached model list instead of `
+      + "overwriting it with leverframe's built-in fallback list. Try refreshing again later.");
+  }
+  if (!result.models.length) return { ...identity, ok: false, reason: 'No models available for this OAuth provider. Sign in again.' };
+  const reason = result.source === 'seed'
+    ? `Live model discovery failed${detail}. Showing leverframe's built-in fallback model list, which may not include the newest models yet. Try refreshing again later.`
+    : result.source === 'live' && skippedModels ? copilotPartialDiscoveryMessage(skippedModels) : undefined;
+  return { models: result.models, modelSource: result.source, reason, skippedModels };
+}
+
+async function discoverApiProviderModels(provider: RegistryProvider, apiKey: string | null): Promise<DiscoveredProviderModels | RefreshProviderResult> {
+  const identity = { id: provider.id, name: provider.name };
+  const keyOptional = resolveProviderTemplate(provider)?.apiKeyOptional === true;
+  const key = keyOptional && isLikelyPlaceholderKey(apiKey) ? '' : apiKey;
+  if (!keyOptional && isLikelyPlaceholderKey(key)) {
+    return cachedModelCount(provider) > 0
+      ? skipWithCachedModels(provider, 'A placeholder API key is configured. Kept cached model list. Add this provider again via leverframe providers add with a real key to refresh live.')
+      : { ...identity, ok: false, reason: 'No usable API key. Add the provider via leverframe providers add with a real key.' };
+  }
+  if (!keyOptional && !key) return { ...identity, ok: false, reason: 'API key not available. Cannot refresh models.' };
+  const fetched = await refreshApiListProvider(provider, key ?? '');
+  if (fetched.error) {
+    if (/rejected|401|403/.test(fetched.error) && cachedModelCount(provider) > 0) {
+      return skipWithCachedModels(provider,
+        `${fetched.error} Kept ${cachedModelCount(provider)} cached model${cachedModelCount(provider) === 1 ? '' : 's'} from import. `
+        + 'Update your API key via leverframe providers add if you need a live refresh.');
+    }
+    return { ...identity, ok: false, reason: fetched.error };
+  }
+  const modelSource = fetched.usedStaticFallback ? 'fallback' : resolveModelSource(provider) === 'static-seed' ? 'seed' : 'live';
+  return { models: fetched.models, baseUrl: fetched.baseUrl, modelSource };
+}
+
+async function refreshProviderModelsInner(providerId: string, apiKey: string | null, registry = loadRegistry()): Promise<RefreshProviderResult> {
   const provider = registry.providers.find(p => p.id === providerId);
-  if (!provider) {
-    return { id: providerId, name: providerId, ok: false, reason: 'Provider not found.' };
+  if (!provider) return { id: providerId, name: providerId, ok: false, reason: 'Provider not found.' };
+  if (resolveModelSource(provider) === 'manual-only') {
+    return { id: provider.id, name: provider.name, ok: true, skipped: true, reason: 'Manual-only provider. The model list is not refreshed automatically.' };
   }
-
-  const source = resolveModelSource(provider);
-  if (source === 'manual-only') {
-    return {
-      id: provider.id,
-      name: provider.name,
-      ok: true,
-      skipped: true,
-      reason: 'Manual-only provider. The model list is not refreshed automatically.',
-    };
-  }
-
   try {
     const previousModelCount = provider.modelsCache?.models.length ?? 0;
-    let models: CachedModel[] = [];
-    let baseUrl: string | undefined;
-    let oauthFallbackReason: string | undefined;
-    let modelSource: RefreshProviderResult['modelSource'];
-    let skippedModels: CopilotModelSkipDiagnostic[] | undefined;
-
-    const oauthTemplateId = provider.templateId ?? provider.id;
-    const supportsOAuthDiscovery = provider.authType === 'oauth'
-      && ['openai', 'openai-oauth', 'github-copilot'].includes(oauthTemplateId);
-    if (supportsOAuthDiscovery) {
-      if (!apiKey) {
-        const reason = 'OAuth token not available. Sign in again with leverframe providers auth.';
-        return {
-          id: provider.id,
-          name: provider.name,
-          ok: false,
-          reason,
-          failureKind: 'authentication',
-        };
-      }
-      const oauthResult = await refreshOAuthProvider(provider, apiKey);
-      skippedModels = oauthResult.skippedModels === undefined
-        ? undefined
-        : safeCopilotSkippedModels(oauthResult.skippedModels, apiKey);
-      const failureDetail = oauthResult.failureReason ? ` (${oauthResult.failureReason})` : '';
-      if (oauthResult.source === 'cache') {
-        const reason = oauthResult.failureKind === 'schema'
-          ? `Copilot returned unexpected model data${failureDetail}. Kept your existing cached model list. Update Leverframe before retrying.`
-          : `Live model discovery failed${failureDetail}. Kept your existing cached model list. Try refreshing again later.`;
-        return {
-          ...skipWithCachedModels(provider, reason),
-          failureKind: oauthResult.failureKind,
-          failureReason: oauthResult.failureReason,
-          modelSource: 'cache',
-          skippedModels,
-        };
-      }
-      if (oauthResult.source === 'seed' && cachedModelCount(provider) > 0) {
-        return skipWithCachedModels(
-          provider,
-          `Live model discovery failed${failureDetail}. Kept your existing cached model list instead of `
-          + "overwriting it with leverframe's built-in fallback list. Try refreshing again later.",
-        );
-      }
-      if (oauthResult.source === 'seed') {
-        oauthFallbackReason = `Live model discovery failed${failureDetail}. Showing leverframe's built-in fallback `
-          + 'model list, which may not include the newest models yet. Try refreshing again later.';
-      }
-      if (oauthResult.source === 'live' && skippedModels) {
-        oauthFallbackReason = copilotPartialDiscoveryMessage(skippedModels);
-      }
-      models = oauthResult.models;
-      modelSource = oauthResult.source;
-      if (models.length === 0) {
-        return {
-          id: provider.id,
-          name: provider.name,
-          ok: false,
-          reason: 'No models available for this OAuth provider. Sign in again.',
-        };
-      }
-    } else {
-      const template = resolveProviderTemplate(provider);
-      const keyOptional = template?.apiKeyOptional === true;
-      const effectiveKey = keyOptional && isLikelyPlaceholderKey(apiKey) ? '' : apiKey;
-      if (!keyOptional && isLikelyPlaceholderKey(effectiveKey)) {
-        if (cachedModelCount(provider) > 0) {
-          return skipWithCachedModels(
-            provider,
-            'A placeholder API key is configured. Kept cached model list. '
-            + 'Add this provider again via leverframe providers add with a real key to refresh live.',
-          );
-        }
-        return {
-          id: provider.id,
-          name: provider.name,
-          ok: false,
-          reason: 'No usable API key. Add the provider via leverframe providers add with a real key.',
-        };
-      }
-      if (!keyOptional && !effectiveKey) {
-        return {
-          id: provider.id,
-          name: provider.name,
-          ok: false,
-          reason: 'API key not available. Cannot refresh models.',
-        };
-      }
-      const fetched = await refreshApiListProvider(provider, effectiveKey ?? '');
-      if (fetched.error) {
-        if (
-          (fetched.error.includes('rejected') || fetched.error.includes('401') || fetched.error.includes('403'))
-          && cachedModelCount(provider) > 0
-        ) {
-          return skipWithCachedModels(
-            provider,
-            `${fetched.error} Kept ${cachedModelCount(provider)} cached model${cachedModelCount(provider) === 1 ? '' : 's'} from import. `
-            + 'Update your API key via leverframe providers add if you need a live refresh.',
-          );
-        }
-        return { id: provider.id, name: provider.name, ok: false, reason: fetched.error };
-      }
-      models = fetched.models;
-      baseUrl = fetched.baseUrl;
-      modelSource = fetched.usedStaticFallback
-        ? 'fallback'
-        : resolveModelSource(provider) === 'static-seed'
-          ? 'seed'
-          : 'live';
-    }
-
-    const pricingCache = loadPricingCache();
+    const oauth = provider.authType === 'oauth' && ['openai', 'openai-oauth', 'github-copilot'].includes(provider.templateId ?? provider.id);
+    const result = await (oauth ? discoverOAuthProviderModels(provider, apiKey) : discoverApiProviderModels(provider, apiKey));
+    if (!('models' in result)) return result;
     const platform = pricingPlatformForProvider(provider.templateId, provider.id);
-    const enriched = enrichModelsWithPricing(models, buildPricingIndex(pricingCache), platform);
-
-    updateRegistry(current => {
-      updateProviderCache(current, providerId, enriched, baseUrl, skippedModels);
-    });
+    const models = enrichModelsWithPricing(result.models, buildPricingIndex(loadPricingCache()), platform);
+    updateRegistry(current => { updateProviderCache(current, providerId, models, result.baseUrl, result.skippedModels); });
     enrichPricingAsync();
-
     return {
-      id: provider.id,
-      name: provider.name,
-      ok: true,
-      modelSource,
-      modelCount: enriched.length,
-      previousModelCount: provider.refreshedAt ? previousModelCount : undefined,
-      reason: oauthFallbackReason,
-      skippedModels,
+      id: provider.id, name: provider.name, ok: true, modelSource: result.modelSource, modelCount: models.length,
+      previousModelCount: provider.refreshedAt ? previousModelCount : undefined, reason: result.reason, skippedModels: result.skippedModels,
     };
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    return {
-      id: provider.id,
-      name: provider.name,
-      ok: false,
-      reason,
-      failureReason: reason,
-      failureKind: (provider.templateId ?? provider.id) === 'github-copilot'
-        ? classifyCopilotModelFailure(err)
-        : undefined,
-    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return { id: provider.id, name: provider.name, ok: false, reason, failureReason: reason,
+      failureKind: (provider.templateId ?? provider.id) === 'github-copilot' ? classifyCopilotModelFailure(error) : undefined };
   }
 }
 
@@ -644,7 +557,9 @@ export async function refreshProviderModels(
   registry = loadRegistry(),
 ): Promise<RefreshProviderResult> {
   try {
-    let result = await refreshProviderModelsInner(providerId, apiKey, registry);
+    let result = providerId === 'antigravity'
+      ? await refreshAntigravityProviderModels(registry.providers.find(entry => entry.id === providerId))
+      : await refreshProviderModelsInner(providerId, apiKey, registry);
     const provider = registry.providers.find(entry => entry.id === providerId);
     if (
       provider?.templateId === 'github-copilot'

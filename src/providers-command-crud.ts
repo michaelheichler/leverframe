@@ -181,7 +181,7 @@ function buildProvidersAddOptions(configuredIds: Iterable<string>): AddMenuItem[
       label: tpl.id === 'openai-oauth'
         ? 'Sign in with ChatGPT (Plus/Pro plan)'
         : `Sign in with ${tpl.name} (OAuth)`,
-      hint: 'OAuth device code, no API key needed',
+      hint: tpl.id === 'antigravity' ? 'Browser sign-in, no API key needed' : 'OAuth device code, no API key needed',
     });
   }
 

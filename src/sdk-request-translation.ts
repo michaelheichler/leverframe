@@ -22,6 +22,7 @@ import { neutralClientInstructions } from './neutral-client-request.js';
 import { decodeOpenAiReasoningSignature } from './reasoning-signature.js';
 import { extractClaudeSessionId } from './client-session.js';
 import { anthropicCacheOptions, anthropicCacheSettings, anthropicSystemMessages, nativeMarkedToolContent, nativeUserContent, validAnthropicCacheControls, type CacheControl } from './anthropic-sdk-cache.js';
+import { ANTIGRAVITY_SESSION_HEADER } from './antigravity/types.js';
 
 export { ToolResultImageError, extractClaudeSessionId };
 
@@ -530,6 +531,14 @@ function openAiCacheSettings(npm: string, body: AnthropicRequest, options: Trans
   return { explicit, key };
 }
 
+function sessionHeaders(options: TranslateRequestOptions | undefined, promptCacheKey?: string, sessionId?: string): Record<string, string> | undefined {
+  const headers: Record<string, string> = {};
+  if (options?.openAiOAuth && promptCacheKey) headers['session-id'] = promptCacheKey;
+  if (options?.reasoningMetadata?.providerId === 'opencode-go' && sessionId) headers['x-opencode-session'] = sessionId;
+  if (options?.reasoningMetadata?.providerId === 'antigravity' && sessionId) headers[ANTIGRAVITY_SESSION_HEADER] = sessionId;
+  return Object.keys(headers).length ? headers : undefined;
+}
+
 export function translateRequest(
   body: AnthropicRequest,
   npm: string,
@@ -595,16 +604,10 @@ export function translateRequest(
     temperature: options?.reasoningMetadata?.supportsTemperature === false
       ? undefined
       : body.temperature,
-    maxRetries: options?.openAiOAuth
+    maxRetries: options?.reasoningMetadata?.providerId === 'antigravity' ? 0 : options?.openAiOAuth
       ? OPENAI_OAUTH_SDK_MAX_RETRIES
       : SDK_MAX_RETRIES_NON_OAUTH,
-    headers: (options?.openAiOAuth && promptCacheKey)
-      || (options?.reasoningMetadata?.providerId === 'opencode-go' && claudeSessionId)
-      ? {
-          ...(options?.openAiOAuth && promptCacheKey ? { 'session-id': promptCacheKey } : {}),
-          ...(options?.reasoningMetadata?.providerId === 'opencode-go' && claudeSessionId
-            ? { 'x-opencode-session': claudeSessionId } : {}),
-        } : undefined,
+    headers: sessionHeaders(options, promptCacheKey, claudeSessionId),
     providerOptions,
     inputTokensIncludeCache: CACHE_INCLUSIVE_INPUT_NPMS.has(npm),
   };

@@ -33,7 +33,7 @@ The Haiku smoke test does not validate the ChatGPT OAuth translation route. The 
 
 ## Live provider Claude Code smoke
 
-`tests/live-provider-claude-smoke.test.ts` sends a one-shot Claude Code prompt through `leverframe claude --proxy` for each registered provider that already has credentials. It picks the cheapest catalog model (preferred ids when present: Luna, hy3, Copilot flash, Haiku). Anthropic uses Claude Code's native model id. Other providers use `--model leverframe:<provider-id>:<model-id>`.
+`tests/live-provider-claude-smoke.test.ts` sends a one-shot Claude Code prompt through `leverframe claude --proxy` for each registered provider that already has credentials. It picks the cheapest catalog model (preferred ids include Luna, hy3, Copilot flash, Haiku). Anthropic uses Claude Code's native model id. Other providers use `--model leverframe:<provider-id>:<model-id>`.
 
 The command is always:
 
@@ -52,14 +52,29 @@ leverframe claude --proxy -- \
 - Skip when Claude CLI is missing, or no enabled provider has credentials (CI usually skips).
 - Auto-run after a local install when Claude CLI and at least one configured provider exist.
 - Force a hard fail on missing prerequisites with `LEVERFRAME_LIVE_PROVIDER_SMOKE=1`.
-- Pass: the model replies `OK`, or the output is a quota/limit/429 (routing worked).
-- Fail: Leverframe proxy/routing/OAuth errors, crashes, or timeouts. Failures include provider id, model id, exit code, kind, and a redacted snippet. Secrets are never written to the test file or logs.
+- Pass. The model replies `OK`, or the output is a quota/limit/429 (routing worked).
+- Fail. Leverframe proxy/routing/OAuth errors, crashes, or timeouts. Failures include provider id, model id, exit code, kind, and a redacted snippet. Logs and test files omit secrets.
 
 A temp `LEVERFRAME_HOME` holds only the smoke favorites so proxy mode can route cheapest models without mutating `~/.leverframe` or deleting `smoke-*` aliases.
 
-Wrapper: `scripts/smoke-subscription-models.sh` runs this Vitest file. The test file is the source of truth.
+The wrapper `scripts/smoke-subscription-models.sh` runs this Vitest file. The test file is the source of truth.
 
 ```bash
 corepack pnpm exec vitest run tests/live-provider-claude-smoke.test.ts
 ```
+
+# Antigravity deterministic verification
+
+```bash
+pnpm exec vitest run tests/antigravity-*.test.ts
+pnpm typecheck
+pnpm lint
+pnpm build
+node scripts/verify-package-contents.mjs
+```
+
+These fixtures mock external Google transport and use local HTTP listeners.
+Never run headless Claude for verification, including live smoke scripts
+mentioned elsewhere here. Run real conversations interactively.
+See [Antigravity verification](ANTIGRAVITY-VERIFICATION.md).
 
