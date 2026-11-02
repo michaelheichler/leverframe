@@ -1,0 +1,114 @@
+tests/universal-provider-accounts.test.ts
+  s_f701aa91e6d2ff::t_7740d1aa7909bf 5,80
+scripts/verify-package-contents.mjs
+  s_f701aa91e6d2ff::t_7b64ce10c669c8 31
+tests/fixtures/context-evidence.ts
+  s_f701aa91e6d2ff::t_7740d1aa7909bf 1,7-9,13
+docs/claude-code.md
+  s_f701aa91e6d2ff::t_7b64ce10c669c8 1-71
+src/server/openai-pool.ts
+  s_f701aa91e6d2ff::t_db42d34384b455 3,80-81,103-104
+CHANGELOG.md
+  s_f701aa91e6d2ff::t_20f0ed0b9d448d 9-19
+src/account-pool-dispatch.ts
+  s_f701aa91e6d2ff::t_db42d34384b455 36,44-45,48-49,51,53,105-108,110-114,194
+  s_f701aa91e6d2ff::t_60937ebaf9f923 39,42-43,46-47,58-59
+tests/proxy-auto-replay.test.ts
+  s_f701aa91e6d2ff::t_1fc33dc5168813 3,78-81,83-101
+tests/account-pool-oauth-proxy.test.ts
+  s_f701aa91e6d2ff::t_e25b3d315e9745 333,335-341,349,351-355
+tests/account-pool-settings.test.ts
+  s_f701aa91e6d2ff::t_91b7569b86adae 1-117
+tests/account-pool-sdk-provider-observation.test.ts
+  s_f701aa91e6d2ff::t_8e487461f88ed0 9
+  s_f701aa91e6d2ff::t_1e4e7914ab5acb 110
+  s_f701aa91e6d2ff::t_08fbf2f92eea50 1-8,10-21,26-109,111-119
+  s_f701aa91e6d2ff::t_16477b8f7c45f6 22-25
+src/registry/openai-oauth-models.ts
+  s_f701aa91e6d2ff::t_7735b4c400e5a1 1-152
+src/account-pool-native.ts
+  s_f701aa91e6d2ff::t_db42d34384b455 2,74-76
+src/account-pool.ts
+  s_f701aa91e6d2ff::t_db42d34384b455 75,125,219-220,242
+src/upstream-error.ts
+  s_f701aa91e6d2ff::t_2faa5cbb8b9f82 4,72-93,97
+tests/account-pool-anthropic-billing.test.ts
+  s_f701aa91e6d2ff::t_2048df742b69e8 13,15,22-30
+  s_f701aa91e6d2ff::t_305a0229a8f3c7 31-32
+docs/superpowers/plans/2026-11-02-universal-provider-accounts.md
+  s_f701aa91e6d2ff::t_905f63c0fed090 18,43,51-55
+  s_f701aa91e6d2ff::t_66e54917491496 57
+  s_f701aa91e6d2ff::t_be84bfe6b72ec9 49
+  s_f701aa91e6d2ff::t_7792b8a31e4f9e 56
+tests/account-pool-recovery.test.ts
+  s_f701aa91e6d2ff::t_229c6ebcd4d0c0 154,156-159,166,168-169,171-181,183
+src/registry/refresh-models.ts
+  s_f701aa91e6d2ff::t_7735b4c400e5a1 21
+src/patch-model-options.ts
+  s_f701aa91e6d2ff::t_2e495428d49f6d 1-57
+tests/account-pool-server.test.ts
+  s_f701aa91e6d2ff::t_e25b3d315e9745 261,263-269,285,290-294
+src/patch-transforms.ts
+  s_f701aa91e6d2ff::t_2e495428d49f6d 8-10,322-323,326
+tests/account-pool-oauth-codex-quota.test.ts
+  s_f701aa91e6d2ff::t_e93b73d0af0d96 1-186
+tests/upstream-error.test.ts
+  s_f701aa91e6d2ff::t_acef210e866b86 18,89-101
+  s_58284d5d2c28f4::t_613a30c666a0f6 102-103
+tests/account-pool-credit-failover.test.ts
+  s_f701aa91e6d2ff::t_121a4c9d4c7839 132-159
+  s_f701aa91e6d2ff::t_76a5d7fe42272b 73-80,125-131
+  s_f701aa91e6d2ff::t_1dec74ff77fdf2 81-124
+  s_f701aa91e6d2ff::t_17113394b590eb 5
+  s_f701aa91e6d2ff::t_84057f25476424 9,160,176,233-298
+  s_f701aa91e6d2ff::t_9e3f3b42daa211 1-4,6-8,10-72,161-169,172,174-175,177-232,299-321
+  s_f701aa91e6d2ff::t_2879ffc0abcb3c 170-171,173
+package.json
+  s_f701aa91e6d2ff::t_7b64ce10c669c8 30
+src/account-pool-sdk.ts
+  s_f701aa91e6d2ff::t_60937ebaf9f923 181
+  s_f701aa91e6d2ff::t_db42d34384b455 3,198
+tests/account-pool-proxy-capacity.test.ts
+  s_f701aa91e6d2ff::t_4c7b751abac4e7 1-320
+docs/account-pools.md
+  s_f701aa91e6d2ff::t_f8638d47d9640d 32
+  s_f701aa91e6d2ff::t_4c9b68125f479f 30,36
+  s_f701aa91e6d2ff::t_cadf62f31995b0 31
+README.md
+  s_f701aa91e6d2ff::t_7b64ce10c669c8 1-4,7-10,12,14,16-20,22,24,26,29-31,33,37,39,42,47,49,52,57,59,61-72,74,76,78,80,84,86,88,90,98,100,102,105-111,114,116,118,120
+  s_f701aa91e6d2ff::t_f8638d47d9640d 82
+dist/chunk-7JWNFWSF.js
+  s_f701aa91e6d2ff::t_3f81702ece3d76 3
+dist/claude-wrapper.js
+  s_f701aa91e6d2ff::t_07bcdd7716521f 2
+dist/cli.js
+  s_f701aa91e6d2ff::t_f78b87a09d3718 2,4-5,7-11,13-14,16,19,21-22,24-28,31-35,37,39-40,42-43,47,49-50,52,55-56,58,60,63,66-67,69-73,76,79-81,83,87,89,91-93,95-96,102,106,108,110-119,123,128,130,138,144,147,152,158,161,166,215,270,346,381,416,418,420,423,425,427-428
+src/sdk-request-messages.ts
+  s_f701aa91e6d2ff::t_444e06a7e0b50c 1-271
+src/sdk-request-translation.ts
+  s_f701aa91e6d2ff::t_f8768603ecae86 1,4,18,20,22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a3f9040cfcde4a3d08f0e86d464409937874a97c",
+  "prompts": {},
+  "sessions": {
+    "s_58284d5d2c28f4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "900a5940-9089-4dbd-9982-0e8275a29167",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    },
+    "s_f701aa91e6d2ff": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19b73-7b49-77d3-88d2-a1aa50d64d05",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
