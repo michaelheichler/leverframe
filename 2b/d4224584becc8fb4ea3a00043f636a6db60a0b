@@ -1,0 +1,179 @@
+src/oauth/antigravity.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 1-70
+docs/TESTING.md
+  s_bc4d340f7d0274::t_ee28bba453f818 36,55-56,60,66-79
+  s_bc4d340f7d0274::t_4194ed2f7fe58e 80
+docs/ANTIGRAVITY-INTEGRATION-DESIGN.md
+  s_bc4d340f7d0274::t_ee28bba453f818 7,75
+  s_bc4d340f7d0274::t_38d0de9ddd4cba 3
+tests/antigravity-tool-signature-transport.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-82
+src/registry/refresh-models.ts
+  s_f701aa91e6d2ff::t_87f8ab6070e2f5 505
+  s_bc4d340f7d0274::t_ee28bba453f818 32,474-496,498-503,506-512,514-526,528-533,536-538,540-541,544-545,547-550,560-561
+  s_f701aa91e6d2ff::t_d9d46a6b1f7f9c 562
+tests/antigravity-response.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-93
+src/provider-templates.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 37-45
+  s_bc4d340f7d0274::t_6bad0eede6efd6 36
+tests/antigravity-factory.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-46
+tests/antigravity-models.test.ts
+  s_f701aa91e6d2ff::t_f34179b6b7915c 63
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-38,41-49,51-58,64-81
+  s_f701aa91e6d2ff::t_7c256789ff4bcb 39-40,50,59-62
+tests/antigravity-callback.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-29
+tests/antigravity-registry-persistence.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-50
+README.md
+  s_bc4d340f7d0274::t_ee28bba453f818 5-14,77-94,234
+tests/antigravity-billing-policy.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-148
+tests/antigravity-server.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-104
+src/antigravity/tool-parts.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 1-50
+src/antigravity/http.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 1-56
+dist/claude-wrapper.js
+  s_f701aa91e6d2ff::t_0f084a067d3bf0 2
+tests/antigravity-envelope.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-61
+src/antigravity/response.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 1-87
+tests/antigravity-oauth.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-203
+tests/antigravity-discovery-billing.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-92
+src/antigravity/provider.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 1-17,19-37
+  s_f701aa91e6d2ff::t_6ffacc1584af2f 18
+src/antigravity/signatures.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 1-68
+src/oauth/antigravity-callback.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 1-60
+src/providers-command-args.ts
+  s_bc4d340f7d0274::t_1e87a3654bf1d1 65,69-70
+tests/antigravity-catalog-billing.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-45
+docs/ANTIGRAVITY-VERIFICATION.md
+  s_bc4d340f7d0274::t_38d0de9ddd4cba 3-4,59,63-66
+  s_bc4d340f7d0274::t_46702d7304eced 67-71
+  s_bc4d340f7d0274::t_ee28bba453f818 1-2,5-44,48-58,60-62
+  s_bc4d340f7d0274::t_8b16795264d2e5 45-47
+src/registry/types.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 26,105
+src/server/route-helpers.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 248
+src/oauth/antigravity-registration.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 1-9
+src/env.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 229-230,299,302-309
+  s_f701aa91e6d2ff::t_e261df72499894 310-311
+tests/antigravity-http.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-149
+src/language-model-factory.ts
+  s_f701aa91e6d2ff::t_6ffacc1584af2f 107-108
+  s_bc4d340f7d0274::t_ee28bba453f818 4,105-106
+tests/antigravity-signatures.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-122
+src/antigravity/discovery.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 1-77
+src/antigravity/models.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 1-20,22-43
+  s_f701aa91e6d2ff::t_ad899149de5244 21
+docs/superpowers/plans/2026-10-31-antigravity-subscription.md
+  s_bc4d340f7d0274::t_ee28bba453f818 166-168,171-177
+  s_bc4d340f7d0274::t_38d0de9ddd4cba 169-170
+THIRD_PARTY_NOTICES.md
+  s_bc4d340f7d0274::t_ee28bba453f818 3-7,9-10
+src/antigravity/billing-policy.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 1-47
+tests/antigravity-parallel-signatures.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-97
+tests/antigravity-patch-picker.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-43
+tests/antigravity-system-messages.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-101
+src/oauth/types.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 80
+src/antigravity/envelope.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 1-46
+src/registry/provider-auth.ts
+  s_bc4d340f7d0274::t_1e87a3654bf1d1 272-275
+  s_bc4d340f7d0274::t_ee28bba453f818 81-92,172-175
+  s_f701aa91e6d2ff::t_2af39951b34b9d 15,52,68,176-177,218,268,277-278
+tests/antigravity-proxy.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-219
+tests/antigravity-auth.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-42
+src/oauth/refresh.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 4,31-33
+  s_bc4d340f7d0274::t_c32932d28ed8d4 34
+src/antigravity/auth.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 3-5,7-10,17-23
+  s_f701aa91e6d2ff::t_6ffacc1584af2f 1-2,6,11-16
+src/sdk-request-translation.ts
+  s_bc4d340f7d0274::t_1e87a3654bf1d1 534-541,610
+  s_bc4d340f7d0274::t_ee28bba453f818 25,607
+src/antigravity/refresh-models.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 1-31
+scripts/verify-package-contents.mjs
+  s_bc4d340f7d0274::t_ee28bba453f818 1,85-86,89
+src/antigravity/types.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 1-21
+dist/cli.js
+  s_f701aa91e6d2ff::t_506534598eb249 17-19,26,32,37,47,77,79-80,108,113,127,378
+  s_f701aa91e6d2ff::t_0f084a067d3bf0 115-120,144,166,169,181,185,189,198,208,215,218,223,235,242,245,247,256,260,270,272-273,276,281,296,308,312,321,332,336,341,346,349,358,407
+  s_f701aa91e6d2ff::t_e0f300a37f3bdb 2,4-5,7-14,16,20-25,27-28,31,33-35,39-40,42-43,49-50,52,55-56,58,60,63,66-67,69-73,76,81,83,87,89,91-93,95-96,102,106,110-112,114,121-126,128-130,136,138,140-141,147,152,158,161,361,371,381,387,395,416,418,421,423,425,427-428
+tests/antigravity-catalog-account.test.ts
+  s_bc4d340f7d0274::t_b31beb9adf2ebe 1-104
+src/antigravity/backend.ts
+  s_bc4d340f7d0274::t_ee28bba453f818 1-82
+package.json
+  s_f701aa91e6d2ff::t_cc835b9ebdbc87 51
+pnpm-lock.yaml
+  s_bc4d340f7d0274::t_1ec4862f89afc8 14-16,115-120,1713-1718
+src/providers-command-crud.ts
+  s_f701aa91e6d2ff::t_a3d14426274766 184
+src/registry/load.ts
+  s_f701aa91e6d2ff::t_8f62ad6ebdd4a8 23,59,61
+src/registry/io.ts
+  s_f701aa91e6d2ff::t_6f272bf1c67dca 102,105,160
+tests/providers-command.test.ts
+  s_7bd584565fe9ad::t_c10128bcb98020 81,93,97,193,216
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2bd4224584becc8fb4ea3a00043f636a6db60a0b",
+  "prompts": {},
+  "sessions": {
+    "s_7bd584565fe9ad": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19b79-fc35-78b0-b19d-4863f2388a21",
+        "model": "unknown"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    },
+    "s_bc4d340f7d0274": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19ad4-83df-73d1-91b1-4de8c1ba3535",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    },
+    "s_f701aa91e6d2ff": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19b73-7b49-77d3-88d2-a1aa50d64d05",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
