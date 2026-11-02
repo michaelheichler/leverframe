@@ -102,6 +102,41 @@ it('preserves OAuth identity and beta flags on the wire', async () => {
   });
 });
 
+it('forwards an explicit caller API version on native requests', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ content: [] }));
+
+  await relayAnthropicMessages(responseSink(), 'https://api.anthropic.test/v1/messages', {
+    model: 'claude-test', messages: [{ role: 'user', content: 'Hello' }],
+  }, 'fixture-key', false, { authType: 'api', inboundVersion: '2025-04-20' });
+
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('anthropic-version')).toBe('2025-04-20');
+});
+
+it('uses the explicit caller version when an extra header contains a mixed-case API version', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ content: [] }));
+
+  await relayAnthropicMessages(responseSink(), 'https://api.anthropic.test/v1/messages', {
+    model: 'claude-test', messages: [{ role: 'user', content: 'Hello' }],
+  }, 'fixture-key', false, {
+    authType: 'api', inboundVersion: '2025-04-20', extraHeaders: { 'Anthropic-Version': '2023-06-01' },
+  });
+
+  const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+  expect(headers.get('anthropic-version')).toBe('2025-04-20');
+});
+
+it('keeps a valid API version when the caller omits one on native requests', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ content: [] }));
+
+  await relayAnthropicMessages(responseSink(), 'https://api.anthropic.test/v1/messages', {
+    model: 'claude-test', messages: [{ role: 'user', content: 'Hello' }],
+  }, 'fixture-key', false, { authType: 'api' });
+
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('anthropic-version')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+});
+
 it.each([
   [JSON.stringify({ device_id: 'fixture-device', account_uuid: 'fixture-account', session_id: 'fixture-session' }), { trace: 'keep' }],
   ['user_' + 'a'.repeat(64) + '_account_12345678-1234-4234-8234-123456789abc_session_12345678-1234-4234-8234-123456789def', { trace: 'keep' }],

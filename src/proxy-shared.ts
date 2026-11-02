@@ -19,6 +19,7 @@ export type FullStreamPart = {
   providerMetadata?: {
     google?: { thoughtSignature?: string; thought_signature?: string };
     openai?: { reasoningEncryptedContent?: string | null };
+    leverframeCacheUsage?: { cacheCreation5mInputTokens?: number; cacheCreation1hInputTokens?: number };
   };
   error?: unknown;
   reason?: string;

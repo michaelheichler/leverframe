@@ -154,7 +154,7 @@ describe('Anthropic provider identity', () => {
       baseURL: 'https://api.anthropic.com',
     });
 
-    expect(createAnthropic).toHaveBeenCalledWith({ apiKey: 'test-key' });
+    expect(createAnthropic).toHaveBeenCalledWith({ apiKey: 'test-key', fetch: expect.any(Function) });
     expect(createAnthropic).not.toHaveBeenCalledWith(
       expect.objectContaining({ baseURL: 'https://api.anthropic.com' }),
     );
@@ -177,6 +177,7 @@ describe('Anthropic provider identity', () => {
     expect(createAnthropic).toHaveBeenCalledWith({
       apiKey: 'test-key',
       baseURL: 'https://proxy.example.com/v1',
+      fetch: expect.any(Function),
     });
     vi.doUnmock('@ai-sdk/anthropic');
   });
@@ -198,11 +199,12 @@ describe('Anthropic provider identity', () => {
 
     expect(createAnthropic).toHaveBeenCalledWith({
       authToken: 'oauth-token',
-      headers: expect.objectContaining({
+      headers: {
         'User-Agent': 'claude-cli/2.1.195 (external, cli)',
         'x-app': 'cli',
         'X-Claude-Code-Session-Id': expect.any(String),
-      }),
+      },
+      fetch: expect.any(Function),
     });
     expect(createAnthropic).not.toHaveBeenCalledWith(
       expect.objectContaining({ apiKey: 'oauth-token' }),
@@ -234,6 +236,10 @@ describe('custom provider headers', () => {
       apiKey: 'sk-test',
       baseURL: 'https://api.z.ai/api/coding/paas/v4',
       includeUsage: true,
+      metadataExtractor: {
+        extractMetadata: expect.any(Function),
+        createStreamExtractor: expect.any(Function),
+      },
       headers: { 'X-Plan': 'coding' },
     });
     vi.doUnmock('@ai-sdk/openai-compatible');
@@ -257,6 +263,10 @@ describe('custom provider headers', () => {
       name: 'kilo',
       baseURL: 'https://api.kilo.ai/api/gateway',
       includeUsage: true,
+      metadataExtractor: {
+        extractMetadata: expect.any(Function),
+        createStreamExtractor: expect.any(Function),
+      },
     });
     vi.doUnmock('@ai-sdk/openai-compatible');
   });
@@ -278,6 +288,7 @@ describe('custom provider headers', () => {
     expect(createAnthropic).toHaveBeenCalledWith({
       apiKey: 'sk-test',
       baseURL: 'https://api.z.ai/api/anthropic/v1',
+      fetch: expect.any(Function),
       headers: { 'X-Plan': 'coding' },
     });
     vi.doUnmock('@ai-sdk/anthropic');
@@ -355,6 +366,10 @@ describe('provider protocol dispatch', () => {
       apiKey: 'test-kimi-membership-key',
       baseURL: 'https://api.kimi.com/coding/v1',
       includeUsage: true,
+      metadataExtractor: {
+        extractMetadata: expect.any(Function),
+        createStreamExtractor: expect.any(Function),
+      },
     });
     expect(factory).toHaveBeenCalledWith('k3');
     vi.doUnmock('@ai-sdk/openai-compatible');
@@ -379,6 +394,10 @@ describe('provider protocol dispatch', () => {
       apiKey: 'sk-zai',
       baseURL: 'https://api.z.ai/api/coding/paas/v4',
       includeUsage: true,
+      metadataExtractor: {
+        extractMetadata: expect.any(Function),
+        createStreamExtractor: expect.any(Function),
+      },
     });
     expect(factory).toHaveBeenCalledWith('glm-5.2');
     vi.doUnmock('@ai-sdk/openai-compatible');

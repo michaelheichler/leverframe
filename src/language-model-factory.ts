@@ -6,6 +6,7 @@ import type { ResponsesWebSocketDiagnosticEvent } from './oauth/responses-websoc
 import { revalidateCustomEndpointUrl } from './registry/url-security.js';
 import { neutralClientHeaders } from './neutral-client-request.js';
 import { openCodeGoFetch, openCodeGoHeaders } from './opencode-go-headers.js';
+import { createCompatibleCacheUsage } from './compatible-cache-usage.js';
 
 type SdkProviderFactory = (options: { apiKey: string; baseURL?: string; name?: string; headers?: Record<string, string>; fetch?: typeof fetch }) => {
   (modelId: string): LanguageModel;
@@ -108,7 +109,7 @@ export async function createLanguageModel(spec: ProviderModelSpec): Promise<Lang
         `${revalidation.error ?? 'Custom endpoint URL failed security revalidation.'}${revalidation.hint ? ` ${revalidation.hint}` : ''}`);
     }
   }
-  spec = { ...spec, fetch: openCodeGoFetch(baseURL), headers: openCodeGoHeaders(baseURL,
+  spec = { ...spec, fetch: spec.fetch ?? openCodeGoFetch(baseURL), headers: openCodeGoHeaders(baseURL,
     spec.authType === 'oauth' || !spec.headers ? spec.headers : neutralClientHeaders(spec.headers)) };
   if (spec.providerId === 'github-copilot' || npm === '@github/copilot-sdk') {
     return createCopilotHttpLanguageModel({
@@ -120,12 +121,14 @@ export async function createLanguageModel(spec: ProviderModelSpec): Promise<Lang
   if (npm === '@ai-sdk/anthropic') return createBuiltinAnthropicModel(spec);
   if (npm === '@ai-sdk/openai-compatible') {
     const { createOpenAICompatible } = await import('@ai-sdk/openai-compatible');
-    return createOpenAICompatible({
+    const cacheUsage = createCompatibleCacheUsage(baseURL);
+    return cacheUsage.wrap(createOpenAICompatible({
       name: spec.providerId ?? 'openai-compatible', baseURL: baseURL ?? '', includeUsage: true,
+      metadataExtractor: cacheUsage.metadataExtractor,
       ...(apiKey.trim() ? { apiKey } : {}),
       ...(spec.headers ? { headers: spec.headers } : {}),
       ...(spec.fetch ? { fetch: spec.fetch } : {}),
-    })(modelId);
+    })(modelId));
   }
   const create = await loadSdkProviderFactory(npm);
   return create({ apiKey, ...(baseURL ? { baseURL } : {}), ...(spec.headers ? { headers: spec.headers } : {}),

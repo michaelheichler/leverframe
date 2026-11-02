@@ -1,5 +1,5 @@
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { tool, jsonSchema } from 'ai';
 import type { ModelMessage } from 'ai';
 import {
@@ -21,6 +21,7 @@ import { VERTEX_ANTHROPIC_NPM } from './constants.js';
 import { neutralClientInstructions } from './neutral-client-request.js';
 import { decodeOpenAiReasoningSignature } from './reasoning-signature.js';
 import { extractClaudeSessionId } from './client-session.js';
+import { anthropicCacheOptions, anthropicCacheSettings, anthropicSystemMessages, nativeMarkedToolContent, nativeUserContent, validAnthropicCacheControls, type CacheControl } from './anthropic-sdk-cache.js';
 
 export { ToolResultImageError, extractClaudeSessionId };
 
@@ -35,7 +36,7 @@ interface AnthropicBlock {
   tool_use_id?: string;
   content?: unknown;
   source?: { type: 'base64' | 'url'; media_type?: string; data?: string; url?: string };
-  cache_control?: { type?: string; ttl?: string };
+  cache_control?: CacheControl;
 
   _name?: string;
 }
@@ -44,11 +45,11 @@ interface AnthropicTool {
   name: string;
   description?: string;
   input_schema: Record<string, unknown>;
-  cache_control?: { type?: string; ttl?: string };
+  cache_control?: CacheControl;
 }
 export interface AnthropicRequest {
   model: string;
-  system?: string | Array<string | { text?: string; cache_control?: { type?: string; ttl?: string } }>;
+  system?: string | Array<string | { text?: string; cache_control?: CacheControl }>;
   messages: AnthropicMsg[];
   tools?: AnthropicTool[];
   tool_choice?: { type: 'auto' | 'any' | 'tool'; name?: string };
@@ -59,6 +60,7 @@ export interface AnthropicRequest {
   output_config?: { effort?: string };
   metadata?: { user_id?: unknown };
   diagnostics?: unknown;
+  cache_control?: CacheControl;
 }
 
 export interface TranslateRequestOptions {
@@ -140,6 +142,10 @@ function systemToString(
 function openAiCacheBreakpoint(block: AnthropicBlock, enabled: boolean): Record<string, unknown> | undefined {
   if (!enabled || !block.cache_control) return undefined;
   return { openai: { promptCacheBreakpoint: { mode: 'explicit' } } };
+}
+
+function blockCacheOptions(block: AnthropicBlock, openAi: boolean, anthropic: boolean) {
+  return anthropic ? anthropicCacheOptions(block.cache_control) : openAiCacheBreakpoint(block, openAi);
 }
 
 function translateTopLevelSystemForOpenAi(
@@ -300,44 +306,47 @@ function thinkingToSdkPart(
 function translateUserBlocks(
   blocks: AnthropicBlock[],
   openAiPromptCacheBreakpoints: boolean,
+  anthropicCache = false,
 ): ModelMessage[] {
   const out: ModelMessage[] = [];
   const toolResults = blocks.filter(b => b.type === 'tool_result');
   const parts: Array<Record<string, unknown>> = [];
   for (const b of blocks) {
+    const cache = blockCacheOptions(b, openAiPromptCacheBreakpoints, anthropicCache);
     if (b.type === 'text') {
       parts.push({
         type: 'text',
         text: b.text ?? '',
-        ...(openAiCacheBreakpoint(b, openAiPromptCacheBreakpoints)
-          ? { providerOptions: openAiCacheBreakpoint(b, openAiPromptCacheBreakpoints) }
-          : {}),
+        ...(cache ? { providerOptions: cache } : {}),
       });
     } else if (b.type === 'image') {
       const p = imagePart(b);
       if (p) {
         parts.push({
           ...p,
-          ...(openAiCacheBreakpoint(b, openAiPromptCacheBreakpoints)
-            ? { providerOptions: openAiCacheBreakpoint(b, openAiPromptCacheBreakpoints) }
-            : {}),
+          ...(cache ? { providerOptions: cache } : {}),
         });
       }
+    } else if (anthropicCache && (b.type === 'document' || b.type === 'search_result')) {
+      const anchor = `leverframe-native-${randomUUID()}`;
+      const nativeBlock = nativeUserContent(b);
+      parts.push({ type: 'text', text: anchor, providerOptions: { leverframe: { nativeUserBlock: nativeBlock } } });
     }
   }
   const toolResultImageParts: Array<Record<string, unknown>> = [];
   if (toolResults.length) {
     out.push({
       role: 'tool',
-      content: toolResults.map(tr => ({
-        type: 'tool-result',
-        toolCallId: splitToolUseId(tr.tool_use_id ?? '').rawId,
-        toolName: tr._name ?? 'unknown',
-        output: { type: 'text', value: serializeToolResultForModel(tr, toolResultImageParts) },
-        ...(openAiCacheBreakpoint(tr, openAiPromptCacheBreakpoints)
-          ? { providerOptions: openAiCacheBreakpoint(tr, openAiPromptCacheBreakpoints) }
-          : {}),
-      })),
+      content: toolResults.map(tr => {
+        const nativeContent = anthropicCache ? nativeMarkedToolContent(tr.content) : undefined;
+        const options = blockCacheOptions(tr, openAiPromptCacheBreakpoints, anthropicCache);
+        return {
+          type: 'tool-result', toolCallId: splitToolUseId(tr.tool_use_id ?? '').rawId, toolName: tr._name ?? 'unknown',
+          output: { type: 'text', value: nativeContent ? '' : serializeToolResultForModel(tr, toolResultImageParts) },
+          ...((options || nativeContent) ? { providerOptions: { ...options,
+            ...(nativeContent ? { leverframe: { nativeToolResultContent: nativeContent } } : {}) } } : {}),
+        };
+      }),
     } as unknown as ModelMessage);
   }
   const userParts = [...toolResultImageParts, ...parts];
@@ -351,6 +360,7 @@ export function translateMessages(
   openAiPromptCacheBreakpoints = false,
 ): ModelMessage[] {
   const isGoogle = npm === '@ai-sdk/google';
+  const anthropicCache = npm === '@ai-sdk/anthropic';
   const out: ModelMessage[] = [];
   for (const msg of messages) {
     const blocks: AnthropicBlock[] = typeof msg.content === 'string'
@@ -362,18 +372,18 @@ export function translateMessages(
         out.push({
           role: 'system',
           content: block.text,
-          ...(openAiCacheBreakpoint(block, openAiPromptCacheBreakpoints)
-            ? { providerOptions: openAiCacheBreakpoint(block, openAiPromptCacheBreakpoints) }
-            : {}),
+          ...(blockCacheOptions(block, openAiPromptCacheBreakpoints, anthropicCache)
+            ? { providerOptions: blockCacheOptions(block, openAiPromptCacheBreakpoints, anthropicCache) } : {}),
         } as unknown as ModelMessage);
       }
     } else if (msg.role === 'user') {
-      out.push(...translateUserBlocks(blocks, openAiPromptCacheBreakpoints));
+      out.push(...translateUserBlocks(blocks, openAiPromptCacheBreakpoints, anthropicCache));
     } else if (msg.role === 'assistant') {
       const parts: Array<Record<string, unknown>> = [];
       for (const b of blocks) {
         if (b.type === 'text') {
-          parts.push({ type: 'text', text: b.text ?? '' });
+          parts.push({ type: 'text', text: b.text ?? '', ...(anthropicCache && anthropicCacheOptions(b.cache_control)
+            ? { providerOptions: anthropicCacheOptions(b.cache_control) } : {}) });
         } else if (b.type === 'thinking') {
           const part = thinkingToSdkPart(b, npm);
           if (part) parts.push(part);
@@ -383,6 +393,7 @@ export function translateMessages(
             type: 'tool-call', toolCallId: rawId, toolName: b.name, input: b.input ?? {},
           };
           if (thoughtSignature && isGoogle) part.providerOptions = { google: { thoughtSignature } };
+          if (anthropicCache && b.cache_control) part.providerOptions = anthropicCacheOptions(b.cache_control);
           parts.push(part);
         }
       }
@@ -460,12 +471,13 @@ export function toolInputRules(tools?: SdkCallParams['tools']): Map<string, Tool
   return map;
 }
 
-export function translateTools(anthropicTools?: AnthropicTool[]): Record<string, ReturnType<typeof tool>> | undefined {
+export function translateTools(anthropicTools?: AnthropicTool[], anthropicCache = false): Record<string, ReturnType<typeof tool>> | undefined {
   if (!anthropicTools?.length) return undefined;
   const tools: Record<string, ReturnType<typeof tool>> = {};
   for (const t of anthropicTools) {
     if (!t.name || !t.input_schema) continue;
-    tools[t.name] = tool({ description: t.description ?? '', inputSchema: jsonSchema(t.input_schema) });
+    tools[t.name] = tool({ description: t.description ?? '', inputSchema: jsonSchema(t.input_schema),
+      ...(anthropicCache && t.cache_control ? { providerOptions: anthropicCacheOptions(t.cache_control) } : {}) });
   }
   return Object.keys(tools).length ? tools : undefined;
 }
@@ -506,11 +518,24 @@ const CACHE_INCLUSIVE_INPUT_NPMS = new Set([
   VERTEX_ANTHROPIC_NPM,
 ]);
 
+function openAiCacheSettings(npm: string, body: AnthropicRequest, options: TranslateRequestOptions | undefined,
+  sessionId: string | undefined, baseSystem: string | undefined, tools: AnthropicTool[]) {
+  const upstreamModelId = options?.reasoningMetadata?.upstreamModelId ?? body.model;
+  const explicit = !options?.openAiOAuth && supportsOpenAiPromptCacheBreakpoints(
+    upstreamModelId, options?.reasoningMetadata?.supportsPromptCacheBreakpoints,
+  );
+  const key = npm === '@ai-sdk/openai'
+    ? sessionId ? claudeSessionPromptCacheKey(sessionId) : openAiPromptCacheKey(baseSystem, tools)
+    : undefined;
+  return { explicit, key };
+}
+
 export function translateRequest(
   body: AnthropicRequest,
   npm: string,
   options?: TranslateRequestOptions,
 ): SdkCallParams {
+  if (npm === '@ai-sdk/anthropic' && !validAnthropicCacheControls(body)) throw new TypeError('Invalid Anthropic cache_control');
   body = neutralClientInstructions(body);
   const messages = body.messages ?? [];
   annotateToolNames(messages);
@@ -541,18 +566,14 @@ export function translateRequest(
     });
   }
 
-  const upstreamModelId = options?.reasoningMetadata?.upstreamModelId ?? body.model;
-  const supportsExplicitOpenAiCaching = !options?.openAiOAuth
-    && supportsOpenAiPromptCacheBreakpoints(
-      upstreamModelId,
-      options?.reasoningMetadata?.supportsPromptCacheBreakpoints,
-    );
-  if (npm === '@ai-sdk/openai') {
+  const { explicit: supportsExplicitOpenAiCaching, key: promptCacheKey } =
+    openAiCacheSettings(npm, body, options, claudeSessionId, baseSystem, upstreamTools);
+  const { enabled: anthropicCache, markedSystem: markedAnthropicSystem, cacheOptions } = anthropicCacheSettings(npm, body);
+  if (cacheOptions) providerOptions = deepMergeProviderOptions(providerOptions, cacheOptions);
+  if (promptCacheKey) {
     providerOptions = deepMergeProviderOptions(providerOptions, {
       openai: {
-        promptCacheKey: claudeSessionId
-          ? claudeSessionPromptCacheKey(claudeSessionId)
-          : openAiPromptCacheKey(baseSystem, upstreamTools),
+        promptCacheKey,
         ...(supportsExplicitOpenAiCaching
           ? { promptCacheOptions: { mode: 'implicit', ttl: '30m' } }
           : {}),
@@ -561,13 +582,14 @@ export function translateRequest(
   }
 
   return {
-    instructions: options?.openAiOAuth || supportsExplicitOpenAiCaching ? undefined : systemText,
+    instructions: options?.openAiOAuth || (supportsExplicitOpenAiCaching && !anthropicCache) || markedAnthropicSystem ? undefined : systemText,
     messages: [
-      ...(supportsExplicitOpenAiCaching ? translateTopLevelSystemForOpenAi(body.system) : []),
+      ...(markedAnthropicSystem ? anthropicSystemMessages(body.system) : []),
+      ...(supportsExplicitOpenAiCaching && !anthropicCache ? translateTopLevelSystemForOpenAi(body.system) : []),
       ...translateMessages(messages, npm, supportsExplicitOpenAiCaching),
     ],
     allowSystemInMessages: true,
-    tools: translateTools(upstreamTools.length ? upstreamTools : undefined),
+    tools: translateTools(upstreamTools.length ? upstreamTools : undefined, anthropicCache),
     toolChoice: compactRequest ? 'none' : translateToolChoice(body.tool_choice),
     maxOutputTokens: options?.openAiOAuth ? undefined : body.max_tokens,
     temperature: options?.reasoningMetadata?.supportsTemperature === false
@@ -576,10 +598,13 @@ export function translateRequest(
     maxRetries: options?.openAiOAuth
       ? OPENAI_OAUTH_SDK_MAX_RETRIES
       : SDK_MAX_RETRIES_NON_OAUTH,
-    headers: options?.reasoningMetadata?.providerId === 'opencode-go'
-      && claudeSessionId
-      ? { 'x-opencode-session': claudeSessionId }
-      : undefined,
+    headers: (options?.openAiOAuth && promptCacheKey)
+      || (options?.reasoningMetadata?.providerId === 'opencode-go' && claudeSessionId)
+      ? {
+          ...(options?.openAiOAuth && promptCacheKey ? { 'session-id': promptCacheKey } : {}),
+          ...(options?.reasoningMetadata?.providerId === 'opencode-go' && claudeSessionId
+            ? { 'x-opencode-session': claudeSessionId } : {}),
+        } : undefined,
     providerOptions,
     inputTokensIncludeCache: CACHE_INCLUSIVE_INPUT_NPMS.has(npm),
   };

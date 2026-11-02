@@ -15,6 +15,7 @@ import {
   writeStoredCredential,
 } from './credential-store.js';
 import { withCredentialMutationLock } from './registry/lock.js';
+import type { RegistryAccount } from './registry/types.js';
 
 export { classifyKeyringError } from './credential-store.js';
 
@@ -231,6 +232,28 @@ export interface ResolvedProviderAuth {
   apiKey: string | null;
   accountId?: string;
   providerData?: Record<string, unknown>;
+}
+
+export async function resolveProviderAccountAuth(
+  providerId: string,
+  account: RegistryAccount,
+  diag?: (msg: string) => void,
+): Promise<ResolvedProviderAuth> {
+  const parsed = parseAuthRef(account.authRef);
+  if (!parsed || parsed.kind === 'none') return { apiKey: null };
+  if (parsed.kind === 'env') return { apiKey: readEnvCredential(parsed.varName) };
+  const raw = await readKeyringAccount(parsed.account, diag);
+  const credential = parseStoredOAuthCredential(raw);
+  if (!credential || !raw) return { apiKey: decodeProviderSecret(raw) };
+  if (!credential.accessRejected && !oauthCredentialShouldRefresh(credential, providerId)) {
+    return { apiKey: credential.access, accountId: credential.accountId, providerData: credential.providerData };
+  }
+  const apiKey = await refreshOAuthKeyringAccount(parsed.account, providerId, raw, diag);
+  if (!apiKey) return { apiKey: null };
+  const refreshed = parseStoredOAuthCredential(await readKeyringAccount(parsed.account, diag));
+  return refreshed?.access === apiKey
+    ? { apiKey, accountId: refreshed.accountId, providerData: refreshed.providerData }
+    : { apiKey };
 }
 
 export async function resolveProviderAuth(

@@ -10,6 +10,10 @@ export { ConfigLockBusyError, _configLockInternals } from './config-lock.js';
 
 const CONFIG_FILE_MODE = 0o600;
 
+function validQuotaThreshold(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value < 100;
+}
+
 function validateContextCeilingOverrides(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw)) return undefined;
   const seen = new Set<string>();
@@ -27,6 +31,19 @@ function validateLaunchConfig(raw: unknown): UserPreferences['launch'] {
   const candidate = raw as { bypassPermissions?: unknown };
   if (typeof candidate.bypassPermissions !== 'boolean') return undefined;
   return { bypassPermissions: candidate.bypassPermissions };
+}
+
+function validateSummarySettings(raw: unknown): NonNullable<UserPreferences['summarySettings']> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { enabled: false };
+  const value = raw as NonNullable<UserPreferences['summarySettings']>;
+  const amount = (item: unknown): item is number => Number.isSafeInteger(item) && (item as number) >= 0;
+  const pricing = value.pricing;
+  return {
+    enabled: value.enabled === true,
+    ...(typeof value.engineId === 'string' && value.engineId.trim() && value.engineId.length <= 256 ? { engineId: value.engineId.trim() } : {}),
+    ...(amount(value.lifetimeLimitMicros) ? { lifetimeLimitMicros: value.lifetimeLimitMicros } : {}),
+    ...(pricing && amount(pricing.inputMicrosPerMillion) && amount(pricing.outputMicrosPerMillion) && typeof pricing.provenance === 'string' && pricing.provenance.trim() && pricing.provenance.length <= 512 ? { pricing: { ...pricing, provenance: pricing.provenance.trim() } } : {}),
+  };
 }
 
 export class CorruptConfigError extends Error {
@@ -88,6 +105,11 @@ export function loadPreferences(): UserPreferences {
     ? undefined
     : normalizeModelAliases(config.modelAliases);
   return {
+    summarySettings: validateSummarySettings(config.summarySettings),
+    accountPoolBalancing: typeof config.accountPoolBalancing === 'boolean' ? config.accountPoolBalancing : true,
+    accountPoolFailover: typeof config.accountPoolFailover === 'boolean' ? config.accountPoolFailover : true,
+    accountPoolQuotaThresholdPercent: config.accountPoolQuotaThresholdPercent === undefined
+      ? 10 : validQuotaThreshold(config.accountPoolQuotaThresholdPercent) ? config.accountPoolQuotaThresholdPercent : 0,
     lastModel: config.lastModel,
     lastProvider: config.lastProvider,
     recentModelsByProvider: config.recentModelsByProvider,
@@ -103,9 +125,14 @@ export function loadPreferences(): UserPreferences {
   };
 }
 
-export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastModel' | 'lastProvider' | 'recentModelsByProvider' | 'favoriteModels' | 'modelAliases' | 'claudeBridgeMode' | 'serverBridgeMode' | 'appPathOverrides' | 'recentLaunchFolders' | 'contextCeilingOverrides'>>): void {
+export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastModel' | 'lastProvider' | 'recentModelsByProvider' | 'favoriteModels' | 'modelAliases' | 'claudeBridgeMode' | 'serverBridgeMode' | 'appPathOverrides' | 'recentLaunchFolders' | 'contextCeilingOverrides' | 'accountPoolBalancing' | 'accountPoolFailover' | 'accountPoolQuotaThresholdPercent' | 'summarySettings'>>): void {
+  if (prefs.accountPoolQuotaThresholdPercent !== undefined && !validQuotaThreshold(prefs.accountPoolQuotaThresholdPercent)) throw new RangeError('Invalid account pool quota threshold');
   withConfigWriteLock(() => {
     const config = readConfig();
+    if (prefs.summarySettings !== undefined) config.summarySettings = validateSummarySettings(prefs.summarySettings);
+    if (prefs.accountPoolBalancing !== undefined) config.accountPoolBalancing = prefs.accountPoolBalancing;
+    if (prefs.accountPoolFailover !== undefined) config.accountPoolFailover = prefs.accountPoolFailover;
+    if (prefs.accountPoolQuotaThresholdPercent !== undefined) config.accountPoolQuotaThresholdPercent = prefs.accountPoolQuotaThresholdPercent;
     if (prefs.lastModel !== undefined) config.lastModel = prefs.lastModel;
     if (prefs.lastProvider !== undefined) config.lastProvider = prefs.lastProvider;
     if (prefs.recentModelsByProvider !== undefined) config.recentModelsByProvider = prefs.recentModelsByProvider;

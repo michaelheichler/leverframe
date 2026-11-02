@@ -34,6 +34,8 @@ import { reconcileExecution, type ReconcileOutcome } from '../execution-recovery
 import { cancelAllActiveRequestExecutions } from '../request-execution-context.js';
 import { handleAnthropicMessages, handleOpenAIChatCompletions } from './inference-routes.js';
 import { readJson, requestHeader, type PLog } from './route-helpers.js';
+import { rememberConfiguredPool } from '../account-pool-dispatch.js';
+import { handleEvidenceRequest } from '../context/evidence-route.js';
 
 export interface ServerOptions {
   host: string;
@@ -52,6 +54,7 @@ export interface ServerOptions {
   inferenceLogPath?: string;
 
   webSocketDiagnosticsLogPath?: string;
+  managedPools?: Set<string>;
 }
 
 export interface ServerHandle {
@@ -88,6 +91,13 @@ function reconcileExecutionsAtStartupSafely(plog: PLog): void {
 }
 
 export async function startServer(options: ServerOptions): Promise<ServerHandle> {
+  const managedPools = new Set<string>();
+  for (const model of options.catalog.list()) {
+    if (model.providerId && (model.authType === 'api' || model.authType === 'oauth')) {
+      rememberConfiguredPool(managedPools, model.providerId, model.authType);
+    }
+  }
+  options = { ...options, managedPools };
   silenceSdkWarnings();
   const languageModelCache = new ProviderRuntimeCache<LanguageModel>({
     disposeHandle: disposeLanguageModel,
@@ -139,6 +149,12 @@ async function routeRequest(req: IncomingMessage, res: ServerResponse, options: 
 
     if (!isAuthorized(toRequest(req), options.serverPassword)) {
       sendJson(res, 401, { error: { message: 'Unauthorized' } });
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/v1/leverframe/evidence') {
+      if (options.serverPassword === null) { sendJson(res, 401, { error: { message: 'Unauthorized' } }); return; }
+      await handleEvidenceRequest(req, res);
       return;
     }
 

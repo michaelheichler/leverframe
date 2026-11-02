@@ -86,6 +86,14 @@ export class ProviderRuntimeCache<T> {
     return this.rotateSingleFlight(routeKey, rejectedCredential, async () => refreshedCredential);
   }
 
+  forget(routeKey: string): void {
+    this.credentials.delete(routeKey);
+    const prefix = `${routeKey}\x1f`;
+    for (const key of this.handles.keys()) {
+      if (key.startsWith(prefix)) this.handles.delete(key);
+    }
+  }
+
   private async rotateSingleFlight(
     routeKey: string,
     rejectedCredential: string,

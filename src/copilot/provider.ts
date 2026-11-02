@@ -1,6 +1,7 @@
 /** Because Copilot must not own a second agent runtime. */
 import type { LanguageModelV4 } from '@ai-sdk/provider';
 import { COPILOT_API_BASE_URL, createCopilotFetch } from './backend.js';
+import { createAnthropicCacheTransport } from '../anthropic-cache-transport.js';
 
 /** Because catalog metadata determines the HTTP protocol. */
 export async function createCopilotHttpLanguageModel(input: {
@@ -21,7 +22,8 @@ export async function createCopilotHttpLanguageModel(input: {
   }
   if (input.npm === '@ai-sdk/anthropic') {
     const { createAnthropic } = await import('@ai-sdk/anthropic');
-    return createAnthropic({ ...options, baseURL: `${COPILOT_API_BASE_URL}/v1` })(input.modelId);
+    const transport = createAnthropicCacheTransport(options.fetch);
+    return transport.wrap(createAnthropic({ ...options, fetch: transport.fetch, baseURL: `${COPILOT_API_BASE_URL}/v1` })(input.modelId));
   }
   throw new TypeError('GitHub Copilot model protocol is not supported.');
 }

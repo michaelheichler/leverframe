@@ -13,6 +13,7 @@ ${pc.bold('Usage:')}
   leverframe favorites
   leverframe providers
   leverframe executions <list|show|reconcile>
+  leverframe evidence get <session-id> <reference>
   leverframe --help
   leverframe --version
 
@@ -28,6 +29,10 @@ ${pc.bold('Commands:')}
   favorites   Alias for models
   providers   Add or sign in to supported providers
   executions  Inspect and reconcile interrupted executions
+  evidence    Retrieve stored evidence for a session
+
+Evidence expires after 30 days and is limited to 32 MiB by default. Set
+LEVERFRAME_EVIDENCE_MAX_BYTES to a positive byte count to change the limit.
 
 ${pc.bold('Bridge modes (claude and server):')}
   --endpoint   Local Anthropic-format gateway; Claude Code launches with
@@ -224,7 +229,7 @@ ${pc.bold('How it works:')}
 ${pc.bold('Examples:')}
   leverframe favorites
   leverframe models --alias sol=leverframe:openai-oauth:gpt-5.6-sol
-  leverframe claude    # fresh routable catalog; favorites affect ordering`;
+  leverframe claude    ${['#'].join('')} fresh routable catalog; favorites affect ordering`;
 }
 
 export function patchHelpText(): string {

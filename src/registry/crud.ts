@@ -27,7 +27,7 @@ export async function removeProviderFromRegistry(
   opts?: { deleteCredential?: boolean },
 ): Promise<RemoveProviderResult> {
   let removedProvider: RegistryProvider | undefined;
-  let queuedRef: string | null = null;
+  const queuedRefs: string[] = [];
   let mutation = false;
   let cleanup: Awaited<ReturnType<typeof reconcilePendingCredentialDeletes>>;
   try {
@@ -36,11 +36,14 @@ export async function removeProviderFromRegistry(
       if (index < 0) return false;
       removedProvider = registry.providers[index];
       if (opts?.deleteCredential !== false) {
-        const candidate = storedRef(removedProvider);
+        const candidates = new Set([storedRef(removedProvider), ...(removedProvider.accounts ?? [])
+          .map(account => storedRef({ ...removedProvider!, authRef: account.authRef }))]);
         const remaining = registry.providers.filter((_, candidateIndex) => candidateIndex !== index);
-        if (candidate && !credentialIsReferenced({ ...registry, providers: remaining }, candidate)) {
-          await journalCredentialWrite(candidate);
-          queuedRef = candidate;
+        for (const candidate of candidates) {
+          if (candidate && !credentialIsReferenced({ ...registry, providers: remaining }, candidate)) {
+            await journalCredentialWrite(candidate);
+            queuedRefs.push(candidate);
+          }
         }
       }
       registry.providers.splice(index, 1);
@@ -58,7 +61,7 @@ export async function removeProviderFromRegistry(
     removed: true,
     id,
     name: removedProvider.name,
-    credentialDeleted: queuedRef !== null && cleanup.deleted.includes(queuedRef),
+    credentialDeleted: queuedRefs.length > 0 && queuedRefs.every(ref => cleanup.deleted.includes(ref)),
     ...(cleanup.persistenceError ? { error: cleanup.persistenceError } : {}),
   };
 }
