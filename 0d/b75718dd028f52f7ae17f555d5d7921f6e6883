@@ -1,0 +1,302 @@
+tests/anthropic-cache-control-thinking-route.test.ts
+  s_8776d7edbe969f::t_9f74e0845b80ef 65-87
+  s_8776d7edbe969f::t_07c1c16da56efe 1-43,45-47,49-64,88-91,93-98,100-105,107-109,111-127
+  s_8776d7edbe969f::t_ef23fe0fbfc177 106
+  s_8776d7edbe969f::t_8a2dfcc846d242 92
+  s_8776d7edbe969f::t_17e7a8f609e35d 44,48,99,110
+tests/account-pool-pinned-quota-exhaustion.test.ts
+  s_8776d7edbe969f::t_3943f9ec5f28e0 1-35,43-70,72-91,99-101
+  s_8776d7edbe969f::t_fa9ee9189bf71e 36-42,71
+  s_8776d7edbe969f::t_cbc0625ab52079 92-98
+tests/account-pool-affinity-quota-activity.test.ts
+  s_8776d7edbe969f::t_de742be9264632 1-143
+tests/anthropic-cache-control-nested-wire.test.ts
+  s_8776d7edbe969f::t_51d3c0067d2f13 2
+  s_8776d7edbe969f::t_b0cdf335dac25b 24-39,73,75,87,89-90,92,94-109,111-116,177-209
+  s_8776d7edbe969f::t_94a05b2185cad3 21-23,40-42,46-53,56-57,60,67,70,117-176
+  s_8776d7edbe969f::t_8db1b06fdf9d0c 1,3-20,43-45,54-55,58-59,61-66,68-69,71-72,74,76-86,88,91,93,210
+  s_8776d7edbe969f::t_a1a2b157cc81ae 110
+  s_8776d7edbe969f::t_331502892cd3fb 211-234
+src/proxy-shared.ts
+  s_8776d7edbe969f::t_d82a4fcea1057a 22
+src/server/openai-pool.ts
+  s_8776d7edbe969f::t_977489c8e3179b 1-52,54-77,79-81,106-107
+  s_8776d7edbe969f::t_54ccad6662e7de 53,78,82-88,90-102,104-105
+  s_8776d7edbe969f::t_1b203d1c75b66e 89,103
+src/http-proxy/forward.ts
+  s_8776d7edbe969f::t_6dff369bb2f5d2 126
+src/account-pool-activity.ts
+  s_8776d7edbe969f::t_20e86f10575f7a 47-48
+  s_8776d7edbe969f::t_7bbcd15530cead 40-45
+  s_8776d7edbe969f::t_41077bd3b6161c 37
+src/anthropic-cache-transport.ts
+  s_8776d7edbe969f::t_41f47d68ab8990 7-8,13,17-18,22,27,29-37,43-44,57,62-63,66-71,73,75,79,86,100-101
+  s_8776d7edbe969f::t_9977e971dc4b64 89,95
+  s_8776d7edbe969f::t_1bee1f5966891e 1-5,9-10,26,28,38-42,45-56,58-61,64-65,72,74,76-78,80-85,87-88,90-91,93-94,96-99,102,108
+  s_8776d7edbe969f::t_521816e895401a 6,11-12,14-16,19-21,23-25,103-107
+  s_8776d7edbe969f::t_2c05dedca03378 92
+docs/local-catalog-candidates.md
+  s_8776d7edbe969f::t_326e5dd3b96752 1-79
+tests/account-pool-quota-settings.test.ts
+  s_8776d7edbe969f::t_649c09fb1ebe3e 1-23,25-26,28,30-31,33-37,44-46
+  s_8776d7edbe969f::t_ede4bdb097a2c3 24,32,38-43
+  s_8776d7edbe969f::t_9d497e7d16da3c 27,29
+src/server/anthropic-sdk-route.ts
+  s_8776d7edbe969f::t_d82a4fcea1057a 116-117
+tests/openai-public-pool-route.test.ts
+  s_8776d7edbe969f::t_9e104344c52923 11-14
+  s_8776d7edbe969f::t_74b3df421a1f38 1-5,8-10,15-17,20-24,26-28,30-40,43-47,98-100,102-120,123-138,140-141,143-161,286-289
+  s_8776d7edbe969f::t_d587824392d9dd 139,142,181,184,205,208
+  s_8776d7edbe969f::t_1d4f4accd189aa 290-371
+  s_8776d7edbe969f::t_aebb95926c2cb3 372,412-466
+  s_8776d7edbe969f::t_2155b5a9e7f511 18-19,55-70
+  s_8776d7edbe969f::t_87f8fc10003614 7,48-54,71-74,215-285
+  s_8776d7edbe969f::t_016ceed752d213 25,83-90,101,121-122
+  s_8776d7edbe969f::t_5c0045da5f7407 6,29,41-42,75-82,91-97,162-180,182-183,185-204,206-207,209-214
+  s_8776d7edbe969f::t_cdcd8120a518f6 373-411
+tests/anthropic-cache-control-validation-route.test.ts
+  s_8776d7edbe969f::t_80ac448e201d3a 1-54,57-83,107
+  s_8776d7edbe969f::t_13e94c3664bfc4 55-56,84-106
+src/proxy-messages-handler.ts
+  s_8776d7edbe969f::t_314667cc929979 40,124-128
+tests/openai-adapter.test.ts
+  s_8776d7edbe969f::t_d4a11e2817efdf 78,81-82
+src/sdk-stream-finish.ts
+  s_8776d7edbe969f::t_d82a4fcea1057a 3,13,28
+src/account-pool-threshold.ts
+  s_8776d7edbe969f::t_5a99b6bbcca9be 13-14
+  s_8776d7edbe969f::t_ca47369b447ba9 4,11-12
+  s_8776d7edbe969f::t_83b06ad7780a60 1-3,5,7-10,16-25,27,29-33,35-45
+  s_8776d7edbe969f::t_c7545cb8bdd8bd 6,15,26,28,34
+tests/account-pool-quota-threshold.test.ts
+  s_8776d7edbe969f::t_89ec9e400d765d 1,3-19,21-41,75-89,91,93-95,331
+  s_8776d7edbe969f::t_f55f029131952e 227-238
+  s_8776d7edbe969f::t_c1be125198b37b 179-180,183,192-193,196,205-206,209
+  s_8776d7edbe969f::t_0617e8b80a5586 326
+  s_8776d7edbe969f::t_00e1f317a31ad1 20,42-74,90,92,96-151,173-174,214-226,239-296,311-325,327-330
+  s_8776d7edbe969f::t_8f732c07641929 297-310
+  s_8776d7edbe969f::t_0d0a00781f7dc8 2,152-172
+  s_8776d7edbe969f::t_ae7bb2d53ec24e 175-178,181-182,184-191,194-195,197-204,207-208,210-213
+src/cache-ttl-evidence.ts
+  s_8776d7edbe969f::t_d82a4fcea1057a 1-16
+tests/account-pool-quota-threshold-dispatch.test.ts
+  s_8776d7edbe969f::t_6923d9f2d89edb 71-72,107
+  s_8776d7edbe969f::t_6bd7d0a00431e2 1,3-39,48-70,73-75,77-106,108-112,156
+  s_8776d7edbe969f::t_76ddb27fa19944 2,40-47,113-155
+  s_8776d7edbe969f::t_6e522fa59500e7 76
+src/types.ts
+  s_8776d7edbe969f::t_53cb70d99c21f2 97
+src/compatible-cache-usage.ts
+  s_8776d7edbe969f::t_99e78589d12f67 1-5,8-25,32-46,50-53,58-59,65-95
+  s_8776d7edbe969f::t_d82a4fcea1057a 60-61,64
+  s_8776d7edbe969f::t_d201f41885b3ae 62
+  s_8776d7edbe969f::t_946ad4978718ba 63
+  s_8776d7edbe969f::t_d7465248616dff 6,31,56
+  s_8776d7edbe969f::t_0aa7cf1fba2a49 7,28,30,47-49,54-55,57
+  s_8776d7edbe969f::t_89524c30ea3af2 26-27,29
+src/sdk-stream-events.ts
+  s_8776d7edbe969f::t_d82a4fcea1057a 10,18,35,104
+tests/anthropic-cache-control-validation-proxy.test.ts
+  s_8776d7edbe969f::t_e9ac7b4440304b 1-64
+docs/backend-caching.md
+  s_8776d7edbe969f::t_0ec8cb1963eaf2 1-25,27-38
+  s_8776d7edbe969f::t_c4a015cca201f3 26
+src/account-management-prompts.ts
+  s_8776d7edbe969f::t_6c29edba45a7ea 101-102
+  s_8776d7edbe969f::t_5ec5186277e2ae 79,88,94-100,103-105
+  s_8776d7edbe969f::t_df99c4c3359d24 106-107
+docs/superpowers/plans/2026-11-01-backend-cache-reliability.md
+  s_8776d7edbe969f::t_24f167693b346a 17,23-34
+  s_8776d7edbe969f::t_8e29d2c95985e1 1-16,18-22,35-40
+src/server/anthropic-inference-route.ts
+  s_8776d7edbe969f::t_314667cc929979 41,138-141
+  s_8776d7edbe969f::t_eb0cf83ac84af5 142-143
+src/config.ts
+  s_8776d7edbe969f::t_53cb70d99c21f2 13,15-16,111-112,128-129,135
+  s_8776d7edbe969f::t_6c29edba45a7ea 14
+tests/account-pool-quota-telemetry.test.ts
+  s_8776d7edbe969f::t_758423bd5bdc12 1-15,31-48,60-71
+  s_8776d7edbe969f::t_dd1b7438122e14 16-30
+  s_8776d7edbe969f::t_8fbe5e3299592f 49-59
+tests/anthropic-cache-control-validation.test.ts
+  s_8776d7edbe969f::t_8ccdc5ede4082f 8-9,12-13
+  s_8776d7edbe969f::t_bf566b5d2ed788 1-7,10-11,14-41
+scripts/verify-package-contents.mjs
+  s_8776d7edbe969f::t_3f483736ee3894 63-65
+tests/http-proxy-forward-anthropic-cache.test.ts
+  s_8776d7edbe969f::t_9daef93e4eacf5 22-23
+  s_8776d7edbe969f::t_ef4d1fef6026cd 1-21,24-71
+tests/account-pool-quota-settings-ui.test.ts
+  s_8776d7edbe969f::t_fe64ab2a44f8c2 1-53,56
+  s_8776d7edbe969f::t_301ff6b59647f6 54-55
+src/account-pool-sdk.ts
+  s_8776d7edbe969f::t_f8e77c46147ca3 61-88,148
+tests/anthropic-cache-control-block-fidelity.test.ts
+  s_8776d7edbe969f::t_a5977ced9ae65b 102-170,214-222,238-240
+  s_8776d7edbe969f::t_a3126bb92a54f2 1-41,43-50,53,55,63-78,93,96-101
+  s_8776d7edbe969f::t_f6616033ad0014 79-92,94-95
+  s_8776d7edbe969f::t_cb50fa1e40f248 42,51-52,54,56-62
+  s_8776d7edbe969f::t_c516bbd2f289e2 171-213,223-237
+src/anthropic-sdk-cache.ts
+  s_8776d7edbe969f::t_6ced514c8c6ccc 19-20
+  s_8776d7edbe969f::t_aa76a27f20d2be 63-67
+  s_8776d7edbe969f::t_9c2646bc0c823e 5,7-17,60-62,68-73,75-80,85-89,101
+  s_8776d7edbe969f::t_31d55b0cb07282 1-2,4,102-107,118-121,123-128
+  s_8776d7edbe969f::t_4805409639877e 90,97-98
+  s_8776d7edbe969f::t_b450d0e74874f5 58-59
+  s_8776d7edbe969f::t_5438aeb1ba51e5 99
+  s_8776d7edbe969f::t_7f2e6168db42b2 3,6,100,114
+  s_8776d7edbe969f::t_687f6cca261986 108-113,115-117
+  s_8776d7edbe969f::t_61da9370b0d199 18,21-57,84,91-96
+  s_8776d7edbe969f::t_bf0e416e49350e 74,81-83
+  s_8776d7edbe969f::t_de022304495f73 122
+tests/anthropic-cache-control-nested-route.test.ts
+  s_8776d7edbe969f::t_c554818fa9bdba 1-90
+tests/compatible-cache-usage-route.test.ts
+  s_8776d7edbe969f::t_e5080f52137192 28,34-36,43
+  s_8776d7edbe969f::t_1b3605e382d403 5,19
+  s_8776d7edbe969f::t_a364937a156802 1-4,6-18,20-27,29-33,37-42,44-79
+src/language-model-factory.ts
+  s_8776d7edbe969f::t_99e78589d12f67 9,124-125,127,131
+tests/opencode-go-usage-partition.test.ts
+  s_8776d7edbe969f::t_4981adc692e5d3 147-156
+  s_8776d7edbe969f::t_ecf039a67710af 1-146,157-194
+src/sdk-streaming-response.ts
+  s_8776d7edbe969f::t_521816e895401a 14,210
+src/copilot/provider.ts
+  s_8776d7edbe969f::t_aca90ce4e6c3ba 4,25-26
+tests/openai-cache-key-endpoint-provenance.test.ts
+  s_8776d7edbe969f::t_058b612b8a2f63 1-154
+src/account-pool-telemetry.ts
+  s_8776d7edbe969f::t_627edb43bde33a 9-11,14,20,44,75
+src/openai-request-translation.ts
+  s_8776d7edbe969f::t_f1f951cd13d8b0 5-6,32-33,107-108,176-178,180-183,190,193,209-211
+  s_8776d7edbe969f::t_42dc7fd5f3f457 179
+tests/copilot-anthropic-cache-wire.test.ts
+  s_8776d7edbe969f::t_a758e62046df0d 121,123-142
+  s_8776d7edbe969f::t_fda734a1ce71d8 36,103-120,122
+  s_8776d7edbe969f::t_124af7ed892085 1-9,11-20,32-35,37-38,57-58,60-61,66-67,69-70,73-76,143-149,151,153-155
+  s_8776d7edbe969f::t_5b0a3de85084b8 88-97
+  s_8776d7edbe969f::t_3da5a49dd72668 152
+  s_8776d7edbe969f::t_599b9f52921bf0 10,21-31,39-53,56,59,72
+  s_8776d7edbe969f::t_bf3ad9431c6749 54,68,78
+  s_8776d7edbe969f::t_ee04fa6c91d15a 55,71,150
+  s_8776d7edbe969f::t_ecb90947dc042f 101-102
+  s_8776d7edbe969f::t_67c7618b4db052 77
+  s_8776d7edbe969f::t_04f2f8e8c865a6 62-65,79-87,98-100
+docs/provider-capacity-and-local-evidence.md
+  s_8776d7edbe969f::t_19661a48284a23 43-44
+src/account-pool-dispatch.ts
+  s_8776d7edbe969f::t_ccf9383f30076e 131,163
+  s_8776d7edbe969f::t_304864340c26c1 139
+src/sdk-non-streaming-response.ts
+  s_8776d7edbe969f::t_521816e895401a 17,38
+  s_8776d7edbe969f::t_d82a4fcea1057a 18,44,96-97,135,167
+src/openai-endpoint-provenance.ts
+  s_8776d7edbe969f::t_6ca78ca984024f 1-6,8-14
+  s_8776d7edbe969f::t_b195d3d4f072d8 7
+tests/anthropic-cache-control-recursive-protocol.test.ts
+  s_8776d7edbe969f::t_afafe7f33aa45f 100-115
+  s_8776d7edbe969f::t_9330866827871b 150-169,208-239
+  s_8776d7edbe969f::t_0c4f78b51f6a8e 1-99,116-149,170-177,179-207,240
+  s_8776d7edbe969f::t_4bea0cf92ff015 178
+src/language-model-builtins.ts
+  s_8776d7edbe969f::t_aca90ce4e6c3ba 8,77-79,81
+  s_8776d7edbe969f::t_6ca78ca984024f 9,52-56
+src/server/openai-inference-route.ts
+  s_8776d7edbe969f::t_8ad85eb90eab7a 38,74-83,85-107,110-121,123-124,126-138,140-147,171-173,175-183,185-192,216-218,224-225,227,229,268-276,282,284-285,289-300,327
+  s_8776d7edbe969f::t_386cb69246ecda 42-43,219-220,222-223,301-322,324-326,329-349
+  s_8776d7edbe969f::t_1b203d1c75b66e 155-159
+  s_8776d7edbe969f::t_61de1401933b92 201-205
+  s_8776d7edbe969f::t_1b0374c66deb8b 22-24,70,109,122,125,139,148-154,160-166,168-170,193-194,251-258
+  s_8776d7edbe969f::t_96996b738b8e6b 20-21,195-197,199-200,206,208-215,230-237,259-267,287
+  s_8776d7edbe969f::t_429a80006a8948 226,228,288
+  s_8776d7edbe969f::t_0fe6d6fc25e981 207,238-250
+  s_8776d7edbe969f::t_6ca78ca984024f 19,221
+  s_8776d7edbe969f::t_51f44f48b780ad 108
+tests/openai-chat-session-affinity-route.test.ts
+  s_8776d7edbe969f::t_6e27738dc97fb0 132-135,141
+  s_8776d7edbe969f::t_2ef80927d1f66c 172-178,180-185,232
+  s_8776d7edbe969f::t_8754e57580744e 1-12,23-25,31-38,44-58,60-61,63-66,72-79,93-96,98-100,105-106,139,145-146,149-151,171
+  s_8776d7edbe969f::t_549e2396fad2be 69
+  s_8776d7edbe969f::t_393944eb460581 39-43,67-68,70-71,80-82,90-92,97,102,107-108,136-137,142-144,147-148,152-170
+  s_8776d7edbe969f::t_45ca1b1a8d39e1 83-89,101,192,204
+  s_8776d7edbe969f::t_a4c3e9079adaf8 13-15
+  s_8776d7edbe969f::t_997a1a255d16c0 16-22,26-30
+  s_8776d7edbe969f::t_6bdc41a4287567 59,62,103,110-112,115-131,186-189,191,193,195-201,203,205,207-210
+  s_8776d7edbe969f::t_b9be7610c8e828 104,138
+  s_8776d7edbe969f::t_9e9971368c7a8b 109,113-114,211-231
+  s_8776d7edbe969f::t_edc9d194bf7c0a 140,179,194,206
+  s_8776d7edbe969f::t_3e6c1c531851ba 190,202
+src/account-pool.ts
+  s_8776d7edbe969f::t_eefee31de1058d 4,16,29,190,192,282-284
+  s_8776d7edbe969f::t_c7545cb8bdd8bd 159,191
+  s_8776d7edbe969f::t_41077bd3b6161c 21,209-213,230-231
+  s_8776d7edbe969f::t_6c29edba45a7ea 160
+tests/compatible-cache-usage.test.ts
+  s_8776d7edbe969f::t_1b86fd74426af5 22-27,35-37,61-63,333-335,337-350,371-389
+  s_8776d7edbe969f::t_52b8cc2dadd340 42-45,48-53,56-60,64-66,108-109,137-145,148-153,181-186,189-206,208-210,212-215,218-219
+  s_8776d7edbe969f::t_03200d61ebc4c9 351-370
+  s_8776d7edbe969f::t_5a2875a52f8646 67,70,81-82
+  s_8776d7edbe969f::t_34dd53634857d0 110-136
+  s_8776d7edbe969f::t_b4d59ef4bf585d 41,46-47,54-55,207,211,274-283,285,297-304,308-332,390-391
+  s_8776d7edbe969f::t_d79c7041baf27c 336
+  s_8776d7edbe969f::t_16a1c46133e984 154-162,222-230
+  s_8776d7edbe969f::t_310f5d8204ce94 2,68-69,71-80,248-272
+  s_8776d7edbe969f::t_32f4077cfab703 1,3-21,28-34,38-40,83-107
+  s_8776d7edbe969f::t_e6a203c1ff2761 163-180,231-247,273
+  s_8776d7edbe969f::t_1faa35ec5730a3 146-147,216-217,220-221,284,286-296
+  s_8776d7edbe969f::t_d3d8253b5f62d8 187-188,305-307
+tests/openai-chat-session-affinity.test.ts
+  s_8776d7edbe969f::t_cbc0b1e37a777f 46-48,50-52,54-75
+  s_8776d7edbe969f::t_eb5d70b99a73e4 1-13,15-16,18-19,21-38,40-45,76-79,81-95
+  s_8776d7edbe969f::t_c5ec50da1a8df5 14,17,20,39,80
+  s_8776d7edbe969f::t_5a8c38074470a9 49,53
+tests/anthropic-cache-control-external-transport.test.ts
+  s_8776d7edbe969f::t_b68b6b39aac327 52,65
+  s_8776d7edbe969f::t_9a86262c683c6a 1-51,53-64,66-68
+src/sdk-request-translation.ts
+  s_8776d7edbe969f::t_5e32ee46b22efc 380
+  s_8776d7edbe969f::t_4bb71f55518f77 2,330-331,333
+  s_8776d7edbe969f::t_7e9ccacd1567a6 585
+  s_8776d7edbe969f::t_9c2646bc0c823e 39,48,52
+  s_8776d7edbe969f::t_cc183b895ef2ff 538
+  s_8776d7edbe969f::t_0c55c5f90d1fe8 147-150,315,320,327,375-376
+  s_8776d7edbe969f::t_6ced514c8c6ccc 24,332
+  s_8776d7edbe969f::t_4805409639877e 340-349
+  s_8776d7edbe969f::t_49e3501d2a81f3 587
+  s_8776d7edbe969f::t_687f6cca261986 571-572
+  s_8776d7edbe969f::t_64c7b232471cd0 588
+  s_8776d7edbe969f::t_c0c8ca18cbe0b0 592
+  s_8776d7edbe969f::t_8b89a71128a844 63,309,363,385-386,396,474,479-480
+tests/openai-public-pool-balancing-toggle.test.ts
+  s_8776d7edbe969f::t_12c761968a0840 1-10,12-18,20-57,60-68,70-110
+  s_8776d7edbe969f::t_054f3eae764096 19,58-59,69
+  s_8776d7edbe969f::t_f6847c6c5c0da1 11
+package.json
+  s_8776d7edbe969f::t_1fe7c85a797ce3 3
+tests/openai-public-pool-cache-key-provenance.test.ts
+  s_8776d7edbe969f::t_972f7227fac9ec 1-123
+docs/superpowers/plans/2026-11-01-managed-local-inference.md
+  s_8776d7edbe969f::t_a6be46a232a985 116
+src/sdk-usage.ts
+  s_8776d7edbe969f::t_d82a4fcea1057a 53-54
+tests/provider-factory-models.test.ts
+  s_8776d7edbe969f::t_fae1b9ca0a4e72 157,180,202,206-207,239-242,266-269,291,369-372,397-400
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0db75718dd028f52f7ae17f555d5d7921f6e6883",
+  "prompts": {},
+  "sessions": {
+    "s_8776d7edbe969f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19785-6895-79e1-aee9-8f20d8de9c31",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
