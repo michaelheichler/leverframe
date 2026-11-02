@@ -1,0 +1,288 @@
+tests/universal-account-model-compatibility.test.ts
+  s_f701aa91e6d2ff::t_ec0f394798afc5 2-18,20-34,40-45,50-53,55,60
+  s_f701aa91e6d2ff::t_db7ed6c552440f 1,19,35-39,46-49,54,56-59
+tests/antigravity-context-metadata.test.ts
+  s_f701aa91e6d2ff::t_78e61c4a90ea51 1-4,6-10,13-14,16-27,48-76
+  s_f701aa91e6d2ff::t_5a9cdb1a92573c 5,11-12,15,28-47,77-78
+src/registry/credential-cleanup-journal.ts
+  s_f701aa91e6d2ff::t_691e1d63c4b871 42-43
+src/claude-model-selection.ts
+  s_f701aa91e6d2ff::t_4a4432714fa50d 1-70
+tests/account-management.test.ts
+  s_f701aa91e6d2ff::t_bca9f18cf4f0dc 14,200-201,208-210,260-263,275-277,284-287,298-300
+dist/cli.js
+  s_f701aa91e6d2ff::t_61b3e15ed7a564 2
+  s_f701aa91e6d2ff::t_0f084a067d3bf0 3-14,16,19,21-22,24-28,31-35,37,39-40,42-43,47,49-50,52,55-56,58,60,63,66-67,69-73,76-77,79-81,83,87,89,91-93,95-96,102,106,108,110-119,123,128,130,138,144,147,152,158,161,166,169,181,185,189,198,208,215,218,223,235,242,245,247,256,260,270,272-273,276,281,296,308,312,321,332,336,341,346,349,358,361,371,378,381,387,395,407,416,418-420,423-424
+  s_f701aa91e6d2ff::t_3de4e5f2cc70cf 425,427-428
+src/provider-catalog.ts
+  s_f701aa91e6d2ff::t_ab74ef6eb68c48 77-79
+  s_f701aa91e6d2ff::t_b75854ba9c5306 259-261
+src/server/models.ts
+  s_f701aa91e6d2ff::t_c49be983fbcba9 18-20
+src/antigravity/models.ts
+  s_f701aa91e6d2ff::t_ad899149de5244 16
+  s_f701aa91e6d2ff::t_a7ad369863dd51 22
+dist/claude-wrapper.js
+  s_f701aa91e6d2ff::t_61b3e15ed7a564 2
+src/registry/account-catalogs.ts
+  s_f701aa91e6d2ff::t_667c31a59f6e69 5,34
+  s_f701aa91e6d2ff::t_22c61220f94220 4,14,16-23,29-30,47-48
+  s_f701aa91e6d2ff::t_89c02fe04653fa 1-3,6-13,15,24-28,31-33,35-46,49-59
+src/registry/fetch-template-models.ts
+  s_f701aa91e6d2ff::t_16dc8ae609f33a 35-40,113-116,118,123-125,134-138,146-148,165,191,198
+tests/universal-native-account-endpoint-launch.test.ts
+  s_f701aa91e6d2ff::t_3132821cd92534 1-28,31-74
+  s_f701aa91e6d2ff::t_db33d6d8e44bee 29-30
+src/ui.ts
+  s_f701aa91e6d2ff::t_c33611a7259ffd 93-96,158-159
+  s_f701aa91e6d2ff::t_0dc6497b0042b4 4,162
+tests/universal-account-identity.test.ts
+  s_f701aa91e6d2ff::t_8e54c8f5d61a18 1
+  s_f701aa91e6d2ff::t_d2dc05b38bc24a 2-44,47
+  s_f701aa91e6d2ff::t_a7529a8e8f5d03 45-46
+src/registry/load.ts
+  s_f701aa91e6d2ff::t_16dc8ae609f33a 48
+  s_f701aa91e6d2ff::t_b75854ba9c5306 12,34-35
+  s_f701aa91e6d2ff::t_87f8ab6070e2f5 4-5,13,23,26-31,45,51,68,70-84,94-95
+CHANGELOG.md
+  s_f701aa91e6d2ff::t_9ffdc1b9681aa0 9
+  s_f701aa91e6d2ff::t_fbdfafbb62077f 10-30,33-34
+  s_f701aa91e6d2ff::t_93125bc31dd3c3 35
+tests/providers-command.test.ts
+  s_f701aa91e6d2ff::t_6c99702b6a0fbb 213
+  s_f701aa91e6d2ff::t_066a32161b178d 5
+src/account-management-prompts.ts
+  s_f701aa91e6d2ff::t_4f76abc7d2aa18 3,6,9,15,17-22,44-46,54-55,63
+src/account-models.ts
+  s_f701aa91e6d2ff::t_667c31a59f6e69 6,26
+  s_f701aa91e6d2ff::t_d507374b38f53a 15
+  s_f701aa91e6d2ff::t_b75854ba9c5306 1-4,7-14,16-19,21-25,27-29,32-38
+  s_f701aa91e6d2ff::t_16dc8ae609f33a 5,20,30-31
+src/proxy-context-selection.ts
+  s_f701aa91e6d2ff::t_ab74ef6eb68c48 130-131
+tests/universal-anonymous-custom-provider.test.ts
+  s_f701aa91e6d2ff::t_b76adacb100193 5,46
+  s_f701aa91e6d2ff::t_23bdc0a11634fd 1-4,6-45,47-110
+src/upstream-forward.ts
+  s_f701aa91e6d2ff::t_219029d8741a0f 31,40-41,44,98
+docs/account-pools.md
+  s_f701aa91e6d2ff::t_1b90618c158233 30
+  s_f701aa91e6d2ff::t_3b19fb11640de6 13
+  s_f701aa91e6d2ff::t_ed43f17e9f12f2 1,3,5,7,9,11,15,17-23,26,28,32,34,36,38,40,42,44,46,48,50
+src/patcher.ts
+  s_f701aa91e6d2ff::t_22c61220f94220 255-256
+  s_f701aa91e6d2ff::t_0dc6497b0042b4 57,82,103,168,226
+src/account-route-auth.ts
+  s_f701aa91e6d2ff::t_22c61220f94220 1-15
+tests/universal-account-primary-removal.test.ts
+  s_f701aa91e6d2ff::t_356a0edd1defee 65,70
+  s_f701aa91e6d2ff::t_0df0dc3cd903e3 1-3,5-22,26-30,32-64,66-69,71-85
+  s_f701aa91e6d2ff::t_4c56ecabf80ffc 4,23-25,31
+tests/universal-account-setup.test.ts
+  s_f701aa91e6d2ff::t_fccf66210fb183 6,72-73,81-82,101-102,109-110
+  s_f701aa91e6d2ff::t_239119745580f1 1-5,7-71,74-80,83-100,103-108,111-113
+src/account-pool-sdk.ts
+  s_f701aa91e6d2ff::t_87f8ab6070e2f5 66
+  s_f701aa91e6d2ff::t_00a9b4a60dcc1a 4,23,33-36,38,49,58,68,72,147,149,159,174
+src/proxy-native-handler.ts
+  s_f701aa91e6d2ff::t_00a9b4a60dcc1a 121
+  s_f701aa91e6d2ff::t_219029d8741a0f 52,122
+src/account-setup.ts
+  s_f701aa91e6d2ff::t_4f76abc7d2aa18 1-49
+tests/universal-account-context-selection.test.ts
+  s_f701aa91e6d2ff::t_b4c0ac3212548e 1-45
+src/registry/account-discovery.ts
+  s_f701aa91e6d2ff::t_ab74ef6eb68c48 1-25
+src/server/openai-inference-route.ts
+  s_f701aa91e6d2ff::t_c6f0f9a02dab0b 124
+  s_f701aa91e6d2ff::t_d539c8e7e0715b 152,164-165,244,249,255-260
+tests/universal-account-catalogs.test.ts
+  s_f701aa91e6d2ff::t_9447ebe9dc7bc6 48-74,160-191
+  s_f701aa91e6d2ff::t_d6d02d8cf0f264 1-47,75-111,125-159,192
+  s_f701aa91e6d2ff::t_7252d900aaa39f 112-124
+src/cli-command-claude.ts
+  s_f701aa91e6d2ff::t_392e99c8397d08 3-5,7-8,10-11,13-22,25-30,33-39,41-42,46,57-63,65-74,76-81
+src/proxy-messages-handler.ts
+  s_f701aa91e6d2ff::t_d539c8e7e0715b 135,137
+  s_f701aa91e6d2ff::t_219029d8741a0f 213
+  s_f701aa91e6d2ff::t_22c61220f94220 41,124-128
+  s_f701aa91e6d2ff::t_00a9b4a60dcc1a 134,136
+src/catalog.ts
+  s_f701aa91e6d2ff::t_b75854ba9c5306 41-43
+src/types.ts
+  s_f701aa91e6d2ff::t_c49be983fbcba9 18-20
+tests/universal-account-loading.test.ts
+  s_f701aa91e6d2ff::t_02d4a7f99d796d 1-8,10-15,20-80,82-86,88-94,96,98,100-103,105
+  s_f701aa91e6d2ff::t_b872d5c4cc297e 9,16-19,81,87,95,97,99,104
+src/antigravity/provider.ts
+  s_f701aa91e6d2ff::t_6ffacc1584af2f 10
+  s_f701aa91e6d2ff::t_290905971ec48d 19
+src/registry/provider-auth.ts
+  s_f701aa91e6d2ff::t_4f76abc7d2aa18 8,39,232-233
+src/account-pool-native.ts
+  s_f701aa91e6d2ff::t_219029d8741a0f 25,46
+  s_f701aa91e6d2ff::t_00a9b4a60dcc1a 24,43
+docs/superpowers/plans/2026-11-02-universal-provider-accounts.md
+  s_f701aa91e6d2ff::t_312bc7311de029 1-29
+  s_f701aa91e6d2ff::t_0a5c8d577cf18c 49
+  s_f701aa91e6d2ff::t_404d2405344a0e 36-37,46-48,50-51
+  s_f701aa91e6d2ff::t_3b19fb11640de6 30-35,38-45
+README.md
+  s_f701aa91e6d2ff::t_e0b6a84713c4c2 99-102,218
+  s_f701aa91e6d2ff::t_939766e3ae20ad 89-90
+src/providers-command-crud.ts
+  s_f701aa91e6d2ff::t_4fafe524aab45d 178,183-185,221-224
+  s_f701aa91e6d2ff::t_f5d602c6862aaf 173-174,177,179-182,212,298
+  s_f701aa91e6d2ff::t_4f76abc7d2aa18 337
+tests/universal-anonymous-account-ownership.test.ts
+  s_f701aa91e6d2ff::t_ecb9203f4df985 8,70-82,85-93
+  s_f701aa91e6d2ff::t_c8dc705fc762d2 141-145
+  s_f701aa91e6d2ff::t_22b34ff8c51dfc 9-10,139-140,146-159
+  s_f701aa91e6d2ff::t_896aa6e923f7d9 83-84
+  s_f701aa91e6d2ff::t_2c6ca52e50918b 1-7,11-69,94-138,160
+src/server/anthropic-native-route.ts
+  s_f701aa91e6d2ff::t_00a9b4a60dcc1a 38,60
+  s_f701aa91e6d2ff::t_d539c8e7e0715b 39
+  s_f701aa91e6d2ff::t_219029d8741a0f 61,85
+src/registry/materialize.ts
+  s_f701aa91e6d2ff::t_f00dd93723165f 115
+  s_f701aa91e6d2ff::t_16dc8ae609f33a 118-119
+  s_f701aa91e6d2ff::t_b75854ba9c5306 120
+src/registry/refresh-models.ts
+  s_f701aa91e6d2ff::t_ab74ef6eb68c48 33,564-565
+  s_f701aa91e6d2ff::t_16dc8ae609f33a 175
+  s_f701aa91e6d2ff::t_87f8ab6070e2f5 322
+  s_f701aa91e6d2ff::t_89c02fe04653fa 47,562-563,566
+  s_f701aa91e6d2ff::t_69702fccb6a037 509
+src/account-management.ts
+  s_f701aa91e6d2ff::t_4f76abc7d2aa18 115-120,125-126
+  s_f701aa91e6d2ff::t_0dc6497b0042b4 13,25-26,143
+  s_f701aa91e6d2ff::t_e30b0d88566a2d 12,15-20,27-28,54-55,57-58,60,93-103,106,109,111-113
+  s_f701aa91e6d2ff::t_1b90618c158233 11,29,38-44,104-105,107-108,110,121-124
+  s_f701aa91e6d2ff::t_507ea987b5b5fe 56
+  s_f701aa91e6d2ff::t_de2aa160322b60 114
+tests/universal-account-models.test.ts
+  s_f701aa91e6d2ff::t_663ee02bbd5c51 1-40,42-55,60,62-69,71-80
+  s_f701aa91e6d2ff::t_049fcb36409450 56-59
+  s_f701aa91e6d2ff::t_d0fd83274c8873 41,61,70
+tests/universal-account-token-count.test.ts
+  s_f701aa91e6d2ff::t_96a9a23c34b188 1-102
+src/proxy-request.ts
+  s_f701aa91e6d2ff::t_c49be983fbcba9 78-80
+  s_f701aa91e6d2ff::t_0dc6497b0042b4 123
+src/registry/io.ts
+  s_f701aa91e6d2ff::t_2c96951641beed 20,56,64-67,70
+src/patch-select-badge.ts
+  s_f701aa91e6d2ff::t_0dc6497b0042b4 34
+src/registry/account-cache.ts
+  s_f701aa91e6d2ff::t_667c31a59f6e69 1-9
+src/registry/resolve-template.ts
+  s_f701aa91e6d2ff::t_87f8ab6070e2f5 44
+tests/universal-provider-accounts.test.ts
+  s_f701aa91e6d2ff::t_9b3f3dea0d5b57 6,84-86,91-93
+  s_f701aa91e6d2ff::t_d341a8f6c639cc 1-5,8-9,11-71,80-83,87-90,94-138
+  s_f701aa91e6d2ff::t_9892a46b6ececf 7,72-79
+  s_f701aa91e6d2ff::t_861c3c89339524 10
+src/env.ts
+  s_f701aa91e6d2ff::t_87f8ab6070e2f5 239-250
+  s_f701aa91e6d2ff::t_0dc6497b0042b4 152,316
+tests/universal-account-proxy-routing.test.ts
+  s_f701aa91e6d2ff::t_978fc390a9603b 1-103
+docs/superpowers/specs/2026-11-02-provider-context-account-selection-design.md
+  s_f701aa91e6d2ff::t_3ba4b92592083a 1-4,6-13,15-18
+  s_f701aa91e6d2ff::t_3b19fb11640de6 5,14
+tests/universal-account-badges.test.ts
+  s_f701aa91e6d2ff::t_ec8bf078ef3b89 81-87
+  s_f701aa91e6d2ff::t_1fa6a083e6fbbc 32
+  s_f701aa91e6d2ff::t_4195d33e854813 3
+  s_f701aa91e6d2ff::t_9ae6c9767fb910 37,79,90
+  s_f701aa91e6d2ff::t_5737fce8e898f6 8,39-45,80
+  s_f701aa91e6d2ff::t_0d18087006d373 1-2,4-7,9-31,33-36,38,46-78,88-89,91-106
+src/account-identity.ts
+  s_f701aa91e6d2ff::t_1b90618c158233 37-40
+  s_f701aa91e6d2ff::t_844565c4525897 12-14
+  s_f701aa91e6d2ff::t_c49be983fbcba9 1-11,15-36
+src/server/anthropic-sdk-route.ts
+  s_f701aa91e6d2ff::t_00a9b4a60dcc1a 22,33
+  s_f701aa91e6d2ff::t_d539c8e7e0715b 23
+src/registry/account-loading.ts
+  s_f701aa91e6d2ff::t_667c31a59f6e69 6,21
+  s_f701aa91e6d2ff::t_87f8ab6070e2f5 1-5,7-20,22-31
+src/patch-model-picker-options.ts
+  s_f701aa91e6d2ff::t_0dc6497b0042b4 8
+src/account-display.ts
+  s_f701aa91e6d2ff::t_0dc6497b0042b4 1-6
+src/server/openai-pool.ts
+  s_f701aa91e6d2ff::t_d539c8e7e0715b 14,17-18,58,93
+  s_f701aa91e6d2ff::t_844565c4525897 16,22,55,92
+tests/providers-add-accounts.test.ts
+  s_f701aa91e6d2ff::t_f8a3988a7d9ed8 1-31,33-34,36-37,39-67,69,82,106
+  s_f701aa91e6d2ff::t_16dc24257c57f4 32,35,38,70-81
+  s_f701aa91e6d2ff::t_52220df34bf95a 68
+  s_f701aa91e6d2ff::t_402d818a25ba28 83-105
+tests/universal-antigravity-account-auth.test.ts
+  s_f701aa91e6d2ff::t_4be26650365e2f 1,6,11,13,19-23,29-31,47-51,54,64-65,76,83-84
+  s_f701aa91e6d2ff::t_6c81d00e55ef13 2-5,7-10,12,14-18,24-28,32-46,52-53,55-63,66-75,77-82,85-90
+src/claude-endpoint-launch.ts
+  s_f701aa91e6d2ff::t_4a4432714fa50d 1-116
+dist/chunk-NWMK6LHR.js
+  s_f701aa91e6d2ff::t_61b3e15ed7a564 1-7
+tests/provider-details.test.ts
+  s_f701aa91e6d2ff::t_078bc9ddeaa105 1-95
+package.json
+  s_f701aa91e6d2ff::t_9ffdc1b9681aa0 3
+src/account-pool-dispatch.ts
+  s_f701aa91e6d2ff::t_3807952f42be65 10,129-135
+  s_f701aa91e6d2ff::t_80d11c103f0c54 90,118,128,138,140-143,147,154,188
+  s_f701aa91e6d2ff::t_00a9b4a60dcc1a 13,51-52,91,158,169-170
+tests/universal-account-dispatch.test.ts
+  s_f701aa91e6d2ff::t_6c12ed2d2f8c36 1-76
+src/claude-http-launch.ts
+  s_f701aa91e6d2ff::t_6a5a306b6277ee 1-124
+src/registry/credential-lifecycle.ts
+  s_f701aa91e6d2ff::t_1b90618c158233 11,53
+  s_f701aa91e6d2ff::t_667c31a59f6e69 12,52,56
+  s_f701aa91e6d2ff::t_8fabd029fccdc6 58-67
+tests/universal-provider-context-metadata.test.ts
+  s_f701aa91e6d2ff::t_7e24fa4a670609 1-71
+src/registry/types.ts
+  s_f701aa91e6d2ff::t_c49be983fbcba9 85-88
+  s_f701aa91e6d2ff::t_22c61220f94220 89
+src/patch-transforms.ts
+  s_f701aa91e6d2ff::t_0dc6497b0042b4 13,16,358-360
+src/registry/account-schema.ts
+  s_f701aa91e6d2ff::t_22c61220f94220 25
+  s_f701aa91e6d2ff::t_2c96951641beed 1-24,26-30
+tests/universal-account-tag-stability.test.ts
+  s_f701aa91e6d2ff::t_3936a0c1574d09 1-90
+src/antigravity/auth.ts
+  s_f701aa91e6d2ff::t_f1a8e2fdd4975d 1-2,6,11-16
+src/language-model-factory.ts
+  s_f701aa91e6d2ff::t_709cb58cb2aece 107-108
+tests/antigravity-models.test.ts
+  s_58284d5d2c28f4::t_ef3c622af9c470 39-40,50,59-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "946893a3fd94654a7fef30a9aca4a8a1cd26e446",
+  "prompts": {},
+  "sessions": {
+    "s_58284d5d2c28f4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "900a5940-9089-4dbd-9982-0e8275a29167",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    },
+    "s_f701aa91e6d2ff": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19b73-7b49-77d3-88d2-a1aa50d64d05",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
