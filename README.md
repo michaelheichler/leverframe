@@ -2,17 +2,16 @@
 
 Leverframe bridges Claude Code to external model providers through Anthropic and OpenAI-compatible APIs. It preserves tools, skills, agents, prompt caching, model switching, and auto-compaction.
 
-Supported provider setups include:
+Supported provider setups include subscriptions and API credentials.
 
-- OpenAI API keys
-- Anthropic API keys
-- ChatGPT/Codex plan OAuth
-- GitHub Copilot subscription OAuth
-- OpenCode Go subscription
-- Kimi Coding Plan
-- Moonshot pay-as-you-go
-- z.ai Coding Plan
-- custom OpenAI-compatible endpoints
+| Subscription login or plan | API credentials |
+| --- | --- |
+| ChatGPT/Codex OAuth | OpenAI |
+| GitHub Copilot OAuth | Anthropic |
+| Antigravity OAuth (experimental) | Moonshot |
+| OpenCode Go | Custom OpenAI-compatible endpoints |
+| Kimi Coding Plan | |
+| z.ai Coding Plan | |
 
 Leverframe can also run as a local Anthropic-format or OpenAI-compatible endpoint for other clients.
 
@@ -75,6 +74,24 @@ A rejected GitHub token requires GitHub login, not OpenAI token refresh. Reautho
 This integration uses Copilot backend endpoints rather than a documented public inference API. See [provider contracts](docs/PROVIDER-CONTRACTS.md) for the authentication and metadata rules.
 
 Use `leverframe claude --endpoint` instead of `--proxy` to use the same alias through endpoint mode.
+### Antigravity subscription (experimental)
+
+```bash
+leverframe providers auth antigravity
+leverframe models
+leverframe models --alias gemini=leverframe:antigravity:<account-model-id>
+leverframe patch
+leverframe claude --proxy
+```
+
+Browser login stores Google credentials in the OS credential store. Leverframe discovers account Gemini models and sends subscription requests directly to Google's Antigravity backend. It requires no Google desktop app, companion CLI, API key, or runtime download.
+
+The patched harness retains conversation history, context management, tools, and subagents. Identity normalization removes harness identity declarations while retaining task instructions. Durable tool references preserve signed and unsigned calls across restart.
+
+Quota errors stop the request. Leverframe omits credit controls and blocks further requests after reported credit consumption, without switching model, account, or billing route. Signing in again requires an explicit billing review to clear that block. Interactive backend verification remains open.
+
+See [verification status](docs/ANTIGRAVITY-VERIFICATION.md) for remaining release checks.
+
 ### API-key providers
 
 ```bash
@@ -214,7 +231,7 @@ claudeplus --dangerously-skip-permissions
 
 The launcher resolves `claude` and `leverframe` from PATH. Set `CLAUDEPLUS_CLAUDE_PATH` or `CLAUDEPLUS_LEVERFRAME_PATH` to select another executable. It respects `LEVERFRAME_HOME`.
 
-It starts `leverframe server --proxy --prepare-claude` to prepare Claude and proxy routes from the same fresh catalog before accepting requests. Each invocation gets its own port, process, settings, and log directory. A startup lock prevents concurrent launches from patching Claude or selecting ports at the same time. Private per-session settings pin the proxy connection and the Leverframe CA, and startup prints the log path.
+It starts `leverframe server --proxy --prepare-claude` to prepare Claude and proxy routes from the same fresh catalog before accepting requests. Each invocation has its own resources. A startup lock prevents concurrent launches from patching Claude or selecting ports at the same time. Private session settings pin the proxy connection and Leverframe CA. Startup prints the log path.
 
 The launcher removes inherited `CLAUDE_CODE_MAX_CONTEXT_TOKENS` overrides and masks settings-supplied overrides in its private session settings, without rewriting your saved configuration. Context limits remain provider-controlled rather than globally forced. The proxy allows 600 seconds between output chunks.
 

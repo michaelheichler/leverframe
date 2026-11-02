@@ -34,6 +34,16 @@ export const ANTHROPIC_API_PROVIDER_ID = 'anthropic-api';
 
 export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   {
+    id: 'antigravity',
+    name: 'Google Antigravity (Subscription)',
+    authType: 'oauth',
+    npm: '@ai-sdk/google',
+    defaultBaseUrl: 'https://daily-cloudcode-pa.googleapis.com',
+    signupUrl: 'https://antigravity.google',
+    modelSource: 'api-list',
+    supported: true,
+  },
+  {
     id: ANTHROPIC_API_PROVIDER_ID,
     name: 'Anthropic API',
     authType: 'api',

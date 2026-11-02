@@ -21,6 +21,7 @@ import { VERTEX_ANTHROPIC_NPM } from './constants.js';
 import { neutralClientInstructions } from './neutral-client-request.js';
 import { decodeOpenAiReasoningSignature } from './reasoning-signature.js';
 import { extractClaudeSessionId } from './client-session.js';
+import { ANTIGRAVITY_SESSION_HEADER } from './antigravity/types.js';
 
 export { ToolResultImageError, extractClaudeSessionId };
 
@@ -573,13 +574,13 @@ export function translateRequest(
     temperature: options?.reasoningMetadata?.supportsTemperature === false
       ? undefined
       : body.temperature,
-    maxRetries: options?.openAiOAuth
+    maxRetries: options?.reasoningMetadata?.providerId === 'antigravity' ? 0 : options?.openAiOAuth
       ? OPENAI_OAUTH_SDK_MAX_RETRIES
       : SDK_MAX_RETRIES_NON_OAUTH,
-    headers: options?.reasoningMetadata?.providerId === 'opencode-go'
-      && claudeSessionId
-      ? { 'x-opencode-session': claudeSessionId }
-      : undefined,
+    headers: claudeSessionId && options?.reasoningMetadata?.providerId === 'antigravity'
+      ? { [ANTIGRAVITY_SESSION_HEADER]: claudeSessionId }
+      : options?.reasoningMetadata?.providerId === 'opencode-go' && claudeSessionId
+        ? { 'x-opencode-session': claudeSessionId } : undefined,
     providerOptions,
     inputTokensIncludeCache: CACHE_INCLUSIVE_INPUT_NPMS.has(npm),
   };

@@ -11,6 +11,7 @@ import {
   runGitHubCopilotDeviceCodeFlow,
 } from '../oauth/github-copilot.js';
 import { runOpenAiDeviceCodeFlow } from '../oauth/openai.js';
+import { runAntigravityOAuthFlow } from '../oauth/antigravity.js';
 import { sleepMs } from '../oauth/pkce.js';
 import {
   supportsNativeOAuth,
@@ -47,6 +48,7 @@ const PROVIDER_DISPLAY: Record<NativeOAuthProviderId, string> = {
   openai: OPENAI_DISPLAY,
   'openai-oauth': OPENAI_DISPLAY,
   'github-copilot': 'GitHub Copilot',
+  antigravity: 'Google Antigravity',
 };
 
 function openBrowser(url: string): void {
@@ -75,6 +77,18 @@ async function runNativeDeviceCode(
   };
 
   try {
+    if (providerId === 'antigravity') {
+      const credential = await runAntigravityOAuthFlow({
+        signal,
+        confirmBillingRecovery: async () => {
+          const answer = await p.confirm({ message: 'Antigravity reported credit use. Review Google billing before continuing. Resume subscription requests?' });
+          return !p.isCancel(answer) && answer === true;
+        },
+        openBrowser: url => { spinner.stop(''); p.log.info(`Sign in: ${url}`); openBrowser(url); },
+      });
+      spinner.stop(pc.green('Signed in to Google Antigravity'));
+      return credential;
+    }
     if (providerId === 'github-copilot') {
       const { tokens } = await runGitHubCopilotDeviceCodeFlow(onDeviceCode, {
         sleep: sleepMs,
@@ -149,6 +163,12 @@ async function upsertOAuthProvider(providerId: string, _cred: StoredOAuthCredent
         },
         addedAt: new Date().toISOString(),
       };
+    }
+    if (providerId === 'antigravity') {
+      delete entry.modelsCache;
+      delete entry.refreshedAt;
+      delete entry.modelDiscoveryError;
+      delete entry.modelDiscoveryWarnings;
     }
     const index = registry.providers.findIndex(provider => provider.id === registryId);
     if (index >= 0) registry.providers[index] = entry;

@@ -245,6 +245,7 @@ export async function getOrInitLanguageModel(
     providerId: model.providerId ?? model.sourceBackend,
     authType: model.authType,
     oauthAccountId: model.oauthAccountId,
+    providerData: model.providerData,
     headers: model.headers,
     useResponsesLite: model.useResponsesLite,
     preferWebSockets: model.preferWebSockets,

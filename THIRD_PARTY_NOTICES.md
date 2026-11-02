@@ -1,8 +1,13 @@
 # Third-party notices
 
+The Antigravity transport uses `@ai-sdk/google` version `4.0.12` under the
+Apache License 2.0. The [Vercel AI SDK repository](https://github.com/vercel/ai/tree/main/packages/google)
+contains its source and license. Leverframe uses the library for
+serialization. Protocol provenance appears in [the research note](docs/ANTIGRAVITY-SUBSCRIPTION-RESEARCH.md).
+
 The Claude native-bundle reader and writer in `src/claude-bundle-native.ts`
-is derived from `tweakcc-fixed`, copyright 2025 Piebald LLC, with subsequent
-work by its contributors. It is used under the MIT License:
+derives from `tweakcc-fixed`, copyright 2025 Piebald LLC, with subsequent
+work by its contributors. Leverframe uses it under the MIT License.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

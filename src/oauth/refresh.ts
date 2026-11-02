@@ -1,6 +1,7 @@
 
 
 import { refreshOpenAiAccessToken } from './openai.js';
+import { refreshAntigravityAccessToken } from './antigravity.js';
 import type { StoredOAuthCredential } from './types.js';
 import { accessTokenIsExpiring, NATIVE_OAUTH_PROVIDER_IDS, oauthCredentialNeedsRefresh, tokensToStoredCredential } from './types.js';
 
@@ -26,6 +27,10 @@ export async function refreshStoredOAuthCredential(
   }
   if (!cred.refresh) {
     throw new Error(`${providerId}: OAuth refresh token missing. Run leverframe providers auth ${providerId}`);
+  }
+  if (providerId === 'antigravity') {
+    const tokens = await refreshAntigravityAccessToken(cred.refresh);
+    return tokensToStoredCredential(tokens, cred.refresh, cred.accountId, cred.providerData);
   }
   if (providerId !== 'openai' && providerId !== 'openai-oauth') {
     throw new Error(`OAuth refresh not implemented for provider "${providerId}"`);
