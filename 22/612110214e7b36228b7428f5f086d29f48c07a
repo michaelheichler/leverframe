@@ -1,0 +1,29 @@
+.claude/settings.json
+  s_8776d7edbe969f::t_426e9bc0f7147f 1-106
+.claude/hooks/caliber-session-freshness.sh
+  s_8776d7edbe969f::t_426e9bc0f7147f 1-14
+.claude/hooks/caliber-sync-agents.sh
+  s_8776d7edbe969f::t_426e9bc0f7147f 1-19
+.claude/hooks/caliber-freshness-notify.sh
+  s_8776d7edbe969f::t_426e9bc0f7147f 1-14
+.claude/hooks/caliber-sync-on-edit.sh
+  s_8776d7edbe969f::t_426e9bc0f7147f 1-19
+.claude/skills/jev-compaction/SKILL.md
+  s_8776d7edbe969f::t_67cd73a9aa2100 1-111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "22612110214e7b36228b7428f5f086d29f48c07a",
+  "prompts": {},
+  "sessions": {
+    "s_8776d7edbe969f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19785-6895-79e1-aee9-8f20d8de9c31",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
