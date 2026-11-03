@@ -1,0 +1,27 @@
+tests/responses-websocket-terminal.test.ts
+  s_07199be42151ec::t_12962a6fea0c3a 18-65,67-84,86-94,96-105,107-108,110-113
+src/oauth/responses-websocket.ts
+  s_07199be42151ec::t_7768d5b2230ff8 87
+  s_07199be42151ec::t_b88ffb72c4fdd9 341,343-348
+  s_07199be42151ec::t_68ab769601ea02 342
+  s_07199be42151ec::t_4250ca08e3549f 85
+src/oauth/responses-websocket-response-output.ts
+  s_07199be42151ec::t_c6d86998f18bec 45-49,64-83
+  s_07199be42151ec::t_c75f6927e5166f 50-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1629e3f94ce740b2139edcfdbeeab7bfa970f757",
+  "prompts": {},
+  "sessions": {
+    "s_07199be42151ec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6d0e848-0716-4c15-b64f-9b961b806c2e",
+        "model": "leverframe:anthropic-api:claude-opus-5-5"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
