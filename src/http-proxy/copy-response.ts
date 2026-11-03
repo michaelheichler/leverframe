@@ -1,6 +1,7 @@
 
 
 import type * as http from 'node:http';
+import * as zlib from 'node:zlib';
 import {
   clientFacingAnthropicStatus,
   isTerminalUsageLimitText,
@@ -51,6 +52,30 @@ function rebuildRawHeaders(
   return out;
 }
 
+const ERROR_BODY_DECODERS: Record<string, ((body: Buffer) => Buffer) | undefined> = {
+  gzip: zlib.gunzipSync,
+  br: zlib.brotliDecompressSync,
+  deflate: zlib.inflateSync,
+  // Node before 22.15 lacks zstd, so it stays undefined and reads as unsupported.
+  zstd: (zlib as Partial<typeof zlib>).zstdDecompressSync,
+};
+
+function decodedErrorText(body: Buffer, contentEncoding: string | string[] | undefined): string {
+  const encodings = (Array.isArray(contentEncoding) ? contentEncoding.join(',') : contentEncoding ?? '')
+    .split(',')
+    .map(encoding => encoding.trim().toLowerCase())
+    .filter(encoding => encoding && encoding !== 'identity');
+  try {
+    return encodings.reduceRight((decoded, encoding) => {
+      const decode = ERROR_BODY_DECODERS[encoding];
+      if (!decode) throw new Error(`unsupported content-encoding ${encoding}`);
+      return decode(decoded);
+    }, body).toString('utf8');
+  } catch {
+    return `[undecodable ${encodings.join(',')} body, ${body.length} bytes]`;
+  }
+}
+
 export function copyResponse(
   upstream: http.IncomingMessage,
   res: http.ServerResponse,
@@ -89,7 +114,7 @@ export function copyResponse(
     if (settled || res.headersSent) return;
     settled = true;
     const body = Buffer.concat(errorChunks);
-    const bodyText = `${body.toString('utf8')}${truncated ? ' [truncated]' : ''}${suffix}`;
+    const bodyText = `${decodedErrorText(body, upstream.headers['content-encoding'])}${truncated ? ' [truncated]' : ''}${suffix}`;
     options.onErrorResponse?.(upstreamStatus, bodyText);
     const clientStatus = clientFacingAnthropicStatus(upstreamStatus, bodyText, bodyText);
     const stripRetryAfter = clientStatus !== upstreamStatus
