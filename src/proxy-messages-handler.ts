@@ -43,9 +43,16 @@ import { resolveAccountRoute } from './account-route-auth.js';
 
 import type { ProxyRequestContext } from './proxy-handler.js';
 
+function rejectedThreadedTranslation(prepared: PreparedProxyMessage, res: ServerResponse): boolean {
+  if(prepared.route.modelFormat==='anthropic'||!('thread' in prepared.anthropicBody)) return false;
+  // Because a 400 makes Claude Code resend this turn with the full history.
+  anthropicError(res, 400, `Leverframe: message threads are not supported for ${prepared.originalModel}; resend without thread.`);
+  return true;
+}
+
 export async function handleProxyMessages(req: IncomingMessage, res: ServerResponse, context: ProxyRequestContext, messagesEndpoint: NonNullable<ReturnType<typeof anthropicMessagesEndpoint>>): Promise<void> {
   const prepared=await prepareProxyMessage(req, res, context, messagesEndpoint);
-  if(!prepared) return;
+  if(!prepared||rejectedThreadedTranslation(prepared, res)) return;
   if(messagesEndpoint==='count_tokens') {
     await handleProxyTokenCount(prepared);
     return;
