@@ -33,6 +33,7 @@ ANTHROPIC_ORIGIN = "https://api.anthropic.com"
 class Proxy(NamedTuple):
     url: str
     ca_path: str
+    placeholder_key: str = ""
 
 
 def client_environment(inherited: dict, proxy: Proxy, bare: bool = False) -> dict:
@@ -44,8 +45,8 @@ def client_environment(inherited: dict, proxy: Proxy, bare: bool = False) -> dic
     env.update({key: "0" for key in BACKEND_FLAGS})
     env["ANTHROPIC_BASE_URL"] = ANTHROPIC_ORIGIN
     env["NODE_EXTRA_CA_CERTS"] = proxy.ca_path
-    if bare and not any(env.get(key, "").strip() for key in CREDENTIAL_KEYS):
-        env["ANTHROPIC_API_KEY"] = "sk-ant-api03-leverframe-http-proxy"
+    if bare and proxy.placeholder_key and not any(env.get(key, "").strip() for key in CREDENTIAL_KEYS):
+        env["ANTHROPIC_API_KEY"] = proxy.placeholder_key
     env["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"] = "1"
     env.setdefault("ENABLE_TOOL_SEARCH", "auto")
     return env
@@ -150,6 +151,7 @@ def start_leverframe(env: dict, log_dir: Path, processes: list) -> tuple:
         env.pop(key, None)
     env["LEVERFRAME_OUTPUT_IDLE_TIMEOUT_MS"] = "600000"
     env["LEVERFRAME_CLAUDE_PATH"] = str(CLAUDE)
+    env["LEVERFRAME_PARENT_PID"] = str(os.getpid())
     log_path = log_dir / "leverframe.log"
     with log_path.open("w") as log:
         process = subprocess.Popen(
@@ -161,7 +163,8 @@ def start_leverframe(env: dict, log_dir: Path, processes: list) -> tuple:
     runtime = json.loads((APP_HOME / "server-runtime.json").read_text())
     entry = next(item for item in runtime if item["port"] == port and item["pid"] == process.pid)
     token = urllib.parse.quote(entry["token"], safe="")
-    return Proxy(f"http://leverframe:{token}@127.0.0.1:{port}", entry["caPath"]), entry
+    placeholder = entry.get("anthropicPlaceholderKey", "")
+    return Proxy(f"http://leverframe:{token}@127.0.0.1:{port}", entry["caPath"], placeholder), entry
 
 
 def main() -> int:

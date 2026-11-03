@@ -21,6 +21,7 @@ export interface ServerRuntimeState {
   caPath?: string;
 
   token?: string;
+  anthropicPlaceholderKey?: string;
   startedAt: string;
 }
 
@@ -51,6 +52,10 @@ function isPort(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 65535;
 }
 
+function nonBlankString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
 export function parseServerRuntimeRecord(value: unknown): ServerRuntimeState | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -63,13 +68,12 @@ export function parseServerRuntimeRecord(value: unknown): ServerRuntimeState | n
   const startedAt = typeof record['startedAt'] === 'string' ? record['startedAt'] : '';
 
   const caPath = record['caPath'];
-  const token = typeof record['token'] === 'string' && record['token'].trim()
-    ? record['token']
-    : undefined;
+  const token = nonBlankString(record['token']);
   if (mode === 'proxy') {
 
     if (typeof caPath !== 'string' || !caPath.trim()) return null;
-    return { mode, port: record['port'], pid, caPath, token, startedAt };
+    const anthropicPlaceholderKey = nonBlankString(record['anthropicPlaceholderKey']);
+    return { mode, port: record['port'], pid, caPath, token, startedAt, ...(anthropicPlaceholderKey && { anthropicPlaceholderKey }) };
   }
   return { mode, port: record['port'], pid, token, startedAt };
 }

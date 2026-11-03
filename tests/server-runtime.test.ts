@@ -68,12 +68,12 @@ describe('server runtime state file', () => {
 
   it('persists and reads the per-start token field', () => {
     const alwaysAlive = { isAlive: () => true };
-    registerServerRuntimeState(proxyState({ pid: 999998, token: 'proxy-token-abc' }), env, alwaysAlive);
-    registerServerRuntimeState(endpointState({ pid: 999999, token: 'endpoint-token-xyz' }), env, alwaysAlive);
+    registerServerRuntimeState(proxyState({ pid: 999998, token: 'proxy-token-sample' }), env, alwaysAlive);
+    registerServerRuntimeState(endpointState({ pid: 999999, token: 'endpoint-token-sample' }), env, alwaysAlive);
 
     const records = readLiveServerRuntimeStates(env, alwaysAlive);
-    expect(records.find(r => r.mode === 'proxy')?.token).toBe('proxy-token-abc');
-    expect(records.find(r => r.mode === 'endpoint')?.token).toBe('endpoint-token-xyz');
+    expect(records.find(r => r.mode === 'proxy')?.token).toBe('proxy-token-sample');
+    expect(records.find(r => r.mode === 'endpoint')?.token).toBe('endpoint-token-sample');
   });
 
   it('tolerates legacy records that lack a token field', () => {
@@ -90,7 +90,9 @@ describe('server runtime state file', () => {
     const numericToken = { ...endpointState({ pid: 999999 }), token: 12345 };
     expect(parseServerRuntimeStates(JSON.stringify(numericToken))[0]?.token).toBeUndefined();
   });
+});
 
+describe('server runtime registration', () => {
   it('two registering servers do not clobber each other', () => {
     const proxy = proxyState({ pid: process.pid });
     const endpoint = endpointState({ pid: 999999 });
@@ -121,7 +123,9 @@ describe('server runtime state file', () => {
     expect(records).toHaveLength(1);
     expect(records[0]?.mode).toBe('endpoint');
   });
+});
 
+describe('server runtime unregister and lock', () => {
   it('unregister removes only its own record and keeps the other server registered', () => {
     const proxy = proxyState({ pid: 999998 });
     const endpoint = endpointState({ pid: 999999 });
@@ -199,6 +203,22 @@ describe('parseServerRuntimeStates', () => {
     registerServerRuntimeState(endpoint, env, { isAlive: () => true });
     expect(JSON.parse(readFileSync(path, 'utf8'))).toBeInstanceOf(Array);
     expect(readLiveServerRuntimeStates(env, { isAlive: () => true })).toEqual([legacy, endpoint]);
+  });
+});
+
+describe('parseServerRuntimeStates anthropic placeholder key', () => {
+  it('keeps the placeholder key a proxy record advertises', () => {
+    const proxy = proxyState({ anthropicPlaceholderKey: 'runtime-placeholder-fixture' });
+    expect(parseServerRuntimeStates(JSON.stringify(proxy))).toEqual([proxy]);
+  });
+
+  it.each([
+    ['an empty string', ''],
+    ['whitespace', '   '],
+    ['a non-string value', 42],
+  ])('drops a placeholder key that is %s', (_label, anthropicPlaceholderKey) => {
+    const raw = JSON.stringify({ ...proxyState(), anthropicPlaceholderKey });
+    expect(parseServerRuntimeStates(raw)).toEqual([proxyState()]);
   });
 });
 

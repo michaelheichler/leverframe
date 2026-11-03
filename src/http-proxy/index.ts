@@ -13,6 +13,8 @@ import { buildHttpProxyRoutes, type HttpProxyRouteResult } from './routes.js';
 import { startHttpProxy, type HttpProxyHandle } from './server.js';
 import { ensureHttpProxyCaBundle } from './ca.js';
 import { registerServerRuntimeState, unregisterServerRuntimeState } from '../server-runtime.js';
+import { HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY } from '../env.js';
+import { launcherPid, onParentExit } from './parent-watch.js';
 import { getInferenceRequestLogPath, getSessionLogPath } from '../log-paths.js';
 import { resolveClaudeInstallation } from '../claude-installation.js';
 import { runLaunchPatchCheck } from '../patcher.js';
@@ -130,15 +132,29 @@ export async function startConfiguredHttpProxy(
   return { handle, loaded };
 }
 
-function waitForShutdown(): Promise<void> {
+function waitForShutdown(parentPid = launcherPid()): Promise<void> {
   return new Promise(resolve => {
+    const stopWatching = parentPid ? onParentExit(parentPid, () => done()) : () => {};
     const done = () => {
+      stopWatching();
       process.off('SIGINT', done);
       process.off('SIGTERM', done);
       resolve();
     };
     process.once('SIGINT', done);
     process.once('SIGTERM', done);
+  });
+}
+
+function registerProxyRuntime(handle: HttpProxyHandle): void {
+  registerServerRuntimeState({
+    mode: 'proxy',
+    port: handle.port,
+    pid: process.pid,
+    caPath: handle.caCertPath,
+    token: handle.token,
+    anthropicPlaceholderKey: HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY,
+    startedAt: new Date().toISOString(),
   });
 }
 
@@ -186,16 +202,7 @@ export async function runHttpProxyServerCommand(
   console.log(pc.dim('Use `/model <listed-name>` for a favorite or saved alias.'));
   console.log(pc.dim('Press Ctrl+C to stop.'));
 
-  if (!noDiscovery) {
-    registerServerRuntimeState({
-      mode: 'proxy',
-      port: handle.port,
-      pid: process.pid,
-      caPath: handle.caCertPath,
-      token: handle.token,
-      startedAt: new Date().toISOString(),
-    });
-  }
+  if (!noDiscovery) registerProxyRuntime(handle);
 
   await waitForShutdown();
   if (!noDiscovery) unregisterServerRuntimeState();

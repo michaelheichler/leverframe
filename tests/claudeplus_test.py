@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import stat
 import subprocess
@@ -12,6 +13,8 @@ from unittest.mock import Mock, patch
 ROOT = Path(__file__).resolve().parents[1]
 PROXY_URL = "http://leverframe:fixture@127.0.0.1:3128"
 CA_PATH = "/tmp/leverframe-ca.pem"
+PLACEHOLDER_KEY = "runtime-placeholder-fixture"
+INHERITED_CREDENTIAL = "subscription-fixture"
 
 
 def load_launcher() -> object:
@@ -22,7 +25,7 @@ def load_launcher() -> object:
 
 
 launcher = load_launcher()
-PROXY = launcher.Proxy(PROXY_URL, CA_PATH)
+PROXY = launcher.Proxy(PROXY_URL, CA_PATH, PLACEHOLDER_KEY)
 
 
 def critical_section_interval(output: str) -> tuple:
@@ -60,20 +63,26 @@ class ClaudeplusTests(unittest.TestCase):
         self.assertTrue(first_interval[1] <= second_interval[0] or second_interval[1] <= first_interval[0])
 
     def test_client_routes_anthropic_through_the_leverframe_proxy(self) -> None:
-        inherited = {"HTTP_PROXY": "old", "NO_PROXY": "api.anthropic.com", "CLAUDE_CODE_OAUTH_TOKEN": "subscription-fixture"}
+        inherited = {"HTTP_PROXY": "old", "NO_PROXY": "api.anthropic.com", "CLAUDE_CODE_OAUTH_TOKEN": INHERITED_CREDENTIAL}
         env = launcher.client_environment(inherited, PROXY)
         self.assertEqual({key: env[key] for key in launcher.PROXY_KEYS}, dict.fromkeys(launcher.PROXY_KEYS, PROXY_URL))
         self.assertNotIn("NO_PROXY", env)
         self.assertEqual(env["NODE_EXTRA_CA_CERTS"], CA_PATH)
-        self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "subscription-fixture")
+        self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], INHERITED_CREDENTIAL)
         self.assertEqual(env["ANTHROPIC_BASE_URL"], "https://api.anthropic.com")
         self.assertEqual(env.get("CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"), "1")
         self.assertEqual(env["ENABLE_TOOL_SEARCH"], "auto")
 
-    def test_bare_client_uses_proxy_auth_only_without_an_explicit_credential(self) -> None:
+    def test_non_bare_client_gets_no_placeholder_api_key(self) -> None:
         self.assertNotIn("ANTHROPIC_API_KEY", launcher.client_environment({}, PROXY))
+
+    def test_bare_client_without_a_credential_uses_the_proxy_placeholder_key(self) -> None:
         env = launcher.client_environment({}, PROXY, bare=True)
-        self.assertEqual(env.get("ANTHROPIC_API_KEY"), "sk-ant-api03-leverframe-http-proxy")
+        self.assertEqual(env.get("ANTHROPIC_API_KEY"), PLACEHOLDER_KEY)
+
+    def test_bare_client_sets_no_api_key_when_the_proxy_reports_no_placeholder(self) -> None:
+        keyless = launcher.Proxy(PROXY_URL, CA_PATH, "")
+        self.assertNotIn("ANTHROPIC_API_KEY", launcher.client_environment({}, keyless, bare=True))
 
     def test_bare_client_keeps_each_explicit_credential(self) -> None:
         for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
@@ -161,7 +170,7 @@ class ClaudeplusTests(unittest.TestCase):
         cleanup.assert_called_once_with([])
 
     def test_proxy_startup_prepares_claude_and_returns_the_session_proxy(self) -> None:
-        runtime = [{"port": 3128, "pid": 321, "token": "fix ture", "caPath": "/tmp/ca.pem"}]
+        runtime = [{"port": 3128, "pid": 321, "token": "fix ture", "caPath": "/tmp/ca.pem", "anthropicPlaceholderKey": PLACEHOLDER_KEY}]
         with tempfile.TemporaryDirectory() as directory, patch.object(launcher, "APP_HOME", Path(directory)), \
                 patch.object(launcher, "free_port", return_value=3128), \
                 patch.object(launcher, "wait_ready"), \
@@ -173,7 +182,8 @@ class ClaudeplusTests(unittest.TestCase):
         self.assertIn("--proxy", command)
         self.assertEqual(env["LEVERFRAME_CLAUDE_PATH"], str(launcher.CLAUDE))
         self.assertEqual(env["LEVERFRAME_OUTPUT_IDLE_TIMEOUT_MS"], "600000")
-        self.assertEqual(proxy, launcher.Proxy("http://leverframe:fix%20ture@127.0.0.1:3128", "/tmp/ca.pem"))
+        self.assertEqual(env["LEVERFRAME_PARENT_PID"], str(os.getpid()))
+        self.assertEqual(proxy, launcher.Proxy("http://leverframe:fix%20ture@127.0.0.1:3128", "/tmp/ca.pem", PLACEHOLDER_KEY))
         self.assertEqual(entry, runtime[0])
 
 
