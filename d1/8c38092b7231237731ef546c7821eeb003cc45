@@ -1,0 +1,22 @@
+tests/proxy-message-threads.test.ts
+  s_07199be42151ec::t_05a786cd4353cb 1-193
+src/proxy-messages-handler.ts
+  s_07199be42151ec::t_ea33b2a10821f2 55
+  s_07199be42151ec::t_385884fe189247 46-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d18c38092b7231237731ef546c7821eeb003cc45",
+  "prompts": {},
+  "sessions": {
+    "s_07199be42151ec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6d0e848-0716-4c15-b64f-9b961b806c2e",
+        "model": "leverframe:anthropic-api:claude-opus-5-5"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
