@@ -1,0 +1,46 @@
+scripts/claudeplus.py
+  s_07199be42151ec::t_972a00c393ffca 48-49
+  s_07199be42151ec::t_126c51015636d5 154
+  s_07199be42151ec::t_fb2d1740571bb9 166-167
+  s_07199be42151ec::t_0cd742144f5936 36
+tests/http-proxy-parent-watch.test.ts
+  s_07199be42151ec::t_e94dda70bc867b 34
+  s_07199be42151ec::t_58b481b3d67cc6 1-33,35-67,69,71-94
+  s_07199be42151ec::t_b4984dd09fbc41 68,70
+tests/claudeplus_test.py
+  s_07199be42151ec::t_9c6a9db2155483 3,16-17,28,66,71,76,78-79,81-85,173,185-186
+src/http-proxy/parent-watch.ts
+  s_07199be42151ec::t_430ad06f65d6bd 27
+  s_07199be42151ec::t_f06dba04481b07 1-26,28-31
+tests/server-runtime.test.ts
+  s_07199be42151ec::t_2b2ea300981059 71-72,75-76
+  s_07199be42151ec::t_80afaa83d00598 126,128,223
+  s_07199be42151ec::t_edf4174033f971 93,95
+  s_07199be42151ec::t_801dac0f74f4bf 209-222
+  s_07199be42151ec::t_56286764ca29fb 224
+src/http-proxy/index.ts
+  s_07199be42151ec::t_3c01b86244385a 149-160
+  s_07199be42151ec::t_b0d15a86314ac6 135,137,139
+  s_07199be42151ec::t_0c064d4c81bfb4 16-17
+  s_07199be42151ec::t_a372fed7b2aee2 205
+src/server-runtime.ts
+  s_07199be42151ec::t_daf4c53495e097 71,75-76
+  s_07199be42151ec::t_3f00e075dd6045 55-58
+  s_07199be42151ec::t_9337635f3b4953 24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4c6d1b3b6d63c07fb6d2e915f8308f923f377220",
+  "prompts": {},
+  "sessions": {
+    "s_07199be42151ec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6d0e848-0716-4c15-b64f-9b961b806c2e",
+        "model": "leverframe:anthropic-api:claude-opus-5-5"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
