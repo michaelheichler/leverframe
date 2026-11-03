@@ -82,7 +82,9 @@ import {
 } from './responses-websocket-payload.js';
 import {
   captureOutput,
+  emptyTerminalTransportError,
   errorFrameTransportError,
+  sdkDropsTerminal,
   eventType,
   expectedAssistantItems,
   responseErrorCode,
@@ -336,7 +338,14 @@ function handleUpstreamFailureEvent(entry: ConnectionEntry, ctx: RequestContext,
     dispatchContext(ctx.createReplacement(), ctx);
     return true;
   }
-  if (!errorFrame) return false;
+  if (!errorFrame) {
+    if (ctx.emittedModelData || !sdkDropsTerminal(event)) return false;
+    handleTransportFailure(entry, ctx, emptyTerminalTransportError(ctx, event), {
+      source: 'response_event',
+      errorCode,
+    }, ctx.frameCount);
+    return true;
+  }
   handleTransportFailure(entry, ctx, errorFrameTransportError(ctx, event), {
     source: 'error_frame',
     errorCode,

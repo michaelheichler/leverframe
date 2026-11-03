@@ -42,6 +42,45 @@ export function errorFrameTransportError(ctx: RequestContext, event: unknown): P
   });
 }
 
+function objectField(value: unknown, key: string): JsonObject {
+  const field = value && typeof value === 'object' ? (value as JsonObject)[key] : undefined;
+  return field && typeof field === 'object' ? field as JsonObject : {};
+}
+
+export function sdkDropsTerminal(event: unknown): boolean {
+  const type = eventType(event);
+  const response = objectField(event, 'response');
+  const usage = response.usage === undefined || response.usage === null ? undefined : objectField(response, 'usage');
+  const validUsage = typeof usage?.input_tokens === 'number' && typeof usage.output_tokens === 'number';
+  if (type === 'response.failed') {
+    const error = response.error === undefined || response.error === null ? undefined : objectField(response, 'error');
+    return typeof (event as JsonObject).sequence_number !== 'number'
+      || (error !== undefined && typeof error.message !== 'string')
+      || (usage !== undefined && !validUsage);
+  }
+  return (type === 'response.completed' || type === 'response.incomplete') && !validUsage;
+}
+
+// Fail here because the AI SDK drops terminals that miss its schema, hiding why.
+export function emptyTerminalTransportError(ctx: RequestContext, event: unknown): ProviderTransportError {
+  const type = eventType(event) ?? 'response';
+  const response = objectField(event, 'response');
+  const errorCode = responseErrorCode(event);
+  const reason = objectField(response, 'incomplete_details').reason;
+  const message = objectField(response, 'error').message;
+  const detail = [errorCode, typeof reason === 'string' ? reason : undefined].filter(Boolean).join(', ');
+  const messageSuffix = typeof message === 'string' ? `: ${message.slice(0, ERROR_FRAME_MESSAGE_LIMIT)}` : '';
+  return new ProviderTransportError({
+    provider: ctx.provider,
+    model: ctx.model,
+    phase: 'stream',
+    httpStatus: 502,
+    retryable: type === 'response.failed' && (errorCode === undefined || errorCode === 'server_error'),
+    outputEmitted: false,
+    safeMessage: `Provider ended with ${type} before any output${detail ? ` (${detail})` : ''}${messageSuffix}`,
+  });
+}
+
 function responseIdFromEvent(event: unknown): string | undefined {
   if (!event || typeof event !== 'object') return undefined;
   const response = (event as JsonObject).response;
