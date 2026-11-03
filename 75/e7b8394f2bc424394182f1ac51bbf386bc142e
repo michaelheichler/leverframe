@@ -1,0 +1,44 @@
+.craftsman-baseline.json
+  s_2323a9b425b5bd::t_3f304fcc81af93 58
+  s_2323a9b425b5bd::t_0b49ce2463a523 56-57
+  s_9dbaec5916562b::t_24f962a92cd22f 2,175,207,240-241,269,275
+dist/cli.js
+  s_07199be42151ec::t_c0d2e78ccf50ef 2,4-5,7-11,13-14,16,21-22,24-28,31,33-35,37,40,42-43,47,49,52,55-56,58,60,63,66,69-73,76,79,81,83,89,91-93,95-96,102,106,110-117,128,130,138,144,161,166,418,420,423,425,427-428
+  s_07199be42151ec::t_ee63f07e284147 12,19,32,39,67,80,87,108,118-119,123,147,152,158,215,270,346,381,416
+dist/claude-wrapper.js
+  s_07199be42151ec::t_c0d2e78ccf50ef 2
+dist/chunk-VREWYKFT.js
+  s_07199be42151ec::t_c0d2e78ccf50ef 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "75e7b8394f2bc424394182f1ac51bbf386bc142e",
+  "prompts": {},
+  "sessions": {
+    "s_07199be42151ec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6d0e848-0716-4c15-b64f-9b961b806c2e",
+        "model": "leverframe:anthropic-api:claude-opus-5-5"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    },
+    "s_2323a9b425b5bd": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19c37-d702-7361-b78e-c8470b0dbd49",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    },
+    "s_9dbaec5916562b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a782629814403017e",
+        "model": "unknown"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
