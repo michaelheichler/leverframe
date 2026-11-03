@@ -1,0 +1,29 @@
+dist/cli.js
+  s_07199be42151ec::t_4c3b39c036266a 2,25-26,33,35,52,55,63,69,73,76,79,81,83,89,91-93,95-96,102,106,110,112-117,144,161,166,418,425,427-428
+.craftsman-baseline.json
+  s_42a6e9e2279e96::t_b2c1904c2cd77e 128,268
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "711bd543683395a5b7f070d8b20b006adcb77817",
+  "prompts": {},
+  "sessions": {
+    "s_07199be42151ec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6d0e848-0716-4c15-b64f-9b961b806c2e",
+        "model": "leverframe:anthropic-api:claude-opus-5-5"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    },
+    "s_42a6e9e2279e96": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a3da541fbbac40a0e",
+        "model": "unknown"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
