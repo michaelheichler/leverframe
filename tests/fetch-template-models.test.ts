@@ -51,15 +51,15 @@ function stubSupplierFetch(listing: unknown, catalog: unknown): void {
   });
 }
 
-describe('fetchTemplateModels', () => {
-  beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn());
-  });
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn());
+});
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
+describe('fetchTemplateModels auth headers', () => {
   it('uses x-api-key for Anthropic, not Bearer auth', async () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
@@ -69,7 +69,7 @@ describe('fetchTemplateModels', () => {
       }),
     } as Response);
 
-    const result = await fetchTemplateModels(anthropicTemplate, 'sk-ant-test-key');
+    const result = await fetchTemplateModels(anthropicTemplate, 'sk-ant-dummy-key');
     expect(result.error).toBeUndefined();
     expect(result.models.map(m => m.id)).toEqual(['claude-sonnet-4-6']);
 
@@ -78,7 +78,7 @@ describe('fetchTemplateModels', () => {
       `https://api.anthropic.com/v1/models?limit=${ANTHROPIC_MODELS_PAGE_LIMIT}`,
       expect.objectContaining({
         headers: expect.objectContaining({
-          'x-api-key': 'sk-ant-test-key',
+          'x-api-key': 'sk-ant-dummy-key',
           'anthropic-version': '2023-06-01',
         }),
       }),
@@ -105,7 +105,9 @@ describe('fetchTemplateModels', () => {
       }),
     );
   });
+});
 
+describe('fetchTemplateModels custom headers and request parameters', () => {
   it('merges extra headers for custom endpoints needing plan/auth-tracking headers', async () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
@@ -147,7 +149,9 @@ describe('fetchTemplateModels', () => {
       supportedParameters: ['tools', 'reasoning', 'include_reasoning'],
     });
   });
+});
 
+describe('fetchTemplateModels anonymous fetches', () => {
   it('uses provider-specific modelsPath and omits Authorization for anonymous fetches', async () => {
     const anonymousTemplate = template({
       id: 'anon-free',
@@ -191,7 +195,9 @@ describe('fetchTemplateModels', () => {
       }),
     );
   });
+});
 
+describe('fetchTemplateModels credential redaction', () => {
   it('redacts an opaque resolved credential echoed by an upstream error', async () => {
     const root = mkdtempSync(join(tmpdir(), 'leverframe-trace-secret-'));
     const previousHome = process.env['LEVERFRAME_HOME'];
@@ -218,6 +224,9 @@ describe('fetchTemplateModels', () => {
     }
   });
 
+});
+
+describe('fetchTemplateModels free status', () => {
   it('derives verified free status from zero pricing even when provider flag is false', async () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
@@ -242,7 +251,9 @@ describe('fetchTemplateModels', () => {
       cost: { input: 0, output: 0 },
     });
   });
+});
 
+describe('fetchTemplateModels context windows and discovery failure', () => {
   it('keeps a live context window the supplier catalog does not cover', async () => {
     stubSupplierFetch(
       { data: [{ id: 'live-only', name: 'Live Only', context_length: 262_144 }] },
@@ -286,7 +297,9 @@ describe('fetchTemplateModels', () => {
     expect(result.error).toMatch(/HTTP 503/);
     expect(result.usedStaticFallback).toBeUndefined();
   });
+});
 
+describe('fetchTemplateModels supplier catalog', () => {
   it('fills a missing context window from the supplier catalog', async () => {
     stubSupplierFetch(
       { data: [{ id: 'supplier-only', name: 'Supplier Only' }] },
@@ -327,7 +340,9 @@ describe('fetchTemplateModels', () => {
       supportsTemperature: false,
     });
   });
+});
 
+describe('fetchTemplateModels malformed supplier metadata', () => {
   it('ignores malformed supplier reasoning options without failing discovery', async () => {
     stubSupplierFetch(
       { data: [{ id: 'supplier-model', name: 'Supplier Model' }] },
@@ -347,5 +362,42 @@ describe('fetchTemplateModels', () => {
     expect(result.error).toBeUndefined();
     expect(result.models[0]?.supportedReasoningEfforts).toBeUndefined();
     expect(result.models[0]?.supportsReasoningToggle).toBeUndefined();
+  });
+});
+
+describe('fetchTemplateModels listed cost', () => {
+  function stubListing(row: Record<string, unknown>): void {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ data: [row] }),
+    } as Response);
+  }
+
+  it('reads cost and peak multiplier from a listed cost when the row has no pricing', async () => {
+    stubListing({
+      id: 'vendor/peak-tiered',
+      cost: {
+        text: { input: { price: 0.15, cache: { read: 0.003 } }, output: { price: 0.6 } },
+        multipliers: [{ factor: 2 }],
+      },
+    });
+
+    const result = await fetchTemplateModels(openaiCompatTemplate, 'sk-test');
+
+    expect(result.models[0]?.cost).toEqual({ input: 0.15, output: 0.6, cache_read: 0.003 });
+    expect(result.models[0]?.peakCostMultiplier).toBe(2);
+  });
+
+  it('classifies a zero listed cost as verified free with no peak multiplier', async () => {
+    stubListing({
+      id: 'vendor/listed-free',
+      cost: { text: { input: { price: 0, cache: { read: 0 } }, output: { price: 0 } } },
+    });
+
+    const result = await fetchTemplateModels(openaiCompatTemplate, 'sk-test');
+
+    expect(result.models[0]).toMatchObject({ isFree: true, freeStatus: 'verified_free' });
+    expect(result.models[0]?.peakCostMultiplier).toBeUndefined();
   });
 });

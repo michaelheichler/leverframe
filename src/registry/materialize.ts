@@ -73,6 +73,7 @@ export function cachedModelToLocal(
     cost: cached.cost,
     usageMultiplier: cached.usageMultiplier,
     usageMultiplierApplies: cached.usageMultiplierApplies,
+    peakCostMultiplier: cached.peakCostMultiplier,
     deprecated: cached.deprecated,
     isFree: isFreeStatus(freeStatus),
     freeStatus,

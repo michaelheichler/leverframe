@@ -33,6 +33,7 @@ export interface CachedModel {
   cost?: { input: number; output: number; cache_read?: number; cache_write?: number };
   usageMultiplier?: number;
   usageMultiplierApplies?: boolean;
+  peakCostMultiplier?: number;
   deprecated?: boolean;
   contextWindowUnconfirmed?: boolean;
 

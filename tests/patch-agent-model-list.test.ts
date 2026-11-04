@@ -96,6 +96,13 @@ describe('computePatchConfigHash for picker-only models', () => {
 
     expect(computePatchConfigHash(pickerOnly)).not.toBe(computePatchConfigHash(agentVisible));
   });
+
+  it('changes when only the capabilities change', () => {
+    const withCapabilities = (capabilities: string) => ({ 'leverframe:p:m1': { context: 1000, capabilities } });
+
+    expect(computePatchConfigHash(withCapabilities('[1M context, 6x usage]')))
+      .not.toBe(computePatchConfigHash(withCapabilities('[1M context, 10x usage]')));
+  });
 });
 
 describe('buildDesiredPatchConfig Agent tool scope', () => {

@@ -19,6 +19,7 @@ function modelToCached(model: LocalProviderModel): CachedModel {
     cost: model.cost,
     usageMultiplier: model.usageMultiplier,
     usageMultiplierApplies: model.usageMultiplierApplies,
+    peakCostMultiplier: model.peakCostMultiplier,
     deprecated: model.deprecated,
     contextWindowUnconfirmed: model.contextWindowUnconfirmed,
     isFree: model.isFree,

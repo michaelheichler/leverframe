@@ -6,7 +6,7 @@ import { normalizeGoogleDisplayName, normalizeGoogleModelId } from './google-mod
 import type { CachedModel } from './types.js';
 import { getProviderDebugLogPath } from '../log-paths.js';
 import { makeTraceLogger } from '../trace-log.js';
-import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
+import { classifyFreeStatus, isFreeStatus, isZeroCost } from '../free-models.js';
 import { revalidateCustomEndpointUrl } from './url-security.js';
 import {
   fetchModelsDevCatalog,
@@ -17,6 +17,7 @@ import {
 } from './models-dev.js';
 import { fetchOpenCodeGoMetadata } from './supplier-metadata.js';
 import { fetchAnthropicModels } from './anthropic-models-fetch.js';
+import { parseListedCost, peakCostMultiplier, type ListedCost } from './listed-cost.js';
 
 const TEST_TIMEOUT_MS = 10_000;
 
@@ -40,6 +41,7 @@ interface ProviderModelListRow {
   limit?: { context?: unknown; input?: unknown; output?: unknown };
   isFree?: boolean;
   pricing?: Record<string, string | number | undefined>;
+  cost?: ListedCost;
   use_responses_lite?: boolean;
   prefer_websockets?: boolean;
 }
@@ -126,7 +128,8 @@ function parseModelList(body: OpenAiModelListResponse, npm: string): CachedModel
     if (!rawId) continue;
     const { id, upstreamModelId } = normalizeGoogleModelId(rawId, npm);
     const family = id.split(/[-/:]/)[0] ?? id;
-    const cost = parseNativePricing(row.pricing);
+    const cost = parseNativePricing(row.pricing) ?? parseListedCost(row.cost);
+    const peak = peakCostMultiplier(row.cost);
     const freeStatus = classifyFreeStatus({
       model: { cost, isFree: row.isFree },
     });
@@ -147,6 +150,7 @@ function parseModelList(body: OpenAiModelListResponse, npm: string): CachedModel
       ...(input === undefined ? {} : { inputTokenLimit: input }),
       ...(output === undefined ? {} : { outputTokenLimit: output }),
       cost,
+      ...(peak === undefined ? {} : { peakCostMultiplier: peak }),
       isFree: isFreeStatus(freeStatus),
       freeStatus,
       modelFormat: format,
@@ -190,6 +194,7 @@ async function applyDynamicSupplierMetadata(
 
     const contextWindow = positiveTokenCount(model.contextWindow) ?? positiveTokenCount(capabilities?.limit?.context);
     const supportedReasoningEfforts = modelsDevReasoningEfforts(capabilities);
+    const cost = supplied?.cost ?? providerModel?.cost ?? model.cost;
     return {
       ...model,
       name: capabilities?.name ?? model.name,
@@ -198,9 +203,9 @@ async function applyDynamicSupplierMetadata(
       contextWindowUnconfirmed: contextWindow === undefined,
       npm,
       modelFormat: modelFormatForNpm(npm ?? template.npm),
-      cost: supplied?.cost ?? providerModel?.cost ?? model.cost,
+      cost,
       usageMultiplier: supplied?.usageMultiplier,
-      usageMultiplierApplies: true,
+      usageMultiplierApplies: template.supplierMetadataUrl !== undefined && !isZeroCost(cost),
       reasoning: capabilities?.reasoning ?? model.reasoning,
       supportsTemperature: capabilities?.temperature ?? model.supportsTemperature,
       inputTokenLimit: capabilities?.limit?.input ?? model.inputTokenLimit,

@@ -24,6 +24,8 @@ export interface PatchScriptModelEntry {
 
   display?: string;
 
+  capabilities?: string;
+
   effort?: PatchScriptEffort;
 
   pickerOnly?: boolean;

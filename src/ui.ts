@@ -38,13 +38,14 @@ function formatContextWindow(tokens: number): string {
 }
 
 export function formatModelCapabilities(
-  model: Pick<LocalProviderModel, 'contextWindow' | 'contextWindowUnconfirmed' | 'usageMultiplier' | 'usageMultiplierApplies' | 'deprecated'>,
+  model: Pick<LocalProviderModel, 'contextWindow' | 'contextWindowUnconfirmed' | 'usageMultiplier' | 'usageMultiplierApplies' | 'peakCostMultiplier' | 'deprecated'>,
 ): string {
   const capabilities: string[] = [];
   if (model.contextWindow) capabilities.push(`${formatContextWindow(model.contextWindow)} context`);
   else if (model.contextWindowUnconfirmed) capabilities.push('context unconfirmed');
   if (model.usageMultiplier !== undefined) capabilities.push(`${model.usageMultiplier}x usage`);
   else if (model.usageMultiplierApplies) capabilities.push('usage multiplier unconfirmed');
+  if (model.peakCostMultiplier !== undefined) capabilities.push(`${model.peakCostMultiplier}x at peak`);
   if (model.deprecated) capabilities.push('deprecated');
   return `[${capabilities.join(', ')}]`;
 }

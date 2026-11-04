@@ -32,6 +32,7 @@ export interface LocalProviderModel {
 
   usageMultiplier?: number;
   usageMultiplierApplies?: boolean;
+  peakCostMultiplier?: number;
   deprecated?: boolean;
   contextWindow?: number;
   maxContextWindow?: number;

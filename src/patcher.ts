@@ -13,6 +13,7 @@ import {
   type PatchScriptModelConfig,
 } from './patch-transforms.js';
 import { getReasoningCapabilities, type ReasoningMetadata } from './provider-factory.js';
+import { formatModelCapabilities } from './ui.js';
 import type { FavoriteModel, LocalProvider } from './types.js';
 import type { CachedModel, RegistryProvider } from './registry/types.js';
 import { runPatchCommandV2, runLaunchPatchCheckV2 } from './patch-reconcile.js';
@@ -68,6 +69,8 @@ export interface PatchModelMeta {
   contextCeilingOverride?: number;
   displayName?: string;
 
+  capabilities?: string;
+
   effort?: PatchScriptEffort;
 }
 
@@ -85,6 +88,10 @@ interface PatchMetadataModel {
   contextWindow?: number;
   maxContextWindow?: number;
   contextWindowUnconfirmed?: boolean;
+  usageMultiplier?: number;
+  usageMultiplierApplies?: boolean;
+  peakCostMultiplier?: number;
+  deprecated?: boolean;
 }
 
 function patchModelFormat(model: Pick<PatchMetadataModel, 'modelFormat'>): PatchModelMeta['modelFormat'] {
@@ -109,6 +116,7 @@ function buildPatchModelMeta(
     modelFormat: patchModelFormat(model),
     nativeAnthropic: providerId === 'anthropic' && model.modelFormat === 'anthropic',
     displayName: httpProxyDisplayName(model, providerName),
+    capabilities: formatModelCapabilities(model),
     effort,
   };
 }
@@ -194,6 +202,7 @@ export function buildPatchModelConfig(
     if (contextProvenance === 'missing') unknownWindows.push(id);
     const display = meta?.displayName?.trim();
     if (display) entry.display = display;
+    if (meta?.capabilities && meta.capabilities !== '[]') entry.capabilities = meta.capabilities;
     const projectedEffort = projectNativeEffort(meta?.effort);
     if (projectedEffort) entry.effort = projectedEffort;
     if (
@@ -224,6 +233,7 @@ export function computePatchConfigHash(
       entry.contextSelection === true,
       entry.pickerOnly === true,
       entry.accountTag ?? null,
+      entry.capabilities ?? null,
     ];
   });
   return createHash('sha256')

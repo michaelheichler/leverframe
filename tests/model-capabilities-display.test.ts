@@ -31,6 +31,11 @@ describe('model capability display', () => {
     }))).toBe('[256K context, usage multiplier unconfirmed, deprecated]');
   });
 
+  it('shows the peak cost multiplier after the usage multiplier', () => {
+    expect(formatModelCapabilities(model({ usageMultiplier: 10, peakCostMultiplier: 2 })))
+      .toBe('[1M context, 10x usage, 2x at peak]');
+  });
+
   it('does not mention a usage multiplier for regular providers', () => {
     expect(formatModelCapabilities(model({
       contextWindow: 128_000,

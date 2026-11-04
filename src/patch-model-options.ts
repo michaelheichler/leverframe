@@ -27,6 +27,18 @@ export function shortDisplayName(display: string | undefined): string | undefine
   return trimmed;
 }
 
+function comparableName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function aliasLabel(alias: string, modelName: string | undefined): string {
+  const label = alias.charAt(0).toUpperCase() + alias.slice(1);
+  // Because an alias can outlive its model version, the name alone can mislead.
+  return modelName && !comparableName(modelName).includes(comparableName(alias))
+    ? `${label} (${modelName})`
+    : label;
+}
+
 export function applyConfiguredModelPicker(source: string, options: {
   identities: string[];
   aliases: Record<string, string>;
@@ -37,15 +49,17 @@ export function applyConfiguredModelPicker(source: string, options: {
     const canonicalId = options.aliases[identity] ?? identity;
     const display = options.displays[identity] ?? options.displays[canonicalId];
     const isAlias = options.aliases[identity] !== undefined;
-    const accountTag = options.models[canonicalId.replace(/(?:\[(?:default|maximum|1m)\])+$/i, '')]?.accountTag;
+    const entry = options.models[canonicalId.replace(/(?:\[(?:default|maximum|1m)\])+$/i, '')];
+    const accountTag = entry?.accountTag;
+    const capabilities = entry?.capabilities ? ` ${entry.capabilities}` : '';
     const badge = accountTag ? { badge: accountTag, badgeColor: '#ff9f43' }
       : canonicalId.startsWith(ANTHROPIC_API_IDENTITY_PREFIX) ? { badge: 'API' } : {};
     const description = options.displays[identity] || 'Custom model (' + canonicalId + ')';
     return {
       ...badge,
       value: identity,
-      label: isAlias ? identity.charAt(0).toUpperCase() + identity.slice(1) : display ?? canonicalId,
-      description: isAlias ? description : display ? 'Model ID: ' + canonicalId : description,
+      label: isAlias ? aliasLabel(identity, shortDisplayName(display)) : display ?? canonicalId,
+      description: (isAlias ? description : display ? 'Model ID: ' + canonicalId : description) + capabilities,
     };
   });
   const picker = applyModelPickerOptions(source, pickerOptions);

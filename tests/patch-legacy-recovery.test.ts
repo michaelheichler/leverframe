@@ -32,6 +32,7 @@ const CURRENT_CONFIG: PatchScriptModelConfig = {
     alias: 'current',
     context: 272_000,
     display: 'Model (OpenAI)',
+    capabilities: '[272K context]',
   },
 };
 const LEGACY_CONFIG: PatchScriptModelConfig = {

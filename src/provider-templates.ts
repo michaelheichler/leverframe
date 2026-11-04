@@ -92,7 +92,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     signupUrl: 'https://opencode.ai/auth',
     modelSource: 'api-list',
     modelsDevProviderId: 'opencode-go',
-    supplierMetadataUrl: 'https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/content/docs/go.mdx',
+    supplierMetadataUrl: 'https://raw.githubusercontent.com/anomalyco/opencode/dev/services/www/src/docs/content/console/go.mdx',
     supported: true,
   },
   {

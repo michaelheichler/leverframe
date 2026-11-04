@@ -25,12 +25,14 @@ function amount(value: string): number | undefined {
 function modelNameKey(value: string): string {
   return value
     .replace(/\([^)]*tokens?\)/gi, '')
+    .replace(/\((?:off-?)?peak\)/gi, '')
     .replace(/[^a-z0-9]+/gi, '')
     .toLowerCase();
 }
 
 export function parseOpenCodeGoMetadata(mdx: string): Map<string, SupplierModelMetadata> {
-  const monthlyMatch = mdx.match(/\*\*\$([\d.]+)\/month\*\*/gi)?.at(-1)?.match(/\$([\d.]+)/);
+  // Because rows keep the first plan's limits, the price must come from that plan.
+  const monthlyMatch = mdx.match(/\*\*\$([\d.]+)\/month\*\*/i);
   const monthlyPrice = monthlyMatch ? Number(monthlyMatch[1]) : NaN;
   const pricingByName = new Map<string, { usage?: number; cost?: ModelCost }>();
   const endpointRows: Array<{ name: string; id: string; npm: string }> = [];
