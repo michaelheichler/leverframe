@@ -108,14 +108,18 @@ export async function fetchAnthropicModels(
   const root = baseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10_000);
+  const bearerAuth = Object.entries(extraHeaders ?? {}).some(([name, value]) => name.toLowerCase() === 'authorization'
+    && /^Bearer\s+\S+/i.test(value));
   const headers = {
-    'x-api-key': apiKey,
+    ...(apiKey || !bearerAuth ? { 'x-api-key': apiKey } : {}),
     'anthropic-version': '2023-06-01',
     Accept: 'application/json',
     ...extraHeaders,
   };
   const logTrace = process.env.LEVERFRAME_TRACE === '1'
-    ? makeTraceLogger(getProviderDebugLogPath(), [apiKey])
+    ? makeTraceLogger(getProviderDebugLogPath(), [apiKey, ...Object.entries(extraHeaders ?? {})
+      .filter(([name]) => name.toLowerCase() === 'authorization')
+      .map(([, value]) => value.replace(/^Bearer\s+/i, ''))])
     : undefined;
 
   try {

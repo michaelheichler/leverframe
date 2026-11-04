@@ -56,6 +56,7 @@ describe('parseOpenCodeGoMetadata', () => {
       npm: NPM,
       usageMultiplier: 10,
       cost: { input: 0.15, output: 0.6, cache_read: 0.003 },
+      pricing: { input: 0.15, output: 0.6, cacheRead: 0.003, cacheWrite: undefined, source: 'supplier' },
     });
   });
 

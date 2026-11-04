@@ -30,6 +30,8 @@ import {
 silenceSdkWarnings
 } from './sdk-adapter.js';
 import { formatAnthropicModelList } from './server/models.js';
+import type { RoutingControlContext } from './proxy-routing-control.js';
+import { createRoutingAdapterSession, type RoutingAdapterAttemptInput, type RoutingAdapterSession } from './routing-adapter-session.js';
 
 export { aliasModelId,type ProxyModelAlias,type ProxyRoute } from './proxy-request.js';
 export { isTransientSdkStreamFailure } from './proxy-retry.js';
@@ -40,6 +42,7 @@ export interface ProxyHandle {
   port: number;
   token: string;
   close: () => void | Promise<void>;
+  createRoutingSession?: (input: RoutingAdapterAttemptInput) => RoutingAdapterSession;
 }
 
 export async function startProxyCatalog(
@@ -50,6 +53,7 @@ export async function startProxyCatalog(
   debugLogPath?: string,
   webSocketDiagnosticsLogPath?: string,
   modelAliases?: ProxyModelAlias[],
+  routing?: Omit<RoutingControlContext, 'proxyToken'>,
 ): Promise<ProxyHandle> {
   const proxyToken = randomUUID();
   const managedPools = configuredPools(routes);
@@ -71,35 +75,24 @@ export async function startProxyCatalog(
   const plog = makeProxyLog(debug, debugLogPath);
   logStartupRecovery(plog);
 
-  const onRejection = (reason: unknown) => {
-    plog(() => `Unhandled Rejection: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}`);
-  };
-  const onException = (error: Error) => {
-    plog(() => `Uncaught Exception: ${error.stack || error.message}`);
-  };
-  process.on('unhandledRejection', onRejection);
-  process.on('uncaughtException', onException);
+  const cleanupListeners = installProxyErrorHandlers(plog);
 
   const modelsPayload = () => proxyModelsPayload(routes);
+  let adapterClosed = false;
+  const requestContext = { proxyToken, byAlias, defaultRoute, managedPools, providerRuntimeCache, plog,
+    modelsPayload, inferenceLogPath, webSocketDiagnosticsLogPath, routing };
 
   const server = createServer(async (req, res) => {
     try {
       plog(() => `${req.method} ${req.url}`);
 
-      await handleProxyRequest(req, res, {
-        proxyToken, byAlias, defaultRoute, managedPools, providerRuntimeCache, plog,
-        modelsPayload, inferenceLogPath, webSocketDiagnosticsLogPath,
-      });
+      await handleProxyRequest(req, res, requestContext);
     } catch (err) {
       handleProxyRequestError(res, plog, err);
     }
   });
 
   server.keepAliveTimeout = INTERNAL_ADAPTER_KEEPALIVE_TIMEOUT_MS;
-  const cleanupListeners = () => {
-    process.off('unhandledRejection', onRejection);
-    process.off('uncaughtException', onException);
-  };
   let address: AddressInfo;
   try {
     address = await listenTcpServer(server, 0, '127.0.0.1');
@@ -111,13 +104,33 @@ export async function startProxyCatalog(
   return {
     port: address.port,
     token: proxyToken,
+    createRoutingSession: input => {
+      if (adapterClosed || !routing) throw new Error('The routing adapter is unavailable.');
+      return createRoutingAdapterSession(requestContext, input, () => !adapterClosed);
+    },
     close: async () => {
+      adapterClosed = true;
       cleanupListeners();
 
       cancelAllActiveRequestExecutions();
       await new Promise<void>(resolve => server.close(() => resolve()));
       await providerRuntimeCache.dispose();
     },
+  };
+}
+
+function installProxyErrorHandlers(plog: ReturnType<typeof makeProxyLog>): () => void {
+  const onRejection = (reason: unknown) => {
+    plog(() => `Unhandled Rejection: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}`);
+  };
+  const onException = (error: Error) => {
+    plog(() => `Uncaught Exception: ${error.stack || error.message}`);
+  };
+  process.on('unhandledRejection', onRejection);
+  process.on('uncaughtException', onException);
+  return () => {
+    process.off('unhandledRejection', onRejection);
+    process.off('uncaughtException', onException);
   };
 }
 

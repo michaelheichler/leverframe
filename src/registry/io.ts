@@ -99,16 +99,19 @@ function parseProvider(raw: unknown): RegistryProvider | null {
     provider.pinnedAccountId = p.pinnedAccountId;
   }
   if (p.subscriptionFilter === 'free') provider.subscriptionFilter = 'free';
+  if (p.id === 'anthropic' && p.credentialSource === 'claude-code') provider.credentialSource = 'claude-code';
+  if (isBillingMetadata(p.billing)) provider.billing = p.billing;
   if (p.authType === 'api' || p.authType === 'oauth' || p.authType === 'none') {
     provider.authType = p.authType;
   }
   if (typeof p.refreshedAt === 'string') provider.refreshedAt = p.refreshedAt;
   if (p.modelsCache && typeof p.modelsCache === 'object' && !Array.isArray(p.modelsCache)) {
-    const cache = p.modelsCache as { fetchedAt?: string; models?: unknown[]; oauthAccountId?: unknown };
+    const cache = p.modelsCache as { fetchedAt?: string; models?: unknown[]; oauthAccountId?: unknown; source?: unknown };
     if (typeof cache.fetchedAt === 'string' && Array.isArray(cache.models)) {
       provider.modelsCache = {
         ...(typeof cache.oauthAccountId === 'string' && cache.oauthAccountId ? { oauthAccountId: cache.oauthAccountId } : {}),
         fetchedAt: cache.fetchedAt,
+        ...(cache.source === 'harness' || cache.source === 'account' ? { source: cache.source } : {}),
         models: cache.models.filter(m => m && typeof m === 'object' && !Array.isArray(m)) as NonNullable<RegistryProvider['modelsCache']>['models'],
       };
     }
@@ -126,6 +129,14 @@ function parseProvider(raw: unknown): RegistryProvider | null {
   const warnings = parseModelDiscoveryWarnings(p.modelDiscoveryWarnings);
   if (warnings !== undefined) provider.modelDiscoveryWarnings = warnings;
   return provider;
+}
+
+function isBillingMetadata(raw: unknown): raw is NonNullable<RegistryProvider['billing']> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  const value = raw as Record<string, unknown>;
+  return (value.kind === 'metered' || value.kind === 'subscription' || value.kind === 'none' || value.kind === 'unknown')
+    && typeof value.source === 'string' && value.source.length > 0
+    && typeof value.observedAt === 'string' && value.observedAt.length > 0;
 }
 
 function parseRegistry(raw: unknown): ProviderRegistry {
@@ -150,6 +161,8 @@ function hasOwn(record: Record<string, unknown>, key: string): boolean {
 function strictOptionalFields(raw: unknown): boolean {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
   const provider = raw as Record<string, unknown>;
+  if (hasOwn(provider, 'credentialSource') && (provider.id !== 'anthropic' || provider.credentialSource !== 'claude-code' || provider.authRef !== 'claude-code')) return false;
+  if (hasOwn(provider, 'billing') && !isBillingMetadata(provider.billing)) return false;
   if (hasOwn(provider, 'subscriptionFilter') && provider.subscriptionFilter !== 'free') return false;
   if (
     hasOwn(provider, 'authType')
@@ -162,6 +175,7 @@ function strictOptionalFields(raw: unknown): boolean {
     const cache = provider.modelsCache;
     if (!cache || typeof cache !== 'object' || Array.isArray(cache)) return false;
     const fields = cache as Record<string, unknown>;
+    if (hasOwn(fields, 'source') && fields.source !== 'harness' && fields.source !== 'account') return false;
     if (hasOwn(fields, 'oauthAccountId') && (typeof fields.oauthAccountId !== 'string' || !fields.oauthAccountId)) return false;
     if (typeof fields.fetchedAt !== 'string' || !Array.isArray(fields.models)) return false;
     if (fields.models.some(model => !model || typeof model !== 'object' || Array.isArray(model))) return false;

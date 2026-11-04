@@ -60,7 +60,9 @@ function spawnProductionWorker(
       {
         env: {
           ...process.env,
+          HOME: homeDir,
           LEVERFRAME_HOME: homeDir,
+          LEVERFRAME_TEST_HOME: homeDir,
           LEVERFRAME_LOCK_WORKER_MODE: 'run',
           LEVERFRAME_LOCK_WORKER_ID: workerId,
           LEVERFRAME_LOCK_WORKER_ROUNDS: String(rounds),

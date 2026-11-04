@@ -6,6 +6,39 @@ export const REGISTRY_SCHEMA_VERSION = 1;
 
 export type RegistrySubscriptionFilter = 'free';
 
+export interface BillingMetadata {
+  kind: 'metered' | 'subscription' | 'none' | 'unknown';
+  source: string;
+  observedAt: string;
+}
+
+export interface ModelPricingMetadata {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  cacheWrites?: CacheWriteRate[];
+  tiers?: ModelPricingTier[];
+  invalidTiers?: boolean;
+  source: string;
+  observedAt?: string;
+}
+
+export interface CacheWriteRate {
+  ttlSeconds: number;
+  rate: number;
+}
+
+export interface ModelPricingTier {
+  condition?: { type: 'context'; size: number };
+  label?: string;
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  cacheWrites?: CacheWriteRate[];
+}
+
 export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type ModelDiscoveryFailureKind =
   | 'authentication'
@@ -31,6 +64,7 @@ export interface CachedModel {
   brand?: string;
   contextWindow?: number;
   cost?: { input: number; output: number; cache_read?: number; cache_write?: number };
+  pricing?: ModelPricingMetadata;
   usageMultiplier?: number;
   usageMultiplierApplies?: boolean;
   peakCostMultiplier?: number;
@@ -83,6 +117,7 @@ export interface RegistryAccount {
   id: string;
   authRef: string;
   enabled: boolean;
+  billing?: BillingMetadata;
   name?: string;
   tag?: string;
   modelsCache?: RegistryProvider['modelsCache'];
@@ -99,6 +134,8 @@ export interface RegistryProvider {
   accounts?: RegistryAccount[];
   pinnedAccountId?: string;
   authType?: 'api' | 'oauth' | 'none';
+  credentialSource?: 'claude-code';
+  billing?: BillingMetadata;
   subscriptionFilter?: RegistrySubscriptionFilter;
   api: {
     npm?: string;
@@ -108,6 +145,7 @@ export interface RegistryProvider {
     headers?: Record<string, string>;
   };
   modelsCache?: {
+    source?: 'harness' | 'account';
     oauthAccountId?: string;
     fetchedAt: string;
     models: CachedModel[];

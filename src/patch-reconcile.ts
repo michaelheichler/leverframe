@@ -39,6 +39,7 @@ import {
 import { buildDesiredPatchConfig, computePatchConfigHash, type DesiredPatchConfig } from './patcher.js';
 import { loadStoredRegistryProviders } from './registry/load.js';
 import type { FavoriteModel, LocalProvider } from './types.js';
+import type { RoutingConfig } from './model-routing.js';
 
 export { migrateLegacyStateIfVerified } from './patch-legacy-recovery.js';
 
@@ -131,9 +132,13 @@ export async function checkResolvedPatchState(
   freshProviders?: LocalProvider[],
   selectedModel?: FavoriteModel,
   contextSelectionAvailable = true,
+  routingAvailable = false,
+  routingConfig?: RoutingConfig,
+  routingPreflight?: ReturnType<typeof import('./routing-policy-identity.js').routingPreflight>,
+  routingRecoveryOnly = false,
 ): Promise<CheckResult> {
   return withPatchTargetLock(installation.identity, () => checkOwnedPatchState({
-    installation, runtime, freshProviders, selectedModel, contextSelectionAvailable,
+    installation, runtime, freshProviders, selectedModel, contextSelectionAvailable, routingAvailable, routingConfig, routingPreflight, routingRecoveryOnly,
   }), { waitMs: 500 });
 }
 
@@ -148,11 +153,19 @@ async function checkOwnedPatchState(options: {
   freshProviders?: LocalProvider[];
   selectedModel?: FavoriteModel;
   contextSelectionAvailable: boolean;
+  routingAvailable?: boolean;
+  routingConfig?: RoutingConfig;
+  routingPreflight?: ReturnType<typeof import('./routing-policy-identity.js').routingPreflight>;
+  routingRecoveryOnly?: boolean;
 }): Promise<CheckResult> {
-  const { installation, runtime, freshProviders, selectedModel, contextSelectionAvailable } = options;
+  const { installation, runtime, freshProviders, selectedModel, contextSelectionAvailable, routingAvailable, routingConfig, routingPreflight, routingRecoveryOnly } = options;
   const catalog = freshProviders ?? await loadStoredPatchCatalog();
   const desired = buildDesiredPatchConfig(catalog, selectedModel, {
     includeContextModes: contextSelectionAvailable,
+    routingAvailable,
+    routingConfig,
+    routingPreflight,
+    routingRecoveryOnly,
   });
   const configHash = computePatchConfigHash(desired.config);
 
@@ -174,7 +187,7 @@ async function checkOwnedPatchState(options: {
     live.readable
     && live.sha256
     && live.injection.state === 'present'
-    && (!manifest || live.sha256 !== manifest.patchedSha256)
+    && (routingAvailable || routingRecoveryOnly || !manifest || live.sha256 !== manifest.patchedSha256)
   ) {
     try {
       const content = await runtime.readContent(installation.canonicalPath, installation.version);
@@ -182,6 +195,11 @@ async function checkOwnedPatchState(options: {
     } catch {
       semanticSitesComplete = false;
     }
+  }
+
+  if ((routingAvailable || routingRecoveryOnly) && manifest && manifest.configHash === configHash
+    && live.sha256 === manifest.patchedSha256 && semanticSitesComplete === false) {
+    throw new Error('Routing integration is incomplete. Reapply the Claude integration from its saved baseline before launching.');
   }
 
   const state = evaluatePatchStateV2({
@@ -228,6 +246,10 @@ export interface RunPatchCommandV2Options {
   freshProviders?: LocalProvider[];
   selectedModel?: FavoriteModel;
   contextSelectionAvailable?: boolean;
+  routingAvailable?: boolean;
+  routingConfig?: RoutingConfig;
+  routingPreflight?: ReturnType<typeof import('./routing-policy-identity.js').routingPreflight>;
+  routingRecoveryOnly?: boolean;
 }
 
 export async function runPatchCommandV2(
@@ -254,6 +276,10 @@ export async function runPatchCommandV2(
       freshProviders: catalogProviders,
       selectedModel: opts.selectedModel,
       contextSelectionAvailable: opts.contextSelectionAvailable !== false,
+      routingAvailable: opts.routingAvailable,
+      routingConfig: opts.routingConfig,
+      routingPreflight: opts.routingPreflight,
+      routingRecoveryOnly: opts.routingRecoveryOnly,
     });
     if (opts.restore) {
       const outcome = await restorePatchTransactionV2({ installation, manifest }, runtime);
@@ -342,14 +368,22 @@ export async function runLaunchPatchCheckV2(
     freshProviders?: LocalProvider[];
     selectedModel?: FavoriteModel;
     contextSelectionAvailable?: boolean;
+    routingAvailable?: boolean;
+    routingConfig?: RoutingConfig;
+    routingPreflight?: ReturnType<typeof import('./routing-policy-identity.js').routingPreflight>;
+    routingRecoveryOnly?: boolean;
   } = {},
   presenter: PatchPresenter = clackPatchPresenter,
 ): Promise<void> {
   try {
     const runtime = opts.runtime ?? defaultPatchRuntime;
     const installation = opts.installation ?? resolveClaudeInstallation();
-    if (!installation) return;
+    if (!installation) {
+      if (opts.routingAvailable || opts.routingRecoveryOnly) throw new Error('Routing requires a Claude installation.');
+      return;
+    }
     if (!isClaudeCodeVersionSupportedForBinaryPatching(installation.version)) {
+      if (opts.routingAvailable || opts.routingRecoveryOnly) throw new Error('Routing requires a supported Claude integration.');
       presenter.notice(unsupportedClaudeCodeBinaryPatchingMessage(installation.version));
       return;
     }
@@ -359,6 +393,10 @@ export async function runLaunchPatchCheckV2(
       opts.freshProviders,
       opts.selectedModel,
       opts.contextSelectionAvailable !== false,
+      opts.routingAvailable === true,
+      opts.routingConfig,
+      opts.routingPreflight,
+      opts.routingRecoveryOnly === true,
     );
     if (Object.keys(desired.config).length === 0) {
       if (
@@ -374,6 +412,10 @@ export async function runLaunchPatchCheckV2(
               installation, runtime, freshProviders: opts.freshProviders,
               selectedModel: opts.selectedModel,
               contextSelectionAvailable: opts.contextSelectionAvailable !== false,
+              routingAvailable: opts.routingAvailable,
+              routingConfig: opts.routingConfig,
+              routingPreflight: opts.routingPreflight,
+              routingRecoveryOnly: opts.routingRecoveryOnly,
             });
             if (!current.manifest || (current.state !== 'patched' && current.state !== 'config_stale')) {
               return { ok: true, message: 'No stale integration remains to restore.' };
@@ -427,6 +469,10 @@ export async function runLaunchPatchCheckV2(
           freshProviders: opts.freshProviders,
           selectedModel: opts.selectedModel,
           contextSelectionAvailable: opts.contextSelectionAvailable,
+          routingAvailable: opts.routingAvailable,
+          routingConfig: opts.routingConfig,
+          routingPreflight: opts.routingPreflight,
+          routingRecoveryOnly: opts.routingRecoveryOnly,
         },
         presenter,
       );
@@ -441,6 +487,10 @@ export async function runLaunchPatchCheckV2(
         freshProviders: opts.freshProviders,
         selectedModel: opts.selectedModel,
         contextSelectionAvailable: opts.contextSelectionAvailable,
+        routingAvailable: opts.routingAvailable,
+        routingConfig: opts.routingConfig,
+        routingPreflight: opts.routingPreflight,
+        routingRecoveryOnly: opts.routingRecoveryOnly,
       },
       opts.agentStdout ? silentPatchPresenter : presenter,
     );

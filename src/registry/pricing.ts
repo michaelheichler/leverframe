@@ -120,7 +120,7 @@ export async function fetchPricingCache(): Promise<PricingCacheFile | null> {
   }
 }
 
-function pickPricingRow(rows: PricingTierRow[], platform?: string): PricingTierRow | null {
+export function pickPricingRow(rows: PricingTierRow[], platform?: string): PricingTierRow | null {
   const textRows = rows.filter(r => !r.modality || r.modality === 'text');
   const pool = textRows.length > 0 ? textRows : rows;
   if (platform) {

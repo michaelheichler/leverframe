@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { _credentialStoreInternals } from '../src/credential-store.js';
 import { getCredentialCleanupPath, getProvidersPath } from '../src/paths.js';
 import {
@@ -18,6 +18,19 @@ import { saveRegistry } from '../src/registry/io.js';
 import type { ProviderRegistry } from '../src/registry/types.js';
 
 const originalHome = process.env.LEVERFRAME_HOME;
+const fixtureRoots = new Set<string>();
+
+function inside(parent: string, child: string): boolean {
+  const path = relative(parent, child);
+  return path === '' || (!path.startsWith(`..${sep}`) && path !== '..' && !path.startsWith(sep));
+}
+
+function temporaryDirectory(prefix: string): string {
+  const directory = mkdtempSync(join(tmpdir(), prefix));
+  if (!inside(tmpdir(), directory)) throw new Error('Credential fixture escaped the isolated temporary directory.');
+  fixtureRoots.add(directory);
+  return directory;
+}
 
 function registry(authRef = 'keyring:provider:test'): ProviderRegistry {
   return {
@@ -36,7 +49,11 @@ function registry(authRef = 'keyring:provider:test'): ProviderRegistry {
 }
 
 beforeEach(() => {
-  process.env.LEVERFRAME_HOME = join(mkdtempSync(join(tmpdir(), 'leverframe-lifecycle-')), 'home');
+  const root = temporaryDirectory('leverframe-lifecycle-');
+  process.env.LEVERFRAME_HOME = join(root, 'home');
+  if (!inside(root, getCredentialCleanupPath()) || !inside(root, getProvidersPath())) {
+    throw new Error('Credential lifecycle paths escaped the test fixture.');
+  }
   _credentialLifecycleInternals.resetWarningsForTests();
 });
 
@@ -44,6 +61,8 @@ afterEach(() => {
   if (originalHome === undefined) delete process.env.LEVERFRAME_HOME;
   else process.env.LEVERFRAME_HOME = originalHome;
   vi.restoreAllMocks();
+  for (const directory of fixtureRoots) rmSync(directory, { recursive: true, force: true });
+  fixtureRoots.clear();
 });
 
 describe('credential cleanup journal', () => {
@@ -79,7 +98,6 @@ describe('credential cleanup journal', () => {
   });
 });
 
-describe('credential cleanup reconciliation', () => {
   it('cancels deletion when the reference becomes active again', async () => {
     saveRegistry(registry(), getProvidersPath());
     await queueCredentialDelete('keyring:provider:test');
@@ -182,4 +200,3 @@ describe('credential cleanup reconciliation', () => {
       'Cleanup for keyring:provider:test: keyring error: backend failure',
     ]);
   });
-});

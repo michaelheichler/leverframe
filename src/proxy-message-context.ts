@@ -5,6 +5,7 @@ import type { ProviderRuntimeCache } from './provider-runtime-cache.js';
 import type { ProxyAnthropicRequestBody, ProxyRoute } from './proxy-request.js';
 import type { createRequestExecutionContext } from './request-execution-context.js';
 import type { ProxyRequestContext } from './proxy-handler.js';
+import type { dispatchWithPool } from './account-pool-dispatch.js';
 
 export type ProxyMessageContext={
   req: IncomingMessage;
@@ -28,4 +29,10 @@ export type ProxyMessageContext={
   credential: ReturnType<ProviderRuntimeCache<LanguageModel>['snapshot']>|undefined;
   pooledNative: boolean;
   pooledSdk: boolean;
+  eligibleAccount?: Parameters<typeof dispatchWithPool>[0]['eligibleAccount'];
+  routingBound?: true;
+  selectorAttemptFetch?: typeof fetch;
+  routingAttempt?: true;
+  routingUsage?: (usage: import('./http-proxy/response-usage.js').ResponseUsage) => void;
+  selectorUsage?: (usage: import('./http-proxy/response-usage.js').ResponseUsage) => void;
 };

@@ -1,3 +1,4 @@
+import { ANTHROPIC_API_ORIGIN } from '../constants.js';
 
 
 import { shouldHideModel, type CompatibilityAgent } from '../model-compatibility.js';
@@ -20,7 +21,7 @@ export function resolveEndpoint(
   if (npm === '@ai-sdk/anthropic') {
     return {
       format: 'anthropic',
-      baseUrl: (apiUrl || 'https://api.anthropic.com').replace(/\/v1\/?$/, ''),
+      baseUrl: (apiUrl || ANTHROPIC_API_ORIGIN).replace(/\/v1\/?$/, ''),
     };
   }
   if (npm === '@ai-sdk/openai-compatible') {

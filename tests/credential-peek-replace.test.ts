@@ -1,6 +1,6 @@
-import { mkdtempSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   _credentialStoreInternals,
@@ -9,6 +9,7 @@ import {
   UnstableCredentialSnapshotError,
   writeFallbackCredential,
 } from '../src/credential-store.js';
+import { getProvidersPath } from '../src/paths.js';
 import { loadRegistry, saveRegistry } from '../src/registry/io.js';
 import { loadStoredRegistryProviders } from '../src/registry/load.js';
 
@@ -26,15 +27,34 @@ vi.mock('node:fs', async () => {
 });
 
 const ACCOUNT = 'provider:openai';
+const fixtureRoots = new Set<string>();
+
+function inside(parent: string, child: string): boolean {
+  const path = relative(parent, child);
+  return path === '' || (!path.startsWith(`..${sep}`) && path !== '..' && !path.startsWith(sep));
+}
+
+function temporaryDirectory(prefix: string): string {
+  const directory = mkdtempSync(join(tmpdir(), prefix));
+  if (!inside(tmpdir(), directory)) throw new Error('Credential fixture escaped the isolated temporary directory.');
+  fixtureRoots.add(directory);
+  return directory;
+}
 
 afterEach(() => {
   openHook.beforeOpen = () => {};
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  for (const directory of fixtureRoots) rmSync(directory, { recursive: true, force: true });
+  fixtureRoots.clear();
 });
 
 function seedFallback(): string {
-  vi.stubEnv('LEVERFRAME_HOME', join(mkdtempSync(join(tmpdir(), 'leverframe-peek-replace-')), 'home'));
+  const root = temporaryDirectory('leverframe-peek-replace-');
+  const home = join(root, 'home');
+  vi.stubEnv('LEVERFRAME_HOME', home);
+  expect(inside(root, getCredentialFallbackPath())).toBe(true);
+  expect(inside(root, getProvidersPath())).toBe(true);
   writeFallbackCredential(ACCOUNT, 'fallback-before');
   vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockResolvedValue({ ok: true, value: 'primary-stale' });
   return getCredentialFallbackPath();

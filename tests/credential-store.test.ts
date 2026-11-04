@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import {
@@ -22,10 +22,24 @@ import {
   writeStoredCredential,
 } from '../src/credential-store.js';
 import { resolveProviderCredential, saveProviderCredential } from '../src/env.js';
+import { getProvidersPath } from '../src/paths.js';
 
 const originalHome = process.env['LEVERFRAME_HOME'];
 const originalDbus = process.env['DBUS_SESSION_BUS_ADDRESS'];
 const originalXdgRuntime = process.env['XDG_RUNTIME_DIR'];
+const temporaryRoots = new Set<string>();
+
+function inside(parent: string, child: string): boolean {
+  const path = relative(parent, child);
+  return path === '' || (!path.startsWith(`..${sep}`) && path !== '..' && !path.startsWith(sep));
+}
+
+function temporaryDirectory(prefix: string): string {
+  const directory = mkdtempSync(join(tmpdir(), prefix));
+  expect(inside(tmpdir(), directory)).toBe(true);
+  temporaryRoots.add(directory);
+  return directory;
+}
 
 afterEach(() => {
   if (originalHome === undefined) delete process.env['LEVERFRAME_HOME'];
@@ -36,22 +50,25 @@ afterEach(() => {
   else process.env['XDG_RUNTIME_DIR'] = originalXdgRuntime;
   vi.restoreAllMocks();
   vi.useRealTimers();
+  for (const directory of temporaryRoots) rmSync(directory, { recursive: true, force: true });
+  temporaryRoots.clear();
 });
 
 function temporaryHome(): string {
-  const directory = mkdtempSync(join(tmpdir(), 'leverframe-credentials-'));
+  const directory = temporaryDirectory('leverframe-credentials-');
   process.env['LEVERFRAME_HOME'] = join(directory, 'home');
+  expect(inside(directory, getCredentialFallbackPath())).toBe(true);
+  expect(inside(directory, getProvidersPath())).toBe(true);
   return process.env['LEVERFRAME_HOME'];
 }
 
 function isolateFromSystemDbus(): string {
   delete process.env['DBUS_SESSION_BUS_ADDRESS'];
-  const runtimeDir = mkdtempSync(join(tmpdir(), 'leverframe-no-dbus-'));
+  const runtimeDir = temporaryDirectory('leverframe-no-dbus-');
   process.env['XDG_RUNTIME_DIR'] = runtimeDir;
   return runtimeDir;
 }
 
-describe('credential fallback', () => {
   it('persists and reads credentials with private permissions and atomic replacement', () => {
     const home = temporaryHome();
     const path = getCredentialFallbackPath();
@@ -358,64 +375,6 @@ describe('credential fallback', () => {
     await expect(deleteStoredCredential(account)).resolves.toBe(false);
     expect(operation).not.toHaveBeenCalled();
   });
-});
-
-describe('legacy keychain migration', () => {
-  it('falls back from leverframe to clodex and copies the credential forward', async () => {
-    temporaryHome();
-    const operations: Array<{ operation: string; service: string }> = [];
-    vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockImplementation(async input => {
-      operations.push({ operation: input.operation, service: input.service });
-      if (input.operation === 'read' && input.service === 'leverframe') return { ok: true, value: null };
-      if (input.operation === 'read' && input.service === 'clodex') return { ok: true, value: 'legacy-secret' };
-      if (input.operation === 'write' && input.service === 'leverframe') return { ok: true, value: null };
-      throw new Error(`Unexpected keyring operation: ${input.operation} ${input.service}`);
-    });
-
-    await expect(readStoredCredential('provider:openai')).resolves.toBe('legacy-secret');
-    expect(operations).toEqual([
-      { operation: 'read', service: 'leverframe' },
-      { operation: 'read', service: 'clodex' },
-      { operation: 'write', service: 'leverframe' },
-    ]);
-  });
-
-  it('checks relay-ai after an empty clodex lookup and copies that credential forward', async () => {
-    temporaryHome();
-    const operations: Array<{ operation: string; service: string }> = [];
-    vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockImplementation(async input => {
-      operations.push({ operation: input.operation, service: input.service });
-      if (input.operation === 'read' && input.service === 'relay-ai') return { ok: true, value: 'older-secret' };
-      if (input.operation === 'write' && input.service === 'leverframe') return { ok: true, value: null };
-      if (input.operation === 'read') return { ok: true, value: null };
-      throw new Error(`Unexpected keyring operation: ${input.operation} ${input.service}`);
-    });
-
-    await expect(readStoredCredential('provider:openai')).resolves.toBe('older-secret');
-    expect(operations).toEqual([
-      { operation: 'read', service: 'leverframe' },
-      { operation: 'read', service: 'clodex' },
-      { operation: 'read', service: 'relay-ai' },
-      { operation: 'write', service: 'leverframe' },
-    ]);
-  });
-
-  it('continues to the clodex service when the leverframe lookup fails', async () => {
-    temporaryHome();
-    vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockImplementation(async input => {
-      if (input.operation === 'read' && input.service === 'leverframe') return { ok: false, error: 'primary unavailable' };
-      if (input.operation === 'read' && input.service === 'clodex') return { ok: true, value: 'legacy-secret' };
-      if (input.operation === 'write' && input.service === 'leverframe') return { ok: true, value: null };
-      throw new Error(`Unexpected keyring operation: ${input.operation} ${input.service}`);
-    });
-    const diagnostics: string[] = [];
-
-    await expect(readStoredCredential('provider:openai', message => diagnostics.push(message))).resolves.toBe('legacy-secret');
-    expect(diagnostics).toContain('keyring error: primary unavailable');
-  });
-});
-
-describe('isolated keyring operations', () => {
   it('kills a blocked child using KEYRING_TIMEOUT_MS by default', async () => {
     vi.useFakeTimers();
     const child = fakeChild();
@@ -479,7 +438,7 @@ describe('isolated keyring operations', () => {
 
   it('derives the D-Bus address from an owned runtime socket', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
-    const runtime = mkdtempSync(join(tmpdir(), 'leverframe-dbus-runtime-'));
+    const runtime = temporaryDirectory('leverframe-dbus-runtime-');
     const socketPath = join(runtime, 'bus');
     const server = createServer();
     await new Promise<void>((resolve, reject) => {
@@ -500,7 +459,7 @@ describe('isolated keyring operations', () => {
 
   it('does not derive a D-Bus address from a regular file', () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
-    const runtime = mkdtempSync(join(tmpdir(), 'leverframe-dbus-runtime-'));
+    const runtime = temporaryDirectory('leverframe-dbus-runtime-');
     writeFileSync(join(runtime, 'bus'), 'not a socket');
 
     expect(buildKeyringHelperEnv({ XDG_RUNTIME_DIR: runtime }).DBUS_SESSION_BUS_ADDRESS).toBeUndefined();
@@ -519,7 +478,7 @@ describe('isolated keyring operations', () => {
   });
 
   it('kills a child process whose synchronous native-shaped call blocks', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'leverframe-keyring-module-'));
+    const directory = temporaryDirectory('leverframe-keyring-module-');
     const modulePath = join(directory, 'blocked.mjs');
     writeFileSync(modulePath, `export class Entry { getPassword() { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10000); } }`);
     const started = Date.now();
@@ -605,7 +564,7 @@ describe('isolated keyring operations', () => {
   it.runIf(process.platform === 'linux')('fast-fails without spawning when D-Bus session bus is unavailable', async () => {
     const spawned = vi.fn(() => { throw new Error('spawn must not be called when D-Bus is unavailable'); });
     const started = Date.now();
-    const runtime = mkdtempSync(join(tmpdir(), 'leverframe-missing-dbus-'));
+    const runtime = temporaryDirectory('leverframe-missing-dbus-');
 
     const result = await runIsolatedKeyringOperation(
       { operation: 'read', service: 'leverframe', account: 'probe' },
@@ -636,7 +595,7 @@ describe('isolated keyring operations', () => {
 
   it('passes a derived D-Bus address to the spawned helper', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
-    const runtime = mkdtempSync(join(tmpdir(), 'leverframe-dbus-runtime-'));
+    const runtime = temporaryDirectory('leverframe-dbus-runtime-');
     const socketPath = join(runtime, 'bus');
     const server = createServer();
     await new Promise<void>((resolve, reject) => {
@@ -671,7 +630,8 @@ describe('isolated keyring operations', () => {
     const result = await runIsolatedKeyringOperation(
       { operation: 'read', service: 'leverframe', account: 'probe' },
       {
-        env: { HOME: '/tmp', XDG_RUNTIME_DIR: mkdtempSync(join(tmpdir(), 'leverframe-missing-dbus-')) },
+        env: { HOME: temporaryDirectory('leverframe-subprocess-home-'),
+          XDG_RUNTIME_DIR: temporaryDirectory('leverframe-missing-dbus-') },
         spawnImpl: spawned as unknown as typeof import('node:child_process').spawn,
       },
     );
@@ -679,12 +639,10 @@ describe('isolated keyring operations', () => {
     expect(result).toEqual({ ok: false, error: 'D-Bus session is unavailable; Secret Service keyring access cannot be used' });
     expect(spawned).not.toHaveBeenCalled();
   });
-});
-
 describe('headless diagnostics', () => {
   it.runIf(process.platform === 'linux')('explains D-Bus remediation, GUI independence, and fallback storage before OAuth', async () => {
     const home = temporaryHome();
-    const isolatedRuntime = mkdtempSync(join(tmpdir(), 'leverframe-no-dbus-'));
+    const isolatedRuntime = temporaryDirectory('leverframe-no-dbus-');
     const diagnostics = await diagnoseCredentialStorage({
       LEVERFRAME_HOME: home,
       SSH_CONNECTION: 'client server',

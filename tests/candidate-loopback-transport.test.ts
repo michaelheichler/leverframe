@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawn as spawnProcess, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -482,20 +482,10 @@ describe('candidate loopback transport', () => {
   it('serializes provenance ordinals across concurrent writer processes', { timeout: 20_000 }, async () => {
     const root = temporaryCandidateRoot();
     const sidecar = join(realpathSync.native(root.config), 'provenance.jsonl');
-    let workerIndex = 0;
-    const spawn = (extraDelay: number) => new Promise<{ code: number | null; stderr: string }>((resolve) => {
-      const workerPath = join(process.cwd(), 'tests', `.candidate-provenance-worker-${process.pid}-${workerIndex++}.test.ts`);
-      writeFileSync(workerPath, `
-        import { createCandidateProvenanceHook } from ${JSON.stringify(new URL('../src/test-only/candidate-loopback-transport.ts', import.meta.url).href)};
-        import { expect, it } from 'vitest';
-        const hook = createCandidateProvenanceHook(${JSON.stringify(sidecar)});
-        const record = { ...${JSON.stringify(provenanceRecord(0))}, ordinal: undefined };
-        it('writes one provenance record', async () => {
-          ${extraDelay ? `await new Promise(resolve => setTimeout(resolve, ${extraDelay}));` : ''}
-          await expect(hook.beforeTransport(record)).resolves.toBeTypeOf('number');
-        });
-      `);
-      const child = spawnProcess(process.execPath, [join(process.cwd(), 'node_modules/vitest/vitest.mjs'), 'run', workerPath], {
+    const workerMarker = join(root.config, '.candidate-provenance-worker.json');
+    writeFileSync(workerMarker, JSON.stringify(provenanceRecord(0)), { mode: 0o600 });
+    const spawn = () => new Promise<{ code: number | null; stderr: string }>((resolve) => {
+      const child = spawnProcess(process.execPath, [join(process.cwd(), 'node_modules/vitest/vitest.mjs'), 'run', 'tests/candidate-provenance-worker.test.ts'], {
         env: { ...candidateEnvironment(root), TMPDIR: dirname(root.home) },
         stdio: ['ignore', 'pipe', 'pipe'],
       }) as ChildProcess;
@@ -503,11 +493,10 @@ describe('candidate loopback transport', () => {
       child.stderr?.setEncoding('utf8');
       child.stderr?.on('data', chunk => { stderr += chunk; });
       child.on('close', code => {
-        unlinkSync(workerPath);
         resolve({ code, stderr });
       });
     });
-    const results = await Promise.all([spawn(0), spawn(0)]);
+    const results = await Promise.all([spawn(), spawn()]);
     expect(results.map(result => result.code), results.map(result => result.stderr).join('\n')).toEqual([0, 0]);
     const records = readFileSync(sidecar, 'utf8').trim().split('\n').map(line => JSON.parse(line) as { ordinal: number });
     expect(records.map(record => record.ordinal).sort((left, right) => left - right)).toEqual([0, 1]);

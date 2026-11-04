@@ -44,8 +44,10 @@ export function applyConfiguredModelPicker(source: string, options: {
   aliases: Record<string, string>;
   displays: Record<string, string>;
   models: PatchScriptModelConfig;
+  routingModelId?: string;
 }): { content: string; results: PatchSiteResult[] } {
-  const pickerOptions = [...new Set(options.identities)].map(identity => {
+  const identities = options.routingModelId ? [options.routingModelId] : options.identities;
+  const pickerOptions = [...new Set(identities)].map(identity => {
     const canonicalId = options.aliases[identity] ?? identity;
     const display = options.displays[identity] ?? options.displays[canonicalId];
     const isAlias = options.aliases[identity] !== undefined;
@@ -62,7 +64,7 @@ export function applyConfiguredModelPicker(source: string, options: {
       description: (isAlias ? description : display ? 'Model ID: ' + canonicalId : description) + capabilities,
     };
   });
-  const picker = applyModelPickerOptions(source, pickerOptions);
+  const picker = applyModelPickerOptions(source, pickerOptions, !!options.routingModelId);
   const results = [picker.result];
   if (!pickerOptions.some(option => 'badge' in option)) return { content: picker.content, results };
   const badged = applySelectBadge(picker.content);

@@ -43,6 +43,8 @@ function spawnWorker(id: number, rounds: number, syncDir: string): Promise<void>
     cwd: join(import.meta.dirname, '..'),
     env: {
       ...process.env,
+      HOME: process.env.LEVERFRAME_HOME,
+      LEVERFRAME_TEST_HOME: process.env.LEVERFRAME_HOME,
       LEVERFRAME_REGISTRY_WORKER_MODE: 'run',
       LEVERFRAME_REGISTRY_WORKER_ID: String(id),
       LEVERFRAME_REGISTRY_WORKER_ROUNDS: String(rounds),

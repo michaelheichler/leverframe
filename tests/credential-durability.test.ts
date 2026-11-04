@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, expect, it } from 'vitest';
 import { runIsolatedKeyringOperation } from '../src/credential-store.js';
 
 interface FakeState {
@@ -22,11 +22,33 @@ interface FakeControl {
   failures: FakeFailure[];
 }
 
+const fixtureRoots = new Set<string>();
+
+function inside(parent: string, child: string): boolean {
+  const path = relative(parent, child);
+  return path === '' || (!path.startsWith(`..${sep}`) && path !== '..' && !path.startsWith(sep));
+}
+
+function temporaryDirectory(prefix: string): string {
+  const directory = mkdtempSync(join(tmpdir(), prefix));
+  if (!inside(tmpdir(), directory)) throw new Error('Credential fixture escaped the isolated temporary directory.');
+  fixtureRoots.add(directory);
+  return directory;
+}
+
+afterEach(() => {
+  for (const directory of fixtureRoots) rmSync(directory, { recursive: true, force: true });
+  fixtureRoots.clear();
+});
+
 function fakeKeyring(options: { enumerable?: boolean } = {}): { moduleUrl: string; statePath: string; controlPath: string } {
-  const directory = mkdtempSync(join(tmpdir(), 'leverframe-fake-keyring-'));
+  const directory = temporaryDirectory('leverframe-fake-keyring-');
   const statePath = join(directory, 'state.json');
   const controlPath = join(directory, 'control.json');
   const modulePath = join(directory, 'keyring.mjs');
+  if (![statePath, controlPath, modulePath].every(path => inside(directory, path))) {
+    throw new Error('Credential fixture files escaped their isolated directory.');
+  }
   const enumerationSource = options.enumerable === false
     ? ''
     : `export const findCredentials = service => {
@@ -84,7 +106,6 @@ function operation(
   });
 }
 
-describe('generational keyring durability', () => {
   it('publishes v3 generation-scoped chunks with count and SHA-256', async () => {
     const fake = fakeKeyring();
     const value = 'credential-'.repeat(400);
@@ -448,4 +469,3 @@ describe('generational keyring durability', () => {
     expect(result).toEqual({ ok: false, error: 'integrity: keyring credential journal is corrupt' });
     expect(state(fake.statePath).leverframe?.[account]).toBe('kept-secret');
   });
-});

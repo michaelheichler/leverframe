@@ -26,4 +26,11 @@ describe('model picker options on current Claude Code builds', () => {
 
     expect(pickerValues(patched.content)).toEqual(['sonnet', 'leverframe:openai:model-a']);
   });
+
+  it('replaces native picker choices with the single routing entry when enabled', () => {
+    const auto = { value: 'auto', label: 'Auto', description: 'Route specialist work' };
+    const patched = applyModelPickerOptions(CURRENT_BUILD_PICKER, [auto], true);
+
+    expect(pickerValues(patched.content)).toEqual([auto.value]);
+  });
 });

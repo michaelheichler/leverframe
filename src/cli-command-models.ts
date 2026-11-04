@@ -1,5 +1,6 @@
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
+import { runSwitchyardCommand } from './cli-command-switchyard.js';
 import { leverframeIntro, leverframeOutro, providerSelectOption, modelSelectOption, fmtModel, fmtEnabledStar } from './ui.js';
 import { loadPreferences, savePreferences } from './config.js';
 import { fetchBrowsingProviderCatalog, providersForPicker } from './provider-catalog.js';
@@ -99,6 +100,9 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
   const maxFavorites = MAX_MODEL_CATALOG;
   const scopeName = 'Favorite Models';
   leverframeIntro(scopeName);
+  if (loadPreferences().routing?.enabled) {
+    p.log.info('Switchyard routing is saved as enabled. Favorites do not select the router or change existing jobs.');
+  }
 
   const spinner = p.spinner();
   spinner.start('Refreshing provider models...');
@@ -122,6 +126,12 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
   if (favoriteProviders.length === 0) {
     p.log.warn('No providers found.');
     p.log.info(`${pc.dim('Add a provider with ')}${pc.cyan('leverframe providers')}${pc.dim('.')}`);
+    const choice = await p.select({ message: 'Model settings', options: [
+      { value: 'switchyard', label: 'Switchyard' }, { value: 'done', label: 'Done' },
+    ] });
+    if (choice === 'switchyard') {
+      await runSwitchyardCommand([]);
+    }
     leverframeOutro('Done');
     return 0;
   }
@@ -158,6 +168,7 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
         ? 'Remove a favorite first to make room'
         : `${allProviders.length} provider${allProviders.length !== 1 ? 's' : ''} available`,
     });
+    options.push({ value: '__switchyard__', label: 'Switchyard', hint: 'Configure automatic routing' });
     options.push({ value: '__done__', label: 'Done', hint: '' });
 
     const header = favorites.length === 0
@@ -171,6 +182,10 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
     });
 
     if (p.isCancel(choice) || choice === '__done__') break;
+    if (choice === '__switchyard__') {
+      await runSwitchyardCommand([]);
+      continue;
+    }
 
     if (choice === '__add__') {
       if (atCap) {

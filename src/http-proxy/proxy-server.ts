@@ -4,6 +4,8 @@ import type { Duplex } from 'node:stream';
 import { timingSafeEqual } from 'node:crypto';
 import type { ProxyRoute } from '../proxy.js';
 import { handleContextSelectionRequest } from '../proxy-context-selection.js';
+import { handleRoutingControlRequest, type RoutingControlContext } from '../proxy-routing-control.js';
+import { handleRoutingRecoveryControlRequest } from '../proxy-routing-recovery-control.js';
 import { sendJson } from '../http-utils.js';
 import { forwardPlainHttp } from './forward.js';
 
@@ -87,8 +89,10 @@ function handleConnect(req: http.IncomingMessage, client: Duplex, head: Buffer, 
   openTunnel(target, client, head, sockets);
 }
 
-async function handlePlain(req: http.IncomingMessage, res: http.ServerResponse, token: string, routes: Map<string, ProxyRoute>): Promise<void> {
+async function handlePlain(req: http.IncomingMessage, res: http.ServerResponse, token: string, routes: Map<string, ProxyRoute>, routing?: Omit<RoutingControlContext, 'proxyToken'>): Promise<void> {
   try {
+    if (routing && await handleRoutingRecoveryControlRequest(req, res, { ...routing, proxyToken: token })) return;
+    if (routing && await handleRoutingControlRequest(req, res, { ...routing, proxyToken: token })) return;
     if (await handleContextSelectionRequest(req, res, { proxyToken: token, byAlias: routes })) return;
     if (!authorized(req.headers, token)) { authRequired(res); return; }
     forwardPlainHttp(req, res);
@@ -101,8 +105,8 @@ async function handlePlain(req: http.IncomingMessage, res: http.ServerResponse, 
   }
 }
 
-export function createProxyServer(token: string, routes: Map<string, ProxyRoute>, mitm: http.Server, sockets: Set<net.Socket>): http.Server {
-  const server = http.createServer((req, res) => { void handlePlain(req, res, token, routes); });
+export function createProxyServer(token: string, routes: Map<string, ProxyRoute>, mitm: http.Server, sockets: Set<net.Socket>, routing?: Omit<RoutingControlContext, 'proxyToken'>): http.Server {
+  const server = http.createServer((req, res) => { void handlePlain(req, res, token, routes, routing); });
   server.on('connection', socket => {
     sockets.add(socket);
     socket.once('close', () => sockets.delete(socket));

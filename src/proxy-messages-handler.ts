@@ -39,6 +39,18 @@ import { reportedContextWindow } from './context-window.js';
 import { applyRequestContextPolicy, formatRequestPolicyOutcome } from './context/request-policy.js';
 import { validAnthropicCacheControls } from './anthropic-sdk-cache.js';
 import { resolveAccountRoute } from './account-route-auth.js';
+import { assertRoutingIdentity, resolveRoutingBinding, routingBindingErrors, withRoutingLease, type RoutingBinding } from './routing-bindings.js';
+import { assertRoutingRequest, routingAccountEligibility, routingDirectFailure } from './routing-account-eligibility.js';
+import { loadRegistry } from './registry/io.js';
+import { routingTransportFingerprint } from './routing-transport-identity.js';
+import { applyRoutingEffort } from './routing-effort.js';
+import { httpProxyModelId } from './http-proxy/routes.js';
+import { recordFirstRoutingRequest } from './routing-request-estimate.js';
+import { createSelectorAttemptFetch, SELECTOR_ATTEMPT_HEADER, SELECTOR_SESSION_HEADER,
+  SELECTOR_CONSUMER_HEADER, SELECTOR_CONNECTION_HEADER } from './routing-selector-attempt.js';
+import { decodeSelectorTrace, SELECTOR_TRACE_HEADER, selectorCostSnapshot, selectorTargetForAlias,
+  writeSelectorTrace, type SelectorTrace } from './routing-selector-log.js';
+import type { ResponseUsage } from './http-proxy/response-usage.js';
 
 
 import type { ProxyRequestContext } from './proxy-handler.js';
@@ -53,6 +65,30 @@ function rejectedThreadedTranslation(prepared: PreparedProxyMessage, res: Server
 export async function handleProxyMessages(req: IncomingMessage, res: ServerResponse, context: ProxyRequestContext, messagesEndpoint: NonNullable<ReturnType<typeof anthropicMessagesEndpoint>>): Promise<void> {
   const prepared=await prepareProxyMessage(req, res, context, messagesEndpoint);
   if(!prepared||rejectedThreadedTranslation(prepared, res)) return;
+  if(prepared.bindingRequest) {
+    try { await withRoutingLease(prepared.bindingRequest, async binding => {
+      if (messagesEndpoint === 'messages') {
+        await recordFirstRoutingRequest(binding, prepared.anthropicBody as unknown as Record<string, unknown>, context.routing!.catalog);
+      }
+      await dispatchPreparedMessage(prepared, messagesEndpoint, binding);
+    }); }
+    catch(error) {
+      if (res.headersSent || res.destroyed) { if (!res.writableEnded) res.destroy(); return; }
+      const retryable = !!error && typeof error === 'object' && 'retryable' in error && error.retryable === true;
+      if (error && typeof error === 'object' && 'code' in error && error.code === routingBindingErrors.leaseAbandoned) {
+        sendJson(res, 400, { type: 'error', error: { type: 'invalid_request_error', code: routingBindingErrors.leaseAbandoned,
+          message: error instanceof Error ? error.message : 'Recover the abandoned routing request.' } });
+        return;
+      }
+      anthropicError(res, retryable ? 409 : 500, error instanceof Error ? error.message : 'Routing request failed.');
+    }
+    return;
+  }
+  await dispatchPreparedMessage(prepared, messagesEndpoint);
+}
+
+async function dispatchPreparedMessage(prepared: PreparedProxyMessage, messagesEndpoint: NonNullable<ReturnType<typeof anthropicMessagesEndpoint>>, binding?: RoutingBinding): Promise<void> {
+  const { req, res, context } = prepared;
   if(messagesEndpoint==='count_tokens') {
     await handleProxyTokenCount(prepared);
     return;
@@ -84,7 +120,9 @@ export async function handleProxyMessages(req: IncomingMessage, res: ServerRespo
   const state={
     req, res, context, route, anthropicBody, originalModel, clientModelId, clientWantsStream, relayRequestId,
     trackedRequestId, claudeSessionId, clientAbort, requestExecution, tracking, providerId, apiKey,
-    upstreamUrl, credentialRouteKey, credential, pooledNative, pooledSdk,
+    upstreamUrl, credentialRouteKey, credential, pooledNative, pooledSdk, selectorAttemptFetch: prepared.selectorAttemptFetch,
+    selectorUsage: selectorUsageObserver(context, prepared.selectorTrace, originalModel),
+    ...(binding ? { routingBound: true as const, eligibleAccount: routingAccountEligibility(binding, context.routing!.catalog, anthropicBody as unknown as Record<string, unknown>) } : {}),
   };
   if(route.modelFormat==='anthropic') {
     await handleProxyNative(state);
@@ -100,15 +138,65 @@ export async function handleProxyMessages(req: IncomingMessage, res: ServerRespo
 
 }
 
+function selectorNoticeGuard(req: IncomingMessage, context: ProxyRequestContext): (() => void) | undefined {
+  const encoded = req.headers[SELECTOR_SESSION_HEADER], consumerId = req.headers[SELECTOR_CONSUMER_HEADER],
+    connectionId = req.headers[SELECTOR_CONNECTION_HEADER];
+  if (typeof encoded !== 'string' || !/^[A-Za-z0-9_-]{1,5462}$/.test(encoded)
+    || typeof consumerId !== 'string' || typeof connectionId !== 'string') return undefined;
+  const sessionId = Buffer.from(encoded, 'base64url').toString('utf8');
+  if (Buffer.from(sessionId, 'utf8').toString('base64url') !== encoded) return undefined;
+  const channel = context.routing?.noticeChannel;
+  const captured = channel?.capture(sessionId);
+  if (!captured || captured.consumerId !== consumerId || captured.connectionId !== connectionId) return undefined;
+  return () => {
+    const current = channel?.capture(sessionId);
+    if (captured.signal.aborted || !current || current.signal !== captured.signal
+      || current.consumerId !== consumerId || current.connectionId !== connectionId) {
+      throw new Error('Routing selector notice consumer is unavailable.');
+    }
+  };
+}
+
+function prepareSelectorAttempt(req: IncomingMessage, res: ServerResponse, context: ProxyRequestContext): {
+  fetch?: typeof fetch; trace?: SelectorTrace;
+} | null {
+  const marker = req.headers[SELECTOR_ATTEMPT_HEADER];
+  if (marker === undefined) {
+    if (req.headers[SELECTOR_TRACE_HEADER] !== undefined) { anthropicError(res, 400, 'Invalid selector trace.'); return null; }
+    return {};
+  }
+  if (marker !== '1') { anthropicError(res, 400, 'Invalid selector attempt marker'); return null; }
+  const rawTrace = req.headers[SELECTOR_TRACE_HEADER], trace = decodeSelectorTrace(rawTrace);
+  if ((rawTrace !== undefined && !trace) || (context.routing?.selectorRequiresNotice && !trace)) {
+    anthropicError(res, 400, 'Invalid selector trace.'); return null;
+  }
+  const guard = context.routing?.selectorRequiresNotice ? selectorNoticeGuard(req, context) : undefined;
+  if (context.routing?.selectorRequiresNotice && !guard) {
+    anthropicError(res, 400, 'Routing selector notice consumer is unavailable.'); return null;
+  }
+  return { trace, fetch: createSelectorAttemptFetch(guard,
+    trace ? () => writeSelectorTrace(context.inferenceLogPath, trace, 'send') : undefined) };
+}
+
+function selectorUsageObserver(context: ProxyRequestContext, trace: SelectorTrace | undefined, alias: unknown): ((usage: ResponseUsage) => void) | undefined {
+  if (!trace) return undefined;
+  const catalog = context.routing?.catalog;
+  const target = catalog && typeof alias === 'string' ? selectorTargetForAlias(catalog, alias) : undefined;
+  const snapshot = catalog && target ? selectorCostSnapshot(catalog, target) : undefined;
+  return usage => writeSelectorTrace(context.inferenceLogPath, trace, 'usage', { target, snapshot, usage });
+}
+
 async function prepareProxyMessage(req: IncomingMessage, res: ServerResponse, context: ProxyRequestContext, messagesEndpoint: NonNullable<ReturnType<typeof anthropicMessagesEndpoint>>) {
-  const { proxyToken, byAlias, defaultRoute, managedPools, providerRuntimeCache, plog }=context;
+  const { proxyToken, byAlias, defaultRoute, plog }=context;
   const inboundKey=extractApiKey(req);
   if(inboundKey!==proxyToken) {
     anthropicError(res, 401, 'Invalid proxy token');
     return;
   }
 
-  const { controller: clientAbort }=wireClientDisconnectAbort(req, res);
+  const selectorAttempt = prepareSelectorAttempt(req, res, context);
+  if (selectorAttempt === null) return;
+  const { fetch: selectorAttemptFetch } = selectorAttempt, { controller: clientAbort }=wireClientDisconnectAbort(req, res);
 
   const raw=await readBody(req);
   const parsedRequest=parseAnthropicRequest(raw);
@@ -120,10 +208,20 @@ async function prepareProxyMessage(req: IncomingMessage, res: ServerResponse, co
 
   const originalModel=anthropicBody.model;
   const clientWantsStream=Boolean(anthropicBody.stream);
+  if (selectorAttemptFetch && (messagesEndpoint !== 'messages' || clientWantsStream)) {
+    anthropicError(res, 400, 'Selector attempts require nonstream messages'); return;
+  }
   const relayRequestIdRaw=req.headers['x-relay-request-id'];
   const relayRequestId=Array.isArray(relayRequestIdRaw)? relayRequestIdRaw[0]:relayRequestIdRaw;
 
-  const resolvedRoute=typeof originalModel==='string'? lookupRoute(byAlias, originalModel):undefined;
+  const bound = await resolveBoundRoute(req, res, context, anthropicBody);
+  if (bound === null) return;
+  const bindingRequest = bound?.bindingRequest;
+  if (bindingRequest && messagesEndpoint === 'messages') {
+    anthropicError(res, 409, 'Bound routing messages require the HTTP routing gateway.');
+    return;
+  }
+  const resolvedRoute=bound?.route ?? (typeof originalModel==='string'? lookupRoute(byAlias, originalModel):undefined);
   if(typeof originalModel==='string'&&!resolvedRoute) {
     anthropicError(res, 404, `Unknown model: ${originalModel}`);
     return;
@@ -138,20 +236,7 @@ async function prepareProxyMessage(req: IncomingMessage, res: ServerResponse, co
     anthropicError(res, 400, 'Invalid Anthropic cache_control');
     return;
   }
-  const pooledNative=messagesEndpoint==='messages'&&!!route.providerId
-    &&route.authType!=='oauth'&&route.modelFormat==='anthropic'&&(!!route.accountTag||rememberConfiguredPool(managedPools, route.providerId, 'api'));
-  const pooledSdk=messagesEndpoint==='messages'&&!!route.providerId&&route.modelFormat==='openai'
-    &&(!!route.accountTag||rememberConfiguredPool(managedPools, route.providerId, route.authType==='oauth'?'oauth':'api'));
-  const credentialRouteKey=proxyRuntimeRouteKey(route);
-  let credential=pooledNative||pooledSdk? undefined:providerRuntimeCache.snapshot(credentialRouteKey, route.apiKey);
-  if(credential&&route.authType!=='oauth'&&credential.credential!==route.apiKey) {
-    credential=await providerRuntimeCache.adopt(
-      credentialRouteKey,
-      credential.credential,
-      route.apiKey,
-    );
-  }
-  const apiKey=credential?.credential??route.apiKey;
+  const { pooledNative, pooledSdk, credentialRouteKey, credential, apiKey } = await resolveMessageCredential(context, route, messagesEndpoint);
   const upstreamUrl=route.upstreamUrl;
   const providerId=route.providerId??route.aliasId.split(':')[1]??'unknown';
 
@@ -177,8 +262,75 @@ async function prepareProxyMessage(req: IncomingMessage, res: ServerResponse, co
   return {
     req, res, context, route, anthropicBody, originalModel, clientModelId, clientWantsStream,
     relayRequestId, clientAbort, requestExecution, providerId, apiKey, upstreamUrl, credentialRouteKey,
-    credential, pooledNative, pooledSdk, usesSdkAdapter
+    credential, pooledNative, pooledSdk, usesSdkAdapter, bindingRequest, selectorAttemptFetch, selectorTrace: selectorAttempt.trace
   };
+}
+
+async function resolveBoundRoute(req: IncomingMessage, res: ServerResponse, context: ProxyRequestContext,
+  body: Extract<ReturnType<typeof parseAnthropicRequest>, { ok: true }>['body']) {
+  const requested = body.model;
+  const internalBinding = req.headers['x-leverframe-routing-binding'];
+  const modelId = typeof internalBinding === 'string' ? internalBinding : requested;
+  if (!context.routing || typeof modelId !== 'string' || !modelId.startsWith('leverframe:binding:')) return undefined;
+  const header = req.headers['x-claude-code-session-id'];
+  const sessionId = extractClaudeSessionId(body, Array.isArray(header) ? header[0] : header);
+  if (!sessionId) { anthropicError(res, 400, 'Routing binding requires a session identity.'); return null; }
+  const bindingRequest = { sessionId, modelId };
+  try {
+    const binding = await resolveRoutingBinding(bindingRequest);
+    assertRoutingIdentity(binding, context.routing.catalog);
+    applyRoutingEffort(body as unknown as Record<string, unknown>, binding.decision.effort);
+    if (anthropicMessagesEndpoint(req.url) === 'messages') {
+      assertRoutingRequest(binding, context.routing.catalog, body as unknown as Record<string, unknown>);
+    }
+    const route = lookupRoute(context.byAlias, httpProxyModelId(binding.decision.target.providerId, binding.decision.target.modelId));
+    if (!route || binding.identity.credentialSource !== 'registry'
+      || route.providerId !== binding.decision.target.providerId
+      || route.realModelId !== binding.identity.upstreamModelId
+      || routingTransportFingerprint({ endpoint: route.baseURL ?? route.upstreamUrl, npm: route.npm,
+        format: route.modelFormat, credentialSource: 'registry', providerId: route.providerId, authType: route.authType }) !== binding.identity.transportFingerprint) {
+      throw Object.assign(new Error('The bound model route changed. Restore the original route or start a new job.'), { code: routingBindingErrors.identityMismatch });
+    }
+    const endpoint = anthropicMessagesEndpoint(req.url);
+    const { pooledNative, pooledSdk } = classifyMessagePools(context, route, endpoint);
+    if (!pooledNative && !pooledSdk) {
+      const failure = routingDirectFailure(binding, loadRegistry().providers.find(provider => provider.id === route.providerId),
+        route.accountId, endpoint === 'messages' ? body as unknown as Record<string, unknown> : undefined);
+      if (failure === 'identity') throw Object.assign(new Error('The bound model route changed. Restore the original route or start a new job.'), { code: routingBindingErrors.identityMismatch });
+      if (failure === 'requirements') throw new Error('The bound model cannot satisfy this request. Check its capabilities and context limit.');
+    }
+    return { bindingRequest, route };
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === routingBindingErrors.identityMismatch) {
+      sendJson(res, 400, { type: 'error', error: { type: 'invalid_request_error', code: routingBindingErrors.identityMismatch,
+        message: error instanceof Error ? error.message : 'Invalid routing identity.' } });
+    } else {
+      anthropicError(res, 400, error instanceof Error ? error.message : 'Invalid routing binding.');
+    }
+    return null;
+  }
+}
+
+export function classifyMessagePools(context: ProxyRequestContext, route: NonNullable<ReturnType<typeof lookupRoute>>,
+  endpoint: ReturnType<typeof anthropicMessagesEndpoint>) {
+  const { managedPools } = context;
+  const pooledNative = endpoint === 'messages' && !!route.providerId && route.authType !== 'oauth'
+    && route.modelFormat === 'anthropic' && (!!route.accountTag || rememberConfiguredPool(managedPools, route.providerId, 'api'));
+  const pooledSdk = endpoint === 'messages' && !!route.providerId && route.modelFormat === 'openai'
+    && (!!route.accountTag || rememberConfiguredPool(managedPools, route.providerId, route.authType === 'oauth' ? 'oauth' : 'api'));
+  return { pooledNative, pooledSdk };
+}
+
+export async function resolveMessageCredential(context: ProxyRequestContext, route: NonNullable<ReturnType<typeof lookupRoute>>,
+  endpoint: NonNullable<ReturnType<typeof anthropicMessagesEndpoint>>) {
+  const { providerRuntimeCache } = context;
+  const { pooledNative, pooledSdk } = classifyMessagePools(context, route, endpoint);
+  const credentialRouteKey = proxyRuntimeRouteKey(route);
+  let credential = pooledNative || pooledSdk ? undefined : providerRuntimeCache.snapshot(credentialRouteKey, route.apiKey);
+  if (credential && route.authType !== 'oauth' && credential.credential !== route.apiKey) {
+    credential = await providerRuntimeCache.adopt(credentialRouteKey, credential.credential, route.apiKey);
+  }
+  return { pooledNative, pooledSdk, credentialRouteKey, credential, apiKey: credential?.credential ?? route.apiKey };
 }
 
 type PreparedProxyMessage=NonNullable<Awaited<ReturnType<typeof prepareProxyMessage>>>;
@@ -237,7 +389,7 @@ async function handleProxyTokenCount(prepared: PreparedProxyMessage): Promise<vo
   return;
 }
 
-function trackProxyMessage(prepared: PreparedProxyMessage) {
+export function trackProxyMessage(prepared: Pick<PreparedProxyMessage, 'req' | 'res' | 'route' | 'anthropicBody' | 'originalModel' | 'providerId' | 'relayRequestId'>) {
   const { req, res, route, anthropicBody, originalModel, providerId, relayRequestId }=prepared;
   const sessionHeaderValue=req.headers['x-claude-code-session-id'];
   const sessionHeader=Array.isArray(sessionHeaderValue)? sessionHeaderValue[0]:sessionHeaderValue;

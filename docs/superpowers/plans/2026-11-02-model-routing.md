@@ -67,7 +67,7 @@ Interfaces comprise `ModelRef = { providerId: string; modelId: string }`, `Routi
 
 Files include `src/registry/types.ts`, `src/registry/io.ts`, `src/registry/account-schema.ts`, `src/registry/import-build.ts`, `src/registry/pricing.ts`, `src/registry/fetch-template-models.ts`, `src/provider-catalog.ts`, existing native-auth readers, and new `tests/model-routing-catalog.test.ts`.
 
-Interfaces comprise `CostSnapshot`, `RoutingCatalogSnapshot`, and `buildRoutingCatalog(input: CatalogSnapshotInput): RoutingCatalogSnapshot` in `src/model-routing.ts`. Input contains existing registry/catalog records, pricing data, authenticated credential-source descriptors without secrets, observed pool capacity, and a clock. The snapshot contains concrete references, capability confirmation, billing evidence, and price completeness/provenance.
+`CostSnapshot` and `RoutingCatalogSnapshot` define the data boundary. `buildRoutingCatalog(input: CatalogSnapshotInput): RoutingCatalogSnapshot` builds that view in `src/model-routing.ts`. Input contains existing registry/catalog records, pricing data, authenticated credential-source descriptors without secrets, observed pool capacity, and a clock. The snapshot contains concrete references, capability confirmation, billing evidence, and price completeness/provenance.
 
 - [ ] Run impact for each parser/import/pricing function selected for editing. Reuse credential readers without changing their refresh or storage contracts.
 - [ ] Write fixtures asserting unknown billing for legacy entries, API-key subscription evidence, native OAuth versus native API-key distinction, API-provider isolation, incomplete pricing, cache-rate retention, and alternate-platform provenance. Assert `expect(snapshot.models.find(isIncomplete)?.estimate.kind).toBe('unknown')`.
@@ -96,7 +96,7 @@ Interfaces comprise `createRoutingBinding(input: BindingLaunchInput): Promise<Ro
 - [ ] Enumerate touched existing symbols, run impact, and report HIGH/CRITICAL results. Keep routing disabled until the entire slice passes.
 - [ ] Write launch/resume/concurrency fixtures and patched-harness tests. Assert one `auto` picker option, an unchanged routing-off picker, stable child model/effort and context metadata, idempotent A/B allocation, restored selector budgets, and retryable conflict on overlapping inference.
 - [ ] Write loopback transport assertions for both SDK and native Claude paths. Assert `expect(capturedRequest.model).toBe(configuredUpstreamModel)` and client responses retain the binding identity. Reject cross-session, missing, forged, and expired bindings.
-- [ ] Implement hidden identities, launch control, persistence, and lease handling before normal route lookup. Extend native passthrough to resolve credentials from the binding and write the concrete outbound model. Keep `dispatchWithPool` unchanged.
+- [ ] Implement hidden identities, launch control, persistence, and lease handling before normal route lookup. Extend native passthrough to resolve credentials from the binding and write the concrete outbound model. Keep existing pool ranking and failover, adding only an optional pure eligibility constraint before reservation and after registry reload.
 - [ ] Run both new suites plus `tests/http-proxy-routing-decision.test.ts`, `tests/http-proxy-native-model-routing.test.ts`, `tests/patch-model-picker-options.test.ts`, and the current harness picker fixtures. Then run typecheck.
 
 The task ends with the first working vertical slice. Do not add general selector/UI features to compensate if the supported harness cannot carry the binding or capability metadata. Resolve that seam first.
@@ -161,4 +161,4 @@ These results warn about shared-surface risk. They do not authorize edits to oth
 
 ## Execution handoff
 
-The plan awaits execution-method selection. Native execution keeps the tightly coupled configuration, binding, harness, and dispatch interfaces in one session. Delegated execution adds a fresh implementer and reviewer per task. Neither path runs headless Claude, commits, pushes, or changes the version.
+The user chose Terra at high effort for implementation and Luna at max effort for QA. A fresh implementer and reviewer handle each task, with a trusted test writer owning test edits. Tasks 1 through 3 passed their task reviews. Task 4 remains in progress, with its exact evidence and open gates in the private execution ledger. Development checks use temporary homes and injected credentials. No task authorizes headless Claude, live account changes, commits, pushes, or a version change.

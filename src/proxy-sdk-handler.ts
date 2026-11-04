@@ -31,6 +31,8 @@ import {
   type AnthropicRequest
 } from './sdk-adapter.js';
 import { createSseHeartbeat, DELAY_FIRST_HEARTBEAT } from './sse-heartbeat.js';
+import { supportsSelectorSdkTransport } from './routing-selector-attempt.js';
+import { routingSdkFailure, routingSdkPrecommit, RoutingSdkRejected } from './routing-sdk-outcome.js';
 import {
   writeInferenceResponseErrorLog,
   writeWebSocketDiagnosticLog,
@@ -48,6 +50,17 @@ import {
 
 
 import type { ProxyMessageContext } from './proxy-message-context.js';
+import { routingSdkUsage } from './routing-inference-log.js';
+import type { AnthropicUsageTrace } from './sdk-adapter.js';
+
+function proxySdkUsageObserver(state: ProxyMessageContext): ((usage: AnthropicUsageTrace) => void) | undefined {
+  if (!state.routingUsage && !state.selectorUsage) return undefined;
+  return usage => {
+    const measured = routingSdkUsage(usage);
+    state.routingUsage?.(measured);
+    state.selectorUsage?.(measured);
+  };
+}
 
 type ProxyTranslationLifecycle=ReturnType<typeof createTranslationLifecycle>;
 
@@ -67,6 +80,11 @@ export async function handleProxySdk(state: ProxyMessageContext): Promise<void> 
     const prepared=prepareProxySdk(state, openAiOAuth);
     await executeProxySdk(state, prepared, openAiOAuth, translationLifecycle);
   } catch(err) {
+    if (state.routingAttempt && err instanceof RoutingSdkRejected
+      && routingSdkPrecommit(state.res, state.requestExecution.getSnapshot(), state.requestExecution.abortSignal)) throw err;
+    const failure = state.routingAttempt && routingSdkFailure(err, state.res, state.requestExecution.getSnapshot(),
+      state.requestExecution.abortSignal, state.providerId);
+    if (failure) throw new RoutingSdkRejected(failure);
     respondProxySdkFailure(state, translationLifecycle, err);
   }
 }
@@ -81,7 +99,7 @@ function prepareProxySdk(state: ProxyMessageContext, openAiOAuth: boolean) {
 
   const sdkRequestBody: AnthropicRequest={ ...anthropicBody, model: clientModelId, messages: anthropicBody.messages??[] };
   const params=sdkTranslateRequest(sdkRequestBody, route.npm!, {
-    defaultEffort: route.defaultReasoningEffort,
+    defaultEffort: state.routingBound ? undefined : route.defaultReasoningEffort,
     openAiOAuth,
     claudeSessionId,
     maxTools: maxToolsForNpm(route.npm),
@@ -103,6 +121,7 @@ function prepareProxySdk(state: ProxyMessageContext, openAiOAuth: boolean) {
       upstreamModelId: route.realModelId,
     },
   });
+  if (state.selectorAttemptFetch || state.routingAttempt) params.maxRetries = 0;
   plog(() =>
     `sdk: npm=${route.npm} model=${route.realModelId}, stream=${clientWantsStream}, `+
     `tools=${anthropicBody.tools?.length??0}, msgs=${params.messages.length}`,
@@ -117,22 +136,26 @@ async function executeProxySdk(state: ProxyMessageContext, prepared: PreparedPro
     tracking, providerId, credentialRouteKey, credential, pooledSdk, context }=state;
   const { providerRuntimeCache, plog, webSocketDiagnosticsLogPath }=context;
   const { claudeSessionId, params }=prepared;
+  if (state.selectorAttemptFetch && !supportsSelectorSdkTransport(route.npm, providerId)) {
+    throw new Error('Selector transport cannot enforce its attempt limit.');
+  }
   if(pooledSdk) {
     await dispatchSdkPool({
       res, route, params, cache: providerRuntimeCache, sessionId: claudeSessionId,
+      selectorAttemptFetch: state.selectorAttemptFetch,
+      deferRoutingFailure: state.routingAttempt,
+      eligibleAccount: state.eligibleAccount,
       clientModelId, stream: clientWantsStream, signal: clientAbort.signal, lifecycle: requestExecution, tracking,
       contextWindow: reportedContextWindow(route.contextWindow, route.contextWindowUnconfirmed),
       initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
       onDispatch: () => translationLifecycle?.dispatched(), onPart: part => translationLifecycle?.onPart(part),
       onOutput: chunk => translationLifecycle?.onOutput(chunk), onComplete: () => translationLifecycle?.complete(),
       onExhausted: () => translationLifecycle?.fail('PoolExhausted'),
+      onUsage: proxySdkUsageObserver(state),
     });
     return;
   }
-  const model=await providerRuntimeCache.getHandle(
-    credentialRouteKey,
-    credential!,
-    handleCredential => createLanguageModel({
+  const createModel = (handleCredential: NonNullable<typeof credential>) => createLanguageModel({
       npm: route.npm!,
       modelId: route.realModelId,
       apiKey: handleCredential.credential,
@@ -143,14 +166,16 @@ async function executeProxySdk(state: ProxyMessageContext, prepared: PreparedPro
       providerData: route.providerData,
       headers: route.headers,
       useResponsesLite: route.useResponsesLite,
-      preferWebSockets: route.preferWebSockets,
+      preferWebSockets: state.selectorAttemptFetch ? false : route.preferWebSockets,
+      ...(state.selectorAttemptFetch ? { fetch: state.selectorAttemptFetch } : {}),
       minimalClientVersion: route.minimalClientVersion,
       onDebug: (msg: string) => plog(() => msg),
       onWebSocketDiagnostic: webSocketDiagnosticsLogPath
         ? event => writeWebSocketDiagnosticLog(webSocketDiagnosticsLogPath, event)
         :undefined,
-    }),
-  );
+    });
+  const model=state.selectorAttemptFetch ? await createModel(credential!)
+    : await providerRuntimeCache.getHandle(credentialRouteKey, credential!, createModel);
   translationLifecycle?.dispatched();
   if(clientWantsStream) {
     await streamProxySdk(state, prepared, model, translationLifecycle);
@@ -189,7 +214,7 @@ async function streamProxySdk(state: ProxyMessageContext, prepared: PreparedProx
   }, () => !res.writableEnded&&!res.destroyed, DELAY_FIRST_HEARTBEAT);
   const clearHeartbeat=() => heartbeat.clear();
   clientAbort.signal.addEventListener('abort', clearHeartbeat, { once: true });
-  heartbeat.arm();
+  if (!state.routingAttempt) heartbeat.arm();
   try {
     await streamProxySdkWithReplay(state, prepared, model, translationLifecycle, writeStreamChunk);
     translationLifecycle?.complete();
@@ -207,7 +232,7 @@ async function streamProxySdkWithReplay(state: ProxyMessageContext, prepared: Pr
   const { route, anthropicBody, clientModelId, trackedRequestId, clientAbort, requestExecution, tracking, context }=state;
   const { plog }=context;
   const { claudeSessionId, params }=prepared;
-  const maxRetries=autoReplayMaxRetries();
+  const maxRetries=state.selectorAttemptFetch || state.routingAttempt ? 0 : autoReplayMaxRetries();
   let retryCount=0;
   while(true) {
     try {
@@ -226,6 +251,7 @@ async function streamProxySdkWithReplay(state: ProxyMessageContext, prepared: Pr
             abortSignal: clientAbort.signal,
             clientAbortSignal: clientAbort.signal,
             lifecycle: requestExecution,
+            onUsage: proxySdkUsageObserver(state),
           },
         ),
       );
@@ -266,6 +292,7 @@ async function generateProxySdk(state: ProxyMessageContext, prepared: PreparedPr
         onPart: partType => translationLifecycle?.onPart(partType),
         lifecycle: requestExecution,
         log: plog,
+        onUsage: proxySdkUsageObserver(state),
       },
     ),
   );

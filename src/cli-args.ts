@@ -116,6 +116,156 @@ function validateSaveModeFlag(parsed: ParsedArgs): void {
   }
 }
 
+function parseServerArgs(rest: string[]): ParsedArgs {
+  const parsed = emptyParsed('server');
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i]!;
+    if (arg === '--help' || arg === '-h') parsed.showHelp = true;
+    else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
+    else if (consumeBridgeModeFlag(arg, parsed)) continue;
+    else if (arg === '--save-mode') parsed.saveBridgeMode = true;
+    else if (arg === '--ws-diagnostics') parsed.serverWsDiagnostics = true;
+    else if (arg === '--no-discovery') parsed.serverNoDiscovery = true;
+    else if (arg === '--prepare-claude') parsed.serverPrepareClaude = true;
+    else if (arg === '--quick' || arg === '--saved') parsed.serverQuick = true;
+    else if (arg === '--mask-gateway-ids') parsed.serverMaskGatewayIds = true;
+    else if (arg === '--no-mask-gateway-ids') parsed.serverMaskGatewayIds = false;
+    else if (arg === '--listen' || arg.startsWith('--listen=')) {
+      const consumed = consumeServerOptionValue(arg, rest, i, '--listen', parsed);
+      if (!consumed) return parsed;
+      if (consumed.value !== 'local' && consumed.value !== 'network') {
+        parsed.error = '--listen must be "local" or "network"';
+        return parsed;
+      }
+      parsed.serverListenMode = consumed.value;
+      i = consumed.next;
+    }
+    else if (arg === '--providers' || arg.startsWith('--providers=')) {
+      const consumed = consumeServerOptionValue(arg, rest, i, '--providers', parsed);
+      if (!consumed) return parsed;
+      applyServerProvidersOption(consumed.value, parsed);
+      if (parsed.error) return parsed;
+      i = consumed.next;
+    }
+    else if (arg === '--password' || arg.startsWith('--password=')) {
+      parsed.error =
+        '`--password <value>` is no longer accepted on the command line (it leaks through process listings and shell history). ' +
+        'Set LEVERFRAME_SERVER_PASSWORD in the environment for a one-run password, or run `leverframe server` interactively to enter one hidden.';
+      return parsed;
+    }
+    else if (arg === '--port' || arg.startsWith('--port=')) {
+      const consumed = consumeServerOptionValue(arg, rest, i, '--port', parsed);
+      if (!consumed) return parsed;
+      const port = Number(consumed.value);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        parsed.error = '--port must be an integer between 1 and 65535';
+        return parsed;
+      }
+      parsed.serverPort = port;
+      i = consumed.next;
+    }
+    else if (!parsed.error) parsed.error = `Unknown server option: ${arg}`;
+  }
+  validateSaveModeFlag(parsed);
+  return parsed;
+}
+
+function parseModelsArgs(rest: string[]): ParsedArgs {
+  const parsed = emptyParsed('models');
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i]!;
+    if (arg === '--help' || arg === '-h') parsed.showHelp = true;
+    else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
+    else if (arg === '--list') parsed.favoritesList = true;
+    else if (arg === '--alias' || arg.startsWith('--alias=')) {
+      const consumed = consumeServerOptionValue(arg, rest, i, '--alias', parsed);
+      if (!consumed) return parsed;
+      parsed.favoritesAlias = consumed.value;
+      i = consumed.next;
+    }
+    else if (arg === '--unalias' || arg.startsWith('--unalias=')) {
+      const consumed = consumeServerOptionValue(arg, rest, i, '--unalias', parsed);
+      if (!consumed) return parsed;
+      parsed.favoritesUnalias = consumed.value;
+      i = consumed.next;
+    }
+    else if (arg === '--context-ceiling' || arg.startsWith('--context-ceiling=')) {
+      const consumed = consumeServerOptionValue(arg, rest, i, '--context-ceiling', parsed);
+      if (!consumed) return parsed;
+      parsed.favoritesContextCeiling = consumed.value;
+      i = consumed.next;
+    }
+    else if (arg === '--no-context-ceiling' || arg.startsWith('--no-context-ceiling=')) {
+      const consumed = consumeServerOptionValue(arg, rest, i, '--no-context-ceiling', parsed);
+      if (!consumed) return parsed;
+      parsed.favoritesNoContextCeiling = consumed.value;
+      i = consumed.next;
+    }
+    else if (!parsed.error) parsed.error = `Unknown models option: ${arg}`;
+  }
+  return parsed;
+}
+
+function parseProviderArgs(rest: string[]): ParsedArgs {
+  const parsed = emptyParsed('providers');
+  parsed.claudeArgs = [];
+  for (const arg of rest) {
+    if (arg === '--trace') parsed.trace = true;
+    else if (arg === '--help' || arg === '-h') parsed.showHelp = true;
+    else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
+    else parsed.claudeArgs.push(arg);
+  }
+  return parsed;
+}
+
+function parsePatchArgs(rest: string[]): ParsedArgs {
+  const parsed = emptyParsed('patch');
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i]!;
+    if (arg === '--help' || arg === '-h') parsed.showHelp = true;
+    else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
+    else if (arg === '--restore') parsed.patchRestore = true;
+    else if (arg === '--trace') parsed.trace = true;
+    else if (arg === '--diagnose') parsed.patchDiagnose = true;
+    else if (arg === '--json') parsed.patchJson = true;
+    else if (arg === '--target' || arg.startsWith('--target=')) {
+      const consumed = consumeServerOptionValue(arg, rest, i, '--target', parsed);
+      if (!consumed) return parsed;
+      parsed.patchTarget = consumed.value;
+      i = consumed.next;
+    }
+    else if (!parsed.error) parsed.error = `Unknown patch option: ${arg}`;
+  }
+  if (parsed.patchJson && !parsed.patchDiagnose && !parsed.error) {
+    parsed.error = '--json only applies to `leverframe patch --diagnose --json`';
+  }
+  return parsed;
+}
+
+
+function parseKeyringArgs(rest: string[]): ParsedArgs {
+  const parsed = emptyParsed('keyring');
+  const action = rest[0];
+  if (rest.includes('--help') || rest.includes('-h')) { parsed.showHelp = true; return parsed; }
+  if (rest.includes('--version') || rest.includes('-v')) { parsed.showVersion = true; return parsed; }
+  if (action !== 'repair') {
+    parsed.error = action ? `Unknown keyring action: ${action}` : 'Usage: leverframe keyring repair [--account <account>]';
+    return parsed;
+  }
+  for (let i = 1; i < rest.length; i += 1) {
+    const arg = rest[i]!;
+    if (arg === '--account' || arg.startsWith('--account=')) {
+      const consumed = consumeServerOptionValue(arg, rest, i, '--account', parsed);
+      if (!consumed) return parsed;
+      parsed.keyringRepairAccount = consumed.value;
+      i = consumed.next;
+    }
+    else if (!parsed.error) parsed.error = `Unknown keyring option: ${arg}`;
+  }
+  return parsed;
+}
+
+
 export function parseArgs(args: string[]): ParsedArgs {
   if (args.length === 0) return { ...emptyParsed('root'), showHelp: true };
 
@@ -128,107 +278,13 @@ export function parseArgs(args: string[]): ParsedArgs {
     return { ...emptyParsed('root'), showVersion: true };
   }
 
-  if (first === 'server') {
-    const parsed = emptyParsed('server');
-    for (let i = 0; i < rest.length; i += 1) {
-      const arg = rest[i]!;
-      if (arg === '--help' || arg === '-h') parsed.showHelp = true;
-      else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
-      else if (consumeBridgeModeFlag(arg, parsed)) continue;
-      else if (arg === '--save-mode') parsed.saveBridgeMode = true;
-      else if (arg === '--ws-diagnostics') parsed.serverWsDiagnostics = true;
-      else if (arg === '--no-discovery') parsed.serverNoDiscovery = true;
-      else if (arg === '--prepare-claude') parsed.serverPrepareClaude = true;
-      else if (arg === '--quick' || arg === '--saved') parsed.serverQuick = true;
-      else if (arg === '--mask-gateway-ids') parsed.serverMaskGatewayIds = true;
-      else if (arg === '--no-mask-gateway-ids') parsed.serverMaskGatewayIds = false;
-      else if (arg === '--listen' || arg.startsWith('--listen=')) {
-        const consumed = consumeServerOptionValue(arg, rest, i, '--listen', parsed);
-        if (!consumed) return parsed;
-        if (consumed.value !== 'local' && consumed.value !== 'network') {
-          parsed.error = '--listen must be "local" or "network"';
-          return parsed;
-        }
-        parsed.serverListenMode = consumed.value;
-        i = consumed.next;
-      }
-      else if (arg === '--providers' || arg.startsWith('--providers=')) {
-        const consumed = consumeServerOptionValue(arg, rest, i, '--providers', parsed);
-        if (!consumed) return parsed;
-        applyServerProvidersOption(consumed.value, parsed);
-        if (parsed.error) return parsed;
-        i = consumed.next;
-      }
-      else if (arg === '--password' || arg.startsWith('--password=')) {
-        parsed.error =
-          '`--password <value>` is no longer accepted on the command line (it leaks through process listings and shell history). ' +
-          'Set LEVERFRAME_SERVER_PASSWORD in the environment for a one-run password, or run `leverframe server` interactively to enter one hidden.';
-        return parsed;
-      }
-      else if (arg === '--port' || arg.startsWith('--port=')) {
-        const consumed = consumeServerOptionValue(arg, rest, i, '--port', parsed);
-        if (!consumed) return parsed;
-        const port = Number(consumed.value);
-        if (!Number.isInteger(port) || port < 1 || port > 65535) {
-          parsed.error = '--port must be an integer between 1 and 65535';
-          return parsed;
-        }
-        parsed.serverPort = port;
-        i = consumed.next;
-      }
-      else if (!parsed.error) parsed.error = `Unknown server option: ${arg}`;
-    }
-    validateSaveModeFlag(parsed);
-    return parsed;
-  }
+  if (first === 'server') return parseServerArgs(rest);
 
-  if (first === 'models' || first === 'favorites') {
-    const parsed = emptyParsed('models');
-    for (let i = 0; i < rest.length; i += 1) {
-      const arg = rest[i]!;
-      if (arg === '--help' || arg === '-h') parsed.showHelp = true;
-      else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
-      else if (arg === '--list') parsed.favoritesList = true;
-      else if (arg === '--alias' || arg.startsWith('--alias=')) {
-        const consumed = consumeServerOptionValue(arg, rest, i, '--alias', parsed);
-        if (!consumed) return parsed;
-        parsed.favoritesAlias = consumed.value;
-        i = consumed.next;
-      }
-      else if (arg === '--unalias' || arg.startsWith('--unalias=')) {
-        const consumed = consumeServerOptionValue(arg, rest, i, '--unalias', parsed);
-        if (!consumed) return parsed;
-        parsed.favoritesUnalias = consumed.value;
-        i = consumed.next;
-      }
-      else if (arg === '--context-ceiling' || arg.startsWith('--context-ceiling=')) {
-        const consumed = consumeServerOptionValue(arg, rest, i, '--context-ceiling', parsed);
-        if (!consumed) return parsed;
-        parsed.favoritesContextCeiling = consumed.value;
-        i = consumed.next;
-      }
-      else if (arg === '--no-context-ceiling' || arg.startsWith('--no-context-ceiling=')) {
-        const consumed = consumeServerOptionValue(arg, rest, i, '--no-context-ceiling', parsed);
-        if (!consumed) return parsed;
-        parsed.favoritesNoContextCeiling = consumed.value;
-        i = consumed.next;
-      }
-      else if (!parsed.error) parsed.error = `Unknown models option: ${arg}`;
-    }
-    return parsed;
-  }
+  if (first === 'models' || first === 'favorites') return parseModelsArgs(rest);
 
-  if (first === 'providers') {
-    const parsed = emptyParsed('providers');
-    parsed.claudeArgs = [];
-    for (const arg of rest) {
-      if (arg === '--trace') parsed.trace = true;
-      else if (arg === '--help' || arg === '-h') parsed.showHelp = true;
-      else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
-      else parsed.claudeArgs.push(arg);
-    }
-    return parsed;
-  }
+  if (first === 'switchyard') return { ...emptyParsed('switchyard'), claudeArgs: rest };
+
+  if (first === 'providers') return parseProviderArgs(rest);
 
   if (first === 'executions') {
     const parsed = emptyParsed('executions');
@@ -238,51 +294,9 @@ export function parseArgs(args: string[]): ParsedArgs {
     return parsed;
   }
 
-  if (first === 'keyring') {
-    const parsed = emptyParsed('keyring');
-    const action = rest[0];
-    if (rest.includes('--help') || rest.includes('-h')) { parsed.showHelp = true; return parsed; }
-    if (rest.includes('--version') || rest.includes('-v')) { parsed.showVersion = true; return parsed; }
-    if (action !== 'repair') {
-      parsed.error = action ? `Unknown keyring action: ${action}` : 'Usage: leverframe keyring repair [--account <account>]';
-      return parsed;
-    }
-    for (let i = 1; i < rest.length; i += 1) {
-      const arg = rest[i]!;
-      if (arg === '--account' || arg.startsWith('--account=')) {
-        const consumed = consumeServerOptionValue(arg, rest, i, '--account', parsed);
-        if (!consumed) return parsed;
-        parsed.keyringRepairAccount = consumed.value;
-        i = consumed.next;
-      }
-      else if (!parsed.error) parsed.error = `Unknown keyring option: ${arg}`;
-    }
-    return parsed;
-  }
+  if (first === 'keyring') return parseKeyringArgs(rest);
 
-  if (first === 'patch') {
-    const parsed = emptyParsed('patch');
-    for (let i = 0; i < rest.length; i += 1) {
-      const arg = rest[i]!;
-      if (arg === '--help' || arg === '-h') parsed.showHelp = true;
-      else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
-      else if (arg === '--restore') parsed.patchRestore = true;
-      else if (arg === '--trace') parsed.trace = true;
-      else if (arg === '--diagnose') parsed.patchDiagnose = true;
-      else if (arg === '--json') parsed.patchJson = true;
-      else if (arg === '--target' || arg.startsWith('--target=')) {
-        const consumed = consumeServerOptionValue(arg, rest, i, '--target', parsed);
-        if (!consumed) return parsed;
-        parsed.patchTarget = consumed.value;
-        i = consumed.next;
-      }
-      else if (!parsed.error) parsed.error = `Unknown patch option: ${arg}`;
-    }
-    if (parsed.patchJson && !parsed.patchDiagnose && !parsed.error) {
-      parsed.error = '--json only applies to `leverframe patch --diagnose --json`';
-    }
-    return parsed;
-  }
+  if (first === 'patch') return parsePatchArgs(rest);
 
   if (first !== 'claude') {
     return {

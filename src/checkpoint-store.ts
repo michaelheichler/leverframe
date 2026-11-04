@@ -7,7 +7,7 @@ import { getAppHome } from './paths.js';
 import { durableAtomicWrite, ensurePrivateDirectory, readFileStrict, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE } from './durable-io.js';
 import { tryAcquireRegistryLock, withRegistryWriteLock, withRegistryWriteLockSync, type RegistryLockLease, type RegistryLockOptions } from './registry/lock.js';
 
-const MAX_DOCUMENT_BYTES = 512 * 1024;
+export const MAX_DOCUMENT_BYTES = 512 * 1024;
 
 export type StoreReadState = 'ok' | 'missing' | 'corrupt' | 'unsupported-version' | 'invalid-storage';
 

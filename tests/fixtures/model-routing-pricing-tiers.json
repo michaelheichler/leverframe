@@ -1,0 +1,33 @@
+{
+  "generated_at": "2026-10-01T00:00:00.000Z",
+  "models": [
+    {
+      "model_id": "multi-tier-fixture",
+      "pricing": [
+        {
+          "platform": "anthropic",
+          "tier": "standard",
+          "modality": "text",
+          "input_per_1m_tokens": 1,
+          "output_per_1m_tokens": 2,
+          "cached_input_per_1m_tokens": 0.1
+        },
+        {
+          "platform": "anthropic",
+          "tier": "long-context",
+          "modality": "text",
+          "input_per_1m_tokens": 3,
+          "output_per_1m_tokens": 4,
+          "cached_input_per_1m_tokens": 0.2
+        },
+        {
+          "platform": "openai",
+          "tier": "standard",
+          "modality": "text",
+          "input_per_1m_tokens": 8,
+          "output_per_1m_tokens": 9
+        }
+      ]
+    }
+  ]
+}

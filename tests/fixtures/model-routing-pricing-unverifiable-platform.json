@@ -1,0 +1,26 @@
+{
+  "generated_at": "2026-10-01T00:00:00.000Z",
+  "models": [
+    {
+      "model_id": "unmapped-provider-platform",
+      "pricing": [
+        {
+          "platform": "anthropic",
+          "tier": "standard",
+          "input_per_1m_tokens": 3,
+          "output_per_1m_tokens": 7
+        }
+      ]
+    },
+    {
+      "model_id": "missing-row-platform",
+      "pricing": [
+        {
+          "tier": "standard",
+          "input_per_1m_tokens": 3,
+          "output_per_1m_tokens": 7
+        }
+      ]
+    }
+  ]
+}

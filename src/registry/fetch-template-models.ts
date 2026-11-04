@@ -112,6 +112,18 @@ function parseNativePricing(pricing: ProviderModelListRow['pricing']): CachedMod
   return cost;
 }
 
+function nativePricingEvidence(pricing: ProviderModelListRow['pricing']): CachedModel['pricing'] | undefined {
+  if (!pricing) return undefined;
+  const input = perMillion(toNumber(pricing.prompt) ?? toNumber(pricing.input) ?? toNumber(pricing.input_cost_per_token) ?? toNumber(pricing.inputCostPerToken))
+    ?? toNumber(pricing.input_per_1m_tokens) ?? toNumber(pricing.inputPer1MTokens);
+  const output = perMillion(toNumber(pricing.completion) ?? toNumber(pricing.output) ?? toNumber(pricing.output_cost_per_token) ?? toNumber(pricing.outputCostPerToken))
+    ?? toNumber(pricing.output_per_1m_tokens) ?? toNumber(pricing.outputPer1MTokens);
+  const cacheRead = perMillion(toNumber(pricing.input_cache_read) ?? toNumber(pricing.cache_read));
+  const cacheWrite = perMillion(toNumber(pricing.input_cache_write) ?? toNumber(pricing.cache_write));
+  return input === undefined && output === undefined && cacheRead === undefined && cacheWrite === undefined
+    ? undefined : { input, output, cacheRead, cacheWrite, source: 'endpoint' };
+}
+
 function positiveTokenCount(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
@@ -151,6 +163,7 @@ function parseModelList(body: OpenAiModelListResponse, npm: string): CachedModel
       ...(output === undefined ? {} : { outputTokenLimit: output }),
       cost,
       ...(peak === undefined ? {} : { peakCostMultiplier: peak }),
+      pricing: nativePricingEvidence(row.pricing),
       isFree: isFreeStatus(freeStatus),
       freeStatus,
       modelFormat: format,
@@ -195,6 +208,9 @@ async function applyDynamicSupplierMetadata(
     const contextWindow = positiveTokenCount(model.contextWindow) ?? positiveTokenCount(capabilities?.limit?.context);
     const supportedReasoningEfforts = modelsDevReasoningEfforts(capabilities);
     const cost = supplied?.cost ?? providerModel?.cost ?? model.cost;
+    const tiers = providerModel?.cost?.tiers;
+    const invalidTiers = tiers !== undefined && (!Array.isArray(tiers) || tiers.some(tier =>
+      !tier || tier.tier?.type !== 'context' || !Number.isSafeInteger(tier.tier.size) || tier.tier.size! <= 0));
     return {
       ...model,
       name: capabilities?.name ?? model.name,
@@ -204,6 +220,16 @@ async function applyDynamicSupplierMetadata(
       npm,
       modelFormat: modelFormatForNpm(npm ?? template.npm),
       cost,
+      pricing: supplied?.pricing ?? (providerModel?.cost ? {
+        input: providerModel.cost.input, output: providerModel.cost.output,
+        cacheRead: providerModel.cost.cache_read, cacheWrite: providerModel.cost.cache_write, source: 'models.dev',
+        ...(invalidTiers ? { invalidTiers: true } : {}),
+        tiers: Array.isArray(tiers) ? tiers.flatMap(tier =>
+          tier && tier.tier?.type === 'context' && typeof tier.tier.size === 'number' && Number.isSafeInteger(tier.tier.size) && tier.tier.size > 0
+            ? [{ condition: { type: 'context' as const, size: tier.tier.size }, input: tier.input, output: tier.output,
+              cacheRead: tier.cache_read, cacheWrite: tier.cache_write }]
+            : []) : undefined,
+      } : model.pricing),
       usageMultiplier: supplied?.usageMultiplier,
       usageMultiplierApplies: template.supplierMetadataUrl !== undefined && !isZeroCost(cost),
       reasoning: capabilities?.reasoning ?? model.reasoning,

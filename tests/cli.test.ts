@@ -5,8 +5,30 @@ import { join } from 'node:path';
 import { parseArgs, rootHelpText, claudeHelpText, serverHelpText, modelsHelpText, patchHelpText, main } from '../src/cli.js';
 import { VERSION } from '../src/constants.js';
 
+const mocks = vi.hoisted(() => ({
+  refreshModelsDevCacheAsync: vi.fn(),
+  fetchFreshProviderCatalog: vi.fn(),
+  resolveProviderAuth: vi.fn(),
+}));
+
+vi.mock('../src/registry/models-dev.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/registry/models-dev.js')>(),
+  refreshModelsDevCacheAsync: mocks.refreshModelsDevCacheAsync,
+}));
+
+vi.mock('../src/provider-catalog.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/provider-catalog.js')>(),
+  fetchFreshProviderCatalog: mocks.fetchFreshProviderCatalog,
+}));
+
+vi.mock('../src/env.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/env.js')>(),
+  resolveProviderAuth: mocks.resolveProviderAuth,
+}));
+
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.clearAllMocks();
 });
 
 describe('parseArgs', () => {
@@ -28,6 +50,9 @@ describe('parseArgs', () => {
     expect(parseArgs(['-v'])).toMatchObject({ command: 'root', showVersion: true });
   });
 
+});
+
+describe('parseArgs Claude commands', () => {
   it('parses claude command with no passthrough args', () => {
     expect(parseArgs(['claude'])).toMatchObject({
       command: 'claude',
@@ -60,8 +85,10 @@ describe('parseArgs', () => {
     expect(parseArgs(['server']).bridgeMode).toBeUndefined();
   });
 
-  it('rejects the removed --http-proxy alias', () => {
+});
 
+describe('parseArgs Claude forwarding options', () => {
+  it('rejects the removed --http-proxy alias', () => {
     expect(parseArgs(['claude', '--http-proxy'])).toMatchObject({
       command: 'claude',
       claudeArgs: ['--http-proxy'],
@@ -72,6 +99,9 @@ describe('parseArgs', () => {
     });
   });
 
+});
+
+describe('parseArgs bridge-mode persistence options', () => {
   it('parses --save-mode only together with a bridge-mode flag', () => {
     expect(parseArgs(['claude', '--proxy', '--save-mode'])).toMatchObject({
       command: 'claude',
@@ -150,6 +180,9 @@ describe('parseArgs', () => {
     expect(parseArgs(['server', '--bogus'])).toMatchObject({ error: 'Unknown server option: --bogus' });
   });
 
+});
+
+describe('parseArgs models and patches', () => {
   it('parses models/favorites options', () => {
     expect(parseArgs(['models'])).toMatchObject({ command: 'models' });
     expect(parseArgs(['favorites'])).toMatchObject({ command: 'models' });
@@ -316,5 +349,26 @@ describe('main dispatch', () => {
       else process.env['LEVERFRAME_HOME'] = previousHome;
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe('Switchyard main dispatch', () => {
+  it.each(['status', 'costs'])('runs the read-only %s action without background discovery', async action => {
+    const result = await main(['switchyard', action]);
+
+    expect(result).toBe(0);
+    expect(mocks.refreshModelsDevCacheAsync).not.toHaveBeenCalled();
+    expect(mocks.fetchFreshProviderCatalog).not.toHaveBeenCalled();
+    expect(mocks.resolveProviderAuth).not.toHaveBeenCalled();
+  });
+
+  it('prints command help without starting discovery', async () => {
+    const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await main(['switchyard', '--help']);
+
+    expect(result).toBe(0);
+    expect(output).toHaveBeenCalled();
+    expect(mocks.refreshModelsDevCacheAsync).not.toHaveBeenCalled();
   });
 });

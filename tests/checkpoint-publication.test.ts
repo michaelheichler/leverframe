@@ -16,7 +16,8 @@ async function waitFor(...paths: string[]): Promise<void> {
 
 function worker(home: string, id: string, capability: string) {
   const child = spawn(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', 'tests/checkpoint-publication-worker.test.ts'], {
-    env: { ...process.env, HOME: home, LEVERFRAME_HOME: home, LEVERFRAME_CAS_WORKER_HOME: home,
+    env: { ...process.env, HOME: home, LEVERFRAME_HOME: home, LEVERFRAME_TEST_HOME: home,
+      LEVERFRAME_CAS_WORKER_HOME: home,
       LEVERFRAME_CAS_WORKER_ID: id, LEVERFRAME_CAS_CAPABILITY: capability },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

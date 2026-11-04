@@ -63,6 +63,9 @@ describe('HTTP proxy Claude preparation', () => {
       installation,
       freshProviders: loaded.providers,
       contextSelectionAvailable: true,
+      routingAvailable: false,
+      routingConfig: undefined,
+      routingPreflight: undefined,
     });
     expect(mocks.events).toEqual(['catalog', 'installation', 'prepared', 'bound']);
   });
@@ -95,6 +98,9 @@ describe('HTTP proxy Claude preparation', () => {
       installation,
       freshProviders: [],
       contextSelectionAvailable: true,
+      routingAvailable: false,
+      routingConfig: undefined,
+      routingPreflight: undefined,
     });
     expect(mocks.bind).toHaveBeenCalledOnce();
   });

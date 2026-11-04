@@ -97,7 +97,7 @@ function observeAdapterResponse(response: http.IncomingMessage, res: http.Server
 
 export function forwardToAdapter(
   req: http.IncomingMessage, res: http.ServerResponse, rawBody: Buffer, adapter: ProxyHandle,
-  adapterRequest: typeof http.request, adapterAgent: http.Agent, log?: ForwardLog,
+  adapterRequest: typeof http.request, adapterAgent: http.Agent, log?: ForwardLog, bindingId?: string,
 ): Promise<void> {
   return new Promise(resolve => {
     const state = new ForwardLifecycle(log, 'translated');
@@ -125,6 +125,7 @@ export function forwardToAdapter(
         ...(typeof req.headers['anthropic-beta'] === 'string' ? { 'anthropic-beta': req.headers['anthropic-beta'] } : {}),
         ...(typeof req.headers['anthropic-version'] === 'string' ? { 'anthropic-version': req.headers['anthropic-version'] } : {}),
         ...(typeof req.headers['x-claude-code-session-id'] === 'string' ? { 'x-claude-code-session-id': req.headers['x-claude-code-session-id'] } : {}),
+        ...(bindingId ? { 'x-leverframe-routing-binding': bindingId } : {}),
         ...(log ? { 'x-relay-request-id': log.requestId } : {}),
       },
     }, upstreamRes => {

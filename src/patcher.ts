@@ -8,6 +8,7 @@ import { httpProxyDisplayName, httpProxyModelId } from './http-proxy/routes.js';
 import { stripContextMarkers, stripOneMContextSuffix } from './context-model-id.js';
 import {
   PATCH_TRANSFORMS_VERSION,
+  ROUTING_RECOVERY_ENTRY,
   projectNativeEffort,
   type PatchScriptEffort,
   type PatchScriptModelConfig,
@@ -15,6 +16,7 @@ import {
 import { getReasoningCapabilities, type ReasoningMetadata } from './provider-factory.js';
 import { formatModelCapabilities } from './ui.js';
 import type { FavoriteModel, LocalProvider } from './types.js';
+import { projectRoutingPromptPolicy, type RoutingConfig } from './model-routing.js';
 import type { CachedModel, RegistryProvider } from './registry/types.js';
 import { runPatchCommandV2, runLaunchPatchCheckV2 } from './patch-reconcile.js';
 import { diagnosePatchV2, formatPatchDiagnosticsText, type PatchDiagnosticsReport } from './patch-diagnostics.js';
@@ -76,6 +78,10 @@ export interface PatchModelMeta {
 
 export interface PatchModelConfigOptions {
   includeContextModes?: boolean;
+  routingAvailable?: boolean;
+  routingRecoveryOnly?: boolean;
+  routingConfig?: RoutingConfig;
+  routingPreflight?: ReturnType<typeof import('./routing-policy-identity.js').routingPreflight>;
 
   agentModels?: Array<{ providerId: string; modelId: string }>;
 }
@@ -215,6 +221,8 @@ export function buildPatchModelConfig(
   return { config, unknownWindows, provenance };
 }
 
+const ROUTING_NOTICE_PATCH_REVISION = 1;
+
 export function computePatchConfigHash(
   config: PatchScriptModelConfig,
   transformVersion = PATCH_TRANSFORMS_VERSION,
@@ -234,6 +242,9 @@ export function computePatchConfigHash(
       entry.pickerOnly === true,
       entry.accountTag ?? null,
       entry.capabilities ?? null,
+      ...(entry.routingEnabled ? [true, entry.routingPolicyModelId ?? null, entry.routingMetadata ?? null,
+        entry.routingTargetMetadata ?? null, entry.routingPromptPolicy ?? null, ROUTING_NOTICE_PATCH_REVISION] : []),
+      ...(entry.routingRecoveryOnly ? [ROUTING_NOTICE_PATCH_REVISION] : []),
     ];
   });
   return createHash('sha256')
@@ -313,12 +324,25 @@ export function buildDesiredPatchConfig(
       && provider.models.some(model => model.id === favorite.modelId),
     ));
 
-  return buildPatchModelConfig(
+  const desired = buildPatchModelConfig(
     freshSelections,
     aliases,
     (providerId, modelId) => meta.get(`${providerId}:${modelId}`),
     { ...options, agentModels: favorites },
   );
+  const routingConfig = options.routingConfig ?? prefs.routing;
+  if (options.routingAvailable && routingConfig?.enabled) {
+    if (!options.routingPreflight) throw new Error('Routing preflight is required for Claude integration.');
+    const id = routingConfig.visibleModelId ?? 'auto';
+    desired.config[id] = { ...desired.config[id], display: routingConfig.visibleModelLabel ?? 'Auto', routingEnabled: true,
+      routingPolicyModelId: options.routingPreflight.policyModelId, routingMetadata: options.routingPreflight.metadata,
+      routingTargetMetadata: options.routingPreflight.targetMetadata, routingPromptPolicy: projectRoutingPromptPolicy(routingConfig) };
+  }
+  if (options.routingRecoveryOnly) {
+    if (Object.hasOwn(desired.config, ROUTING_RECOVERY_ENTRY)) throw new Error('Routing recovery config conflicts with a model name.');
+    desired.config[ROUTING_RECOVERY_ENTRY] = { routingRecoveryOnly: true };
+  }
+  return desired;
 }
 
 export interface RunPatchCommandOptions {
@@ -352,6 +376,10 @@ export async function runLaunchPatchCheck(
     freshProviders?: LocalProvider[];
     selectedModel?: FavoriteModel;
     contextSelectionAvailable?: boolean;
+    routingAvailable?: boolean;
+    routingRecoveryOnly?: boolean;
+    routingConfig?: RoutingConfig;
+    routingPreflight?: ReturnType<typeof import('./routing-policy-identity.js').routingPreflight>;
   } = {},
 ): Promise<void> {
   return runLaunchPatchCheckV2(opts);

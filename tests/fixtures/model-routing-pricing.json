@@ -1,0 +1,38 @@
+{
+  "generated_at": "2026-10-01T00:00:00.000Z",
+  "models": [
+    {
+      "model_id": "routing-fixture-incomplete",
+      "pricing": [
+        {
+          "platform": "anthropic",
+          "tier": "standard",
+          "input_per_1m_tokens": 1.7
+        }
+      ]
+    },
+    {
+      "model_id": "routing-fixture-cache",
+      "pricing": [
+        {
+          "platform": "anthropic",
+          "tier": "standard",
+          "input_per_1m_tokens": 2,
+          "output_per_1m_tokens": 8,
+          "cached_input_per_1m_tokens": 0.2
+        }
+      ]
+    },
+    {
+      "model_id": "routing-fixture-substitute",
+      "pricing": [
+        {
+          "platform": "openai",
+          "tier": "standard",
+          "input_per_1m_tokens": 3,
+          "output_per_1m_tokens": 9
+        }
+      ]
+    }
+  ]
+}

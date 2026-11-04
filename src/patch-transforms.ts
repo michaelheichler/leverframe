@@ -6,12 +6,20 @@ import { applyNativeModelKnowledge } from './patch-transforms-model-knowledge.js
 import { applyNativeContextWindow } from './patch-transforms-context-window.js';
 import { ONE_M_CONTEXT_WINDOW } from './context-model-id.js';
 import { applyConfiguredModelPicker, projectNativeEffort, shortDisplayName } from './patch-model-options.js';
+import { prepareRoutingPatch } from './patch-transforms-routing-composition.js';
 
 export { projectNativeEffort, shortDisplayName } from './patch-model-options.js';
+export { ROUTING_RECOVERY_ENTRY } from './patch-transforms-routing-composition.js';
 
 export const PATCH_TRANSFORMS_VERSION = 26;
 
 export interface PatchScriptModelEntry {
+  routingEnabled?: true;
+  routingRecoveryOnly?: true;
+  routingPolicyModelId?: string;
+  routingMetadata?: ReturnType<typeof import('./routing-policy-identity.js').routingPreflight>['metadata'];
+  routingTargetMetadata?: ReturnType<typeof import('./routing-policy-identity.js').routingPreflight>['targetMetadata'];
+  routingPromptPolicy?: import('./model-routing.js').RoutingPromptPolicy;
   accountTag?: string;
   alias?: string;
   context?: number;
@@ -73,8 +81,10 @@ export function formatPatchSiteLine(result: PatchSiteResult): string {
 }
 
 export function applyLeverframePatches(source: string, config: PatchScriptModelConfig): ApplyPatchesOutcome {
-  let js = source;
-  const MODEL_CONFIG = config;
+  const prepared = prepareRoutingPatch(source, config);
+  if (prepared.done) return { content: prepared.content, results: prepared.results };
+  let js = prepared.content;
+  const { config: MODEL_CONFIG, routingModelId } = prepared;
 
   const ALIAS_TO_ID: Record<string, string> = Object.create(null) as Record<string, string>;
 
@@ -99,7 +109,7 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
   const EFFORT_BY_KEY: Record<string, PatchScriptEffort> = Object.create(null) as Record<string, PatchScriptEffort>;
   const ALIAS_OWNERS = new Map<string, string>();
 
-  const report: PatchSiteResult[] = [];
+  const report: PatchSiteResult[] = [...prepared.results];
   const fail = (message: string): never => {
     throw new PatchApplyError(message, report);
   };
@@ -322,7 +332,7 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
 
   {
     const picker = applyConfiguredModelPicker(js, {
-      identities: IDENTITIES, aliases: ALIAS_TO_ID, displays: DISPLAY_BY_IDENTITY, models: MODEL_CONFIG,
+      identities: IDENTITIES, aliases: ALIAS_TO_ID, displays: DISPLAY_BY_IDENTITY, models: MODEL_CONFIG, routingModelId,
     });
     js = picker.content;
     report.push(...picker.results);

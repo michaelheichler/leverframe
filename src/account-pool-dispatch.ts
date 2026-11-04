@@ -3,11 +3,12 @@ import { resolveProviderAccountAuth } from './env.js';
 import { loadRegistry } from './registry/io.js';
 import { confirmRecovery, recordObservation, releaseReservation, reserveAccount } from './account-pool.js';
 import type { CapacityObservation, PoolKey } from './account-pool.js';
-import type { RegistryAccount } from './registry/types.js';
+import type { RegistryAccount, RegistryProvider } from './registry/types.js';
 import { createHash } from 'node:crypto';
 import { codexCapacity } from './account-pool-telemetry.js';
 import { recordPoolActivity } from './account-pool-activity.js';
 import { accountModelsCache } from './registry/account-cache.js';
+import { normalizeGoogleModelId } from './registry/google-model-id.js';
 
 export interface PoolFailure {
   provider: string;
@@ -100,6 +101,7 @@ export function rememberConfiguredPool(managed: Set<string>, providerId: string,
 export type PoolAttempt<T> = { kind: 'success'; value: T } | { kind: 'failure'; value: T; observation?: CapacityObservation };
 export type PoolDispatchResult<T> = { kind: 'result'; value: T } | {
   kind: 'exhausted'; attempted: string[]; accounts: Array<{ accountId: string; status: string; resetAt?: number; reason?: 'billing' }>;
+  missingCredentialAccounts?: string[];
 };
 
 export function poolExhaustionStatus(result: Extract<PoolDispatchResult<unknown>, { kind: 'exhausted' }>): 400 | 429 {
@@ -125,12 +127,17 @@ export async function dispatchWithPool<T>(options: {
   pool: PoolKey;
   sessionId?: string;
   accountId?: string;
+  eligibleAccount?: (account: RegistryAccount, provider: RegistryProvider) => boolean;
+  maxDispatches?: number;
+  skipMissingCredentials?: boolean;
   dispatch: (binding: PoolBinding) => Promise<PoolAttempt<T>>;
 }): Promise<PoolDispatchResult<T>> {
   const attempted: string[] = [];
   const excluded: string[] = [];
   const failures: Array<{ accountId: string; status: string; resetAt?: number; reason?: 'billing' }> = [];
   let lastFailure: T | undefined;
+  let dispatches = 0;
+  const missingCredentialAccounts: string[] = [];
   while (true) {
     const provider = loadRegistry().providers.find(item => item.id === options.pool.providerId && item.enabled);
     const accounts = provider?.accounts ?? [];
@@ -139,8 +146,11 @@ export async function dispatchWithPool<T>(options: {
     const unavailable = accounts.filter(account => {
       const cache = provider && accountModelsCache(provider, account);
       return account.modelDiscoveryError || (explicit && account.id !== options.accountId)
+        || (!!options.eligibleAccount && (!provider || !options.eligibleAccount(account, provider)))
         || (catalogued && !cache)
-        || (cache && !cache.models.some(model => model.upstreamModelId === options.pool.modelId || model.id === options.pool.modelId));
+        || (cache && !cache.models.some(model => model.upstreamModelId === options.pool.modelId || model.id === options.pool.modelId
+          || (!!options.eligibleAccount && provider !== undefined
+            && [model.id, model.upstreamModelId].some(id => normalizeGoogleModelId(id, model.npm ?? provider.api.npm).id === options.pool.modelId))));
     }).map(account => account.id);
     const preferences = loadPreferences();
     const selection = await reserveAccount({
@@ -161,7 +171,8 @@ export async function dispatchWithPool<T>(options: {
         continue;
       }
       if (lastFailure !== undefined && (explicit || preferences.accountPoolFailover === false)) return { kind: 'result', value: lastFailure };
-      return { kind: 'exhausted', attempted, accounts: [...failures, ...selection.accounts] };
+      return { kind: 'exhausted', attempted, accounts: [...failures, ...selection.accounts],
+        ...(missingCredentialAccounts.length ? { missingCredentialAccounts } : {}) };
     }
     const latest = loadRegistry().providers.find(item => item.id === options.pool.providerId && item.enabled);
     const account = latest && (latest.authType === 'none' ? 'api' : latest.authType ?? 'api') === options.pool.billingType
@@ -175,13 +186,25 @@ export async function dispatchWithPool<T>(options: {
       }
       const selected = accounts.find(item => item.id === account.id);
       if (!selected || accountGeneration(selected) !== accountGeneration(account)) continue;
+      if (options.eligibleAccount && (!latest || !options.eligibleAccount(account, latest))) {
+        excluded.push(account.id);
+        continue;
+      }
       const auth = latest?.authType === 'none' && account.authRef === 'none:anonymous'
         ? { apiKey: 'anonymous' } : await resolveProviderAccountAuth(options.pool.providerId, account);
-      if (!auth.apiKey) throw new Error(`Credential unavailable for account ${account.id}`);
+      if (!auth.apiKey) {
+        if (!options.skipMissingCredentials) throw new Error(`Credential unavailable for account ${account.id}`);
+        missingCredentialAccounts.push(account.id);
+        excluded.push(account.id);
+        if (explicit || preferences.accountPoolFailover === false) return { kind: 'exhausted', attempted,
+          accounts: [...failures], missingCredentialAccounts };
+        continue;
+      }
       attempted.push(account.id);
       excluded.push(account.id);
       const generation = accountGeneration(account);
       await recordPoolActivity(options.pool, account.id, excluded.length > 1, selection.switchReason);
+      dispatches++;
       const result = await options.dispatch({ account, apiKey: auth.apiKey, oauthAccountId: auth.accountId, providerData: auth.providerData, generation });
       if (result.kind === 'success') {
         await confirmRecovery({ pool: options.pool, reservationId: selection.reservation.id, generation, now: Date.now() });
@@ -194,7 +217,7 @@ export async function dispatchWithPool<T>(options: {
         ...(result.observation.source.endsWith(':billing') ? { reason: 'billing' as const } : {}),
         ...(result.observation.resetAt === undefined ? {} : { resetAt: result.observation.resetAt }) });
       lastFailure = result.value;
-      if (explicit || preferences.accountPoolFailover === false) return { kind: 'result', value: result.value };
+      if (explicit || preferences.accountPoolFailover === false || (options.maxDispatches !== undefined && dispatches >= options.maxDispatches)) return { kind: 'result', value: result.value };
     } finally {
       await releaseReservation({ pool: options.pool, reservationId: selection.reservation.id, now: Date.now() });
     }

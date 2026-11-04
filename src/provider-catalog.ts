@@ -24,6 +24,7 @@ export interface FreshCatalogUnavailable {
 export interface FreshProviderCatalog {
   providers: LocalProvider[];
   unavailable: FreshCatalogUnavailable[];
+  refresh?: RefreshModelsResult;
 }
 
 function hasConfirmedContext(model: LocalProvider['models'][number]): boolean {
@@ -123,7 +124,7 @@ async function discoverFreshProviderCatalog(
 ): Promise<FreshProviderCatalog> {
   const { refresh, refreshError } = await refreshCatalogOnce();
   const providers = await loadRegistryProviders(undefined, opts);
-  return filterFreshProviderCatalog(providers, refresh, refreshError);
+  return { ...filterFreshProviderCatalog(providers, refresh, refreshError), refresh };
 }
 
 export function fetchFreshProviderCatalog(

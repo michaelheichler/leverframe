@@ -1,7 +1,7 @@
 /** Because dispatch must not mix authentication rules. */
 import type { LanguageModel } from 'ai';
 import type { ProviderModelSpec } from './language-model-factory.js';
-import { CODEX_RESPONSES_LITE_VERSION, CODEX_RESPONSES_LITE_WS_URL } from './constants.js';
+import { CODEX_API_BASE_URL, CODEX_RESPONSES_LITE_VERSION, CODEX_RESPONSES_LITE_WS_URL } from './constants.js';
 import { extractOpenAiAccountId } from './oauth/openai.js';
 import { createResponsesWebSocketFetch } from './oauth/responses-websocket.js';
 import { CLAUDE_CODE_USER_AGENT, injectClaudeIdentity } from './oauth/claude-identity.js';
@@ -29,7 +29,7 @@ function openAiOptions(spec: ProviderModelSpec, useResponsesEndpoint: boolean) {
   const accountId = tokenAccountId || spec.oauthAccountId;
   return {
     apiKey: spec.apiKey,
-    baseURL: 'https://chatgpt.com/backend-api/codex',
+    baseURL: CODEX_API_BASE_URL,
     headers: {
       ...(accountId ? { 'ChatGPT-Account-Id': accountId } : {}),
       originator: 'leverframe',

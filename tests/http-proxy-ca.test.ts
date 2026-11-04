@@ -37,7 +37,9 @@ function spawnCaWorker(home: string, syncDir: string, capability: string, worker
     {
       env: {
         ...process.env,
+        HOME: home,
         LEVERFRAME_HOME: home,
+        LEVERFRAME_TEST_HOME: home,
         LEVERFRAME_CA_WORKER_MODE: 'run',
         LEVERFRAME_CA_WORKER_HOME: home,
         LEVERFRAME_CA_WORKER_SYNC_DIR: syncDir,

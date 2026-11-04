@@ -1,6 +1,6 @@
-import { chmodSync, existsSync, mkdtempSync, readdirSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   _credentialStoreInternals,
@@ -13,15 +13,32 @@ import {
 } from '../src/credential-store.js';
 
 const ACCOUNT = 'provider:openai';
+const fixtureRoots = new Set<string>();
+
+function inside(parent: string, child: string): boolean {
+  const path = relative(parent, child);
+  return path === '' || (!path.startsWith(`..${sep}`) && path !== '..' && !path.startsWith(sep));
+}
+
+function temporaryDirectory(prefix: string): string {
+  const directory = mkdtempSync(join(tmpdir(), prefix));
+  if (!inside(tmpdir(), directory)) throw new Error('Credential fixture escaped the isolated temporary directory.');
+  fixtureRoots.add(directory);
+  return directory;
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  for (const directory of fixtureRoots) rmSync(directory, { recursive: true, force: true });
+  fixtureRoots.clear();
 });
 
 function temporaryHome(): string {
-  const home = join(mkdtempSync(join(tmpdir(), 'leverframe-peek-')), 'home');
+  const root = temporaryDirectory('leverframe-peek-');
+  const home = join(root, 'home');
   vi.stubEnv('LEVERFRAME_HOME', home);
+  expect(inside(root, getCredentialFallbackPath())).toBe(true);
   return home;
 }
 
@@ -84,7 +101,7 @@ describe('peekStoredCredential fallback snapshot', () => {
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
     'returns the primary credential when the app home is unwritable',
     async () => {
-      const home = mkdtempSync(join(tmpdir(), 'leverframe-peek-readonly-'));
+      const home = temporaryDirectory('leverframe-peek-readonly-');
       chmodSync(home, 0o500);
       vi.stubEnv('LEVERFRAME_HOME', home);
       stubKeyring(() => ({ ok: true, value: 'primary-dummy' }));

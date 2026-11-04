@@ -1,0 +1,34 @@
+{
+  "synthetic-provider": {
+    "models": {
+      "tiered-fixture-model": {
+        "id": "tiered-fixture-model",
+        "cost": {
+          "input": 1,
+          "output": 2,
+          "tiers": [
+            {
+              "input": 3,
+              "output": 4,
+              "cache_read": 0.5,
+              "cache_write": 0.7,
+              "tier": { "type": "context", "size": 256000 }
+            },
+            {
+              "input": 5,
+              "output": 6,
+              "cache_read": 0.8,
+              "cache_write": 0.9,
+              "tier": { "type": "context", "size": 512000 }
+            },
+            {
+              "input": 5,
+              "output": 6,
+              "tier": { "type": "context", "size": 0 }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -4,6 +4,14 @@ import type { RegistryAccount } from './types.js';
 export function parseAccountMetadata(raw: Record<string, unknown>): Partial<RegistryAccount> | null {
   try {
     const metadata: Partial<RegistryAccount> = {};
+    if (raw.billing !== undefined) {
+      if (!raw.billing || typeof raw.billing !== 'object' || Array.isArray(raw.billing)) return null;
+      const billing = raw.billing as Record<string, unknown>;
+      if ((billing.kind !== 'metered' && billing.kind !== 'subscription' && billing.kind !== 'none' && billing.kind !== 'unknown')
+        || typeof billing.source !== 'string' || !billing.source
+        || typeof billing.observedAt !== 'string' || !billing.observedAt) return null;
+      metadata.billing = { kind: billing.kind, source: billing.source, observedAt: billing.observedAt };
+    }
     if (raw.name !== undefined) {
       if (typeof raw.name !== 'string') return null;
       metadata.name = validateAccountName(raw.name);
@@ -18,6 +26,7 @@ export function parseAccountMetadata(raw: Record<string, unknown>): Partial<Regi
       metadata.modelsCache = {
         fetchedAt: cache.fetchedAt,
         models: cache.models.filter(model => model && typeof model === 'object' && !Array.isArray(model)),
+        ...(cache.source === 'harness' || cache.source === 'account' ? { source: cache.source } : {}),
         ...(typeof cache.oauthAccountId === 'string' ? { oauthAccountId: cache.oauthAccountId } : {}),
       };
     }

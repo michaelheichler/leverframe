@@ -1,8 +1,7 @@
 import { chmodSync, copyFileSync, existsSync, statSync, unlinkSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { expect, it } from 'vitest';
+import { join, relative, sep } from 'node:path';
+import { expect, it, vi } from 'vitest';
 import { resolveClaudeInstallation } from '../src/claude-installation.js';
 import {
   defaultPatchRuntime,
@@ -11,8 +10,44 @@ import {
 import { buildDesiredPatchConfig } from '../src/patcher.js';
 import { readManifestV2 } from '../src/patch-state.js';
 
-const installation = resolveClaudeInstallation();
+const safety = vi.hoisted(() => ({
+  enabled: process.env['LEVERFRAME_RUN_INSTALLED_CLAUDE_PATCH_E2E'] === '1' && !!process.env['LEVERFRAME_TEST_HOME'],
+  discoveryCalls: 0,
+  executionCalls: 0,
+}));
+
+vi.mock('../src/claude-installation.js', async importOriginal => {
+  const original = await importOriginal<typeof import('../src/claude-installation.js')>();
+  return {
+    ...original,
+    resolveClaudeInstallation: (...args: Parameters<typeof original.resolveClaudeInstallation>) => {
+      safety.discoveryCalls++;
+      return safety.enabled ? original.resolveClaudeInstallation(...args) : null;
+    },
+  };
+});
+
+vi.mock('node:child_process', async importOriginal => {
+  const original = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...original,
+    execFileSync: ((...args: Parameters<typeof original.execFileSync>) => {
+      safety.executionCalls++;
+      if (!safety.enabled) throw new Error('Installed Claude execution is disabled.');
+      return original.execFileSync(...args);
+    }) as typeof original.execFileSync,
+  };
+});
+
+const testHome = process.env['LEVERFRAME_TEST_HOME'];
+const installation = safety.enabled ? resolveClaudeInstallation() : null;
 const canonical = installation?.canonicalPath ?? null;
+const canRunInstalledClaude = safety.enabled && !!testHome && !!canonical && existsSync(canonical);
+
+function inside(parent: string, child: string): boolean {
+  const path = relative(parent, child);
+  return path === '' || (!path.startsWith(`..${sep}`) && path !== '..' && !path.startsWith(sep));
+}
 
 async function selectPristinePatchSource(
   resolved: NonNullable<typeof installation>,
@@ -40,13 +75,19 @@ async function selectPristinePatchSource(
   return manifest.baselinePath;
 }
 
-it.skipIf(!canonical || !existsSync(canonical))(
+it.skipIf(safety.enabled)('does not discover or execute installed Claude in default test runs', () => {
+  expect(safety.discoveryCalls).toBe(0);
+  expect(safety.executionCalls).toBe(0);
+});
+
+it.skipIf(!canRunInstalledClaude)(
   'patches the real claude binary with the full favorites config and it still runs',
   async () => {
     const config = buildDesiredPatchConfig().config;
     if (Object.keys(config).length < 6) return;
 
-    const stage = join(tmpdir(), `claude-e2e-patched-${process.pid}`);
+    const stage = join(testHome!, `claude-e2e-patched-${process.pid}`);
+    expect(inside(testHome!, stage)).toBe(true);
     try {
       const sourcePath = await selectPristinePatchSource(installation!);
       copyFileSync(sourcePath, stage);

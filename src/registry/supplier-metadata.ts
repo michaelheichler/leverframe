@@ -1,9 +1,11 @@
 import type { ModelCost } from '../types.js';
+import type { ModelPricingMetadata } from './types.js';
 
 export interface SupplierModelMetadata {
   npm?: string;
   usageMultiplier?: number;
   cost?: ModelCost;
+  pricing?: ModelPricingMetadata;
 }
 
 function tableCells(line: string): string[] {
@@ -34,7 +36,7 @@ export function parseOpenCodeGoMetadata(mdx: string): Map<string, SupplierModelM
   // Because rows keep the first plan's limits, the price must come from that plan.
   const monthlyMatch = mdx.match(/\*\*\$([\d.]+)\/month\*\*/i);
   const monthlyPrice = monthlyMatch ? Number(monthlyMatch[1]) : NaN;
-  const pricingByName = new Map<string, { usage?: number; cost?: ModelCost }>();
+  const pricingByName = new Map<string, { usage?: number; cost?: ModelCost; pricing?: ModelPricingMetadata }>();
   const endpointRows: Array<{ name: string; id: string; npm: string }> = [];
 
   for (const line of mdx.split(/\r?\n/)) {
@@ -55,7 +57,8 @@ export function parseOpenCodeGoMetadata(mdx: string): Map<string, SupplierModelM
             ...(cacheWrite === undefined ? {} : { cache_write: cacheWrite }),
           };
       const key = modelNameKey(cells[0] ?? '');
-      if (key && !pricingByName.has(key)) pricingByName.set(key, { usage, cost });
+      const pricing = cost ? { input, output, cacheRead, cacheWrite, source: 'supplier' } : undefined;
+      if (key && !pricingByName.has(key)) pricingByName.set(key, { usage, cost, pricing });
     }
     if (cells.length === 4 && cells[0] !== 'Model') {
       const [name, id, , npm] = cells;
@@ -72,6 +75,7 @@ export function parseOpenCodeGoMetadata(mdx: string): Map<string, SupplierModelM
       npm: row.npm,
       usageMultiplier,
       cost: pricing?.cost,
+      pricing: pricing?.pricing,
     }];
   }));
 }

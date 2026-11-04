@@ -1,5 +1,5 @@
 
-import { CONFLICTING_ENV_VARS } from './constants.js';
+import { ANTHROPIC_API_ORIGIN, CONFLICTING_ENV_VARS } from './constants.js';
 import { claudeCodeClientModelId } from './context-model-id.js';
 import {
   oauthCredentialToKeychainJson,
@@ -23,7 +23,7 @@ const HTTP_PROXY_AUTH_USER = 'leverframe';
 
 export const HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY = 'sk-ant-api03-leverframe-http-proxy';
 
-export const ANTHROPIC_API_ORIGIN = 'https://api.anthropic.com';
+export { ANTHROPIC_API_ORIGIN } from './constants.js';
 
 export function ensureAnthropicProxyChildAuth(env: NodeJS.ProcessEnv): void {
   const apiKey = env['ANTHROPIC_API_KEY']?.trim();

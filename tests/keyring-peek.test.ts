@@ -1,15 +1,33 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { runIsolatedKeyringOperation } from '../src/credential-store.js';
 
 type KeyringState = Record<string, Record<string, string>>;
 
 const ACCOUNT = 'provider:test';
+const fixtureRoots = new Set<string>();
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
+
+function inside(parent: string, child: string): boolean {
+  const path = relative(parent, child);
+  return path === '' || (!path.startsWith(`..${sep}`) && path !== '..' && !path.startsWith(sep));
+}
+
+function temporaryDirectory(prefix: string): string {
+  const directory = mkdtempSync(join(tmpdir(), prefix));
+  expect(inside(tmpdir(), directory)).toBe(true);
+  fixtureRoots.add(directory);
+  return directory;
+}
+
+afterEach(() => {
+  for (const directory of fixtureRoots) rmSync(directory, { recursive: true, force: true });
+  fixtureRoots.clear();
+});
 
 const RECORDING_KEYRING_SOURCE = `
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
@@ -27,10 +45,13 @@ export const findCredentials = service => Object.entries(load()[service] ?? {}).
 `;
 
 function recordingKeyring(initial: KeyringState): { moduleUrl: string; mutations: () => string[] } {
-  const directory = mkdtempSync(join(tmpdir(), 'leverframe-recording-keyring-'));
+  const directory = temporaryDirectory('leverframe-recording-keyring-');
   const statePath = join(directory, 'state.json');
   const logPath = join(directory, 'mutations.log');
   const modulePath = join(directory, 'keyring.mjs');
+  expect(inside(directory, statePath)).toBe(true);
+  expect(inside(directory, logPath)).toBe(true);
+  expect(inside(directory, modulePath)).toBe(true);
   writeFileSync(statePath, JSON.stringify(initial));
   writeFileSync(logPath, '');
   const paths = `globalThis.recordingKeyringPaths = ${JSON.stringify({ statePath, logPath })};\n`;

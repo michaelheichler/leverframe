@@ -5,6 +5,7 @@ import { classifyKeyringError, runIsolatedKeyringOperation } from './credential-
 import { durableAtomicWrite } from './durable-io.js';
 import { CONFIG_DIR_MODE, acquireServerPasswordLock, withConfigWriteLock } from './config-lock.js';
 import { normalizeModelAliases } from './model-aliases.js';
+import { parseRoutingConfig } from './routing-config.js';
 
 export { ConfigLockBusyError, _configLockInternals } from './config-lock.js';
 
@@ -105,6 +106,7 @@ export function loadPreferences(): UserPreferences {
     ? undefined
     : normalizeModelAliases(config.modelAliases);
   return {
+    ...(config.routing === undefined ? {} : { routing: parseRoutingConfig(config.routing) }),
     summarySettings: validateSummarySettings(config.summarySettings),
     accountPoolBalancing: typeof config.accountPoolBalancing === 'boolean' ? config.accountPoolBalancing : true,
     accountPoolFailover: typeof config.accountPoolFailover === 'boolean' ? config.accountPoolFailover : true,
@@ -125,10 +127,13 @@ export function loadPreferences(): UserPreferences {
   };
 }
 
-export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastModel' | 'lastProvider' | 'recentModelsByProvider' | 'favoriteModels' | 'modelAliases' | 'claudeBridgeMode' | 'serverBridgeMode' | 'appPathOverrides' | 'recentLaunchFolders' | 'contextCeilingOverrides' | 'accountPoolBalancing' | 'accountPoolFailover' | 'accountPoolQuotaThresholdPercent' | 'summarySettings'>>): void {
+export function savePreferences(prefs: Partial<Pick<UserPreferences, 'routing' | 'lastModel' | 'lastProvider' | 'recentModelsByProvider' | 'favoriteModels' | 'modelAliases' | 'claudeBridgeMode' | 'serverBridgeMode' | 'appPathOverrides' | 'recentLaunchFolders' | 'contextCeilingOverrides' | 'accountPoolBalancing' | 'accountPoolFailover' | 'accountPoolQuotaThresholdPercent' | 'summarySettings'>>): void {
   if (prefs.accountPoolQuotaThresholdPercent !== undefined && !validQuotaThreshold(prefs.accountPoolQuotaThresholdPercent)) throw new RangeError('Invalid account pool quota threshold');
+  const routing = parseRoutingConfig(prefs.routing);
   withConfigWriteLock(() => {
     const config = readConfig();
+    if (routing !== undefined) config.routing = { ...routing,
+      ...(routing.enabled === true || config.routing?.enabled === true || config.routing?.recoveryEnabled === true ? { recoveryEnabled: true } : {}) };
     if (prefs.summarySettings !== undefined) config.summarySettings = validateSummarySettings(prefs.summarySettings);
     if (prefs.accountPoolBalancing !== undefined) config.accountPoolBalancing = prefs.accountPoolBalancing;
     if (prefs.accountPoolFailover !== undefined) config.accountPoolFailover = prefs.accountPoolFailover;
@@ -147,6 +152,22 @@ export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastModel'
       config.contextCeilingOverrides = validateContextCeilingOverrides(prefs.contextCeilingOverrides);
     }
     writeConfig(config);
+  });
+}
+
+export function updateRoutingPreferences(
+  update: (current: NonNullable<UserPreferences['routing']>) => NonNullable<UserPreferences['routing']>,
+  options?: { accountPoolBalancing?: boolean },
+): NonNullable<UserPreferences['routing']> {
+  return withConfigWriteLock(() => {
+    const config = readConfig();
+    const current = parseRoutingConfig(config.routing) ?? {};
+    const next = parseRoutingConfig(update(structuredClone(current)))!;
+    config.routing = { ...next,
+      ...(next.enabled === true || current.enabled === true || current.recoveryEnabled === true ? { recoveryEnabled: true } : {}) };
+    if (options?.accountPoolBalancing !== undefined) config.accountPoolBalancing = options.accountPoolBalancing;
+    writeConfig(config);
+    return config.routing;
   });
 }
 

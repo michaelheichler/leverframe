@@ -12,6 +12,7 @@ ${pc.bold('Usage:')}
   leverframe models
   leverframe favorites
   leverframe providers
+  leverframe switchyard [enable|disable|status|costs|refresh|set|billing]
   leverframe executions <list|show|reconcile>
   leverframe evidence get <session-id> <reference>
   leverframe --help
@@ -28,6 +29,7 @@ ${pc.bold('Commands:')}
   models      Manage favorite models and aliases (max ${MAX_MODEL_CATALOG})
   favorites   Alias for models
   providers   Add or sign in to supported providers
+  switchyard  Configure automatic model routing
   executions  Inspect and reconcile interrupted executions
   evidence    Retrieve stored evidence for a session
 

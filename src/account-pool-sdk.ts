@@ -17,6 +17,8 @@ import { recordObservation } from './account-pool.js';
 import { codexCapacity, codexEventCapacity, observeCodexEvents } from './account-pool-telemetry.js';
 import { createHash } from 'node:crypto';
 import { loadRegistry } from './registry/io.js';
+import { routingGuardedFetch } from './routing-before-send.js';
+import { routingSdkPoolUnavailable, routingSdkPrecommit, RoutingSdkRejected } from './routing-sdk-outcome.js';
 
 interface RuntimeBinding {
   key: string;
@@ -59,16 +61,16 @@ function bindingKey(cache: ProviderRuntimeCache<LanguageModel>, route: ProxyRout
   return key;
 }
 
-export async function getPooledCodexModel(cache: ProviderRuntimeCache<LanguageModel>, route: ProxyRoute, binding: PoolBinding): Promise<LanguageModel> {
+export async function getPooledCodexModel(cache: ProviderRuntimeCache<LanguageModel>, route: ProxyRoute, binding: PoolBinding, selectorAttemptFetch?: typeof fetch): Promise<LanguageModel> {
   const key = bindingKey(cache, route, binding);
   const credential = cache.snapshot(key, binding.apiKey);
-  return cache.getHandle(key, credential, snapshot => createLanguageModel({
-    npm: route.npm!, modelId: route.realModelId, apiKey: route.authType === 'none' ? '' : snapshot.credential,
+  const create = (apiKey: string) => createLanguageModel({
+    npm: route.npm!, modelId: route.realModelId, apiKey: route.authType === 'none' ? '' : apiKey,
     baseURL: route.baseURL, providerId: route.providerId, authType: route.authType,
     oauthAccountId: binding.oauthAccountId, providerData: { ...binding.providerData, leverframeAccountId: binding.account.id },
     headers: route.headers, useResponsesLite: route.useResponsesLite, preferWebSockets: false,
     fetch: async (input, init) => {
-      const response = await fetch(input, init);
+      const response = await routingGuardedFetch(selectorAttemptFetch ?? fetch)(input, init);
       if (route.providerId !== 'openai-oauth') return response;
       if (response.ok) {
         const now = Date.now();
@@ -85,7 +87,8 @@ export async function getPooledCodexModel(cache: ProviderRuntimeCache<LanguageMo
         }
       });
     },
-  }));
+  });
+  return selectorAttemptFetch ? create(binding.apiKey) : cache.getHandle(key, credential, snapshot => create(snapshot.credential));
 }
 
 async function streamPoolResponse(
@@ -103,7 +106,7 @@ async function streamPoolResponse(
     res.write('event: ping\ndata: {"type":"ping"}\n\n');
   }, () => !res.writableEnded && !res.destroyed);
   try {
-    heartbeat.arm();
+    if (!options.deferRoutingFailure) heartbeat.arm();
     await streamAnthropicResponse(model, params, options.clientModelId, chunk => {
       startResponse();
       options.lifecycle.markOutputEmitted();
@@ -126,7 +129,10 @@ export async function dispatchSdkPool(options: {
   route: ProxyRoute;
   params: SdkCallParams;
   cache: ProviderRuntimeCache<LanguageModel>;
+  selectorAttemptFetch?: typeof fetch;
+  deferRoutingFailure?: boolean;
   sessionId?: string;
+  eligibleAccount?: Parameters<typeof dispatchWithPool>[0]['eligibleAccount'];
   clientModelId: string;
   stream: boolean;
   signal: AbortSignal;
@@ -142,13 +148,17 @@ export async function dispatchSdkPool(options: {
   onExhausted?: () => void;
 }): Promise<void> {
   const { route, res } = options;
+  let lastClassifiedError: unknown;
   reconcileBindings(options.cache);
   const result = await dispatchWithPool({
     pool: { providerId: route.providerId!, modelId: route.realModelId, billingType: route.authType === 'oauth' ? 'oauth' : 'api' },
     sessionId: options.sessionId,
     accountId: route.accountId,
+    eligibleAccount: options.eligibleAccount,
+    maxDispatches: options.selectorAttemptFetch ? 1 : undefined,
+    skipMissingCredentials: options.deferRoutingFailure === true,
     dispatch: async binding => {
-      const model = await getPooledCodexModel(options.cache, route, binding);
+      const model = await getPooledCodexModel(options.cache, route, binding, options.selectorAttemptFetch);
       const params = { ...options.params, maxRetries: 0 };
       try {
         options.onDispatch?.();
@@ -175,6 +185,7 @@ export async function dispatchSdkPool(options: {
           body: details?.data ?? details?.errorContent, headers: details?.responseHeaders, now: Date.now(),
         });
         if (!observation) throw error;
+        if (!res.headersSent) lastClassifiedError = error;
         if (res.headersSent) {
           try {
             await recordObservation({
@@ -191,6 +202,15 @@ export async function dispatchSdkPool(options: {
     },
   });
   if (result.kind === 'exhausted') {
+    if (options.deferRoutingFailure && lastClassifiedError !== undefined) throw lastClassifiedError;
+    if (options.deferRoutingFailure && result.attempted.length === 0 && result.accounts.length === 0
+      && result.missingCredentialAccounts?.length && routingSdkPrecommit(res, options.lifecycle.getSnapshot(), options.lifecycle.abortSignal)) {
+      throw new RoutingSdkRejected({ reason: 'credential_missing', acceptance: 'not_sent', response: 'clear', output: 'none', tool: 'none' });
+    }
+    if (options.deferRoutingFailure && result.attempted.length === 0 && !result.missingCredentialAccounts?.length) {
+      const failure = routingSdkPoolUnavailable(result.accounts, res, options.lifecycle.getSnapshot(), options.lifecycle.abortSignal);
+      if (failure) throw new RoutingSdkRejected(failure);
+    }
     options.lifecycle.fail(new Error('Account pool exhausted'));
     options.tracking.fail(undefined);
     options.onExhausted?.();

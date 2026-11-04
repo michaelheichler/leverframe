@@ -15,9 +15,62 @@ import { rootHelpText, claudeHelpText, serverHelpText, modelsHelpText, patchHelp
 import { runModelsCommand } from './cli-command-models.js';
 import { runClaudeCommand } from './cli-command-claude.js';
 import { runEvidenceCommand } from './evidence-command.js';
+import { runSwitchyardCommand } from './cli-command-switchyard.js';
 
 export { parseArgs } from './cli-args.js';
 export { rootHelpText, claudeHelpText, serverHelpText, modelsHelpText, patchHelpText } from './cli-help.js';
+
+function runModels(parsed: ReturnType<typeof parseArgs>): Promise<number> | number {
+  if (parsed.showVersion) {
+    console.log(VERSION);
+    return 0;
+  }
+  if (parsed.showHelp) {
+    printHelp(modelsHelpText());
+    return 0;
+  }
+  return runModelsCommand({
+    list: parsed.favoritesList,
+    alias: parsed.favoritesAlias,
+    unalias: parsed.favoritesUnalias,
+    contextCeiling: parsed.favoritesContextCeiling,
+    noContextCeiling: parsed.favoritesNoContextCeiling,
+  });
+}
+
+function runProviders(parsed: ReturnType<typeof parseArgs>): Promise<number> | number {
+  if (parsed.showVersion) {
+    console.log(VERSION);
+    return 0;
+  }
+  if (parsed.showHelp) {
+    printHelp(providersHelpText());
+    return 0;
+  }
+  if (parsed.trace) {
+    process.env.LEVERFRAME_TRACE = '1';
+  }
+  return runProvidersCommand(parsed.claudeArgs);
+}
+
+function runPatch(parsed: ReturnType<typeof parseArgs>): Promise<number> | number {
+  if (parsed.showVersion) {
+    console.log(VERSION);
+    return 0;
+  }
+  if (parsed.showHelp) {
+    printHelp(patchHelpText());
+    return 0;
+  }
+  return runPatchCommand({
+    restore: parsed.patchRestore,
+    trace: parsed.trace,
+    target: parsed.patchTarget,
+    diagnose: parsed.patchDiagnose,
+    json: parsed.patchJson,
+  });
+}
+
 
 export async function main(args: string[] = process.argv.slice(2)): Promise<number> {
   if (args[0] === 'evidence') return runEvidenceCommand(args.slice(1));
@@ -35,6 +88,8 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
     return 1;
   }
 
+  if (parsed.command === 'switchyard') return runSwitchyardCommand(parsed.claudeArgs);
+
   if (!parsed.showVersion) {
     refreshModelsDevCacheAsync();
   }
@@ -48,42 +103,11 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
     return 0;
   }
 
-  if (parsed.command === 'server') {
-    return runServer(parsed);
-  }
+  if (parsed.command === 'server') return runServer(parsed);
 
-  if (parsed.command === 'models') {
-    if (parsed.showVersion) {
-      console.log(VERSION);
-      return 0;
-    }
-    if (parsed.showHelp) {
-      printHelp(modelsHelpText());
-      return 0;
-    }
-    return runModelsCommand({
-      list: parsed.favoritesList,
-      alias: parsed.favoritesAlias,
-      unalias: parsed.favoritesUnalias,
-      contextCeiling: parsed.favoritesContextCeiling,
-      noContextCeiling: parsed.favoritesNoContextCeiling,
-    });
-  }
+  if (parsed.command === 'models') return runModels(parsed);
 
-  if (parsed.command === 'providers') {
-    if (parsed.showVersion) {
-      console.log(VERSION);
-      return 0;
-    }
-    if (parsed.showHelp) {
-      printHelp(providersHelpText());
-      return 0;
-    }
-    if (parsed.trace) {
-      process.env.LEVERFRAME_TRACE = '1';
-    }
-    return runProvidersCommand(parsed.claudeArgs);
-  }
+  if (parsed.command === 'providers') return runProviders(parsed);
 
   if (parsed.command === 'executions') {
     if (parsed.showVersion) {
@@ -105,23 +129,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
     return runKeyringRepairCommand(parsed.keyringRepairAccount);
   }
 
-  if (parsed.command === 'patch') {
-    if (parsed.showVersion) {
-      console.log(VERSION);
-      return 0;
-    }
-    if (parsed.showHelp) {
-      printHelp(patchHelpText());
-      return 0;
-    }
-    return runPatchCommand({
-      restore: parsed.patchRestore,
-      trace: parsed.trace,
-      target: parsed.patchTarget,
-      diagnose: parsed.patchDiagnose,
-      json: parsed.patchJson,
-    });
-  }
+  if (parsed.command === 'patch') return runPatch(parsed);
 
   if (parsed.showVersion) {
     console.log(VERSION);

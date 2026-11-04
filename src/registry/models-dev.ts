@@ -42,7 +42,9 @@ export interface ModelsDevModel {
   family?: string;
   status?: string;
   limit?: { context?: number; input?: number; output?: number };
-  cost?: { input: number; output: number; cache_read?: number; cache_write?: number };
+  cost?: { input: number; output: number; cache_read?: number; cache_write?: number;
+    tiers?: Array<{ input?: number; output?: number; cache_read?: number; cache_write?: number;
+      tier?: { type?: string; size?: number } }> };
   provider?: { npm?: string };
 }
 

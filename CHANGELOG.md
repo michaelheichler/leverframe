@@ -6,6 +6,10 @@ This changelog records notable changes to Leverframe.
 
 ## [Unreleased]
 
+### Added
+
+- Optional model routing, off by default. Enabling it adds an `auto` entry that delegates each job to a configured model by category, cost, and availability, with logged fallbacks. Live provider behavior and the interactive Claude Code notices are still unverified. See [Model routing](docs/MODEL-ROUTING.md).
+
 ## [0.5.2] - 2026-11-04
 
 ### Changed

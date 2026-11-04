@@ -91,6 +91,8 @@ export async function fetchWithOAuthRetry<TResponse extends { status: number }>(
 }
 
 export interface RelayAnthropicOptions {
+  nativePassthroughHeaders?: Headers;
+  fetch?: typeof fetch;
   deferRejection?: boolean;
   onResponseHeaders?: (headers: Headers) => void | Promise<void>;
   inboundBeta?: string;
@@ -194,17 +196,18 @@ export async function relayAnthropicMessages(
   clientWantsStream: boolean,
   options: RelayAnthropicOptions = {},
 ): Promise<{ status: number; body: string; headers: Headers } | undefined> {
+  if (options.nativePassthroughHeaders && options.refreshToken) throw new Error('Native passthrough cannot use a second credential source.');
   const lifecycle = options.lifecycle;
   const upstreamStarted = performance.now();
   const onUsage = options.onUsage ? (usage: ResponseUsage) => options.onUsage?.(usage, performance.now() - upstreamStarted) : undefined;
   lifecycle?.startConnecting();
-  const payload = JSON.stringify(options.authType === 'oauth'
+  const payload = JSON.stringify(options.nativePassthroughHeaders || options.authType === 'oauth'
     ? body : withoutCacheControlScope(neutralAnthropicApiRequest(body)));
   const extraHeaders = openCodeGoHeaders(messagesUrl, options.extraHeaders,
     extractClaudeSessionId(body, options.claudeCodeSessionId));
-  const doFetch = (key: string) => fetch(messagesUrl, {
+  const doFetch = (key: string) => (options.fetch ?? fetch)(messagesUrl, {
     method: 'POST',
-    headers: anthropicUpstreamHeaders(
+    headers: options.nativePassthroughHeaders ?? anthropicUpstreamHeaders(
       key,
       clientWantsStream,
       options.inboundBeta,

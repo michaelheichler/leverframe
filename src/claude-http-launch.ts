@@ -10,6 +10,7 @@ import { printTraceLog, writeProxyLifecycleLog } from './trace-log.js';
 import { loadHttpProxyRoutes, printHttpProxyModels, reportSkippedHttpProxyFavorites, startConfiguredHttpProxy } from './http-proxy/index.js';
 import type { HttpProxyHandle } from './http-proxy/server.js';
 import { runLaunchPatchCheck } from './patcher.js';
+import { ROUTING_ACTIVE_ENV, ROUTING_ACTIVE_VALUE, ROUTING_NOTICE_ACTIVE_ENV } from './constants.js';
 
 interface HttpProxyLaunchOptions {
   installation: ClaudeInstallation;
@@ -80,12 +81,17 @@ async function launchHttpProxyChild(options: HttpProxyLaunchOptions, handle: Htt
   ensureLoopbackNoProxy(env);
   env['LEVERFRAME_CONTEXT_SELECTION_BASE_URL'] = `http://127.0.0.1:${handle.port}`;
   env['LEVERFRAME_CONTEXT_SELECTION_TOKEN'] = handle.token;
+  if (handle.routingEnabled) env[ROUTING_ACTIVE_ENV] = ROUTING_ACTIVE_VALUE;
+  else delete env[ROUTING_ACTIVE_ENV];
+  if (handle.routingEnabled || handle.routingRecoveryOnly) env[ROUTING_NOTICE_ACTIVE_ENV] = ROUTING_ACTIVE_VALUE;
+  else delete env[ROUTING_NOTICE_ACTIVE_ENV];
   const debugLogPath = options.parsed.trace ? prepareClaudeTraceLog(getSessionLogPath('claude-debug')) : undefined;
   if (debugLogPath && !options.agentStdout) {
     p.log.info(`Claude debug log: ${debugLogPath}`);
     if (proxyDebugLogPath) p.log.info(`Adapter debug log: ${proxyDebugLogPath}`);
   }
-  const exitCode = await launchClaude({ installation: options.installation, env, model: undefined,
+  const exitCode = await launchClaude({ installation: options.installation, env,
+    model: handle.routingEnabled ? handle.routingVisibleModelId ?? 'auto' : undefined,
     extraArgs: [...(debugLogPath ? ['--debug-file', debugLogPath] : []), ...withProxyAnthropicOriginSettings(options.claudeArgs)] });
   if (debugLogPath) printTraceLog(debugLogPath);
   return exitCode;
@@ -103,21 +109,34 @@ export async function runClaudeHttpProxyCommand(options: HttpProxyLaunchOptions)
   const inferenceLogPath = getInferenceSessionLogPath('claude-http-proxy');
   const proxyDebugLogPath = parsed.trace ? getSessionLogPath('claude-proxy-debug') : undefined;
   let started: Awaited<ReturnType<typeof startConfiguredHttpProxy>>;
-  try { started = await startConfiguredHttpProxy(0, parsed.trace, inferenceLogPath, proxyDebugLogPath); }
+  try { started = await startConfiguredHttpProxy(0, parsed.trace, inferenceLogPath, proxyDebugLogPath, undefined, false, true); }
   catch (error) {
     p.log.error(`Failed to start proxy: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   }
   const { handle, loaded } = started;
-  try { await runLaunchPatchCheck({ agentStdout, dryRun: false, installation, freshProviders: loaded.providers, contextSelectionAvailable: true }); }
+  if (handle.routingEnabled && options.claudeArgs.some(arg => arg === '--model' || arg.startsWith('--model='))) {
+    p.log.error('A model override cannot be combined with enabled model routing. Disable routing to choose a model.');
+    await handle.close();
+    return 1;
+  }
+  try { await runLaunchPatchCheck({ agentStdout, dryRun: false, installation, freshProviders: loaded.providers,
+    contextSelectionAvailable: true, routingAvailable: handle.routingEnabled,
+    routingConfig: handle.routingEnabled ? loaded.routingEvidence?.config : undefined,
+    routingPreflight: handle.routingPreflight,
+    ...(handle.routingRecoveryOnly ? { routingRecoveryOnly: true } : {}) }); }
   catch { await handle.close(); return 1; }
   const stop = observeProxyLifecycle(handle, inferenceLogPath);
   if (!agentStdout) {
     p.log.info(`Proxy started on port ${handle.port}; Claude Code's Anthropic auth remains active.`);
     p.log.info(`Inference request log: ${handle.inferenceLogPath}`);
-    printHttpProxyModels(loaded.routes, loaded.aliases);
-    reportSkippedHttpProxyFavorites(loaded);
-    if (loaded.routes.length > 0) p.log.info('Switch with `/model <listed-name>`.');
+    if (handle.routingEnabled) {
+      p.log.info(`Model routing active: ${handle.routingVisibleModelId ?? 'auto'}.`);
+    } else {
+      printHttpProxyModels(loaded.routes, loaded.aliases);
+      reportSkippedHttpProxyFavorites(loaded);
+      if (loaded.routes.length > 0) p.log.info('Switch with `/model <listed-name>`.');
+    }
   }
   try { return await launchHttpProxyChild(options, handle, proxyDebugLogPath); }
   finally { await stop(); }

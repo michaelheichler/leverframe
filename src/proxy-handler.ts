@@ -17,9 +17,11 @@ import {
 import { formatAnthropicModelEntry } from './server/models.js';
 import { extractApiKey } from './http-utils.js';
 import { handleEvidenceRequest } from './context/evidence-route.js';
+import type { RoutingControlContext } from './proxy-routing-control.js';
 
 
 export type ProxyRequestContext={
+  routing?: Omit<RoutingControlContext, 'proxyToken'>;
   proxyToken: string;
   byAlias: Map<string, ProxyRoute>;
   defaultRoute: ProxyRoute;

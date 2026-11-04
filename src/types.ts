@@ -1,10 +1,11 @@
 
 
 import type { FreeStatus } from './free-models.js';
+import type { RoutingConfig } from './model-routing.js';
 
 export type ModelFormat = 'anthropic' | 'openai' | 'unsupported';
 
-export type StarterCommand = 'root' | 'claude' | 'server' | 'models' | 'providers' | 'patch' | 'executions' | 'keyring';
+export type StarterCommand = 'root' | 'claude' | 'server' | 'models' | 'providers' | 'patch' | 'executions' | 'keyring' | 'switchyard';
 
 export interface ModelCost {
   input: number;
@@ -90,6 +91,7 @@ export interface ModelAlias extends FavoriteModel {
 export type BridgeMode = 'endpoint' | 'proxy';
 
 export interface UserPreferences {
+  routing?: RoutingConfig;
   summarySettings?: {
     enabled: boolean;
     engineId?: string;

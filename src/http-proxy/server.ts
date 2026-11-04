@@ -1,3 +1,4 @@
+import { ANTHROPIC_API_ORIGIN } from '../constants.js';
 import * as http from 'node:http';
 import * as https from 'node:https';
 import type { Socket } from 'node:net';
@@ -11,10 +12,16 @@ import { listenTcpServer } from '../listener-ready.js';
 import type { ClaudeCodeCredentialReader } from '../claude-code-credentials.js';
 import { handleMitmRequest } from './mitm.js';
 import { createProxyServer } from './proxy-server.js';
+import type { RoutingControlContext } from '../proxy-routing-control.js';
+import { RoutingNoticeChannel } from '../routing-notice-channel.js';
+import { createRoutingSelectorCall } from '../proxy-routing-selector.js';
+import { readClaudeCodeAuthMaterial } from '../claude-code-credentials.js';
+import { RoutingSelectorCache } from '../routing-selector-cache.js';
 
 export { shouldInterceptConnect } from './proxy-server.js';
 
 export interface HttpProxyOptions {
+  routing?: Omit<RoutingControlContext, 'proxyToken'>;
   host?: string;
   port?: number;
   routes: ProxyRoute[];
@@ -29,6 +36,7 @@ export interface HttpProxyOptions {
   webSocketDiagnosticsLogPath?: string;
 
   anthropicOrigin?: string;
+  nativeRoutingFetch?: typeof fetch;
 
   anthropicRejectUnauthorized?: boolean;
 
@@ -44,6 +52,10 @@ export interface HttpProxyOptions {
 }
 
 export interface HttpProxyHandle {
+  routingEnabled?: true;
+  routingRecoveryOnly?: true;
+  routingVisibleModelId?: string;
+  routingPreflight?: ReturnType<typeof import('../routing-policy-identity.js').routingPreflight>;
   host: string;
   port: number;
   caCertPath: string;
@@ -82,7 +94,7 @@ async function startAdapter(options: HttpProxyOptions): Promise<ProxyHandle | nu
   if (!options.routes.length) return null;
   return startProxyCatalog(
     options.routes, options.routes[0]!.aliasId, options.debug, options.inferenceLogPath,
-    options.debugLogPath, options.webSocketDiagnosticsLogPath, options.modelAliases,
+    options.debugLogPath, options.webSocketDiagnosticsLogPath, options.modelAliases, options.routing,
   );
 }
 
@@ -90,16 +102,28 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
   const certificates = ensureHttpProxyCertificates();
   const proxyAuthToken = options.proxyAuthToken ?? randomBytes(32).toString('base64url');
   const routesById = buildProxyRoutesById(options.routes, options.modelAliases);
-  const origin = new URL(options.anthropicOrigin ?? 'https://api.anthropic.com');
-  let adapter = await startAdapter(options);
+  const origin = new URL(options.anthropicOrigin ?? ANTHROPIC_API_ORIGIN);
+  let adapter: ProxyHandle | null = null;
+  const selectorCache = options.routing ? new RoutingSelectorCache() : undefined;
+  const noticeChannel = options.routing ? new RoutingNoticeChannel() : undefined;
+  const routing = options.routing ? { ...options.routing,
+    selectorCache, noticeChannel, inferenceLogPath: options.inferenceLogPath,
+    selectorRequiresNotice: !options.routing.selectorTransport,
+    selectorTransport: options.routing.selectorTransport ?? createRoutingSelectorCall(() => adapter, {
+      catalog: options.routing.catalog, origin, readAuth: options.resolveClaudeCodeAuth ?? readClaudeCodeAuthMaterial,
+      fetch: options.nativeRoutingFetch, noticeChannel, inferenceLogPath: options.inferenceLogPath,
+    }) } : undefined;
+  const runtimeOptions = routing ? { ...options, routing } : options;
+  try { adapter = await startAdapter(runtimeOptions); }
+  catch (error) { selectorCache?.dispose(); noticeChannel?.dispose(); throw error; }
   const adapterAgent = new http.Agent({ keepAlive: true });
   const mitmServer = https.createServer({
     key: certificates.serverKey, cert: certificates.serverCert, minVersion: 'TLSv1.2',
   }, (req, res) => {
-    void handleMitmRequest(req, res, { options, routesById, adapter, adapterAgent, origin });
+    void handleMitmRequest(req, res, { options: runtimeOptions, routesById, adapter, adapterAgent, origin });
   });
   const sockets = new Set<Socket>();
-  const proxyServer = createProxyServer(proxyAuthToken, routesById, mitmServer, sockets);
+  const proxyServer = createProxyServer(proxyAuthToken, routesById, mitmServer, sockets, routing);
   const closeAdapter = async (): Promise<void> => {
     if (!adapter) return;
     await adapter.close();
@@ -109,6 +133,8 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
   try {
     address = await listenTcpServer(proxyServer, options.port ?? 0, options.host ?? '127.0.0.1');
   } catch (err) {
+    selectorCache?.dispose();
+    noticeChannel?.dispose();
     adapterAgent.destroy();
     if (mitmServer.listening) await new Promise<void>(resolve => mitmServer.close(() => resolve()));
     await closeAdapter();
@@ -117,10 +143,14 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
   return {
     host: options.host ?? '127.0.0.1', port: address.port, caCertPath: certificates.caCertPath,
     token: proxyAuthToken,
+    ...(routing?.config.enabled && !routing.recoveryOnly ? { routingEnabled: true as const, routingVisibleModelId: routing.config.visibleModelId ?? 'auto' }
+      : routing?.recoveryOnly ? { routingRecoveryOnly: true as const } : {}),
     modelIds: [...(options.modelAliases ?? []).map(alias => alias.name), ...options.routes.map(route => route.aliasId)],
     inferenceLogPath: options.inferenceLogPath,
     webSocketDiagnosticsLogPath: options.webSocketDiagnosticsLogPath,
     close: async () => {
+      selectorCache?.dispose();
+      noticeChannel?.dispose();
       adapterAgent.destroy();
       for (const socket of sockets) socket.destroy();
       await new Promise<void>(resolve => proxyServer.close(() => resolve()));
