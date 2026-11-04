@@ -6,13 +6,22 @@ This changelog records notable changes to Leverframe.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-04
+
 ### Changed
 
 - The README includes the Orange Slate logo and release badges, with a shorter setup guide and links to detailed documentation.
 - Focused module extractions resolve file-size warnings without changing translation or model metadata behavior.
 
+### Added
+
+- The Claude Code model picker shows each model's context size, usage multiplier, and peak-hour cost multiplier in its description.
+
 ### Fixed
 
+- OpenCode Go usage multipliers load again after the supplier pricing document moved and split its rates into peak and off-peak rows.
+- The usage multiplier label appears only for models from a provider that publishes one, and stays off free models.
+- The Claude Code picker adds the model name to an alias that no longer matches its model. For example, an older `deepseek-v4-flash` alias that now reaches V4.1 shows `Deepseek-v4-flash (DeepSeek V4.1 Flash)`.
 - Auto suppresses confirmed account credit and quota rejections while trying another eligible account. Confirmed empty accounts remain blocked without blind recovery calls, and a dedicated Leverframe message reports when every eligible account is empty.
 - Google and Antigravity quota failures retain the status and retry metadata needed for automatic account failover. Streaming failures record capacity against the selected provider.
 - Automated tests use private temporary parents on Linux and compare account-label text independently of terminal color settings.
