@@ -1,0 +1,20 @@
+CHANGELOG.md
+  s_803b6e20fa14f4::t_1987f36f5c7477 28
+  s_803b6e20fa14f4::t_c321a8d537cdb3 29-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4a29689d88d0d8b7e4af9f2a4cd7814f4e1d742f",
+  "prompts": {},
+  "sessions": {
+    "s_803b6e20fa14f4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ba2a1262-738c-4d87-ab59-a854957e79e7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
