@@ -1,0 +1,80 @@
+tests/patch-model-picker-capabilities.test.ts
+  s_803b6e20fa14f4::t_525ccd1e9071e9 1-41,43-57
+  s_803b6e20fa14f4::t_25bebde9b358ec 42
+tests/patch-agent-model-list.test.ts
+  s_803b6e20fa14f4::t_0563e686936f69 99-105
+src/registry/types.ts
+  s_803b6e20fa14f4::t_be3630cf6e5b28 36
+tests/fixtures/claude-patch-sites.js
+  s_803b6e20fa14f4::t_842b78edbfcc3f 1
+  s_803b6e20fa14f4::t_e9189ab9d37ae3 2-4
+src/provider-templates.ts
+  s_803b6e20fa14f4::t_792f0325b2b5ba 95
+src/patch-transforms.ts
+  s_803b6e20fa14f4::t_e9e20d458b0783 27-28
+src/types.ts
+  s_803b6e20fa14f4::t_3b6dceef7805ae 35
+tests/supplier-metadata.test.ts
+  s_803b6e20fa14f4::t_37e5feb7812c6f 1-68
+src/ui.ts
+  s_803b6e20fa14f4::t_992f6f84c727de 41
+  s_803b6e20fa14f4::t_1b684a72c878da 48
+tests/model-capabilities-display.test.ts
+  s_803b6e20fa14f4::t_5fb954e13bcbd0 34-38
+tests/fetch-template-models.test.ts
+  s_803b6e20fa14f4::t_64cf9f0743cc0a 72,81
+  s_803b6e20fa14f4::t_02d68847d2542b 200
+  s_803b6e20fa14f4::t_3be51e1163b44a 227-229
+  s_803b6e20fa14f4::t_0394ffc7535690 54-56,58-60,62,108,110,152,154,198,254,256,300,302,343,345
+  s_803b6e20fa14f4::t_439dd99d483a70 367-369,371-373,375-403
+  s_803b6e20fa14f4::t_73c7a4cb4f00c7 370,374
+src/registry/materialize.ts
+  s_803b6e20fa14f4::t_4f39ffd2b3664e 76
+src/test-only/candidate-loopback-transport.ts
+  s_803b6e20fa14f4::t_3df3fa7c724a60 87
+  s_803b6e20fa14f4::t_1d7a844100c1ec 173
+src/registry/fetch-template-models.ts
+  s_803b6e20fa14f4::t_3b3183c695229c 153
+  s_803b6e20fa14f4::t_2e809c6299b9a6 197
+  s_803b6e20fa14f4::t_970cd697904232 206,208
+  s_803b6e20fa14f4::t_9ee2b817848ba9 20
+  s_803b6e20fa14f4::t_cf01e73d62f75d 9
+  s_803b6e20fa14f4::t_cfcf3963d3b353 44
+  s_803b6e20fa14f4::t_87934d00b504c7 131-132
+tests/patch-legacy-recovery.test.ts
+  s_803b6e20fa14f4::t_b83ac24b428df8 35
+src/registry/listed-cost.ts
+  s_803b6e20fa14f4::t_9cc9a71270538e 1-34
+src/registry/convert.ts
+  s_803b6e20fa14f4::t_cce6b303f5e0da 22
+src/patch-model-options.ts
+  s_803b6e20fa14f4::t_039be362024436 52-54
+  s_803b6e20fa14f4::t_c510147ce9826f 30-41
+  s_803b6e20fa14f4::t_a85acfade65339 61-62
+src/registry/supplier-metadata.ts
+  s_803b6e20fa14f4::t_84758414c8b947 34-35
+  s_803b6e20fa14f4::t_057aabaa7b1aed 28
+src/patcher.ts
+  s_803b6e20fa14f4::t_74d11bb12e3319 91-94
+  s_803b6e20fa14f4::t_bbaf220d7683f3 16
+  s_803b6e20fa14f4::t_bcee8c6f5b05f0 119
+  s_803b6e20fa14f4::t_6219b9a6390de6 236
+  s_803b6e20fa14f4::t_0304596fbbbc71 72-73
+  s_803b6e20fa14f4::t_d9d4db3a5a3dea 205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "84b10b36dd7da347632d82cbd0b564d1793b7c4d",
+  "prompts": {},
+  "sessions": {
+    "s_803b6e20fa14f4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ba2a1262-738c-4d87-ab59-a854957e79e7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
