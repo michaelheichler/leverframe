@@ -1,0 +1,21 @@
+docs/MODEL-ROUTING.md
+  s_2323a9b425b5bd::t_b3623a42c32e98 1-360
+docs/superpowers/plans/2026-11-02-model-routing.md
+  s_2323a9b425b5bd::t_9afa1411e5d787 1-164
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2a5aa0da84d7011c4d6958af2159ed9b085f4d94",
+  "prompts": {},
+  "sessions": {
+    "s_2323a9b425b5bd": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19c37-d702-7361-b78e-c8470b0dbd49",
+        "model": "unknown"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
