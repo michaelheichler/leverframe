@@ -1,0 +1,32 @@
+.github/workflows/ci.yml
+  s_803b6e20fa14f4::t_22e78160f72510 35-38
+tests/package-manager.test.ts
+  s_803b6e20fa14f4::t_68a54b1bea61b4 2-3,6-10,13,17
+  s_803b6e20fa14f4::t_07928dedc67f7e 26
+.craftsman-baseline.json
+  s_acb31e06537326::t_9f0d9e598832e0 256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b3d65bc26b13124f35425dfb415f19b26dddec48",
+  "prompts": {},
+  "sessions": {
+    "s_803b6e20fa14f4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ba2a1262-738c-4d87-ab59-a854957e79e7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    },
+    "s_acb31e06537326": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a528d5fe8f00bfee6",
+        "model": "unknown"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
