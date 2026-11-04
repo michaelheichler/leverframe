@@ -1,0 +1,486 @@
+tests/fixtures/claude-agent-2.1.314-routing.ts
+  s_803b6e20fa14f4::t_16ca92c7ea0942 8
+  s_803b6e20fa14f4::t_d92795ad806bd1 4
+  s_803b6e20fa14f4::t_1667be4ab6bf64 1-3
+  s_803b6e20fa14f4::t_3df9c9dad1105b 5-7
+  s_803b6e20fa14f4::t_8e54fa0d56a410 9-11
+  s_1d069649707ee2::t_de429c6f053d38 12-126
+tests/model-routing-recovery-patch-config.test.ts
+  s_803b6e20fa14f4::t_9df7ea351a7f9e 54-59
+  s_803b6e20fa14f4::t_b68bc6cb87e5de 126
+  s_803b6e20fa14f4::t_fa22942efd0697 51-53
+  s_803b6e20fa14f4::t_fdc37127756b32 60-62,123-125
+  s_803b6e20fa14f4::t_fcf95b4032e9d6 127-129
+  s_24cbae58463915::t_c9fb0e72943c93 1-50,63-122,130-204
+tests/model-routing-sidecar.test.ts
+  s_803b6e20fa14f4::t_497759f002e7b0 4-6
+  s_803b6e20fa14f4::t_b3a75fcb54735f 1-3
+  s_803b6e20fa14f4::t_84ca981e4e7624 7-9
+  s_1d069649707ee2::t_f04121cf8ebbba 10-106
+CHANGELOG.md
+  s_803b6e20fa14f4::t_2e02dfe8cd7d66 9-12
+tests/supplier-metadata.test.ts
+  s_803b6e20fa14f4::t_2d5451fe0ec2fd 59
+docs/MODEL-ROUTING.md
+  s_803b6e20fa14f4::t_1ae80c10561d79 3,13,15,17,21,23-41,58,116,132,142-151,154,158-159,202,209,211,226,228,242,248,254-256,264-265,268-269,272-273,283,286,294-295,299-303,309,315-317,319,321-331,337-339,341,364-366,370,383,386,388,401,403-405,407,411
+docs/superpowers/plans/2026-11-02-model-routing.md
+  s_803b6e20fa14f4::t_ef9b8c86847d1f 70,99,164
+src/account-pool-dispatch.ts
+  s_803b6e20fa14f4::t_0d118363f4a740 6,11,104,130-132,139-140,149,151-153,174-175,189-192,195-202,207,220
+src/account-pool-native.ts
+  s_803b6e20fa14f4::t_14317c16fb02e4 9-12,29-32,48,53-55,58,74,84-97
+src/account-pool-sdk.ts
+  s_803b6e20fa14f4::t_3de1a6f86db484 20-21,64,67-68,73,90-91,109,132-133,135,151,157-159,161,188,205-213
+src/checkpoint-store.ts
+  s_803b6e20fa14f4::t_e6b2092ab7fffe 10
+src/claude-http-launch.ts
+  s_803b6e20fa14f4::t_081d464649e9b1 13,84-87,93-94,112,118-127,133-139
+src/cli-args.ts
+  s_803b6e20fa14f4::t_439448019d1e6d 119-268,281,283,285-287,297,299
+src/cli-command-models.ts
+  s_803b6e20fa14f4::t_753d59d932d67d 3,103-105,129-134,171,185-188
+src/cli-command-switchyard.ts
+  s_803b6e20fa14f4::t_7e72157b87db3a 1-177
+src/cli-help.ts
+  s_803b6e20fa14f4::t_37fef2bee307bc 15,32
+src/cli-switchyard-catalog.ts
+  s_803b6e20fa14f4::t_3dbeabc4a25a36 1-103
+src/cli-switchyard-menu.ts
+  s_803b6e20fa14f4::t_b236c5157351ed 1-103
+src/cli.ts
+  s_803b6e20fa14f4::t_608dc24e40c7b1 18,23-74,91-92,106,108,110,132
+src/config.ts
+  s_803b6e20fa14f4::t_e57370cabeed64 8,109,130,132,135-136,158-173
+src/constants.ts
+  s_803b6e20fa14f4::t_9744ab1a493057 7-17
+src/env.ts
+  s_803b6e20fa14f4::t_db03ed4b116e32 2,26
+src/http-proxy/forward.ts
+  s_803b6e20fa14f4::t_4999c60a99cca7 100,128
+src/http-proxy/index.ts
+  s_803b6e20fa14f4::t_6fb4495d586cd2 21-27,32-33,36,49-51,118,120-137,146-149,161,163
+src/http-proxy/mitm.ts
+  s_803b6e20fa14f4::t_8b4a190a6156b0 1-3,15-42,125,155-524
+src/http-proxy/proxy-server.ts
+  s_803b6e20fa14f4::t_b6ee7d0ecbd4c3 7-8,92,94-95,108-109
+src/http-proxy/server.ts
+  s_803b6e20fa14f4::t_773b1f75bfaa08 1,15-19,24,39,55-58,97,105-118,123,126,136-137,146-147,152-153
+src/language-model-builtins.ts
+  s_803b6e20fa14f4::t_b62866ddf76cfa 4,32
+src/model-routing-catalog.ts
+  s_803b6e20fa14f4::t_9da1796c6f47b3 1-167
+src/model-routing-cost.ts
+  s_803b6e20fa14f4::t_649f181cee0391 1-55
+src/model-routing-price-validation.ts
+  s_803b6e20fa14f4::t_b724a599a92e50 1-71
+src/model-routing.ts
+  s_803b6e20fa14f4::t_2cdaecb821465e 1-251
+src/patch-model-options.ts
+  s_803b6e20fa14f4::t_69ad6f20a80245 47,49-50,67
+src/patch-model-picker-options.ts
+  s_803b6e20fa14f4::t_b9b56068030e1e 15,24,26-27,33,36,38,41,47,52
+src/patch-reconcile.ts
+  s_803b6e20fa14f4::t_076664d891c2c0 42,135-138,141,156-159,161,165-168,190,200-204,249-252,279-282,371-374,381-384,386,396-399,415-418,472-475,490-493
+src/patch-transforms-control-error.ts
+  s_803b6e20fa14f4::t_2e18f33db6af57 1-6
+src/patch-transforms-main-routing.ts
+  s_803b6e20fa14f4::t_e4d3683f2bf193 1-43
+src/patch-transforms-main-wire.ts
+  s_803b6e20fa14f4::t_f38effd0a3835b 1-18
+src/patch-transforms-model-routing.ts
+  s_803b6e20fa14f4::t_9f901c1e73fd25 1-193
+src/patch-transforms-routing-auxiliary-guard.ts
+  s_803b6e20fa14f4::t_39071291b74a7d 1-61
+src/patch-transforms-routing-bounds.ts
+  s_803b6e20fa14f4::t_27d2afc1e69da5 1-49
+src/patch-transforms-routing-composition.ts
+  s_803b6e20fa14f4::t_a7ee2a4a544421 1-71
+src/patch-transforms-routing-notice-coordinator.ts
+  s_803b6e20fa14f4::t_010564698ae4b4 1-133
+src/patch-transforms-routing-notice-format.ts
+  s_803b6e20fa14f4::t_ce7c6e1008ea40 1-43
+src/patch-transforms-routing-notice-frame.ts
+  s_803b6e20fa14f4::t_b4a15fa3959151 1-74
+src/patch-transforms-routing-notice-host.ts
+  s_803b6e20fa14f4::t_5d29689247bf58 1-82
+src/patch-transforms-routing-notice-startup.ts
+  s_803b6e20fa14f4::t_c53fd0920030c5 1-58
+src/patch-transforms-routing-notice-trust.ts
+  s_803b6e20fa14f4::t_ab4ed4f66c5743 1-20
+src/patch-transforms-routing-notice-writer.ts
+  s_803b6e20fa14f4::t_730273ec5f5b55 1-71
+src/patch-transforms-routing-recovery.ts
+  s_803b6e20fa14f4::t_a70834c4e7a436 1-105
+src/patch-transforms-routing-sidecar.ts
+  s_803b6e20fa14f4::t_322525dd758269 1-25
+src/patch-transforms.ts
+  s_803b6e20fa14f4::t_41035e873d5eca 9,12,17-22,84-87,112,335
+src/provider-catalog.ts
+  s_803b6e20fa14f4::t_0a35c43adc8c6a 27,127
+src/proxy-handler.ts
+  s_803b6e20fa14f4::t_612bae8fbf8987 20,24
+src/proxy-message-context.ts
+  s_803b6e20fa14f4::t_88dd1c8bf01a0e 8,32-37
+src/proxy-native-handler.ts
+  s_803b6e20fa14f4::t_524babc2579cf0 20-21,26-36,40,49-50,62-63,65,71-72,78,90,92,103-109,129,135-137,141
+src/proxy-routing-control.ts
+  s_803b6e20fa14f4::t_7aaafc0bc3f4a9 1-217
+src/proxy-routing-recovery-control.ts
+  s_803b6e20fa14f4::t_3a726ccbf048d6 1-47
+src/proxy-routing-selector.ts
+  s_803b6e20fa14f4::t_43992d0cdf1bbf 1-103
+src/proxy-sdk-handler.ts
+  s_803b6e20fa14f4::t_096cb6156fc943 34-35,53-63,83-87,102,124,139-141,145-147,154,158,169-170,176-178,217,235,254,295
+src/proxy.ts
+  s_803b6e20fa14f4::t_b4ebcb590726e1 33-34,45,56,78,81-83,89,107-110,112,122-136
+src/registry/account-schema.ts
+  s_803b6e20fa14f4::t_19f0fbcd5ece96 7-14,29
+src/registry/anthropic-models-fetch.ts
+  s_803b6e20fa14f4::t_cd39002b9193cf 111-112,114,120-122
+src/registry/import-build.ts
+  s_803b6e20fa14f4::t_e8d60e7b9a97b0 11-30
+src/registry/io.ts
+  s_803b6e20fa14f4::t_318e21f39c817c 102-103,109,114,134-141,164-165,178
+src/registry/materialize.ts
+  s_803b6e20fa14f4::t_7e20f97d4de8c4 1,24
+src/registry/models-dev.ts
+  s_803b6e20fa14f4::t_e1bedd6ae56921 45-47
+src/registry/pricing.ts
+  s_803b6e20fa14f4::t_e8f2cd5f4c9515 123
+src/registry/supplier-metadata.ts
+  s_803b6e20fa14f4::t_e6159255e7d86a 2,8,39,60-61,78
+src/registry/types.ts
+  s_803b6e20fa14f4::t_287c26a781e5d4 9-41,67,120,137-138,148
+src/routing-account-eligibility.ts
+  s_803b6e20fa14f4::t_0177b0309510c2 1-95
+src/routing-adapter-session.ts
+  s_803b6e20fa14f4::t_876961f505d70c 1-151
+src/routing-before-send.ts
+  s_803b6e20fa14f4::t_976704ffc45cdf 1-25
+src/routing-bindings.ts
+  s_803b6e20fa14f4::t_ab3fdf9971a306 1-749
+src/routing-config.ts
+  s_803b6e20fa14f4::t_2b1dfc47d7f8de 1-148
+src/routing-effort.ts
+  s_803b6e20fa14f4::t_f055a7471e29e7 1-14
+src/routing-estimate.ts
+  s_803b6e20fa14f4::t_6f2e6ecde6e80c 1-40
+src/routing-fallback-contract.ts
+  s_803b6e20fa14f4::t_69ad4c0158ab0b 1-184
+src/routing-inference-log.ts
+  s_803b6e20fa14f4::t_5f12c9e76fa819 1-93
+src/routing-native-outcome.ts
+  s_803b6e20fa14f4::t_9cd5b34f21943f 1-36
+src/routing-notice-channel.ts
+  s_803b6e20fa14f4::t_977e4939916bb1 1-149
+src/routing-notice-contract.ts
+  s_803b6e20fa14f4::t_0835fcd62fded4 1-49
+src/routing-notice-retention.ts
+  s_803b6e20fa14f4::t_c1f91973da437b 1-36
+src/routing-policy-identity.ts
+  s_803b6e20fa14f4::t_07414ddb922e42 1-62
+src/routing-policy.ts
+  s_803b6e20fa14f4::t_47602fb854bb64 1-137
+src/routing-replay-compatibility.ts
+  s_803b6e20fa14f4::t_3e1aa3b9624439 1-115
+src/routing-request-estimate.ts
+  s_803b6e20fa14f4::t_5f13112deb9365 1-26
+src/routing-runtime.ts
+  s_803b6e20fa14f4::t_e39ed06dba1bf4 1-83
+src/routing-sdk-outcome.ts
+  s_803b6e20fa14f4::t_aff906ecb8ce57 1-41
+src/routing-selector-attempt.ts
+  s_803b6e20fa14f4::t_218f2a165a9c76 1-22
+src/routing-selector-cache.ts
+  s_803b6e20fa14f4::t_41178809ce4cdf 1-56
+src/routing-selector-log.ts
+  s_803b6e20fa14f4::t_197ef5986e8657 1-89
+src/routing-selector-versions.ts
+  s_803b6e20fa14f4::t_8540966e17bd19 1-28
+src/routing-selector.ts
+  s_803b6e20fa14f4::t_90422893ed37bb 1-177
+src/routing-transport-identity.ts
+  s_803b6e20fa14f4::t_45ce11e5cb3242 1-27
+src/types.ts
+  s_803b6e20fa14f4::t_6863652726ebb2 4,8,94
+src/upstream-forward.ts
+  s_803b6e20fa14f4::t_065fe32031b4d9 94-95,199,204,208,210
+tests/account-pool-eligibility.test.ts
+  s_803b6e20fa14f4::t_b39b0ae55d06b6 1-139
+tests/account-pool-missing-credentials.test.ts
+  s_803b6e20fa14f4::t_4fd4e2dfbf60e4 1-231
+tests/candidate-loopback-transport.test.ts
+  s_803b6e20fa14f4::t_98c778a45e472a 5,485-488,499
+tests/candidate-provenance-worker.test.ts
+  s_803b6e20fa14f4::t_f91d0e4c0160a3 1-30
+tests/checkpoint-publication.test.ts
+  s_803b6e20fa14f4::t_e65f493f1178a4 19-20
+tests/claude-http-routing-activation.test.ts
+  s_803b6e20fa14f4::t_49560ec6a3bffe 1-431
+tests/claude-module-native-linking.test.ts
+  s_803b6e20fa14f4::t_607a7d0fc1474a 1-144
+tests/cli-command-models.test.ts
+  s_803b6e20fa14f4::t_75c9081558bc17 8-20,32-33,37-52,64,97-201
+tests/cli-command-switchyard.test.ts
+  s_803b6e20fa14f4::t_e100558159167d 1-730
+tests/cli-shared-pricing.test.ts
+  s_803b6e20fa14f4::t_ef7746fc9538c8 1-63
+tests/cli-switchyard-billing.test.ts
+  s_803b6e20fa14f4::t_566ff9f458380b 1-53
+tests/cli-switchyard-quota.test.ts
+  s_803b6e20fa14f4::t_f126c1e620f7b8 1-82
+tests/cli-switchyard-setup.test.ts
+  s_803b6e20fa14f4::t_8df5ef1669f3ab 1-231
+tests/cli.test.ts
+  s_803b6e20fa14f4::t_fb6aa1171ff012 8-28,31,53-55,88,90-91,102-104,183-185,354-374
+tests/config-lock-contention.test.ts
+  s_803b6e20fa14f4::t_5bc4591e0175c9 63,65
+tests/credential-durability.test.ts
+  s_803b6e20fa14f4::t_f0f6af1256b78c 2,4,6,25-43,45,49-51
+tests/credential-lifecycle.test.ts
+  s_803b6e20fa14f4::t_7cf93a54eb062e 2,4,21-33,52-56,64-65
+tests/credential-peek-replace.test.ts
+  s_803b6e20fa14f4::t_aee3f7cafd1e19 1,3,12,30-42,48-49,53-57
+tests/credential-peek.test.ts
+  s_803b6e20fa14f4::t_aa87fba4e1c207 1,3,16-28,33-34,38-39,41,104
+tests/credential-store-legacy-migration.test.ts
+  s_803b6e20fa14f4::t_b8e97d109167ba 1-85
+tests/credential-store.test.ts
+  s_803b6e20fa14f4::t_a961928f24758b 3,6,25,30-42,53-54,58,60-61,67,441,462,481,567,598,633-634,645
+tests/fixtures/claude-agent-2.1.314-notice-auxiliary-guard.ts
+  s_803b6e20fa14f4::t_ea45a64f608428 1-8
+tests/fixtures/claude-agent-2.1.314-notice-frame.ts
+  s_803b6e20fa14f4::t_17264d3ad5cfe2 1-13
+tests/fixtures/claude-agent-2.1.314-notice-host.ts
+  s_803b6e20fa14f4::t_f7c620a6729d8d 1-5
+tests/fixtures/claude-agent-2.1.314-notice-startup.ts
+  s_803b6e20fa14f4::t_ac010e1a86bfea 1-31
+tests/fixtures/claude-agent-2.1.314-notice-writer.ts
+  s_803b6e20fa14f4::t_afdc845623302f 1-27
+tests/fixtures/claude-agent-2.1.314-recovery.ts
+  s_803b6e20fa14f4::t_14638b4a10efb4 1-37
+tests/fixtures/claude-agent-2.1.314-routing-composition.ts
+  s_803b6e20fa14f4::t_3333c2c1fa18b1 1-25
+tests/fixtures/claude-agent-2.1.314-sidecar.ts
+  s_803b6e20fa14f4::t_e1d34fe8777edf 1-16
+tests/fixtures/model-routing-handoff-control.ts
+  s_803b6e20fa14f4::t_cc2aa74c719f88 1-64
+tests/fixtures/model-routing-invalid-pricing.ts
+  s_803b6e20fa14f4::t_c2c0e30a5e1c1b 1-156
+tests/fixtures/model-routing-models-dev-tiers.json
+  s_803b6e20fa14f4::t_7c034bd97d5ebb 1-34
+tests/fixtures/model-routing-pricing-tiers.json
+  s_803b6e20fa14f4::t_33b884f482bb7a 1-33
+tests/fixtures/model-routing-pricing-unverifiable-platform.json
+  s_803b6e20fa14f4::t_c3e2b04f217443 1-26
+tests/fixtures/model-routing-pricing.json
+  s_803b6e20fa14f4::t_12b15aa143700c 1-38
+tests/fixtures/model-routing-proxy.ts
+  s_803b6e20fa14f4::t_e19798c3ab44e9 1-685
+tests/fixtures/test-home-lifecycle.ts
+  s_803b6e20fa14f4::t_97a1a09d2392db 1-120
+tests/http-proxy-ca.test.ts
+  s_803b6e20fa14f4::t_00b21b303a3094 40,42
+tests/http-proxy-prepare-claude.test.ts
+  s_803b6e20fa14f4::t_d4a1544d5b11f0 66-68,101-103
+tests/keyring-peek.test.ts
+  s_803b6e20fa14f4::t_6f6541524eeaee 2,4,6,12,15-31,48,52-54
+tests/model-routing-account-pool.test.ts
+  s_803b6e20fa14f4::t_f36f642f9821d9 1-540
+tests/model-routing-binding-cas-retry.test.ts
+  s_803b6e20fa14f4::t_895cf3ed204f03 1-98
+tests/model-routing-binding-identity.test.ts
+  s_803b6e20fa14f4::t_d665a56c7472e1 1-108
+tests/model-routing-binding-requirements.test.ts
+  s_803b6e20fa14f4::t_f7ccf5dbd9f856 1-65
+tests/model-routing-bindings.test.ts
+  s_803b6e20fa14f4::t_d134e41cb4458b 1-702
+tests/model-routing-catalog.test.ts
+  s_803b6e20fa14f4::t_738aabbcbe6646 1-39
+tests/model-routing-category.test.ts
+  s_803b6e20fa14f4::t_17a1a108e1c35f 1-57
+tests/model-routing-config.test.ts
+  s_803b6e20fa14f4::t_ac59969cb3bc53 1-228
+tests/model-routing-control-selector.test.ts
+  s_803b6e20fa14f4::t_23307997c2bdfb 1-649
+tests/model-routing-count-tokens-identity.test.ts
+  s_803b6e20fa14f4::t_0e0baf49c1d291 1-154
+tests/model-routing-discovery.test.ts
+  s_803b6e20fa14f4::t_29703d78d7d34d 1-142
+tests/model-routing-estimate-update.test.ts
+  s_803b6e20fa14f4::t_245884a2e22354 1-159
+tests/model-routing-fallback.test.ts
+  s_803b6e20fa14f4::t_4914a39b4d74c4 1-513
+tests/model-routing-fixtures.ts
+  s_803b6e20fa14f4::t_a8935a1f002b22 1-69
+tests/model-routing-google-normalization.test.ts
+  s_803b6e20fa14f4::t_c7ac84b020cfa8 1-196
+tests/model-routing-handoff-binding.test.ts
+  s_803b6e20fa14f4::t_4f4af852549983 1-339
+tests/model-routing-handoff-control.test.ts
+  s_803b6e20fa14f4::t_7fc06e7ac16c01 1-390
+tests/model-routing-handoff-wire.test.ts
+  s_803b6e20fa14f4::t_1bc2ea0043b965 1-189
+tests/model-routing-handoff.test.ts
+  s_803b6e20fa14f4::t_a8fd841117cea3 1-147
+tests/model-routing-harness.test.ts
+  s_803b6e20fa14f4::t_6bf9ae90035f4d 1-535
+tests/model-routing-integration.test.ts
+  s_803b6e20fa14f4::t_7ba2b6c784d1a4 1-522
+tests/model-routing-launcher.test.ts
+  s_803b6e20fa14f4::t_a72ddb51a58784 1-126
+tests/model-routing-limits.test.ts
+  s_803b6e20fa14f4::t_282af646c9f439 1-47
+tests/model-routing-main-router.test.ts
+  s_803b6e20fa14f4::t_a47010d4a1c7fb 1-559
+tests/model-routing-mixed-transport-fallback-proxy.test.ts
+  s_803b6e20fa14f4::t_629386a41eca6b 1-702
+tests/model-routing-native-fallback-proxy.test.ts
+  s_803b6e20fa14f4::t_039f569ac2ba78 1-460
+tests/model-routing-native-handoff.test.ts
+  s_803b6e20fa14f4::t_4ea9e45e80e28d 1-482
+tests/model-routing-native-recovery-fallback.test.ts
+  s_803b6e20fa14f4::t_9b3f78763f6b30 1-156
+tests/model-routing-nonpool-eligibility.test.ts
+  s_803b6e20fa14f4::t_7defdd8aadf717 1-237
+tests/model-routing-notice-channel.test.ts
+  s_803b6e20fa14f4::t_1f510e92b85d3e 1-98
+tests/model-routing-notice-composition.test.ts
+  s_803b6e20fa14f4::t_52da7927866494 1-230
+tests/model-routing-notice-coordinator.test.ts
+  s_803b6e20fa14f4::t_85ec5e5d5df135 1-525
+tests/model-routing-notice-retention.test.ts
+  s_803b6e20fa14f4::t_8fc0301fa3c10a 1-187
+tests/model-routing-notices.test.ts
+  s_803b6e20fa14f4::t_a71a0076d8c7a0 1-707
+tests/model-routing-output-cap.test.ts
+  s_803b6e20fa14f4::t_81e39b4fb6130a 1-240
+tests/model-routing-owned-readiness.test.ts
+  s_803b6e20fa14f4::t_8fd116af304f2c 1-123
+tests/model-routing-patch-activation.test.ts
+  s_803b6e20fa14f4::t_92d258d09f4178 1-303
+tests/model-routing-patch-config.test.ts
+  s_803b6e20fa14f4::t_131fcbe1ff2ee9 1-17
+tests/model-routing-policy-patch-config.test.ts
+  s_803b6e20fa14f4::t_ebde5a5bbf85a1 1-84
+tests/model-routing-policy.test.ts
+  s_803b6e20fa14f4::t_94380def2028ab 1-192
+tests/model-routing-preflight.test.ts
+  s_803b6e20fa14f4::t_3338e8b387b63e 1-128
+tests/model-routing-pricing.test.ts
+  s_803b6e20fa14f4::t_19f695a405a47d 1-289
+tests/model-routing-prompts.test.ts
+  s_803b6e20fa14f4::t_afa601b00585cc 1-44
+tests/model-routing-proxy-integration.test.ts
+  s_803b6e20fa14f4::t_fb4804e2410a2a 1-695
+tests/model-routing-recovery-control.test.ts
+  s_803b6e20fa14f4::t_1a837262eecb9c 1-237
+tests/model-routing-recovery-preferences.test.ts
+  s_803b6e20fa14f4::t_d577ed1302c5d6 1-88
+tests/model-routing-recovery-preflight.test.ts
+  s_803b6e20fa14f4::t_e8161d41e4d43d 1-29
+tests/model-routing-recovery-scope.test.ts
+  s_803b6e20fa14f4::t_274f6f11962c8d 1-405
+tests/model-routing-recovery.test.ts
+  s_803b6e20fa14f4::t_510b7ad89ba00e 1-182
+tests/model-routing-registry.test.ts
+  s_803b6e20fa14f4::t_25f4353d4325d6 1-112
+tests/model-routing-runtime.test.ts
+  s_803b6e20fa14f4::t_9f7f481bac34a6 1-298
+tests/model-routing-sdk-fallback-proxy.test.ts
+  s_803b6e20fa14f4::t_378b3c3b9393c5 1-562
+tests/model-routing-selector-cache-lifecycle.test.ts
+  s_803b6e20fa14f4::t_2cab8ad581ca48 1-196
+tests/model-routing-selector-transport.test.ts
+  s_803b6e20fa14f4::t_f0fcf88cbd9a80 1-328
+tests/model-routing-selector-version.test.ts
+  s_803b6e20fa14f4::t_f9bfb32bebbbaa 1-89
+tests/model-routing-selector-versions.test.ts
+  s_803b6e20fa14f4::t_6cff091bc5b13e 1-73
+tests/model-routing-selector.test.ts
+  s_803b6e20fa14f4::t_f12214e13d75a0 1-255
+tests/model-routing-startup-preflight.test.ts
+  s_803b6e20fa14f4::t_3cc47d217f5d52 1-313
+tests/model-routing-tool-execution.test.ts
+  s_803b6e20fa14f4::t_9bf6495791f650 1-179
+tests/model-routing-tool-exposure.test.ts
+  s_803b6e20fa14f4::t_54b6dce982140e 1-110
+tests/model-routing-transport-identity.test.ts
+  s_803b6e20fa14f4::t_df5f744eb9105d 1-319
+tests/model-routing-workload.test.ts
+  s_803b6e20fa14f4::t_c74182f59f4d00 1-133
+tests/patch-model-picker-options.test.ts
+  s_803b6e20fa14f4::t_84959e809d0253 29-35
+tests/patch-native-e2e.test.ts
+  s_803b6e20fa14f4::t_c6a2df80a0beea 3-4,13-43,45-50,78-83,89-90
+tests/patch-transforms-routing-notice-auxiliary-guard.test.ts
+  s_803b6e20fa14f4::t_100dc52a1a3379 1-198
+tests/patch-transforms-routing-notice-format.test.ts
+  s_803b6e20fa14f4::t_71657f69af8863 1-117
+tests/patch-transforms-routing-notice-frame.test.ts
+  s_803b6e20fa14f4::t_f1928f3acab5b4 1-267
+tests/patch-transforms-routing-notice-host.test.ts
+  s_803b6e20fa14f4::t_c01ca49d78cb1d 1-204
+tests/patch-transforms-routing-notice-startup.test.ts
+  s_803b6e20fa14f4::t_954d70e86ce435 1-238
+tests/patch-transforms-routing-notice-trust.test.ts
+  s_803b6e20fa14f4::t_049d5e9c22cfd0 1-196
+tests/patch-transforms-routing-notice-writer.test.ts
+  s_803b6e20fa14f4::t_059800612a96db 1-410
+tests/registry-lock.test.ts
+  s_803b6e20fa14f4::t_005ceb3d31a8bd 46-47
+tests/routing-estimate.test.ts
+  s_803b6e20fa14f4::t_7ce2fea0706207 1-33
+tests/routing-inference-log.test.ts
+  s_803b6e20fa14f4::t_71b0d4cf67917c 1-371
+tests/routing-native-outcome.test.ts
+  s_803b6e20fa14f4::t_964a22ef23b2ab 1-170
+tests/routing-sdk-outcome.test.ts
+  s_803b6e20fa14f4::t_bd3fc6bdabf39e 1-80
+tests/test-home-child-isolation.test.ts
+  s_803b6e20fa14f4::t_bd38ac52ffddb4 1-135
+tests/test-home-isolation.test.ts
+  s_803b6e20fa14f4::t_b39c41bd476ffa 1-65
+tests/test-home-setup.ts
+  s_803b6e20fa14f4::t_e9e14fc0182b7c 1-4
+vitest.config.ts
+  s_803b6e20fa14f4::t_cf540ee7e589e1 7-10
+src/patcher.ts
+  s_803b6e20fa14f4::t_a4225c870df380 11,19,81-84,224-225,245-247,327,333-345,379-382
+src/proxy-messages-handler.ts
+  s_803b6e20fa14f4::t_9395f94d081b4b 42-53,68-91,123-125,141-188,190,197-199,211-213,217-224,239,265,269-335,392
+src/registry/fetch-template-models.ts
+  s_803b6e20fa14f4::t_97ff43f2aa83e9 115-126,166,211-213,223-232
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "01f2e7d0f724a901adc1e023ae6aabdbe226a517",
+  "prompts": {},
+  "sessions": {
+    "s_1d069649707ee2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a2cd9d61967aaf3d7",
+        "model": "unknown"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    },
+    "s_24cbae58463915": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a9aa5c65593060d0a",
+        "model": "unknown"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    },
+    "s_803b6e20fa14f4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ba2a1262-738c-4d87-ab59-a854957e79e7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
