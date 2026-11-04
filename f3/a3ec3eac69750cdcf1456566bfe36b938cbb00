@@ -1,0 +1,19 @@
+CHANGELOG.md
+  s_803b6e20fa14f4::t_c321a8d537cdb3 28-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f3a3ec3eac69750cdcf1456566bfe36b938cbb00",
+  "prompts": {},
+  "sessions": {
+    "s_803b6e20fa14f4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ba2a1262-738c-4d87-ab59-a854957e79e7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Agent Discipline Watcher CI <ci@agent-discipline-watcher.test>"
+    }
+  }
+}
