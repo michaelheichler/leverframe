@@ -6,26 +6,40 @@ This changelog records notable changes to Leverframe.
 
 ## [Unreleased]
 
-### Added
-
-- Optional model routing, off by default. Enabling it adds an `auto` entry that delegates each job to a configured model by category, cost, and availability, with logged fallbacks. Live provider behavior and the interactive Claude Code notices are still unverified. See [Model routing](docs/MODEL-ROUTING.md).
-
 ## [0.5.4] - 2026-11-12
 
 ### Fixed
 
-- Cached OpenAI OAuth and Anthropic models resolve the default fetch transport on each request. Explicit custom transports and Anthropic cache wrapping stay unchanged.
+- Cached OpenAI OAuth and Anthropic models read the default fetch transport on every request, so a transport you set after caching takes effect. Explicit custom transports and Anthropic cache wrapping stay unchanged.
 
 ## [0.5.3] - 2026-11-12
 
+### Added
+
+- Experimental anonymous access to OpenCode Zen free chat models through a new `opencode-zen` provider. It needs no API key and no OpenCode installation, sends only the public placeholder credential, and names Leverframe as the client. Discovery never sends a configured key. OpenCode documents a restriction on free access from another client, and one anonymous test request returned HTTP 429, so successful inference remains unverified.
+- Optional model routing, off by default. Enabling it adds an `auto` entry that delegates each job to a configured model by category, cost, and availability, with logged fallbacks. Live provider behavior and the interactive Claude Code notices are still unverified. See [Model routing](docs/MODEL-ROUTING.md).
+- Payload-free, rate-limited operator notices report requests queued behind the adapter socket cap and client sockets that the proxy drops at its connection cap.
+
+### Changed
+
+- OpenCode Zen policies live on the provider template, so aliases and custom provider IDs keep the same free-model, retry, catalog and credential-notice rules. A configured key that Zen ignores produces one notice per provider load.
+- The build generates runtime bundles at pack time and in CI, and Git no longer tracks `dist/`. A source checkout needs a build before you link or run the CLI, and an install from the published tarball builds automatically.
+- CI installs Bun so the native linking test can build a real binary, and the package manager test uses the real cache.
+
 ### Fixed
 
+- A client that disconnects now closes its upstream forward, and an upstream reset in the middle of a stream closes the client response as incomplete instead of ending it as a complete answer. Abandoned forwards had collected in one long-running proxy until it ran out of file descriptors.
+- The proxy limits local inference to 64 active adapter sockets, above the 31 inbound clients observed. Extra requests wait for a slot. At most 8 free sockets stay for 30 seconds, and active streams never expire.
+- The proxy accepts at most 256 clients, probes idle peers with TCP keepalive after 30 seconds, and gives a CONNECT tunnel 10 seconds to establish. Healthy quiet streams survive once the tunnel is up.
+- The OpenCode Zen configured-key notice appears regardless of module import order, so the notice no longer disappears when modules load in another order.
 - Transient OAuth authentication outages no longer permanently block an account. Leverframe retries only the current client request with bounded backoff and jitter, preserving its neutral instructions and cache key. Genuine credential rejection still stops immediately.
 - Custom provider IDs retain their template policies. OpenCode Zen aliases use public-only credentials for inference and report ignored configured keys at registry load. They keep the single-attempt limit without request-time registry lookups for capability resolution.
 
-### Added
+### Notes
 
-- Payload-free, rate-limited operator notices report requests queued behind the adapter socket cap and client sockets that the proxy drops at its connection cap.
+- Install 0.5.3 or later and restart running proxies and Claude Code sessions to get the connection and transport fixes.
+- OpenCode Zen is experimental. OpenCode restricts free access from another client, and a request can fail with HTTP 429.
+- Model routing stays off until you enable it.
 
 ## [0.5.2] - 2026-11-04
 
@@ -40,12 +54,17 @@ This changelog records notable changes to Leverframe.
 
 ### Fixed
 
+#### Models and accounts
+
 - OpenCode Go usage multipliers load again after the supplier pricing document moved and split its rates into peak and off-peak rows.
 - The usage multiplier label appears only for models from a provider that publishes one, and stays off free models.
 - The Claude Code picker adds the model name to an alias that no longer matches its model. For example, an older `deepseek-v4-flash` alias that now reaches V4.1 shows `Deepseek-v4-flash (DeepSeek V4.1 Flash)`.
 - Auto suppresses confirmed account credit and quota rejections while trying another eligible account. Confirmed empty accounts remain blocked without blind recovery calls, and a dedicated Leverframe message reports when every eligible account is empty.
 - Google and Antigravity quota failures retain the status and retry metadata needed for automatic account failover. Streaming failures record capacity against the selected provider.
 - Automated tests use private temporary parents on Linux and compare account-label text independently of terminal color settings.
+
+#### Proxy and transports
+
 - Translated routes now answer Claude Code's thread-continuation requests with a local 400, so Claude Code resends the full history. Teammates on `sol` and `luna` no longer fail after their first turn with "Upstream returned no content".
 - Codex Responses terminal events that the AI SDK drops now fail the request with the upstream error code and message, in place of "Upstream returned no content".
 - The HTTP proxy decodes gzip, br, deflate, and zstd upstream error bodies before logging and classifying them. The client still receives the original bytes and headers.
