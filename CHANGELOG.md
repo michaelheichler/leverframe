@@ -10,6 +10,17 @@ This changelog records notable changes to Leverframe.
 
 - Optional model routing, off by default. Enabling it adds an `auto` entry that delegates each job to a configured model by category, cost, and availability, with logged fallbacks. Live provider behavior and the interactive Claude Code notices are still unverified. See [Model routing](docs/MODEL-ROUTING.md).
 
+## [0.5.3] - 2026-11-12
+
+### Fixed
+
+- Transient OAuth authentication outages no longer permanently block an account. Leverframe retries only the current client request with bounded backoff and jitter, preserving its neutral instructions and cache key. Genuine credential rejection still stops immediately.
+- Custom provider IDs retain their template policies throughout inference. OpenCode Zen aliases use public-only credentials and keep the single-attempt limit without request-time registry lookups for capability resolution.
+
+### Added
+
+- Payload-free, rate-limited operator notices report requests queued behind the adapter socket cap and client sockets that the proxy drops at its connection cap.
+
 ## [0.5.2] - 2026-11-04
 
 ### Changed
