@@ -108,13 +108,11 @@ it('keeps one lease while a native request switches to a registry Anthropic acco
   const system = cachedSystem('native');
   const downstreamEvents: Array<{ kind: 'headers' } | { kind: 'data' }> = [];
   let stream: NoticeStream | undefined, connectedStream: ConnectedNoticeStream | undefined;
-
   try {
     const started = await startNoticeGatedMixedRequest(service.proxy, session, () =>
       sendBoundRequest(service.proxy, service.certificates.caCert, session, 'auto', 'low', {}, {
         output_config: {}, system, tools: [agentTool],
       }, false, '/v1/messages', item => downstreamEvents.push(item)));
-    const { consumerId } = started;
     connectedStream = started.connected;
     const observed = await noticeOrResponse(started.notices.nextNotice(), started.request);
     stream = noticeStreamFrom(observed);
@@ -129,7 +127,7 @@ it('keeps one lease while a native request switches to a registry Anthropic acco
     expect(downstreamEvents).toEqual([]);
     const pending = await resolveRoutingBinding(bindingQueries(session, stream));
     expectPendingLease(pending, stream);
-    const ack = await acknowledgeRoutingNotice(service.proxy, stream, consumerId);
+    const ack = await acknowledgeRoutingNotice(service.proxy, stream, started.consumerId);
     await upstream.requestArrived;
     const inFlight = await resolveRoutingBinding(bindingQueries(session, stream));
     expectLeaseHeldByInFlight(inFlight, { lease: pending.lease, revision: pending.revision, target: fixture.registryRef });
