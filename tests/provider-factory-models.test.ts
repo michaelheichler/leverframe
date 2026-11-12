@@ -3,6 +3,9 @@ import { thinkingProviderOptions } from '../src/provider-factory.js';
 import { CODEX_RESPONSES_LITE_VERSION } from '../src/constants.js';
 import { OPENAI_OAUTH_ASTRA_MODEL } from './fixtures/openai-oauth-astra-metadata.js';
 
+const FIXTURE_CREDENTIAL = 'fixture-credential-value';
+const KIMI_FIXTURE_CREDENTIAL = 'fixture-kimi-credential-value';
+
 vi.mock('../src/registry/url-security.js', () => ({
   isHardcodedTrustedHost: (url: string) => {
     try {
@@ -61,14 +64,15 @@ describe('createLanguageModel', () => {
     await create({
       npm: '@ai-sdk/openai',
       modelId: 'gpt-6-astra',
-      apiKey: 'opaque-access-token',
+      apiKey: FIXTURE_CREDENTIAL,
       authType: 'oauth',
       preferWebSockets: false,
     });
 
     expect(createOpenAI).toHaveBeenCalledWith({
-      apiKey: 'opaque-access-token',
+      apiKey: FIXTURE_CREDENTIAL,
       baseURL: 'https://chatgpt.com/backend-api/codex',
+      fetch: expect.any(Function),
       headers: { originator: 'leverframe' },
     });
     expect(responses).toHaveBeenCalledWith('gpt-6-astra');
@@ -89,7 +93,7 @@ describe('OpenAI OAuth version and account', () => {
     await create({
       npm: '@ai-sdk/openai',
       modelId: 'gpt-6-astra',
-      apiKey: 'opaque-access-token',
+      apiKey: FIXTURE_CREDENTIAL,
       authType: 'oauth',
       useResponsesLite: true,
       minimalClientVersion: OPENAI_OAUTH_ASTRA_MODEL.minimal_client_version,
@@ -123,7 +127,7 @@ describe('OpenAI OAuth version and account', () => {
     await create({
       npm: '@ai-sdk/openai',
       modelId: 'gpt-5.5',
-      apiKey: 'opaque-access-token',
+      apiKey: FIXTURE_CREDENTIAL,
       authType: 'oauth',
       oauthAccountId: 'stored-acct-456',
     });
@@ -356,14 +360,14 @@ describe('provider protocol dispatch', () => {
     await create({
       npm: '@ai-sdk/openai-compatible',
       modelId: 'k3',
-      apiKey: 'test-kimi-membership-key',
+      apiKey: KIMI_FIXTURE_CREDENTIAL,
       baseURL: 'https://api.kimi.com/coding/v1',
       providerId: 'kimi',
     });
 
     expect(createOpenAICompatible).toHaveBeenCalledWith({
       name: 'kimi',
-      apiKey: 'test-kimi-membership-key',
+      apiKey: KIMI_FIXTURE_CREDENTIAL,
       baseURL: 'https://api.kimi.com/coding/v1',
       includeUsage: true,
       metadataExtractor: {

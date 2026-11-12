@@ -9,6 +9,7 @@ import { codexCapacity } from './account-pool-telemetry.js';
 import { recordPoolActivity } from './account-pool-activity.js';
 import { accountModelsCache } from './registry/account-cache.js';
 import { normalizeGoogleModelId } from './registry/google-model-id.js';
+import { isTransientAuthFailure, TRANSIENT_AUTH_COOLDOWN_MS } from './transient-auth.js';
 
 export interface PoolFailure {
   provider: string;
@@ -30,10 +31,12 @@ function record(value: unknown): Record<string, unknown> | undefined {
 }
 
 export function classifyPoolFailure(input: PoolFailure): CapacityObservation | undefined {
-  if (input.statusCode === 401) return {
-    accountId: input.accountId, scope: { kind: 'account' }, source: `${input.provider}:authentication`,
-    dimension: 'authentication', observedAt: input.now, status: 'auth_failure',
-  };
+  if (input.statusCode === 401) {
+    const transient = isTransientAuthFailure(input.statusCode, input.body);
+    return { accountId: input.accountId, scope: { kind: 'account' }, source: `${input.provider}:authentication`,
+      dimension: 'authentication', observedAt: input.now, status: transient ? 'rate_limited' : 'auth_failure',
+      ...(transient ? { resetAt: input.now + TRANSIENT_AUTH_COOLDOWN_MS } : {}) };
+  }
   if (input.statusCode !== 429 && input.statusCode !== 400 && input.statusCode !== 402) return undefined;
   let payload = input.body;
   if (typeof payload === 'string') {

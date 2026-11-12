@@ -7,6 +7,7 @@ import { createResponsesWebSocketFetch } from './oauth/responses-websocket.js';
 import { CLAUDE_CODE_USER_AGENT, injectClaudeIdentity } from './oauth/claude-identity.js';
 import { createAnthropicCacheTransport } from './anthropic-cache-transport.js';
 import { recordOpenAiEndpoint } from './openai-endpoint-provenance.js';
+import { retryTransientAuth } from './transient-auth-retry.js';
 
 /** Because version headers require numeric components. */
 function validResponsesLiteVersion(value: unknown): string | undefined {
@@ -38,11 +39,11 @@ function openAiOptions(spec: ProviderModelSpec, useResponsesEndpoint: boolean) {
         'x-openai-internal-codex-responses-lite': 'true',
       } : {}),
     },
-    ...(useResponsesEndpoint && spec.preferWebSockets === true ? {
-      fetch: createResponsesWebSocketFetch(CODEX_RESPONSES_LITE_WS_URL, spec.onDebug, {
+    fetch: retryTransientAuth(useResponsesEndpoint && spec.preferWebSockets === true
+      ? createResponsesWebSocketFetch(CODEX_RESPONSES_LITE_WS_URL, spec.onDebug, {
         providerId: spec.providerId ?? 'openai', accountId, onDiagnostic: spec.onWebSocketDiagnostic,
-      }),
-    } : spec.fetch ? { fetch: spec.fetch } : {}),
+      })
+      : spec.fetch ?? globalThis.fetch),
   };
 }
 

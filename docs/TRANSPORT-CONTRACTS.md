@@ -14,6 +14,14 @@ A custom `ANTHROPIC_BASE_URL` can disable native MCP tool search and cause Claud
 
 If credentials change concurrently, the refresh operation retries within its limit and refuses to return a token the provider already rejected. Each completed or failed refresh removes the in-flight entry, allowing a later request to try again. The account file lock lives in `src/registry/lock.ts`.
 
+## Transient authentication outages
+
+An HTTP 401 that wraps an upstream 5xx, rate limit, or too-many-concurrent-requests error does not prove that a credential is invalid. OpenAI OAuth transport retries only the client's existing request, at most twice, with exponential backoff and jitter. It preserves the serialized body, headers, neutral instructions, and prompt cache key. A genuine credential rejection returns immediately without a retry.
+
+If the transient failure remains, the account receives a finite 30-second block rather than a permanent authentication failure. Expiry only makes a later real client request eligible. Leverframe sends no synthetic recovery, test, probe, or keep-warm inference requests.
+
+`tests/account-pool-transient-auth.test.ts` and `tests/account-pool-transient-auth-retry.test.ts` cover the temporary block, exact replay, and genuine credential rejection.
+
 ## Subscription WebSocket upgrade failures
 
 The subscription Responses transport treats an HTTP 403 during WebSocket upgrade as a retryable rate limit. The OpenAI edge can return that status before the request reaches the application. The general HTTP classifier would instead report a terminal permission failure and prevent retry.
