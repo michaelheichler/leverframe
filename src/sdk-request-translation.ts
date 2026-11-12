@@ -17,7 +17,7 @@ import { neutralClientInstructions } from './neutral-client-request.js';
 import { extractClaudeSessionId } from './client-session.js';
 import { anthropicCacheOptions, anthropicCacheSettings, anthropicSystemMessages, validAnthropicCacheControls, type CacheControl } from './anthropic-sdk-cache.js';
 import { ANTIGRAVITY_SESSION_HEADER } from './antigravity/types.js';
-import { openCodeZenHeaders } from './opencode-zen.js';
+import { getTemplateById } from './provider-templates.js';
 import { annotateToolNames, translateMessages, type AnthropicMsg } from './sdk-request-messages.js';
 
 export { ToolResultImageError, extractClaudeSessionId, annotateToolNames, translateMessages };
@@ -269,12 +269,35 @@ function openAiCacheSettings(npm: string, body: AnthropicRequest, options: Trans
 }
 
 function sessionHeaders(options: TranslateRequestOptions | undefined, promptCacheKey?: string, sessionId?: string): Record<string, string> | undefined {
-  if (options?.reasoningMetadata?.providerId === 'opencode-zen' && sessionId) return openCodeZenHeaders(undefined, sessionId);
+  const providerHeaders = getTemplateById(options?.reasoningMetadata?.providerId ?? '')?.sessionHeaders;
+  if (providerHeaders && sessionId) return providerHeaders(sessionId);
   const headers: Record<string, string> = {};
   if (options?.openAiOAuth && promptCacheKey) headers['session-id'] = promptCacheKey;
   if (options?.reasoningMetadata?.providerId === 'opencode-go' && sessionId) headers['x-opencode-session'] = sessionId;
   if (options?.reasoningMetadata?.providerId === 'antigravity' && sessionId) headers[ANTIGRAVITY_SESSION_HEADER] = sessionId;
   return Object.keys(headers).length ? headers : undefined;
+}
+
+function withOAuthInstructions(providerOptions: SdkCallParams['providerOptions'], systemText: string | undefined, compact: boolean) {
+  if (!systemText) return providerOptions;
+  const instructions = compact ? `${systemText}\n\n${COMPACT_OAUTH_INSTRUCTION}` : systemText;
+  return deepMergeProviderOptions(providerOptions, { openai: { instructions } });
+}
+
+function withCacheOptions(providerOptions: SdkCallParams['providerOptions'], openAi: ReturnType<typeof openAiCacheSettings>, cacheOptions: SdkCallParams['providerOptions']) {
+  const merged = deepMergeProviderOptions(providerOptions, cacheOptions);
+  if (!openAi.key) return merged;
+  return deepMergeProviderOptions(merged, { openai: {
+    promptCacheKey: openAi.key,
+    ...(openAi.explicit ? { promptCacheOptions: { mode: 'implicit', ttl: '30m' } } : {}),
+  } });
+}
+
+function requestRetryLimit(options: TranslateRequestOptions | undefined): number {
+  const configured = getTemplateById(options?.reasoningMetadata?.providerId ?? '')?.sdkMaxRetries;
+  if (configured !== undefined) return configured;
+  if (options?.reasoningMetadata?.providerId === 'antigravity') return 0;
+  return options?.openAiOAuth ? OPENAI_OAUTH_SDK_MAX_RETRIES : SDK_MAX_RETRIES_NON_OAUTH;
 }
 
 export function translateRequest(
@@ -304,29 +327,12 @@ export function translateRequest(
     effortProviderOptions(npm, effort, options?.reasoningMetadata?.upstreamModelId ?? body.model, options?.reasoningMetadata),
   );
 
-  if (options?.openAiOAuth && systemText) {
-    const instructions = compactRequest
-      ? `${systemText}\n\n${COMPACT_OAUTH_INSTRUCTION}`
-      : systemText;
-    providerOptions = deepMergeProviderOptions(providerOptions, {
-      openai: { instructions },
-    });
-  }
+  if (options?.openAiOAuth) providerOptions = withOAuthInstructions(providerOptions, systemText, compactRequest);
 
-  const { explicit: supportsExplicitOpenAiCaching, key: promptCacheKey } =
-    openAiCacheSettings(npm, body, options, claudeSessionId, baseSystem, upstreamTools);
+  const openAiCache = openAiCacheSettings(npm, body, options, claudeSessionId, baseSystem, upstreamTools);
+  const { explicit: supportsExplicitOpenAiCaching, key: promptCacheKey } = openAiCache;
   const { enabled: anthropicCache, markedSystem: markedAnthropicSystem, cacheOptions } = anthropicCacheSettings(npm, body);
-  if (cacheOptions) providerOptions = deepMergeProviderOptions(providerOptions, cacheOptions);
-  if (promptCacheKey) {
-    providerOptions = deepMergeProviderOptions(providerOptions, {
-      openai: {
-        promptCacheKey,
-        ...(supportsExplicitOpenAiCaching
-          ? { promptCacheOptions: { mode: 'implicit', ttl: '30m' } }
-          : {}),
-      },
-    });
-  }
+  providerOptions = withCacheOptions(providerOptions, openAiCache, cacheOptions);
 
   return {
     instructions: options?.openAiOAuth || (supportsExplicitOpenAiCaching && !anthropicCache) || markedAnthropicSystem ? undefined : systemText,
@@ -342,9 +348,7 @@ export function translateRequest(
     temperature: options?.reasoningMetadata?.supportsTemperature === false
       ? undefined
       : body.temperature,
-    maxRetries: ['antigravity', 'opencode-zen'].includes(options?.reasoningMetadata?.providerId ?? '') ? 0 : options?.openAiOAuth
-      ? OPENAI_OAUTH_SDK_MAX_RETRIES
-      : SDK_MAX_RETRIES_NON_OAUTH,
+    maxRetries: requestRetryLimit(options),
     headers: sessionHeaders(options, promptCacheKey, claudeSessionId),
     providerOptions,
     inputTokensIncludeCache: CACHE_INCLUSIVE_INPUT_NPMS.has(npm),

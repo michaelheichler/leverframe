@@ -19,6 +19,7 @@ import { createHash } from 'node:crypto';
 import { loadRegistry } from './registry/io.js';
 import { routingGuardedFetch } from './routing-before-send.js';
 import { routingSdkPoolUnavailable, routingSdkPrecommit, RoutingSdkRejected } from './routing-sdk-outcome.js';
+import { getTemplateById } from './provider-templates.js';
 
 interface RuntimeBinding {
   key: string;
@@ -155,7 +156,7 @@ export async function dispatchSdkPool(options: {
     sessionId: options.sessionId,
     accountId: route.accountId,
     eligibleAccount: options.eligibleAccount,
-    maxDispatches: options.selectorAttemptFetch || route.providerId === 'opencode-zen' ? 1 : undefined,
+    maxDispatches: options.selectorAttemptFetch ? 1 : getTemplateById(route.providerId ?? '')?.maxDispatches,
     skipMissingCredentials: options.deferRoutingFailure === true,
     dispatch: async binding => {
       const model = await getPooledCodexModel(options.cache, route, binding, options.selectorAttemptFetch);

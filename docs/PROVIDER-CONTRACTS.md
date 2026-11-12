@@ -1,5 +1,11 @@
 # Provider contracts
 
+## Provider template policies
+
+`ProviderTemplate` declares free-only filtering, dispatch and retry limits, session headers, catalog parsing and authentication, SDK-only routing and ignored-credential notices. Shared translation, dispatch and registry code reads these capabilities instead of matching Zen's provider ID. `anonymousFreeModels` remains separate, so anonymous-capable providers can still offer paid models with a key. Zen's provider modules retain endpoint validation and public-only authentication.
+
+The Zen unit, CLI, server and supplied-key tests cover discovery, identity, retry limits, account isolation and credential handling. The capability refactor changes where these policies live, not their behavior.
+
 ## GitHub Copilot HTTP contract
 
 Leverframe keeps GitHub device authorization and the existing credential store. It sends the GitHub OAuth token directly to `https://api.githubcopilot.com` for model discovery and inference. It does not use a GitHub runtime or exchange the token through the legacy Copilot token endpoint.

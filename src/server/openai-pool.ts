@@ -10,6 +10,7 @@ import type { ProviderRuntimeCache } from '../provider-runtime-cache.js';
 import type { ServerModelInfo } from './models.js';
 import { upstreamModelId } from './models.js';
 import { sendJson } from '../http-utils.js';
+import { getTemplateById } from '../provider-templates.js';
 
 type PoolKind = 'codex' | 'anthropic' | 'provider';
 
@@ -55,7 +56,7 @@ export async function dispatchOpenAiPool(options: {
   const pool = poolKey(options.model);
   const result = await dispatchWithPool({
     pool, sessionId: options.sessionId,
-    maxDispatches: options.model.providerId === 'opencode-zen' ? 1 : undefined,
+    maxDispatches: getTemplateById(options.model.providerId ?? '')?.maxDispatches,
     accountId: options.model.accountId,
     dispatch: async binding => {
       try {

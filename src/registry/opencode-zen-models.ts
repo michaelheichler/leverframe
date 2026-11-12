@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { OPENCODE_ZEN_BASE_URL } from '../opencode-zen.js';
+import { isOpenCodeZenUrl, openCodeZenPublicHeaders, OPENCODE_ZEN_BASE_URL, OPENCODE_ZEN_MODELS_URL } from '../opencode-zen.js';
+import type { ProviderModelCatalog } from '../provider-templates.js';
 import { deriveBrand } from '../models.js';
 import type { CachedModel } from './types.js';
 
@@ -21,6 +22,11 @@ const freeChatModel = z.object({
   capabilities: z.object({ reasoning: supported.optional(), tools: supported.optional(),
     temperature: z.boolean().optional() }).optional(),
 });
+
+export function openCodeZenModelCatalog(baseUrl: string): ProviderModelCatalog | undefined {
+  if (!isOpenCodeZenUrl(baseUrl)) return undefined;
+  return { url: OPENCODE_ZEN_MODELS_URL, parseModels: parseOpenCodeZenModels, headers: openCodeZenPublicHeaders };
+}
 
 export function parseOpenCodeZenModels(body: unknown): CachedModel[] {
   const inventory = z.object({ data: z.array(z.unknown()) }).safeParse(body);

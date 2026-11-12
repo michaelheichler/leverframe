@@ -69,7 +69,7 @@ function buildRegistryEntry(
     enabled: true,
     authRef,
     authType: authRef === 'none:anonymous' ? 'none' : template.authType,
-    ...(template.id === 'opencode-zen' ? { subscriptionFilter: 'free' as const } : {}),
+    ...(template.freeOnly ? { subscriptionFilter: 'free' as const } : {}),
     api: {
       npm: template.npm,
       url: fetched.baseUrl,

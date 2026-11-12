@@ -1,6 +1,15 @@
-import { OPENCODE_ZEN_BASE_URL } from './opencode-zen.js';
+import { OPENCODE_ZEN_BASE_URL, openCodeZenCredentialNotice, openCodeZenHeaders } from './opencode-zen.js';
+import { openCodeZenModelCatalog } from './registry/opencode-zen-models.js';
+import type { CachedModel } from './registry/types.js';
+
 export type ProviderAuthType = 'api' | 'oauth' | 'none';
 export type ProviderModelSource = 'api-list' | 'static-seed' | 'manual-only';
+
+export interface ProviderModelCatalog {
+  url: string;
+  parseModels: (body: unknown) => CachedModel[];
+  headers?: (headers: HeadersInit) => Record<string, string>;
+}
 
 export interface ProviderTemplate {
   id: string;
@@ -14,6 +23,13 @@ export interface ProviderTemplate {
   urlPrompt?: string;
   apiKeyOptional?: boolean;
   anonymousFreeModels?: boolean;
+  freeOnly?: boolean;
+  maxDispatches?: number;
+  sdkMaxRetries?: number;
+  requiresSdkChatCompletions?: boolean;
+  sessionHeaders?: (sessionId: string) => Record<string, string>;
+  modelCatalog?: (baseUrl: string) => ProviderModelCatalog | undefined;
+  credentialNotice?: (baseUrl: string | undefined, apiKey: string | null) => string | undefined;
 
   skipKeyVerification?: boolean;
 
@@ -102,6 +118,13 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     defaultBaseUrl: OPENCODE_ZEN_BASE_URL,
     apiKeyOptional: true,
     anonymousFreeModels: true,
+    freeOnly: true,
+    maxDispatches: 1,
+    sdkMaxRetries: 0,
+    requiresSdkChatCompletions: true,
+    sessionHeaders: sessionId => openCodeZenHeaders(undefined, sessionId),
+    modelCatalog: openCodeZenModelCatalog,
+    credentialNotice: openCodeZenCredentialNotice,
     modelSource: 'api-list',
     supported: true,
   },

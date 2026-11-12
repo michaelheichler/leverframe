@@ -36,8 +36,8 @@ export function openCodeZenPublicHeaders(headers?: HeadersInit): Record<string, 
   return Object.fromEntries(result);
 }
 
-export function openCodeZenCredentialNotice(providerId: string, baseURL: string | undefined, apiKey: string | null): string | undefined {
-  if (providerId !== 'opencode-zen' || !isOpenCodeZenUrl(baseURL ?? OPENCODE_ZEN_BASE_URL)) return undefined;
+export function openCodeZenCredentialNotice(baseURL: string | undefined, apiKey: string | null): string | undefined {
+  if (!isOpenCodeZenUrl(baseURL ?? OPENCODE_ZEN_BASE_URL)) return undefined;
   if (!apiKey?.trim() || apiKey.trim() === 'public') return undefined;
   return 'OpenCode Zen uses the public credential. The configured key is not sent.';
 }
