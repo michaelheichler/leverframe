@@ -18,7 +18,7 @@ import {
 import { fetchOpenCodeGoMetadata } from './supplier-metadata.js';
 import { fetchAnthropicModels } from './anthropic-models-fetch.js';
 import { parseListedCost, peakCostMultiplier, type ListedCost } from './listed-cost.js';
-import { isOpenCodeZenUrl, OPENCODE_ZEN_MODELS_URL } from '../opencode-zen.js';
+import { isOpenCodeZenUrl, openCodeZenPublicHeaders, OPENCODE_ZEN_MODELS_URL } from '../opencode-zen.js';
 import { parseOpenCodeZenModels } from './opencode-zen-models.js';
 
 const TEST_TIMEOUT_MS = 10_000;
@@ -304,7 +304,7 @@ export async function fetchTemplateModels(
   try {
     const response = await fetch(url, {
       method: 'GET',
-      headers,
+      headers: zen ? openCodeZenPublicHeaders(headers) : headers,
       redirect: 'manual',
       signal: controller.signal,
     });

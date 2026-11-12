@@ -4,6 +4,7 @@ import {
   resolveProviderAccountAuth,
   resolveStoredAccountCredential,
   resolveStoredProviderCredential,
+  type ResolvedProviderAuth,
 } from '../env.js';
 import type { CompatibilityAgent } from '../model-compatibility.js';
 import type { LocalProvider } from '../types.js';
@@ -11,6 +12,20 @@ import { materializeRegistry } from './materialize.js';
 import { loadRegistry } from './io.js';
 import { expandAccountModels } from '../account-models.js';
 import { hasAccountCatalog, loadAccountProvider } from './account-loading.js';
+import { openCodeZenCredentialNotice } from '../opencode-zen.js';
+import type { RegistryProvider } from './types.js';
+
+function credentialDiagnostic(provider: RegistryProvider, diag?: (message: string) => void) {
+  let reported = false;
+  return (auth: ResolvedProviderAuth): ResolvedProviderAuth => {
+    const notice = openCodeZenCredentialNotice(provider.id, provider.api.url, auth.apiKey);
+    if (notice && !reported) {
+      reported = true;
+      (diag ?? console.warn)(notice);
+    }
+    return auth;
+  };
+}
 
 export async function loadRegistryProviders(
   diag?: (msg: string) => void,
@@ -23,14 +38,15 @@ export async function loadRegistryProviders(
   const accountProviders: LocalProvider[] = [];
   for (const provider of registry.providers) {
     if (!provider.enabled) continue;
+    const reportAuth = credentialDiagnostic(provider, diag);
     if (hasAccountCatalog(provider)) {
       const loaded = await loadAccountProvider(provider, account => resolveProviderAccountAuth(provider.id, account, diag)
-        .catch(() => ({ apiKey: null })), opts);
+        .then(reportAuth).catch(() => ({ apiKey: null })), opts);
       if (loaded) accountProviders.push(loaded);
       continue;
     }
     try {
-      const auth = await resolveProviderAuth(provider.id, provider.authRef, diag);
+      const auth = reportAuth(await resolveProviderAuth(provider.id, provider.authRef, diag));
       if (provider.id === 'antigravity' && (provider.accounts?.length ?? 0) < 2
         && (!auth.accountId || provider.modelsCache?.oauthAccountId !== auth.accountId)) continue;
       if (auth.apiKey) keys.set(provider.id, auth.apiKey);

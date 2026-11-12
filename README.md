@@ -76,6 +76,8 @@ Availability depends on which endpoints the account's plan advertises. Copilot a
 
 Choose **OpenCode Zen (Free, experimental)** in `leverframe providers add` to discover free chat models without an API key or an OpenCode installation. Zen uses the public placeholder credential and OpenCode-compatible session headers, with Leverframe named as the client. Go retains its separate subscription connection. Model discovery does not verify inference access, and OpenCode documents a restriction on free access from other clients. One anonymous verification request returned HTTP 429, so successful inference remains unverified. A server rejection ends the request through normal error handling. See the [Zen research](docs/opencode-zen-research.md) for sources and model privacy terms.
 
+Official Zen discovery and inference requests use only `Bearer public`. Leverframe strips custom authentication headers and reports configured keys that it ignores, without showing their values.
+
 ## Accounts and context
 
 Open **Add or manage accounts** beside a configured provider in `leverframe providers add`, or choose **Manage accounts** in its details. Enter a name and a tag such as `WORK`, or leave the tag blank for automatic assignment. Rename either later without changing saved account identities.

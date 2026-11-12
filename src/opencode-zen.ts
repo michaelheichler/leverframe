@@ -29,9 +29,22 @@ export function openCodeZenHeaders(headers?: Record<string, string>, sessionId?:
   return Object.fromEntries(result);
 }
 
+export function openCodeZenPublicHeaders(headers?: HeadersInit): Record<string, string> {
+  const result = new Headers(headers);
+  for (const name of ['authorization', 'x-api-key', 'api-key', 'x-goog-api-key']) result.delete(name);
+  result.set('authorization', 'Bearer public');
+  return Object.fromEntries(result);
+}
+
+export function openCodeZenCredentialNotice(providerId: string, baseURL: string | undefined, apiKey: string | null): string | undefined {
+  if (providerId !== 'opencode-zen' || !isOpenCodeZenUrl(baseURL ?? OPENCODE_ZEN_BASE_URL)) return undefined;
+  if (!apiKey?.trim() || apiKey.trim() === 'public') return undefined;
+  return 'OpenCode Zen uses the public credential. The configured key is not sent.';
+}
+
 export function configureOpenCodeZen(spec: ProviderModelSpec): ProviderModelSpec {
   if (spec.providerId !== 'opencode-zen' || !isOpenCodeZenUrl(spec.baseURL)) return spec;
-  const headers = openCodeZenHeaders(spec.headers);
+  const headers = openCodeZenHeaders(openCodeZenPublicHeaders(spec.headers));
   const transport = spec.fetch ?? fetch;
   return {
     ...spec, apiKey: 'public', headers,
@@ -41,9 +54,7 @@ export function configureOpenCodeZen(spec: ProviderModelSpec): ProviderModelSpec
       }
       const outgoing = new Headers(input instanceof Request ? input.headers : undefined);
       new Headers(init?.headers).forEach((value, name) => outgoing.set(name, value));
-      for (const name of ['x-api-key', 'api-key', 'x-goog-api-key']) outgoing.delete(name);
-      outgoing.set('authorization', 'Bearer public');
-      const identity = openCodeZenHeaders(Object.fromEntries(outgoing),
+      const identity = openCodeZenHeaders(openCodeZenPublicHeaders(outgoing),
         outgoing.get('x-opencode-session') || headers['x-opencode-session']);
       return transport(input, { ...init, headers: identity, redirect: 'manual' });
     },
