@@ -17,8 +17,10 @@ import { RoutingNoticeChannel } from '../routing-notice-channel.js';
 import { createRoutingSelectorCall } from '../proxy-routing-selector.js';
 import { readClaudeCodeAuthMaterial } from '../claude-code-credentials.js';
 import { RoutingSelectorCache } from '../routing-selector-cache.js';
+import { createAdapterAgent } from './adapter-agent.js';
 
 export { shouldInterceptConnect } from './proxy-server.js';
+export { createAdapterAgent, ADAPTER_MAX_SOCKETS, ADAPTER_MAX_FREE_SOCKETS, ADAPTER_IDLE_TIMEOUT_MS } from './adapter-agent.js';
 
 export interface HttpProxyOptions {
   routing?: Omit<RoutingControlContext, 'proxyToken'>;
@@ -98,30 +100,39 @@ async function startAdapter(options: HttpProxyOptions): Promise<ProxyHandle | nu
   );
 }
 
+function createRuntimeRouting(options: HttpProxyOptions, origin: URL, adapter: () => ProxyHandle | null) {
+  if (!options.routing) return undefined;
+  const selectorCache = new RoutingSelectorCache();
+  const noticeChannel = new RoutingNoticeChannel();
+  return { ...options.routing,
+    selectorCache, noticeChannel, inferenceLogPath: options.inferenceLogPath,
+    selectorRequiresNotice: !options.routing.selectorTransport,
+    selectorTransport: options.routing.selectorTransport ?? createRoutingSelectorCall(adapter, {
+      catalog: options.routing.catalog, origin, readAuth: options.resolveClaudeCodeAuth ?? readClaudeCodeAuthMaterial,
+      fetch: options.nativeRoutingFetch, noticeChannel, inferenceLogPath: options.inferenceLogPath,
+    }) };
+}
+
+function createMitmServer(certificates: ReturnType<typeof ensureHttpProxyCertificates>, context: Parameters<typeof handleMitmRequest>[2]) {
+  return https.createServer({
+    key: certificates.serverKey, cert: certificates.serverCert, minVersion: 'TLSv1.2',
+  }, (req, res) => { void handleMitmRequest(req, res, context); });
+}
+
 export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpProxyHandle> {
   const certificates = ensureHttpProxyCertificates();
   const proxyAuthToken = options.proxyAuthToken ?? randomBytes(32).toString('base64url');
   const routesById = buildProxyRoutesById(options.routes, options.modelAliases);
   const origin = new URL(options.anthropicOrigin ?? ANTHROPIC_API_ORIGIN);
   let adapter: ProxyHandle | null = null;
-  const selectorCache = options.routing ? new RoutingSelectorCache() : undefined;
-  const noticeChannel = options.routing ? new RoutingNoticeChannel() : undefined;
-  const routing = options.routing ? { ...options.routing,
-    selectorCache, noticeChannel, inferenceLogPath: options.inferenceLogPath,
-    selectorRequiresNotice: !options.routing.selectorTransport,
-    selectorTransport: options.routing.selectorTransport ?? createRoutingSelectorCall(() => adapter, {
-      catalog: options.routing.catalog, origin, readAuth: options.resolveClaudeCodeAuth ?? readClaudeCodeAuthMaterial,
-      fetch: options.nativeRoutingFetch, noticeChannel, inferenceLogPath: options.inferenceLogPath,
-    }) } : undefined;
+  const routing = createRuntimeRouting(options, origin, () => adapter);
+  const selectorCache = routing?.selectorCache;
+  const noticeChannel = routing?.noticeChannel;
   const runtimeOptions = routing ? { ...options, routing } : options;
   try { adapter = await startAdapter(runtimeOptions); }
   catch (error) { selectorCache?.dispose(); noticeChannel?.dispose(); throw error; }
-  const adapterAgent = new http.Agent({ keepAlive: true });
-  const mitmServer = https.createServer({
-    key: certificates.serverKey, cert: certificates.serverCert, minVersion: 'TLSv1.2',
-  }, (req, res) => {
-    void handleMitmRequest(req, res, { options: runtimeOptions, routesById, adapter, adapterAgent, origin });
-  });
+  const adapterAgent = createAdapterAgent();
+  const mitmServer = createMitmServer(certificates, { options: runtimeOptions, routesById, adapter, adapterAgent, origin });
   const sockets = new Set<Socket>();
   const proxyServer = createProxyServer(proxyAuthToken, routesById, mitmServer, sockets, routing);
   const closeAdapter = async (): Promise<void> => {
