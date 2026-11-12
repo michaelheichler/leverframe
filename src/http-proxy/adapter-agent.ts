@@ -1,5 +1,9 @@
-import { Agent, type AgentOptions, type ClientRequest } from 'node:http';
+import { Agent, type AgentOptions, type ClientRequest, type RequestOptions } from 'node:http';
 import type { Socket } from 'node:net';
+import { createConnectionNotice } from './connection-notice.js';
+
+type AddRequest = (this: Agent, request: ClientRequest, options: RequestOptions) => void;
+const addNativeRequest = Reflect.get(Agent.prototype, 'addRequest') as AddRequest;
 
 export const ADAPTER_MAX_SOCKETS = 64;
 export const ADAPTER_MAX_FREE_SOCKETS = 8;
@@ -12,6 +16,13 @@ interface AdapterAgentOptions {
 }
 
 class IdleAdapterAgent extends Agent {
+  private readonly reportQueue = createConnectionNotice('Leverframe adapter connection cap reached, requests are queued.');
+
+  addRequest(request: ClientRequest, options: RequestOptions): void {
+    addNativeRequest.call(this, request, options);
+    if (Object.values(this.requests).some(queued => queued?.includes(request))) this.reportQueue();
+  }
+
   constructor(options: AgentOptions, private readonly idleTimeoutMs: number) {
     super(options);
   }

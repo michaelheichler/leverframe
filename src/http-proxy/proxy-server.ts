@@ -9,6 +9,7 @@ import { handleRoutingRecoveryControlRequest } from '../proxy-routing-recovery-c
 import { sendJson } from '../http-utils.js';
 import { forwardPlainHttp } from './forward.js';
 import { resolveProxyLimits, TCP_KEEPALIVE_INITIAL_DELAY_MS, type ProxyLimits } from './proxy-limits.js';
+import { createConnectionNotice } from './connection-notice.js';
 
 export { PROXY_MAX_CONNECTIONS, TCP_KEEPALIVE_INITIAL_DELAY_MS, TUNNEL_CONNECT_TIMEOUT_MS } from './proxy-limits.js';
 
@@ -138,6 +139,7 @@ export function createProxyServer(token: string, routes: Map<string, ProxyRoute>
   const context: ProxyContext = { token, routes, mitm, sockets, routing, limits: resolveProxyLimits(limits) };
   const server = http.createServer((req, res) => { void handlePlain(req, res, context); });
   server.maxConnections = context.limits.maxConnections;
+  server.on('drop', createConnectionNotice('Leverframe proxy client connection cap reached, incoming client dropped.'));
   server.on('connection', socket => {
     socket.setKeepAlive(true, TCP_KEEPALIVE_INITIAL_DELAY_MS);
     sockets.add(socket);

@@ -20,7 +20,7 @@ An HTTP 401 that wraps an upstream 5xx, rate limit, or too-many-concurrent-reque
 
 If the transient failure remains, the account receives a finite 30-second block rather than a permanent authentication failure. Expiry only makes a later real client request eligible. Leverframe sends no synthetic recovery, test, probe, or keep-warm inference requests.
 
-`tests/account-pool-transient-auth.test.ts` and `tests/account-pool-transient-auth-retry.test.ts` cover the temporary block, exact replay, and genuine credential rejection.
+`tests/account-pool-transient-auth.test.ts` and `tests/account-pool-transient-auth-retry.test.ts` cover temporary blocks and exact replay. They also verify that genuine credential rejection stops immediately.
 
 ## Subscription WebSocket upgrade failures
 
@@ -29,6 +29,12 @@ The subscription Responses transport treats an HTTP 403 during WebSocket upgrade
 `src/oauth/responses-websocket.ts` maps this upgrade failure to internal status 429 and the `rate_limit` category. This exception belongs to the subscription upgrade path, not every provider HTTP 403. The backoff helper bounds valid `Retry-After` values and supplies a delay when the header is absent or invalid. The pending-upgrade state prevents `error` and `close` events from processing the same failure twice.
 
 Regression fixtures include upgrade responses with explanatory bodies and responses without them (`tests/responses-websocket.test.ts` and `tests/responses-websocket-upgrade.test.ts`).
+
+## Connection capacity notices
+
+The adapter allows 64 active sockets and the proxy accepts at most 256 clients. A fixed, payload-free stderr notice reports requests queued behind the adapter limit. Another reports sockets rejected by the proxy's `drop` event. Each server or agent emits its notice at most once per 30 seconds, without retaining request or client data.
+
+`tests/http-proxy-capacity-notices.test.ts` covers burst suppression and private-value exclusion.
 
 ## Provider completion validation
 
