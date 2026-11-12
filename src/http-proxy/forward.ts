@@ -5,6 +5,7 @@ import type { ProxyHandle } from '../proxy.js';
 import { copyResponse as copyHttpProxyResponse } from './copy-response.js';
 import { observeResponseUsage, type ResponseUsage } from './response-usage.js';
 import { ForwardLifecycle, type ForwardLog } from './forward-lifecycle.js';
+import { TCP_KEEPALIVE_INITIAL_DELAY_MS } from './proxy-limits.js';
 
 export function requestHeadersWithoutProxyHeaders(req: http.IncomingMessage): string[] {
   const headers: string[] = [];
@@ -146,7 +147,8 @@ function bindPlainForward(req: http.IncomingMessage, res: http.ServerResponse, u
   req.once('error', cancel);
   res.once('close', cancel);
   res.once('error', cancel);
-  upstream.once('error', err => {
+  upstream.once('socket', socket => socket.setKeepAlive(true, TCP_KEEPALIVE_INITIAL_DELAY_MS));
+  upstream.on('error', err => {
     if (res.destroyed) return;
     if (res.headersSent) { res.destroy(); return; }
     res.writeHead(502, { 'Content-Type': 'text/plain' });

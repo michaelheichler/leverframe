@@ -8,6 +8,23 @@ import { handleRoutingControlRequest, type RoutingControlContext } from '../prox
 import { handleRoutingRecoveryControlRequest } from '../proxy-routing-recovery-control.js';
 import { sendJson } from '../http-utils.js';
 import { forwardPlainHttp } from './forward.js';
+import { resolveProxyLimits, TCP_KEEPALIVE_INITIAL_DELAY_MS, type ProxyLimits } from './proxy-limits.js';
+
+export { PROXY_MAX_CONNECTIONS, TCP_KEEPALIVE_INITIAL_DELAY_MS, TUNNEL_CONNECT_TIMEOUT_MS } from './proxy-limits.js';
+
+interface ProxyContext {
+  token: string;
+  routes: Map<string, ProxyRoute>;
+  mitm: http.Server;
+  sockets: Set<net.Socket>;
+  routing?: Omit<RoutingControlContext, 'proxyToken'>;
+  limits: Required<ProxyLimits>;
+}
+
+interface TunnelConnection {
+  client: Duplex;
+  head: Buffer;
+}
 
 function authorityParts(authority: string): { host: string; port: number } | null {
   try {
@@ -52,16 +69,23 @@ function connectAuthRequired(socket: Duplex): void {
     + 'Connection: close\r\n\r\n' + body);
 }
 
-function openTunnel(target: { host: string; port: number }, client: Duplex, head: Buffer, sockets: Set<net.Socket>): void {
-  const upstream = net.connect(target.port, target.host);
+function openTunnel(target: { host: string; port: number }, tunnel: TunnelConnection, context: ProxyContext): void {
+  const { client, head } = tunnel;
+  const { sockets, limits } = context;
+  const upstream = limits.connect(target.port, target.host);
+  upstream.setKeepAlive(true, TCP_KEEPALIVE_INITIAL_DELAY_MS);
+  const timer = setTimeout(() => upstream.destroy(new Error('Tunnel connection timed out')), limits.tunnelConnectTimeoutMs);
+  timer.unref();
   let established = false;
   sockets.add(upstream);
   client.once('close', () => { if (!upstream.destroyed) upstream.destroy(); });
   upstream.once('close', () => {
+    clearTimeout(timer);
     sockets.delete(upstream);
     if (established && !client.destroyed) client.destroy();
   });
   upstream.once('connect', () => {
+    clearTimeout(timer);
     established = true;
     client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
     if (head.length > 0) upstream.write(head);
@@ -69,13 +93,17 @@ function openTunnel(target: { host: string; port: number }, client: Duplex, head
     upstream.pipe(client);
   });
   upstream.once('error', () => {
+    clearTimeout(timer);
+    upstream.destroy();
     if (client.destroyed) return;
     if (established) { client.destroy(); return; }
     client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n', () => client.destroy());
   });
 }
 
-function handleConnect(req: http.IncomingMessage, client: Duplex, head: Buffer, token: string, mitm: http.Server, sockets: Set<net.Socket>): void {
+function handleConnect(req: http.IncomingMessage, tunnel: TunnelConnection, context: ProxyContext): void {
+  const { client, head } = tunnel;
+  const { token, mitm } = context;
   client.on('error', () => client.destroy());
   if (!authorized(req.headers, token)) { connectAuthRequired(client); return; }
   if (shouldInterceptConnect(req.url ?? '')) {
@@ -86,10 +114,11 @@ function handleConnect(req: http.IncomingMessage, client: Duplex, head: Buffer, 
   }
   const target = authorityParts(req.url ?? '');
   if (!target) { client.end('HTTP/1.1 400 Bad Request\r\n\r\n'); return; }
-  openTunnel(target, client, head, sockets);
+  openTunnel(target, tunnel, context);
 }
 
-async function handlePlain(req: http.IncomingMessage, res: http.ServerResponse, token: string, routes: Map<string, ProxyRoute>, routing?: Omit<RoutingControlContext, 'proxyToken'>): Promise<void> {
+async function handlePlain(req: http.IncomingMessage, res: http.ServerResponse, context: ProxyContext): Promise<void> {
+  const { token, routes, routing } = context;
   try {
     if (routing && await handleRoutingRecoveryControlRequest(req, res, { ...routing, proxyToken: token })) return;
     if (routing && await handleRoutingControlRequest(req, res, { ...routing, proxyToken: token })) return;
@@ -105,12 +134,15 @@ async function handlePlain(req: http.IncomingMessage, res: http.ServerResponse, 
   }
 }
 
-export function createProxyServer(token: string, routes: Map<string, ProxyRoute>, mitm: http.Server, sockets: Set<net.Socket>, routing?: Omit<RoutingControlContext, 'proxyToken'>): http.Server {
-  const server = http.createServer((req, res) => { void handlePlain(req, res, token, routes, routing); });
+export function createProxyServer(token: string, routes: Map<string, ProxyRoute>, mitm: http.Server, sockets: Set<net.Socket>, routing?: Omit<RoutingControlContext, 'proxyToken'>, limits: ProxyLimits = {}): http.Server {
+  const context: ProxyContext = { token, routes, mitm, sockets, routing, limits: resolveProxyLimits(limits) };
+  const server = http.createServer((req, res) => { void handlePlain(req, res, context); });
+  server.maxConnections = context.limits.maxConnections;
   server.on('connection', socket => {
+    socket.setKeepAlive(true, TCP_KEEPALIVE_INITIAL_DELAY_MS);
     sockets.add(socket);
     socket.once('close', () => sockets.delete(socket));
   });
-  server.on('connect', (req, socket, head) => handleConnect(req, socket, head, token, mitm, sockets));
+  server.on('connect', (req, client, head) => handleConnect(req, { client, head }, context));
   return server;
 }

@@ -209,6 +209,20 @@ describe('plain forwarded HTTP when the client leaves', () => {
     const upstream = await origin.firstConnection;
     expect(await settlesWithin(upstream.closed), 'origin socket stayed open while waiting for headers').toBe(true);
   });
+
+  it('closes the origin socket when the client leaves an error response the origin holds open', async () => {
+    const errorStarted = signal();
+    const origin = await startOrigin(http.createServer((_req, res) => {
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      res.write('error body that never ends', errorStarted.fire);
+    }));
+    const req = proxiedRequest(await startProxy(), origin, { method: 'GET' });
+    req.end();
+    await within(errorStarted.fired, 'origin never started the error response');
+    req.destroy();
+    const upstream = await origin.firstConnection;
+    expect(await settlesWithin(upstream.closed), 'origin socket stayed open behind an abandoned error response').toBe(true);
+  });
 });
 
 describe('plain forwarded HTTP when the origin fails', () => {
@@ -252,6 +266,19 @@ describe('plain forwarded HTTP round trips', () => {
       { status: 200, body: 'path /first', reused: false },
       { status: 200, body: 'path /second', reused: true },
     ]);
+  });
+
+  it('leaves no idle origin socket after a completed response while the client keeps its connection', async () => {
+    const server = http.createServer((req, res) => res.end(`path ${req.url}`));
+    server.keepAliveTimeout = 60_000;
+    const origin = await startOrigin(server);
+    const agent = clientAgent();
+    const answer = await exchange({ agent, proxyPort: await startProxy(), origin }, '/done');
+    const originClosed = await settlesWithin((await origin.firstConnection).closed);
+    const clientConnectionsKept = Object.values(agent.freeSockets).flat().filter(socket => socket && !socket.destroyed).length;
+    expect({ answer, originClosed, clientConnectionsKept }).toEqual({
+      answer: { status: 200, body: 'path /done', reused: false }, originClosed: true, clientConnectionsKept: 1,
+    });
   });
 });
 
