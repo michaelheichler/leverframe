@@ -140,6 +140,21 @@ export function forwardToAdapter(
   });
 }
 
+function bindPlainForward(req: http.IncomingMessage, res: http.ServerResponse, upstream: http.ClientRequest): void {
+  const cancel = () => upstream.destroy();
+  req.once('aborted', cancel);
+  req.once('error', cancel);
+  res.once('close', cancel);
+  res.once('error', cancel);
+  upstream.once('error', err => {
+    if (res.destroyed) return;
+    if (res.headersSent) { res.destroy(); return; }
+    res.writeHead(502, { 'Content-Type': 'text/plain' });
+    res.end(`Proxy upstream unreachable: ${err.message}`);
+  });
+  if (req.aborted || res.destroyed) cancel();
+}
+
 export function forwardPlainHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
   let target: URL;
   try { target = new URL(req.url ?? ''); } catch {
@@ -149,12 +164,9 @@ export function forwardPlainHttp(req: http.IncomingMessage, res: http.ServerResp
   }
   const transport = target.protocol === 'https:' ? https : http;
   const upstream = transport.request({
-    protocol: target.protocol, hostname: target.hostname, port: target.port || undefined,
+    protocol: target.protocol, hostname: target.hostname, port: target.port || undefined, agent: false,
     method: req.method, path: `${target.pathname}${target.search}`, headers: requestHeadersWithoutProxyHeaders(req),
   }, upstreamRes => copyResponse(upstreamRes, res));
-  upstream.on('error', err => {
-    if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain' });
-    res.end(`Proxy upstream unreachable: ${err.message}`);
-  });
+  bindPlainForward(req, res, upstream);
   req.pipe(upstream);
 }
