@@ -89,6 +89,17 @@ corepack pnpm exec vitest run tests/proxy.test.ts
 - Use only user-supplied content in project-defining workflows.
 - Do not bump versions or push without an explicit user request.
 
+## Release and install
+
+- Install with `pnpm pack`, then `npm install -g <tgz>`, on the MacBook and on tux (`~/.npm-global`). Running proxies keep the old code until they restart.
+- Release with an annotated tag `vX.Y.Z` and `gh release create`, with notes taken from CHANGELOG.md.
+- `LEVERFRAME_NO_HEADLESS_CLAUDE=1` also skips `caliber refresh` and `caliber learn finalize` in the pre-commit hook. Leave it unset. The hook starts no `claude -p`, and a Caliber failure does not abort the commit.
+
+## Invariants
+
+- At runtime leverframe sends no test, probe or keep-warm requests to providers. Tooling hooks such as Caliber and ADW may call models.
+- `src/neutral-client-request.ts`, every cache file and their call sites stay unchanged. A retried request is byte-identical to the first.
+
 ## Code Intelligence
 Prefer LSP over Search/Grep/Glob/Read for semantic code navigation. It is faster, precise, and avoids reading entire files.
 - `goToDefinition` / `goToImplementation` to jump to source
