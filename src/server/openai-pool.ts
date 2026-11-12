@@ -10,7 +10,7 @@ import type { ProviderRuntimeCache } from '../provider-runtime-cache.js';
 import type { ServerModelInfo } from './models.js';
 import { upstreamModelId } from './models.js';
 import { sendJson } from '../http-utils.js';
-import { getTemplateById } from '../provider-templates.js';
+import { resolveTemplateCapabilities } from '../provider-template-capabilities.js';
 
 type PoolKind = 'codex' | 'anthropic' | 'provider';
 
@@ -24,7 +24,7 @@ async function anthropicModel(model: ServerModelInfo, binding: PoolBinding): Pro
   return createLanguageModel({
     npm: model.npm || '@ai-sdk/anthropic', modelId: upstreamModelId(model), apiKey: binding.apiKey,
     baseURL: model.modelFormat === 'anthropic' ? model.baseUrl : model.apiBaseUrl,
-    providerId: model.providerId, authType: 'api', headers: model.headers,
+    providerId: model.providerId, templateId: model.templateId, authType: 'api', headers: model.headers,
     fetch: async (input, init) => {
       const response = await fetch(input, init);
       if (response.ok) {
@@ -43,7 +43,7 @@ async function pooledModel(model: ServerModelInfo, binding: PoolBinding, cache: 
   return getPooledCodexModel(cache, {
     aliasId: model.id, realModelId: upstreamModelId(model), displayName: model.name,
     upstreamUrl: model.baseUrl ?? '', apiKey: binding.apiKey, modelFormat: 'openai', npm: model.npm,
-    providerId: model.providerId, authType: model.authType, baseURL: model.apiBaseUrl,
+    providerId: model.providerId, templateId: model.templateId, authType: model.authType, baseURL: model.apiBaseUrl,
     headers: model.headers, useResponsesLite: model.useResponsesLite, minimalClientVersion: model.minimalClientVersion,
   }, binding);
 }
@@ -56,7 +56,7 @@ export async function dispatchOpenAiPool(options: {
   const pool = poolKey(options.model);
   const result = await dispatchWithPool({
     pool, sessionId: options.sessionId,
-    maxDispatches: getTemplateById(options.model.providerId ?? '')?.maxDispatches,
+    maxDispatches: resolveTemplateCapabilities(options.model)?.maxDispatches,
     accountId: options.model.accountId,
     dispatch: async binding => {
       try {

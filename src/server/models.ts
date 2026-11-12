@@ -5,7 +5,7 @@ import { httpProxyModelId } from '../http-proxy/routes.js';
 import { maskGatewayModelId } from './vendor-mask.js';
 import type { FreeStatus } from '../free-models.js';
 import type { ModelAlias } from '../types.js';
-import { getTemplateById } from '../provider-templates.js';
+import { resolveTemplateCapabilities } from '../provider-template-capabilities.js';
 
 export interface GatewayModelOptions {
   maskGatewayIds?: boolean;
@@ -68,6 +68,7 @@ export interface ServerModelInfo {
   providerLabel?: string;
 
   providerId?: string;
+  templateId?: string;
 
   headers?: Record<string, string>;
 
@@ -229,7 +230,7 @@ export function buildDedupedModelRows(models: ServerModelInfo[], opts?: GatewayM
 }
 
 export function supportsDirectOpenAIChatCompletions(model: ServerModelInfo): boolean {
-  return model.providerId !== 'github-copilot' && !getTemplateById(model.providerId ?? '')?.requiresSdkChatCompletions
+  return model.providerId !== 'github-copilot' && !resolveTemplateCapabilities(model)?.requiresSdkChatCompletions
     && model.modelFormat === 'openai' && !!model.completionsUrl;
 }
 

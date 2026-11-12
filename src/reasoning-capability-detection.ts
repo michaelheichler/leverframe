@@ -14,6 +14,7 @@ export type ReasoningWireFormat =
 
 export interface ReasoningMetadata {
   providerId?: string;
+  templateId?: string;
   apiBaseUrl?: string;
   supportedParameters?: string[];
   reasoning?: boolean;

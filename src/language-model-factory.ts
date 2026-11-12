@@ -35,6 +35,7 @@ export interface ProviderModelSpec {
   apiKey: string;
   baseURL?: string;
   providerId?: string;
+  templateId?: string;
   authType?: 'api' | 'oauth' | 'none';
   oauthAccountId?: string;
   providerData?: Record<string, unknown>;

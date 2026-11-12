@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { VERSION } from './constants.js';
 import type { ProviderModelSpec } from './language-model-factory.js';
+import { resolveTemplateCapabilities } from './provider-template-capabilities.js';
 
 export const OPENCODE_ZEN_BASE_URL = 'https://opencode.ai/inference/openai/v1';
 export const OPENCODE_ZEN_MODELS_URL = 'https://opencode.ai/inference/v1/models';
@@ -43,7 +44,7 @@ export function openCodeZenCredentialNotice(baseURL: string | undefined, apiKey:
 }
 
 export function configureOpenCodeZen(spec: ProviderModelSpec): ProviderModelSpec {
-  if (spec.providerId !== 'opencode-zen' || !isOpenCodeZenUrl(spec.baseURL)) return spec;
+  if (resolveTemplateCapabilities(spec)?.id !== 'opencode-zen' || !isOpenCodeZenUrl(spec.baseURL)) return spec;
   const headers = openCodeZenHeaders(openCodeZenPublicHeaders(spec.headers));
   const transport = spec.fetch ?? fetch;
   return {

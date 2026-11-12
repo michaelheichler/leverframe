@@ -196,7 +196,7 @@ async function executeOpenAiSdk(
   if (kind) {
     const params = translateOpenAiRequest(body as unknown as OpenAiRequest, {
       openAiOAuth: kind === 'codex', claudeSessionId: requestHeader(req, 'x-claude-code-session-id'),
-      providerId: model.providerId,
+      providerId: model.providerId, templateId: model.templateId,
     });
     try {
       await dispatchOpenAiPool({ res, model, cache: modelCache, kind,
@@ -223,7 +223,7 @@ async function executeOpenAiSdk(
     openAiOAuth,
     openAiProvider: hasCanonicalOpenAiEndpoint(languageModel),
     claudeSessionId: requestHeader(req, 'x-claude-code-session-id'),
-    providerId: model.providerId,
+    providerId: model.providerId, templateId: model.templateId,
   });
   const clientWantsStream = Boolean(body.stream);
   const responseModelId = getResponseModelId(body.model, model, options);

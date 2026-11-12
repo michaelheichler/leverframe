@@ -17,7 +17,7 @@ import { neutralClientInstructions } from './neutral-client-request.js';
 import { extractClaudeSessionId } from './client-session.js';
 import { anthropicCacheOptions, anthropicCacheSettings, anthropicSystemMessages, validAnthropicCacheControls, type CacheControl } from './anthropic-sdk-cache.js';
 import { ANTIGRAVITY_SESSION_HEADER } from './antigravity/types.js';
-import { getTemplateById } from './provider-templates.js';
+import { resolveTemplateCapabilities } from './provider-template-capabilities.js';
 import { annotateToolNames, translateMessages, type AnthropicMsg } from './sdk-request-messages.js';
 
 export { ToolResultImageError, extractClaudeSessionId, annotateToolNames, translateMessages };
@@ -269,7 +269,7 @@ function openAiCacheSettings(npm: string, body: AnthropicRequest, options: Trans
 }
 
 function sessionHeaders(options: TranslateRequestOptions | undefined, promptCacheKey?: string, sessionId?: string): Record<string, string> | undefined {
-  const providerHeaders = getTemplateById(options?.reasoningMetadata?.providerId ?? '')?.sessionHeaders;
+  const providerHeaders = resolveTemplateCapabilities(options?.reasoningMetadata)?.sessionHeaders;
   if (providerHeaders && sessionId) return providerHeaders(sessionId);
   const headers: Record<string, string> = {};
   if (options?.openAiOAuth && promptCacheKey) headers['session-id'] = promptCacheKey;
@@ -294,7 +294,7 @@ function withCacheOptions(providerOptions: SdkCallParams['providerOptions'], ope
 }
 
 function requestRetryLimit(options: TranslateRequestOptions | undefined): number {
-  const configured = getTemplateById(options?.reasoningMetadata?.providerId ?? '')?.sdkMaxRetries;
+  const configured = resolveTemplateCapabilities(options?.reasoningMetadata)?.sdkMaxRetries;
   if (configured !== undefined) return configured;
   if (options?.reasoningMetadata?.providerId === 'antigravity') return 0;
   return options?.openAiOAuth ? OPENAI_OAUTH_SDK_MAX_RETRIES : SDK_MAX_RETRIES_NON_OAUTH;

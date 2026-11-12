@@ -4,7 +4,7 @@ import type { SdkCallParams } from './sdk-adapter.js';
 import { neutralClientInstructions } from './neutral-client-request.js';
 import { extractClaudeSessionId } from './client-session.js';
 import { claudeSessionPromptCacheKey, openAiPromptCacheKey } from './sdk-request-translation.js';
-import { getTemplateById } from './provider-templates.js';
+import { resolveTemplateCapabilities } from './provider-template-capabilities.js';
 
 export interface OpenAiMessage {
   role: 'system' | 'developer' | 'user' | 'assistant' | 'tool';
@@ -108,6 +108,7 @@ export function translateOpenAiRequest(
     openAiProvider?: boolean;
     claudeSessionId?: string;
     providerId?: string;
+    templateId?: string;
   },
 ): SdkCallParams {
   body = neutralClientInstructions(body);
@@ -201,7 +202,7 @@ export function translateOpenAiRequest(
     };
   }
 
-  const template = getTemplateById(options?.providerId ?? '');
+  const template = resolveTemplateCapabilities(options);
   const sessionId = template?.sessionHeaders ? extractClaudeSessionId(body, options?.claudeSessionId) : undefined;
   const headers = sessionId ? template?.sessionHeaders?.(sessionId) : undefined;
   return {

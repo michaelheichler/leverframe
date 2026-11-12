@@ -4,7 +4,9 @@
 
 `ProviderTemplate` declares free-only filtering, dispatch and retry limits, session headers, catalog parsing and authentication, SDK-only routing and ignored-credential notices. Shared translation, dispatch and registry code reads these capabilities instead of matching Zen's provider ID. `anonymousFreeModels` remains separate, so anonymous-capable providers can still offer paid models with a key. Zen's provider modules retain endpoint validation and public-only authentication.
 
-The Zen unit, CLI, server and supplied-key tests cover discovery, identity, retry limits, account isolation and credential handling. The capability refactor changes where these policies live, not their behavior.
+The optional `templateId` travels from the registry through materialized providers, catalogs, routes, translation metadata, and model specifications. `resolveTemplateCapabilities` checks that template first and falls back to the provider ID, without reading the registry on the request path. Custom provider IDs retain Zen public-only credentials and single-attempt limits.
+
+The Zen unit, CLI, server, supplied-key and template-alias tests cover discovery, identity, retry limits, account isolation and credential handling. The capability refactor changes where these policies live, not their behavior.
 
 ## GitHub Copilot HTTP contract
 

@@ -19,7 +19,7 @@ import { createHash } from 'node:crypto';
 import { loadRegistry } from './registry/io.js';
 import { routingGuardedFetch } from './routing-before-send.js';
 import { routingSdkPoolUnavailable, routingSdkPrecommit, RoutingSdkRejected } from './routing-sdk-outcome.js';
-import { getTemplateById } from './provider-templates.js';
+import { resolveTemplateCapabilities } from './provider-template-capabilities.js';
 
 interface RuntimeBinding {
   key: string;
@@ -67,7 +67,7 @@ export async function getPooledCodexModel(cache: ProviderRuntimeCache<LanguageMo
   const credential = cache.snapshot(key, binding.apiKey);
   const create = (apiKey: string) => createLanguageModel({
     npm: route.npm!, modelId: route.realModelId, apiKey: route.authType === 'none' ? '' : apiKey,
-    baseURL: route.baseURL, providerId: route.providerId, authType: route.authType,
+    baseURL: route.baseURL, providerId: route.providerId, templateId: route.templateId, authType: route.authType,
     oauthAccountId: binding.oauthAccountId, providerData: { ...binding.providerData, leverframeAccountId: binding.account.id },
     headers: route.headers, useResponsesLite: route.useResponsesLite, preferWebSockets: false,
     fetch: async (input, init) => {
@@ -156,7 +156,7 @@ export async function dispatchSdkPool(options: {
     sessionId: options.sessionId,
     accountId: route.accountId,
     eligibleAccount: options.eligibleAccount,
-    maxDispatches: options.selectorAttemptFetch ? 1 : getTemplateById(route.providerId ?? '')?.maxDispatches,
+    maxDispatches: options.selectorAttemptFetch ? 1 : resolveTemplateCapabilities(route)?.maxDispatches,
     skipMissingCredentials: options.deferRoutingFailure === true,
     dispatch: async binding => {
       const model = await getPooledCodexModel(options.cache, route, binding, options.selectorAttemptFetch);

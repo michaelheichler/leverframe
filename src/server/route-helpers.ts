@@ -243,6 +243,7 @@ export async function getOrInitLanguageModel(
     apiKey: handleCredential.credential,
     baseURL,
     providerId: model.providerId ?? model.sourceBackend,
+    templateId: model.templateId,
     authType: model.authType,
     oauthAccountId: model.oauthAccountId,
     providerData: model.providerData,

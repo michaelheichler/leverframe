@@ -69,6 +69,7 @@ export interface LocalProviderModel {
 
 export interface LocalProvider {
   id: string;
+  templateId?: string;
   name: string;
   apiKey: string;
   authType?: 'api' | 'oauth' | 'none';

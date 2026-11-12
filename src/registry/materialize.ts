@@ -137,6 +137,7 @@ function materializeOne(
 
   return {
     id: provider.id,
+    templateId: provider.templateId,
     name: provider.name,
     apiKey,
     authType: provider.authType,

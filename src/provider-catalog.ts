@@ -256,6 +256,7 @@ export function localProvidersToServerModels(localProviders: LocalProvider[]): S
       brand: model.brand,
       providerLabel: provider.name,
       providerId: provider.id,
+      templateId: provider.templateId,
       sourceBackend: provider.id,
       accountId: model.accountId,
       accountTag: model.accountTag,

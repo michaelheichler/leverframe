@@ -105,6 +105,7 @@ function prepareProxySdk(state: ProxyMessageContext, openAiOAuth: boolean) {
     maxTools: maxToolsForNpm(route.npm),
     reasoningMetadata: {
       providerId: route.providerId,
+      templateId: route.templateId,
       apiBaseUrl: route.baseURL,
       supportedParameters: route.supportedParameters,
       reasoning: route.reasoning,
@@ -160,7 +161,7 @@ async function executeProxySdk(state: ProxyMessageContext, prepared: PreparedPro
       modelId: route.realModelId,
       apiKey: handleCredential.credential,
       baseURL: route.baseURL,
-      providerId: providerId==='github-copilot'? providerId:route.providerId??route.aliasId,
+      providerId: providerId==='github-copilot'? providerId:route.providerId??route.aliasId, templateId: route.templateId,
       authType: route.authType,
       oauthAccountId: route.oauthAccountId,
       providerData: route.providerData,

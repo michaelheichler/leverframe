@@ -38,6 +38,7 @@ export function localModelToRoute(lp: LocalProvider, model: LocalProviderModel):
     npm: model.npm,
     baseURL: model.apiBaseUrl,
     providerId: lp.id,
+    templateId: lp.templateId,
     accountId: model.accountId,
     accountTag: model.accountTag,
     accountName: model.accountName,

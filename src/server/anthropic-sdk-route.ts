@@ -29,7 +29,7 @@ export async function handleSdkAnthropicMessages(context: NativeRequestContext):
         route: {
           aliasId: model.id, realModelId: upstreamModelId(model), displayName: model.name,
           upstreamUrl: model.baseUrl ?? '', apiKey, modelFormat: 'openai', npm: model.npm,
-          providerId: model.providerId, authType: model.authType, baseURL: model.apiBaseUrl,
+          providerId: model.providerId, templateId: model.templateId, authType: model.authType, baseURL: model.apiBaseUrl,
           accountId: model.accountId,
           headers: model.headers, useResponsesLite: model.useResponsesLite,
           minimalClientVersion: model.minimalClientVersion,
@@ -73,7 +73,7 @@ function prepareSdkRequest(context: NativeRequestContext) {
     openAiOAuth,
     claudeSessionId,
     reasoningMetadata: {
-      providerId: model.providerId,
+      providerId: model.providerId, templateId: model.templateId,
       apiBaseUrl: model.apiBaseUrl,
       supportedParameters: model.supportedParameters,
       reasoning: model.reasoning,

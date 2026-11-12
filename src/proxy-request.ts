@@ -93,6 +93,7 @@ export interface ProxyRoute {
   npm?: string;      // OpenCode api.npm - when SDK-migrated, routes via the adapter
   baseURL?: string;  // base URL for openai-compatible / openrouter SDK providers
   providerId?: string;
+  templateId?: string;
   authType?: 'api' | 'oauth' | 'none';
   oauthAccountId?: string;
   providerData?: Record<string, unknown>;
