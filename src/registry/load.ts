@@ -12,13 +12,14 @@ import { materializeRegistry } from './materialize.js';
 import { loadRegistry } from './io.js';
 import { expandAccountModels } from '../account-models.js';
 import { hasAccountCatalog, loadAccountProvider } from './account-loading.js';
-import { getTemplateById } from '../provider-templates.js';
+import { resolveTemplateCapabilities } from '../provider-template-capabilities.js';
 import type { RegistryProvider } from './types.js';
 
 function credentialDiagnostic(provider: RegistryProvider, diag?: (message: string) => void) {
   let reported = false;
   return (auth: ResolvedProviderAuth): ResolvedProviderAuth => {
-    const notice = getTemplateById(provider.id)?.credentialNotice?.(provider.api.url, auth.apiKey);
+    const template = resolveTemplateCapabilities({ templateId: provider.templateId, providerId: provider.id });
+    const notice = template?.credentialNotice?.(provider.api.url, auth.apiKey);
     if (notice && !reported) {
       reported = true;
       (diag ?? console.warn)(notice);

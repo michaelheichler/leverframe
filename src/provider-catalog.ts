@@ -4,7 +4,7 @@ import { oauthAuthRef } from './registry/import-build.js';
 import { loadRegistry } from './registry/io.js';
 import { loadRegistryProviders } from './registry/load.js';
 import { refreshAllProviderModels, type RefreshModelsResult } from './registry/refresh-models.js';
-import { getTemplateById } from './provider-templates.js';
+import { resolveTemplateCapabilities } from './provider-template-capabilities.js';
 import type { LocalProvider } from './types.js';
 import type { ServerModelInfo } from './server/models.js';
 
@@ -191,7 +191,7 @@ export async function resolveLocalProviderApiKey(provider: LocalProvider): Promi
 
   if (provider.authType === 'none') return 'anonymous';
 
-  const template = getTemplateById(provider.id);
+  const template = resolveTemplateCapabilities({ templateId: provider.templateId, providerId: provider.id });
   if (template?.apiKeyOptional || template?.anonymousFreeModels) {
     return 'anonymous';
   }

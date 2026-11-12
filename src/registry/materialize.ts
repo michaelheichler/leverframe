@@ -7,7 +7,7 @@ import type { LocalProvider, LocalProviderModel } from '../types.js';
 import { normalizeGoogleDisplayName, normalizeGoogleModelId } from './google-model-id.js';
 import type { CachedModel, ProviderRegistry, RegistryProvider } from './types.js';
 import { isValidProviderId } from './validate.js';
-import { getTemplateById } from '../provider-templates.js';
+import { resolveTemplateCapabilities } from '../provider-template-capabilities.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 import { effectiveProviderBaseUrl, resolveProviderTemplate } from './resolve-template.js';
 
@@ -101,7 +101,7 @@ export function cachedModelToLocal(
 }
 
 function providerAllowsAnonymousFreeModels(provider: RegistryProvider): boolean {
-  const template = getTemplateById(provider.templateId) ?? getTemplateById(provider.id);
+  const template = resolveTemplateCapabilities({ templateId: provider.templateId, providerId: provider.id });
   return template?.anonymousFreeModels === true;
 }
 
