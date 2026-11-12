@@ -29,6 +29,5 @@
 !/.claude/skills/**
 /.claude/worktrees/
 !/CLAUDE.md
-!/AGENTS.md
 /dist/
 __pycache__/
