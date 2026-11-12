@@ -10,12 +10,18 @@ This changelog records notable changes to Leverframe.
 
 - Optional model routing, off by default. Enabling it adds an `auto` entry that delegates each job to a configured model by category, cost, and availability, with logged fallbacks. Live provider behavior and the interactive Claude Code notices are still unverified. See [Model routing](docs/MODEL-ROUTING.md).
 
+## [0.5.4] - 2026-11-12
+
+### Fixed
+
+- Cached OpenAI OAuth and Anthropic models resolve the default fetch transport on each request. Explicit custom transports and Anthropic cache wrapping stay unchanged.
+
 ## [0.5.3] - 2026-11-12
 
 ### Fixed
 
 - Transient OAuth authentication outages no longer permanently block an account. Leverframe retries only the current client request with bounded backoff and jitter, preserving its neutral instructions and cache key. Genuine credential rejection still stops immediately.
-- Custom provider IDs retain their template policies throughout inference. OpenCode Zen aliases use public-only credentials and keep the single-attempt limit without request-time registry lookups for capability resolution.
+- Custom provider IDs retain their template policies. OpenCode Zen aliases use public-only credentials for inference and report ignored configured keys at registry load. They keep the single-attempt limit without request-time registry lookups for capability resolution.
 
 ### Added
 

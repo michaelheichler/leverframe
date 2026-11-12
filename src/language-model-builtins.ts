@@ -43,7 +43,7 @@ function openAiOptions(spec: ProviderModelSpec, useResponsesEndpoint: boolean) {
       ? createResponsesWebSocketFetch(CODEX_RESPONSES_LITE_WS_URL, spec.onDebug, {
         providerId: spec.providerId ?? 'openai', accountId, onDiagnostic: spec.onWebSocketDiagnostic,
       })
-      : spec.fetch ?? globalThis.fetch),
+      : spec.fetch ?? ((input, init) => globalThis.fetch(input, init))),
   };
 }
 
@@ -75,7 +75,7 @@ export async function createBuiltinAnthropicModel(spec: ProviderModelSpec): Prom
       }
     : { apiKey };
   if (spec.headers) options.headers = { ...options.headers, ...spec.headers };
-  const transport = createAnthropicCacheTransport(spec.fetch ?? globalThis.fetch);
+  const transport = createAnthropicCacheTransport(spec.fetch ?? ((input, init) => globalThis.fetch(input, init)));
   options.fetch = transport.fetch;
   if (!root || root === 'https://api.anthropic.com') return transport.wrap(createAnthropic(options)(modelId));
   const sdkBase = baseURL!.endsWith('/v1') ? baseURL : `${root}/v1`;
