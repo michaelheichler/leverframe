@@ -1,5 +1,7 @@
 # Leverframe Stabilization and Selective Clodex Integration Plan
 
+Current build policy (2026-11-12): Git ignores `dist/`. CI builds before tests and verifies deterministic builds and packed contents. Packing and publishing run `prepack` to build runtime files. The tracked-output checks below record historical validation, not current contributor instructions. See [development](../README.md#development).
+
 Status: Phases A through F implemented (Phase A and Phase B committed; Phase C, D, E, and F present as uncommitted working-tree changes, including the §21 credential-drift cache fix and the §22 HTTP-proxy routing-decision extraction); Phase G (validate and document) is this document's own closure passes plus the full-suite runs recorded in §18/§20/§21/§22/§24, with §24 the definitive final verification-and-fix pass (one CI-workflow hygiene defect found and fixed, no source/test/dist change needed); deliverable 10 (§16/§16.1/§16.2/§18) verified with a small set of items still genuinely open — see §16.2
 Assessment date: 2026-07-29
 Leverframe revision: `b5bc3c5e0484e4b546532a2b394930306bfc1c1d`
@@ -28,7 +30,7 @@ Leverframe is a Node and TypeScript ESM CLI and local gateway. It uses:
 - `undici`, `ws`, and custom HTTP and TLS proxy code
 - `tweakcc` 4.3.0 for Claude Code patching
 
-The public entry points are `src/cli.ts` and `src/claude-wrapper.ts`. The package publishes tracked output from `dist/`.
+The public entry points are `src/cli.ts` and `src/claude-wrapper.ts`. The package publishes generated runtime files from `dist/`, which Git no longer tracks.
 
 ### 2.1 Verification performed during assessment
 

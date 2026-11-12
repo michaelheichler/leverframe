@@ -54,11 +54,12 @@ pnpm install
 pnpm build
 ```
 
-`pnpm build` runs tsup and then copies `src/keyring-child.mjs` into `dist/`.
+`pnpm build` runs tsup and then copies `src/keyring-child.mjs` into `dist/`. Git ignores this generated directory. Commit sources, never built bundles. Run the build before tests or CLI use in a fresh checkout. `pnpm pack` and `pnpm publish` build through `prepack`. `pnpm check:package` verifies an existing build without running lifecycle scripts.
 
 ### Check before a commit
 
 ```bash
+pnpm build
 pnpm typecheck
 pnpm lint
 pnpm test

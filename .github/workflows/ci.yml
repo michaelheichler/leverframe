@@ -54,15 +54,14 @@ jobs:
             exit 1
           fi
 
-      - run: pnpm test
-
       - name: Build runtime files
-        if: matrix.artifacts
         run: pnpm build
 
-      - name: Verify committed runtime files
-        if: matrix.artifacts
-        run: git diff --exit-code dist
+      - name: Run deterministic tests
+        run: pnpm test
+        env:
+          LEVERFRAME_SKIP_LIVE_PROVIDER_SMOKE: '1'
+          LEVERFRAME_LIVE_CLAUDE_COMPACTION_TEST: '0'
 
       - name: Verify deterministic second build
         if: matrix.artifacts

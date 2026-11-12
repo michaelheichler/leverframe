@@ -38,6 +38,7 @@
   },
   "scripts": {
     "build": "tsup && node --input-type=module -e \"import { copyFileSync } from 'node:fs'; copyFileSync('src/keyring-child.mjs', 'dist/keyring-child.mjs');\"",
+    "prepack": "pnpm build",
     "build:test-candidate": "tsup $(find src -name 'candidate-?li.ts' -print) --format esm --target node22 --out-dir dist-${LEVERFRAME_CANDIDATE_OUTPUT:-test} --sourcemap false --clean",
     "check:package": "node scripts/verify-package-contents.mjs",
     "dev": "tsup --watch",

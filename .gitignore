@@ -29,8 +29,6 @@
 !/.claude/skills/**
 /.claude/worktrees/
 !/CLAUDE.md
-!/dist/
-/dist/*
-!/dist/*.js
-!/dist/*.mjs
+!/AGENTS.md
+/dist/
 __pycache__/

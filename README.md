@@ -34,7 +34,7 @@ npm link --ignore-scripts
 leverframe --version
 ```
 
-The package name is `@michaelheichler/leverframe`. It provides `leverframe`, `leverframe-claude`, and `claudeplus`. Install this fork from the repository or a verified package built from it.
+The package name is `@michaelheichler/leverframe`. It provides `leverframe`, `leverframe-claude`, and `claudeplus`. Install this fork from the repository or a verified package built from it. Source checkouts do not include `dist/`, so run the build before linking or invoking the CLI.
 
 ## Get started
 
@@ -104,13 +104,15 @@ For launch settings, environment variables, patch diagnostics, and Keychain repa
 
 ## Development
 
+The build generates `dist/`, and Git ignores it. Commit source changes, not built bundles. CI builds every job before testing and checks deterministic output and package contents in its artifact job. `pnpm pack` and `pnpm publish` build through the `prepack` lifecycle. `pnpm check:package` inspects an existing build with lifecycle scripts disabled, so build first.
+
 ```bash
+pnpm build
 pnpm typecheck
 pnpm lint
 LEVERFRAME_SKIP_LIVE_PROVIDER_SMOKE=1 pnpm test \
   --exclude tests/live-provider-claude-smoke.test.ts \
   --exclude tests/live-claude-haiku.test.ts
-pnpm build
 pnpm check:package
 ```
 
