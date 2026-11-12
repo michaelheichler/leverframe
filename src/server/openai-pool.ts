@@ -55,6 +55,7 @@ export async function dispatchOpenAiPool(options: {
   const pool = poolKey(options.model);
   const result = await dispatchWithPool({
     pool, sessionId: options.sessionId,
+    maxDispatches: options.model.providerId === 'opencode-zen' ? 1 : undefined,
     accountId: options.model.accountId,
     dispatch: async binding => {
       try {

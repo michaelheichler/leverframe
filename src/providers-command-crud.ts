@@ -123,7 +123,8 @@ async function runTemplateAddFlow(templateId: string): Promise<number> {
     ]);
   }
 
-  const apiKeyInput = await p.password({
+  const anonymous = template.apiKeyOptional && template.anonymousFreeModels;
+  const apiKeyInput = anonymous ? '' : await p.password({
     message: `Paste your ${template.name} API key:`,
     validate: val => val.trim() ? undefined : 'Key cannot be empty',
   });
@@ -198,8 +199,8 @@ function buildProvidersAddOptions(providers: import('./registry/types.js').Regis
   for (const tpl of apiTemplates) {
     options.push({
       value: `api:${tpl.id}`,
-      label: `${tpl.name} API key`,
-      hint: tpl.signupUrl ?? undefined,
+      label: tpl.anonymousFreeModels ? tpl.name : `${tpl.name} API key`,
+      hint: tpl.anonymousFreeModels ? 'Free models, no API key' : tpl.signupUrl ?? undefined,
     });
   }
 

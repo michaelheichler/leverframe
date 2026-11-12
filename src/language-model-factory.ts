@@ -8,6 +8,7 @@ import { revalidateCustomEndpointUrl } from './registry/url-security.js';
 import { neutralClientHeaders } from './neutral-client-request.js';
 import { openCodeGoFetch, openCodeGoHeaders } from './opencode-go-headers.js';
 import { createCompatibleCacheUsage } from './compatible-cache-usage.js';
+import { configureOpenCodeZen } from './opencode-zen.js';
 
 type SdkProviderFactory = (options: { apiKey: string; baseURL?: string; name?: string; headers?: Record<string, string>; fetch?: typeof fetch }) => {
   (modelId: string): LanguageModel;
@@ -101,6 +102,7 @@ export class EndpointUrlValidationError extends Error {
 
 /** Because Copilot OAuth must not use another backend. */
 export async function createLanguageModel(spec: ProviderModelSpec): Promise<LanguageModel> {
+  spec = configureOpenCodeZen(spec);
   const { npm, modelId, apiKey, baseURL } = spec;
   if (spec.providerId === 'antigravity') {
     if (spec.authType !== 'oauth' || !spec.oauthAccountId) throw new TypeError('Antigravity requires subscription OAuth.');

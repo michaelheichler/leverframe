@@ -18,6 +18,8 @@ import {
 import { fetchOpenCodeGoMetadata } from './supplier-metadata.js';
 import { fetchAnthropicModels } from './anthropic-models-fetch.js';
 import { parseListedCost, peakCostMultiplier, type ListedCost } from './listed-cost.js';
+import { isOpenCodeZenUrl, OPENCODE_ZEN_MODELS_URL } from '../opencode-zen.js';
+import { parseOpenCodeZenModels } from './opencode-zen-models.js';
 
 const TEST_TIMEOUT_MS = 10_000;
 
@@ -288,7 +290,8 @@ export async function fetchTemplateModels(
     return fetchAnthropicModels(baseUrl, apiKey.trim(), { ...template.headers, ...extraHeaders });
   }
 
-  const url = modelsUrl(baseUrl, template);
+  const zen = template.id === 'opencode-zen' && isOpenCodeZenUrl(baseUrl);
+  const url = zen ? OPENCODE_ZEN_MODELS_URL : modelsUrl(baseUrl, template);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TEST_TIMEOUT_MS);
 
@@ -360,7 +363,7 @@ export async function fetchTemplateModels(
 
     }
 
-    const listedModels = parseModelList(json, template.npm);
+    const listedModels = zen ? parseOpenCodeZenModels(json) : parseModelList(json, template.npm);
     const supplied = await applyDynamicSupplierMetadata(listedModels, template);
     const models = supplied ? markUnconfirmedContextWindows(supplied) : null;
     if (!models) {

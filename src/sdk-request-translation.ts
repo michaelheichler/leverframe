@@ -17,6 +17,7 @@ import { neutralClientInstructions } from './neutral-client-request.js';
 import { extractClaudeSessionId } from './client-session.js';
 import { anthropicCacheOptions, anthropicCacheSettings, anthropicSystemMessages, validAnthropicCacheControls, type CacheControl } from './anthropic-sdk-cache.js';
 import { ANTIGRAVITY_SESSION_HEADER } from './antigravity/types.js';
+import { openCodeZenHeaders } from './opencode-zen.js';
 import { annotateToolNames, translateMessages, type AnthropicMsg } from './sdk-request-messages.js';
 
 export { ToolResultImageError, extractClaudeSessionId, annotateToolNames, translateMessages };
@@ -268,6 +269,7 @@ function openAiCacheSettings(npm: string, body: AnthropicRequest, options: Trans
 }
 
 function sessionHeaders(options: TranslateRequestOptions | undefined, promptCacheKey?: string, sessionId?: string): Record<string, string> | undefined {
+  if (options?.reasoningMetadata?.providerId === 'opencode-zen' && sessionId) return openCodeZenHeaders(undefined, sessionId);
   const headers: Record<string, string> = {};
   if (options?.openAiOAuth && promptCacheKey) headers['session-id'] = promptCacheKey;
   if (options?.reasoningMetadata?.providerId === 'opencode-go' && sessionId) headers['x-opencode-session'] = sessionId;
@@ -340,7 +342,7 @@ export function translateRequest(
     temperature: options?.reasoningMetadata?.supportsTemperature === false
       ? undefined
       : body.temperature,
-    maxRetries: options?.reasoningMetadata?.providerId === 'antigravity' ? 0 : options?.openAiOAuth
+    maxRetries: ['antigravity', 'opencode-zen'].includes(options?.reasoningMetadata?.providerId ?? '') ? 0 : options?.openAiOAuth
       ? OPENAI_OAUTH_SDK_MAX_RETRIES
       : SDK_MAX_RETRIES_NON_OAUTH,
     headers: sessionHeaders(options, promptCacheKey, claudeSessionId),

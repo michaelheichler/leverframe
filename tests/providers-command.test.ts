@@ -195,6 +195,7 @@ describe('providers add menu', () => {
       'api:moonshot',
       'api:openai',
       'api:opencode-go',
+      'api:opencode-zen',
       'api:zai',
       'custom:openai',
     ]);
@@ -218,8 +219,10 @@ describe('providers add menu', () => {
       'api:kimi',
       'api:moonshot',
       'api:opencode-go',
+      'api:opencode-zen',
       'api:zai',
       'custom:openai',
     ]);
   });
+
 });

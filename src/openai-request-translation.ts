@@ -4,6 +4,7 @@ import type { SdkCallParams } from './sdk-adapter.js';
 import { neutralClientInstructions } from './neutral-client-request.js';
 import { extractClaudeSessionId } from './client-session.js';
 import { claudeSessionPromptCacheKey, openAiPromptCacheKey } from './sdk-request-translation.js';
+import { openCodeZenHeaders } from './opencode-zen.js';
 
 export interface OpenAiMessage {
   role: 'system' | 'developer' | 'user' | 'assistant' | 'tool';
@@ -106,6 +107,7 @@ export function translateOpenAiRequest(
     openAiOAuth?: boolean;
     openAiProvider?: boolean;
     claudeSessionId?: string;
+    providerId?: string;
   },
 ): SdkCallParams {
   body = neutralClientInstructions(body);
@@ -199,6 +201,8 @@ export function translateOpenAiRequest(
     };
   }
 
+  const zen = options?.providerId === 'opencode-zen';
+  const zenSession = zen ? extractClaudeSessionId(body, options?.claudeSessionId) : undefined;
   return {
     instructions: system,
     messages,
@@ -206,6 +210,8 @@ export function translateOpenAiRequest(
     toolChoice: sdkToolChoice,
     temperature: body.temperature,
     maxOutputTokens: body.max_completion_tokens ?? body.max_tokens,
+    ...(zen ? { maxRetries: 0 } : {}),
+    ...(zenSession ? { headers: openCodeZenHeaders(undefined, zenSession) } : {}),
     ...(options?.openAiProvider && typeof body.prompt_cache_key === 'string'
       ? { providerOptions: { openai: { promptCacheKey: body.prompt_cache_key } } }
       : {}),

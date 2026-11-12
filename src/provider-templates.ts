@@ -1,5 +1,4 @@
-
-
+import { OPENCODE_ZEN_BASE_URL } from './opencode-zen.js';
 export type ProviderAuthType = 'api' | 'oauth' | 'none';
 export type ProviderModelSource = 'api-list' | 'static-seed' | 'manual-only';
 
@@ -93,6 +92,17 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     modelSource: 'api-list',
     modelsDevProviderId: 'opencode-go',
     supplierMetadataUrl: 'https://raw.githubusercontent.com/anomalyco/opencode/dev/services/www/src/docs/content/console/go.mdx',
+    supported: true,
+  },
+  {
+    id: 'opencode-zen',
+    name: 'OpenCode Zen (Free, experimental)',
+    authType: 'api',
+    npm: '@ai-sdk/openai-compatible',
+    defaultBaseUrl: OPENCODE_ZEN_BASE_URL,
+    apiKeyOptional: true,
+    anonymousFreeModels: true,
+    modelSource: 'api-list',
     supported: true,
   },
   {

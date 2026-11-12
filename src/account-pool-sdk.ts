@@ -155,7 +155,7 @@ export async function dispatchSdkPool(options: {
     sessionId: options.sessionId,
     accountId: route.accountId,
     eligibleAccount: options.eligibleAccount,
-    maxDispatches: options.selectorAttemptFetch ? 1 : undefined,
+    maxDispatches: options.selectorAttemptFetch || route.providerId === 'opencode-zen' ? 1 : undefined,
     skipMissingCredentials: options.deferRoutingFailure === true,
     dispatch: async binding => {
       const model = await getPooledCodexModel(options.cache, route, binding, options.selectorAttemptFetch);

@@ -54,7 +54,7 @@ leverframe providers auth github-copilot
 leverframe providers auth antigravity
 ```
 
-`claudeplus` prepares a private proxy for each session. Plain `claude` retains its normal routing. Run `leverframe patch` after updating Claude Code. Inspect the integration without network access using `leverframe patch --diagnose --json`.
+`claudeplus` prepares a private proxy for each session, while plain `claude` retains its normal routing. After updating Claude Code, run `leverframe patch` and inspect the integration without network access using `leverframe patch --diagnose --json`.
 
 ## Providers
 
@@ -66,18 +66,21 @@ leverframe providers auth antigravity
 | OpenAI | API key |
 | Anthropic API | API key, separate from the Claude subscription |
 | OpenCode Go | Subscription API key |
+| OpenCode Zen, experimental | Anonymous, free models only |
 | Kimi Coding Plan | Plan API key |
 | Moonshot | API key |
 | z.ai Coding Plan | Plan API key |
 | Custom OpenAI-compatible endpoint | API key or anonymous configuration |
 
-Availability depends on the account, plan, and advertised endpoints. Copilot and Antigravity use backend interfaces that can change. Antigravity interactive tool continuation checks remain open. See [provider contracts](docs/PROVIDER-CONTRACTS.md) and [Antigravity verification](docs/ANTIGRAVITY-VERIFICATION.md).
+Availability depends on which endpoints the account's plan advertises. Copilot and Antigravity use backend interfaces that can change. Antigravity interactive tool continuation checks remain open. See [provider contracts](docs/PROVIDER-CONTRACTS.md) and [Antigravity verification](docs/ANTIGRAVITY-VERIFICATION.md).
+
+Choose **OpenCode Zen (Free, experimental)** in `leverframe providers add` to discover free chat models without an API key or an OpenCode installation. Zen uses the public placeholder credential and OpenCode-compatible session headers, with Leverframe named as the client. Go retains its separate subscription connection. Model discovery does not verify inference access, and OpenCode documents a restriction on free access from other clients. One anonymous verification request returned HTTP 429, so successful inference remains unverified. A server rejection ends the request through normal error handling. See the [Zen research](docs/opencode-zen-research.md) for sources and model privacy terms.
 
 ## Accounts and context
 
 Open **Add or manage accounts** beside a configured provider in `leverframe providers add`, or choose **Manage accounts** in its details. Enter a name and a tag such as `WORK`, or leave the tag blank for automatic assignment. Rename either later without changing saved account identities.
 
-Selecting `[WORK]` binds requests to that account without silent alternatives. `[AUTO]` uses eligible accounts according to pool settings. Each account keeps its own credentials, model catalog, and reported limits.
+Selecting `[WORK]` binds requests to that account without silent alternatives. `[AUTO]` uses eligible accounts according to pool settings. Each account has separate credentials and a model catalog that includes its reported limits.
 
 With failover enabled, Auto handles confirmed credit or quota failures internally and tries another eligible account before exposing an error. It uses real requests, without standalone account probes. Confirmed empty accounts stay blocked until their credential generation changes. If all eligible accounts have confirmed billing exhaustion, Leverframe reports a dedicated message such as “Both accounts are empty.” Unrelated request errors do not establish an empty balance.
 
@@ -87,7 +90,7 @@ See [account management](docs/account-pools.md) and [context selection](docs/CON
 
 ## Routes, aliases, and local servers
 
-External routes use `leverframe:<provider-id>:<model-id>`. Select exact IDs from the discovered catalog. Account choices carry their account identity in the model ID. Save an alias with `leverframe models --alias name=leverframe:provider-id:model-id`, replacing the example provider and model with a discovered route.
+External routes use `leverframe:<provider-id>:<model-id>`, with exact IDs from the discovered catalog. Account choices carry their account identity in the model ID. Save an alias with `leverframe models --alias name=leverframe:provider-id:model-id`, replacing the example provider and model with a discovered route.
 
 ```bash
 leverframe claude --proxy
@@ -115,6 +118,6 @@ These commands exclude live Claude conversation suites. See [testing](docs/TESTI
 
 ## Help and releases
 
-Read the [changelog](CHANGELOG.md) for version history. [Open an issue](https://github.com/michaelheichler/leverframe/issues) with the Leverframe version, platform, and redacted diagnostics. Keep API keys, tokens, and credential files private.
+Read the [changelog](CHANGELOG.md) for version history. When you [open an issue](https://github.com/michaelheichler/leverframe/issues), include redacted diagnostics and state which Leverframe version runs on your platform. Keep credentials private, including their files.
 
 Michael Heichler maintains this fork. Leverframe derives from [clodex](https://github.com/bman654/clodex) and [relay-ai](https://github.com/jacob-bd/relay-ai). It uses the [MIT license](LICENSE), with upstream notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
