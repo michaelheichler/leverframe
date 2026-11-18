@@ -91,10 +91,8 @@ corepack pnpm exec vitest run tests/proxy.test.ts
 
 ## Release and install
 
-- Run `pnpm pack` directly, because `corepack pnpm pack` fails the nested build on the pnpm version pin.
-- On tux, install with `npm install -g <tgz>` into `~/.npm-global`.
-- On the MacBook, `~/.local/bin/leverframe` runs a vendored build in `~/Development/projects/local-mcps/vendor/leverframe-claude-2.1.325`. That build is the release commit plus the `src/` hunks of its `claude-2.1.325.patch`. To update it, fast-forward `vendor/leverframe`, build the patched release in a detached worktree, run the tests, then copy `dist/` (without `--delete`) and `package.json` into the vendored folder. A global npm install there goes unused.
-- Running proxies keep the old code until they restart.
+- Install with `pnpm pack`, then `npm install -g <tgz>`, on the MacBook and on tux (`~/.npm-global`). Running proxies keep the old code until they restart.
+- Run `pnpm pack` directly. Under corepack the nested build fails on the pnpm version pin.
 - Release with an annotated tag `vX.Y.Z` and `gh release create`, with notes taken from CHANGELOG.md.
 - `LEVERFRAME_NO_HEADLESS_CLAUDE=1` also skips `caliber refresh` and `caliber learn finalize` in the pre-commit hook. Leave it unset. The hook starts no `claude -p`, and a Caliber failure does not abort the commit.
 
