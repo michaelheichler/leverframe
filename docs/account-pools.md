@@ -29,7 +29,7 @@ The separate `[AUTO]` choice follows **Account pool settings**. Existing unquali
 
 Auto alternatives keep the same provider and model. Billing type also stays fixed. Explicit account choices stay fixed. When a provider reports comparable quota measurements, Auto uses them to guide selection and otherwise rotates fairly among eligible accounts. Token usage alone cannot establish remaining allowance.
 
-With failover enabled, Auto handles confirmed credit or quota rejections inside the same request before sending any output to the client. A successful alternative hides the intermediate error. A confirmed empty account stays blocked until its credential generation changes. Leverframe sends no standalone account probes. When every eligible account has confirmed billing exhaustion, the client receives a dedicated Leverframe error with the account count rather than the raw provider credit error.
+With failover enabled, Auto handles confirmed credit or quota rejections inside the same request before sending any output to the client. A successful alternative hides the intermediate error. A blocked account can recover after a cooldown, even when the provider reported a later reset or rejected its credentials. Recovery uses only real client requests, with one recovery request at a time for each blocked observation and longer cooldowns after failed attempts, up to 32 minutes. Clear accounts take priority unless a pinned account is ready for recovery. When every eligible account has confirmed billing exhaustion, the client receives a dedicated Leverframe error with the account count rather than the raw provider credit error.
 
 ## Model catalogs and context
 
@@ -45,7 +45,7 @@ Removing an account retires its future routes and cleans up unshared managed cre
 
 A cleanup failure leaves a pending cleanup record and appears in the menu. Leverframe does not claim full credential deletion before it verifies cleanup.
 
-Confirmed quota rejections can trigger an Auto alternative before the response starts. Ambiguous failures and visible output prevent replay. Errors report confirmed reset information when available. Leverframe never sends standalone inference requests to probe quota.
+Confirmed quota rejections can trigger an Auto alternative before the response starts. Ambiguous failures and visible output prevent replay. Errors report provider-reported reset times and the next upstream retry time when known. Recovery uses only real client requests, never standalone test, probe or keep-warm requests. A successful recovery clears unchanged blocked observations, while newer provider evidence stays in place.
 
 ## Verification
 

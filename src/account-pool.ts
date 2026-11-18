@@ -18,9 +18,9 @@ export type CapacityObservation = {
 export type PoolAccount = { id: string; enabled: boolean; generation?: string };
 export type Reservation = { id: string; accountId: string; expiresAt: number };
 export type ReserveResult =
-  | { kind: 'reserved'; reservation: Reservation; switchReason?: 'quota threshold' | 'quota failover' }
+  | { kind: 'reserved'; reservation: Reservation; probe?: true; switchReason?: 'quota threshold' | 'quota failover' }
   | { kind: 'exhausted'; reason: 'no_eligible_account' | 'pinned_account_unavailable' | 'capacity_unavailable';
-      accounts: Array<{ accountId: string; status: CapacityStatus; resetAt?: number; reason?: 'billing' }> };
+      accounts: Array<{ accountId: string; status: CapacityStatus; resetAt?: number; retryAt?: number; reason?: 'billing' }> };
 export interface ReserveAccountOptions {
   pool: PoolKey;
   sessionId?: string;
@@ -35,6 +35,11 @@ export interface ReserveAccountOptions {
 
 export const RESERVATION_TTL_MS = 5 * 60_000;
 export const RECOVERY_COOLDOWN_MS = 60_000;
+export const RECOVERY_BACKOFF_MAX_STEPS = 5;
+
+export function recoveryCooldownMs(failures: number): number {
+  return RECOVERY_COOLDOWN_MS * 2 ** Math.min(Math.max(0, failures), RECOVERY_BACKOFF_MAX_STEPS);
+}
 
 function observationKey(pool: PoolKey, observation: CapacityObservation): string {
   const parts = observation.scope.kind === 'pool' ? ['pool', poolKey(pool), observation.accountId]
@@ -59,12 +64,11 @@ function observationsFor(state: PoolState, pool: PoolKey, accountId: string): St
 
 function isBlocked(observation: StoredObservation, now: number): boolean {
   if (observation.status === 'healthy' || observation.status === 'unknown') return false;
-  if (observation.status === 'auth_failure') return true;
   return observation.resetAt === undefined || observation.resetAt > now;
 }
 
-function blockedSummary(accountId: string, observations: StoredObservation[], now: number): {
-  accountId: string; status: CapacityStatus; resetAt?: number; reason?: 'billing';
+function blockedSummary(state: PoolState, pool: PoolKey, accountId: string, observations: StoredObservation[], now: number): {
+  accountId: string; status: CapacityStatus; resetAt?: number; retryAt?: number; reason?: 'billing';
 } {
   const blocked = observations.filter(observation => isBlocked(observation, now));
   const status = blocked.find(observation => observation.status === 'auth_failure')?.status
@@ -73,7 +77,14 @@ function blockedSummary(accountId: string, observations: StoredObservation[], no
   const resetAt = blocked.length > 0 && blocked.every(observation => observation.resetAt !== undefined)
     ? Math.max(...blocked.map(observation => observation.resetAt!)) : undefined;
   const billing = blocked.some(observation => observation.source.endsWith(':billing'));
-  return { accountId, status, ...(resetAt === undefined ? {} : { resetAt }), ...(billing ? { reason: 'billing' as const } : {}) };
+  const retryAt = blocked.length ? Math.max(...blocked.map(observation => {
+    const id = observationKey(pool, observation);
+    const reservedUntil = state.reservations.filter(reservation => reservation.probeKeys?.includes(id))
+      .map(reservation => reservation.expiresAt);
+    return Math.min(observation.resetAt ?? Infinity, Math.max(probeReadyAt(state, id, observation), ...reservedUntil));
+  })) : undefined;
+  return { accountId, status, ...(resetAt === undefined ? {} : { resetAt }),
+    ...(retryAt === undefined ? {} : { retryAt }), ...(billing ? { reason: 'billing' as const } : {}) };
 }
 
 function reconcile(state: PoolState, pool: PoolKey, accounts: readonly PoolAccount[]): void {
@@ -120,10 +131,14 @@ function reconcile(state: PoolState, pool: PoolKey, accounts: readonly PoolAccou
   });
 }
 
+function probeReadyAt(state: PoolState, id: string, observation: StoredObservation): number {
+  return Math.max(observation.probeAfter ?? -Infinity,
+    observation.observedAt + recoveryCooldownMs(state.probes?.[id]?.failures ?? 0));
+}
+
 function available(state: PoolState, pool: PoolKey, observations: StoredObservation[], now: number): boolean {
   return observations.every(observation => !isBlocked(observation, now)
-    || (observation.status !== 'auth_failure' && !observation.source.endsWith(':billing') && observation.resetAt === undefined
-      && (observation.probeAfter ?? observation.observedAt + RECOVERY_COOLDOWN_MS) <= now
+    || (probeReadyAt(state, observationKey(pool, observation), observation) <= now
       && !state.reservations.some(reservation => reservation.probeKeys?.includes(observationKey(pool, observation)))));
 }
 
@@ -153,6 +168,20 @@ function dominates(candidate: Map<string, number>, other: Map<string, number>): 
   return greater;
 }
 
+function createReservation(state: PoolState, pool: PoolKey,
+  chosen: { account: PoolAccount; observations: StoredObservation[] }, now: number): { reservation: Reservation; probe?: true } {
+  const blocked = chosen.observations.filter(observation => isBlocked(observation, now));
+  const probeKeys = blocked.map(observation => observationKey(pool, observation));
+  const recoveryProbes = Object.fromEntries(blocked.map(observation => [observationKey(pool, observation), observation.observedAt]));
+  for (const observation of blocked) {
+    const failures = state.probes?.[observationKey(pool, observation)]?.failures ?? 0;
+    observation.probeAfter = now + recoveryCooldownMs(failures);
+  }
+  const reservation = { id: randomUUID(), accountId: chosen.account.id, expiresAt: now + RESERVATION_TTL_MS };
+  state.reservations.push({ ...reservation, pool: poolKey(pool), ...(probeKeys.length ? { probeKeys, recoveryProbes } : {}) });
+  return { reservation, ...(probeKeys.length ? { probe: true as const } : {}) };
+}
+
 export async function reserveAccount(options: ReserveAccountOptions): Promise<ReserveResult> {
   validatePool(options.pool);
   if (!Number.isFinite(options.now) || options.accounts.length > 1024) throw new Error('Invalid account pool request');
@@ -165,6 +194,9 @@ export async function reserveAccount(options: ReserveAccountOptions): Promise<Re
   return updatePoolState(options.statePath, options.now, state => {
     const { pool, now } = options;
     reconcile(state, pool, options.accounts);
+    for (const id of Object.keys(state.probes ?? {})) {
+      if (!state.observations[id] || !isBlocked(state.observations[id], now)) delete state.probes![id];
+    }
     const enabled = options.accounts.filter(account => account.enabled);
     if (options.pinnedAccountId && !enabled.some(account => account.id === options.pinnedAccountId)) {
       return { kind: 'exhausted', reason: 'pinned_account_unavailable', accounts: [] };
@@ -172,10 +204,12 @@ export async function reserveAccount(options: ReserveAccountOptions): Promise<Re
     const candidates = enabled.filter(account => !options.excludeAccountIds?.includes(account.id));
     if (!candidates.length) return { kind: 'exhausted', reason: 'no_eligible_account', accounts: [] };
     const statuses = candidates.map(account => ({ account, observations: observationsFor(state, pool, account.id) }));
-    const eligible = statuses.filter(item => available(state, pool, item.observations, now));
+    const ready = statuses.filter(item => available(state, pool, item.observations, now));
+    const clear = ready.filter(item => !item.observations.some(observation => isBlocked(observation, now)));
+    const eligible = clear.length ? ready.filter(item => clear.includes(item) || item.account.id === options.pinnedAccountId) : ready;
     if (!eligible.length) return {
       kind: 'exhausted', reason: 'capacity_unavailable',
-      accounts: statuses.map(item => blockedSummary(item.account.id, item.observations, now)),
+      accounts: statuses.map(item => blockedSummary(state, pool, item.account.id, item.observations, now)),
     };
     const affinityId = options.sessionId ? sessionKey(pool, options.sessionId) : undefined;
     const affinity = affinityId && state.affinity[affinityId]?.accountId;
@@ -184,7 +218,7 @@ export async function reserveAccount(options: ReserveAccountOptions): Promise<Re
     if (!options.balancing && options.pinnedAccountId && !options.excludeAccountIds?.includes(options.pinnedAccountId) && !pinned) {
       const item = statuses.find(entry => entry.account.id === options.pinnedAccountId);
       return { kind: 'exhausted', reason: 'capacity_unavailable',
-        accounts: [blockedSummary(options.pinnedAccountId, item?.observations ?? [], now)] };
+        accounts: [blockedSummary(state, pool, options.pinnedAccountId, item?.observations ?? [], now)] };
     }
     let chosen = (!options.balancing && pinned) || eligible.find(item => item.account.id === affinity);
     const alternative = options.balancing && chosen && affinity === chosen.account.id
@@ -212,20 +246,8 @@ export async function reserveAccount(options: ReserveAccountOptions): Promise<Re
     const quotaFailover = blocked.some(observation => observation.status === 'rate_limited' || observation.status === 'exhausted')
       && !blocked.some(observation => observation.status === 'auth_failure');
     if (affinityId) state.affinity[affinityId] = { accountId: chosen.account.id, usedAt: now };
-    const probeKeys = chosen.observations.filter(observation => isBlocked(observation, now))
-      .map(observation => observationKey(pool, observation));
-    const recoveryProbes = Object.fromEntries(chosen.observations.filter(observation =>
-      isBlocked(observation, now) && observation.resetAt === undefined && observation.dimension === undefined
-      && observation.scope.kind === 'pool' && observation.status === 'rate_limited'
-      && observation.source.endsWith(':rejection'))
-      .map(observation => [observationKey(pool, observation), observation.observedAt]));
-    for (const observation of chosen.observations) {
-      if (isBlocked(observation, now) && observation.resetAt === undefined) observation.probeAfter = now + RECOVERY_COOLDOWN_MS;
-    }
-    const reservation = { id: randomUUID(), accountId: chosen.account.id, expiresAt: now + RESERVATION_TTL_MS };
-    state.reservations.push({ ...reservation, pool: poolKey(pool), ...(probeKeys.length ? { probeKeys } : {}),
-      ...(Object.keys(recoveryProbes).length ? { recoveryProbes } : {}) });
-    return { kind: 'reserved', reservation, ...(alternative ? { switchReason: 'quota threshold' as const }
+    const { reservation, probe } = createReservation(state, pool, chosen, now);
+    return { kind: 'reserved', reservation, ...(probe ? { probe } : {}), ...(alternative ? { switchReason: 'quota threshold' as const }
       : quotaFailover ? { switchReason: 'quota failover' as const } : {}) };
   });
 }
@@ -239,11 +261,13 @@ export async function confirmRecovery(options: {
       && state.generations?.[key(providerKey(options.pool), reservation.accountId)] !== options.generation)) return;
     for (const [id, observedAt] of Object.entries(reservation.recoveryProbes ?? {})) {
       const current = state.observations[id];
-      if (!current || current.observedAt !== observedAt || current.status !== 'rate_limited'
-        || current.resetAt !== undefined || current.dimension !== undefined) continue;
-      state.observations[id] = { ...current, source: 'pool:recovery', status: 'healthy',
-        observedAt: Math.max(options.now, current.observedAt + 1), probeAfter: undefined };
+      if (!current || current.observedAt !== observedAt || !isBlocked(current, options.now)) continue;
+      state.observations[id] = { accountId: current.accountId, scope: current.scope,
+        ...(current.dimension === undefined ? {} : { dimension: current.dimension }),
+        source: 'pool:recovery', status: 'healthy', observedAt: Math.max(options.now, current.observedAt + 1) };
+      if (state.probes) delete state.probes[id];
     }
+    reservation.recovered = true;
   });
 }
 
@@ -306,6 +330,15 @@ export async function releaseReservation(options: {
   pool: PoolKey; reservationId: string; now: number; statePath?: string;
 }): Promise<void> {
   await updatePoolState(options.statePath, options.now, state => {
-    state.reservations = state.reservations.filter(item => item.id !== options.reservationId || item.pool !== poolKey(options.pool));
+    const reservation = state.reservations.find(item => item.id === options.reservationId && item.pool === poolKey(options.pool));
+    if (reservation && !reservation.recovered) {
+      for (const id of reservation.probeKeys ?? []) {
+        const observation = state.observations[id];
+        if (!observation || !isBlocked(observation, options.now)) continue;
+        state.probes ??= {};
+        state.probes[id] = { failures: (state.probes[id]?.failures ?? 0) + 1, usedAt: options.now };
+      }
+    }
+    state.reservations = state.reservations.filter(item => item !== reservation);
   });
 }

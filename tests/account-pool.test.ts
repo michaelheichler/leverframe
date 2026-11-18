@@ -440,20 +440,20 @@ it('allows a recovery probe after its prior reservation expires', async () => {
   expect(reservation(afterExpiry).accountId).toBe('alpha');
 });
 
-it('keeps an authentication failure unavailable without a confirmed reset', async () => {
+it('withholds an authentication failure during the cooldown and lets one request probe it afterwards', async () => {
   await recordObservation({
     pool: pool(),
     observation: observation('alpha', 'auth_failure'),
     now: 100,
     statePath,
   });
+  const options = request({ accounts: [account('alpha')] });
 
-  const result = await reserveAccount(request({
-    accounts: [account('alpha')],
-    now: 100 + RECOVERY_COOLDOWN_MS * 5,
-  }));
+  const inCooldown = await reserveAccount({ ...options, now: 100 + RECOVERY_COOLDOWN_MS - 1 });
+  const afterCooldown = await reserveAccount({ ...options, now: 100 + RECOVERY_COOLDOWN_MS });
 
-  expect(result).toMatchObject({ kind: 'exhausted', reason: 'capacity_unavailable' });
+  expect(inCooldown).toMatchObject({ kind: 'exhausted', reason: 'capacity_unavailable' });
+  expect(afterCooldown).toMatchObject({ kind: 'reserved', probe: true, reservation: { accountId: 'alpha' } });
 });
 
 it('reuses the account whose reservation expired while another remains active', async () => {

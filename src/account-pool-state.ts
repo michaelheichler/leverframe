@@ -13,7 +13,8 @@ export interface StoredObservation extends CapacityObservation {
 export interface PoolState {
   observations: Record<string, StoredObservation>;
   memberships: Record<string, string[]>;
-  reservations: Array<Reservation & { pool: string; probeKeys?: string[]; recoveryProbes?: Record<string, number> }>;
+  reservations: Array<Reservation & { pool: string; probeKeys?: string[]; recoveryProbes?: Record<string, number>; recovered?: true }>;
+  probes?: Record<string, { failures: number; usedAt: number }>;
   affinity: Record<string, { accountId: string; usedAt: number }>;
   rotations: Record<string, { next: number; usedAt: number }>;
   accounts: Record<string, string[]>;
@@ -54,7 +55,7 @@ export async function updatePoolState<T>(path: string | undefined, now: number, 
     state.rotations = Object.fromEntries(rotations);
     if (state.reservations.length > 4096) throw new Error('Too many active account reservations');
     if (Object.keys(state.observations).length > 8192 || Object.keys(state.memberships).length > 4096
-      || Object.keys(state.accounts).length > 1024) throw new Error('Account pool state limit exceeded');
+      || Object.keys(state.accounts).length > 1024 || Object.keys(state.probes ?? {}).length > 8192) throw new Error('Account pool state limit exceeded');
     assertRegistryWriteOwnership(statePath);
     atomicWriteJsonSync(statePath, state);
     return result;

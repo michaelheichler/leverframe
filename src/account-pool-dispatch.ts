@@ -103,7 +103,7 @@ export function rememberConfiguredPool(managed: Set<string>, providerId: string,
 
 export type PoolAttempt<T> = { kind: 'success'; value: T } | { kind: 'failure'; value: T; observation?: CapacityObservation };
 export type PoolDispatchResult<T> = { kind: 'result'; value: T } | {
-  kind: 'exhausted'; attempted: string[]; accounts: Array<{ accountId: string; status: string; resetAt?: number; reason?: 'billing' }>;
+  kind: 'exhausted'; attempted: string[]; accounts: Array<{ accountId: string; status: string; resetAt?: number; retryAt?: number; reason?: 'billing' }>;
   missingCredentialAccounts?: string[];
 };
 
@@ -112,10 +112,13 @@ export function poolExhaustionStatus(result: Extract<PoolDispatchResult<unknown>
 }
 
 export function poolExhaustionMessage(result: Extract<PoolDispatchResult<unknown>, { kind: 'exhausted' }>): string {
+  const retries = result.accounts.flatMap(account => account.retryAt === undefined
+    ? [] : [`${account.accountId}: ${new Date(account.retryAt).toISOString()}`]);
+  const retryMessage = retries.length ? ` Next upstream retry: ${retries.join(', ')}.` : '';
   if (poolExhaustionStatus(result) === 400) {
     const count = result.accounts.length;
     const subject = count === 1 ? 'The account is empty' : count === 2 ? 'Both accounts are empty' : `All ${count} accounts are empty`;
-    return `Leverframe: ${subject}. No eligible account remains for this model. Accounts: ${result.accounts.map(account => account.accountId).join(', ')}.`;
+    return `Leverframe: ${subject}. No eligible account remains for this model. Accounts: ${result.accounts.map(account => account.accountId).join(', ')}.${retryMessage}`;
   }
   const resets = result.accounts.flatMap(account => account.resetAt === undefined
     ? [] : [`${account.accountId}: ${new Date(account.resetAt).toISOString()}`]);
@@ -123,7 +126,7 @@ export function poolExhaustionMessage(result: Extract<PoolDispatchResult<unknown
   const billing = result.accounts.filter(account => account.reason === 'billing').map(account => account.accountId);
   const title = failedAuth.length && failedAuth.length === result.accounts.length
     ? 'Account pool unavailable.' : 'Account pool exhausted.';
-  return `${title} Attempted: ${result.attempted.join(', ') || 'none'}.${resets.length ? ` Confirmed resets: ${resets.join(', ')}.` : ''}${failedAuth.length ? ` Authentication failed for: ${failedAuth.join(', ')}. Repair or replace the affected credentials.` : ''}${billing.length ? ` Billing or payment action required for: ${billing.join(', ')}.` : ''}`;
+  return `${title} Attempted: ${result.attempted.join(', ') || 'none'}.${resets.length ? ` Provider-reported resets: ${resets.join(', ')}.` : ''}${failedAuth.length ? ` Authentication failed for: ${failedAuth.join(', ')}. Repair or replace the affected credentials.` : ''}${billing.length ? ` Billing or payment action required for: ${billing.join(', ')}.` : ''}${retryMessage}`;
 }
 
 export async function dispatchWithPool<T>(options: {
@@ -215,7 +218,7 @@ export async function dispatchWithPool<T>(options: {
       }
       if (!result.observation) return { kind: 'result', value: result.value };
       await recordObservation({ pool: options.pool, observation: result.observation, now: Date.now(), generation });
-      if (result.observation.status === 'auth_failure') return { kind: 'result', value: result.value };
+      if (result.observation.status === 'auth_failure' && !selection.probe) return { kind: 'result', value: result.value };
       failures.push({ accountId: account.id, status: result.observation.status,
         ...(result.observation.source.endsWith(':billing') ? { reason: 'billing' as const } : {}),
         ...(result.observation.resetAt === undefined ? {} : { resetAt: result.observation.resetAt }) });

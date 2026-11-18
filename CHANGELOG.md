@@ -6,6 +6,12 @@ This changelog records notable changes to Leverframe.
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-11-18
+
+### Fixed
+
+- Account pools can recover from quota, billing and authentication blocks using only real client requests, even before a provider-reported reset. Recovery uses per-observation backoff and single-flight reservations, prefers clear accounts, and reports the next upstream retry time.
+
 ## [0.5.4] - 2026-11-12
 
 ### Fixed

@@ -118,6 +118,33 @@ it('uses a successful unknown-reset probe for the immediate follow-up request', 
   }
 });
 
+it('forwards a real request after the cooldown even when headers report a reset one day ahead', async () => {
+  saveSingleAccount();
+  let now = 1_800_000_000_000;
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  const dayAhead = new Date(now + 86_400_000).toISOString();
+  let calls = 0;
+  const upstream = await startNativeUpstream((_call, response) => {
+    calls += 1;
+    if (calls === 1) quotaResponse(response, dayAhead);
+    else messageResponse(response);
+  });
+  const proxy = await startProxyCatalog([route(`http://127.0.0.1:${upstream.port}`)], 'anthropic-api__claude-native-fixture');
+
+  try {
+    const rejected = await postMessages(proxy.port, proxy.token);
+    now += RECOVERY_COOLDOWN_MS;
+    const probe = await postMessages(proxy.port, proxy.token);
+
+    expect(rejected.status).toBe(429);
+    expect(probe.status).toBe(200);
+    expect(calls).toBe(2);
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
 it('keeps a newer rejection after an older recovery probe succeeds', async () => {
   const poolKey = pool();
   const probeTime = 100 + RECOVERY_COOLDOWN_MS;
@@ -151,11 +178,43 @@ it('keeps a newer rejection after an older recovery probe succeeds', async () =>
   expect(nextRequest).toMatchObject({ kind: 'exhausted', reason: 'capacity_unavailable' });
 });
 
-it('keeps a confirmed billing account blocked until its credential generation changes', async () => {
+it('lets one real request retry a billing-blocked account after the cooldown and serves later requests once it succeeds', async () => {
+  saveSingleAccount();
+  let now = 1_800_000_000_000;
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  let calls = 0;
+  const upstream = await startNativeUpstream((_call, response) => {
+    calls += 1;
+    if (calls > 1) return messageResponse(response);
+    response.writeHead(402, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ type: 'error', error: { type: 'billing_error', message: 'payment required' } }));
+  });
+  const proxy = await startProxyCatalog([route(`http://127.0.0.1:${upstream.port}`)], 'anthropic-api__claude-native-fixture');
+
+  try {
+    await postMessages(proxy.port, proxy.token);
+    now += RECOVERY_COOLDOWN_MS - 1;
+    const inCooldown = await postMessages(proxy.port, proxy.token);
+    const upstreamCallsInCooldown = calls;
+    now += 1;
+    const retry = await postMessages(proxy.port, proxy.token);
+    const followup = await postMessages(proxy.port, proxy.token);
+
+    expect(inCooldown.status).not.toBe(200);
+    expect(upstreamCallsInCooldown).toBe(1);
+    expect(retry.status).toBe(200);
+    expect(followup.status).toBe(200);
+    expect(calls).toBe(3);
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+it('clears a billing block at once when the account credential changes', async () => {
   const poolKey = pool();
   const account = { id: 'alpha', enabled: true, generation: 'credential-before-renewal' };
-  const accounts = [account];
-  const initial = reservation(await reserveAccount({ pool: poolKey, accounts, balancing: false, now: 99 }));
+  const initial = reservation(await reserveAccount({ pool: poolKey, accounts: [account], balancing: false, now: 99 }));
   await releaseReservation({ pool: poolKey, reservationId: initial.id, now: 99 });
   await recordObservation({
     pool: poolKey,
@@ -165,22 +224,13 @@ it('keeps a confirmed billing account blocked until its credential generation ch
     },
     now: 100, generation: account.generation,
   });
-  const afterCooldown = 100 + RECOVERY_COOLDOWN_MS + 1;
-  const stillBlocked = await reserveAccount({ pool: poolKey, accounts, balancing: false, now: afterCooldown });
-
-  expect(stillBlocked).toMatchObject({
-    kind: 'exhausted', reason: 'capacity_unavailable',
-    accounts: [{ accountId: 'alpha', status: 'exhausted', reason: 'billing' }],
-  });
 
   const afterCredentialChange = await reserveAccount({
-    pool: poolKey,
-    accounts: [{ ...account, generation: 'credential-after-renewal' }],
-    balancing: false,
-    now: afterCooldown + 1,
+    pool: poolKey, accounts: [{ ...account, generation: 'credential-after-renewal' }], balancing: false, now: 101,
   });
 
-  expect(afterCredentialChange.kind).toBe('reserved');
+  expect(afterCredentialChange).toMatchObject({ kind: 'reserved', reservation: { accountId: 'alpha' } });
+  expect(afterCredentialChange).not.toMatchObject({ probe: true });
 });
 
 it('leaves independently dimensioned capacity blocked after generic recovery', async () => {

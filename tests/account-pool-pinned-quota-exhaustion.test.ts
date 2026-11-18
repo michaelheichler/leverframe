@@ -92,7 +92,7 @@ it('retains the skipped pinned quota window through exhaustion without reporting
   expect(result).toEqual({
     kind: 'exhausted', attempted: ['beta'],
     accounts: expect.arrayContaining([
-      { accountId: 'alpha', status: 'rate_limited', resetAt },
+      { accountId: 'alpha', status: 'rate_limited', resetAt, retryAt: resetAt },
       { accountId: 'beta', status: 'rate_limited', resetAt },
     ]),
   });
