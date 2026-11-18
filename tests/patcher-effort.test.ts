@@ -233,3 +233,31 @@ describe('PATCH 8/9 effort capability gates', () => {
     });
   });
 });
+
+function normalizedEffortConfig() {
+  return {
+    'leverframe:openai-oauth:gpt-5.6-sol': {
+      alias: 'extended',
+      effort: { levels: ['low', 'medium', 'high', 'xhigh', 'max'], defaultLevel: 'medium' },
+    },
+  };
+}
+
+describe('PATCH 8a effort capability on a normalized model identity', () => {
+  it('preserves the native effort guard when the model identity is normalized in Claude 2.1.325', () => {
+    const source = CLAUDE_FIXTURE.replace(
+      'if(SNr(e))return!1;let t=Ede(e,"effort");',
+      'let n=norm(e);if(SNr(n))return!1;let t=Ede(n,"effort");',
+    );
+    const patched = runPatchScript(normalizedEffortConfig(), source);
+    const declaration = patched.split('\n').find(line => line.startsWith('function OI('));
+    const capability = Function('norm', 'SNr', 'Ede', `${declaration};return OI;`)(
+      (id: string) => id.replace(/\[1m\]$/, ''),
+      (id: string) => id === 'blocked',
+      (id: string) => id === 'native',
+    ) as (id: string) => boolean;
+    expect(capability('extended[1m]')).toBe(true);
+    expect(capability('blocked[1m]')).toBe(false);
+    expect(capability('native[1m]')).toBe(true);
+  });
+});

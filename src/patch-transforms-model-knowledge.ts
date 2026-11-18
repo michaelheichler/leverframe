@@ -80,7 +80,7 @@ function refreshExisting(source: string, replacement: string): NativeModelKnowle
       result: siteResult('FAIL', 'existing model knowledge marker is ambiguous'),
     };
   }
-  let content = source.replace(pattern, replacement);
+  let content = source.replace(pattern, () => replacement);
   const legacyPredicate = /\|\|Object\.prototype\.hasOwnProperty\.call\(__lfcKnownModels,([A-Za-z_$][\w$]*)\)/g;
   const legacyMatches = content.match(legacyPredicate) ?? [];
   if (legacyMatches.length > 1) {
@@ -139,9 +139,9 @@ export function applyNativeModelKnowledge(
   const replacement = match[0]
     .replace(
       `||${match[4]!}.has(${normalizedIdentity})||${normalizedIdentity}===${match[5]!}`,
-      `||${match[4]!}.has(${normalizedIdentity})||${normalizedIdentity}===${match[5]!}||__lfcIsKnownModel(${normalizedIdentity})`,
+      () => `||${match[4]!}.has(${normalizedIdentity})||${normalizedIdentity}===${match[5]!}||__lfcIsKnownModel(${normalizedIdentity})`,
     );
-  const content = source.replace(anchor, declaration(keys) + replacement);
+  const content = source.replace(anchor, () => declaration(keys) + replacement);
   return content === source
     ? { content: source, result: siteResult('FAIL', 'replacement made no change') }
     : { content, result: siteResult('OK') };

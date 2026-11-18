@@ -108,6 +108,21 @@ describe.each([
   });
 });
 
+const CLAUDE_2_1_325_CONTEXT =
+  'function T1(e,n,r){let s=IC();if(s!==void 0)return s;if(T4r(e,n,r)){let E=bo(lt($t(e)));return Math.max(xC(e,r),E?.maximum_window??E?.window??0,S1)}let h=CRa(e,r);if(h!==null)return h;let y=xC(e,r);return b4t(e,r)===null?Math.min(y,r_(e)):y}';
+
+describe('Claude Code 2.1.325 context window transform', () => {
+  it('preserves the Claude 2.1.325 three-argument fallback and refreshes a prior injection', () => {
+    const first = applyNativeContextWindow(CLAUDE_2_1_325_CONTEXT, { example: 272000 });
+    expect(first.result.status).toBe('OK');
+    expect(first.content).toContain('return b4t(e,r)===null?Math.min(y,r_(e)):y');
+    const next = applyNativeContextWindow(first.content, { example: 300000 });
+    expect(next.result.status).toBe('OK');
+    expect(next.content).toContain('300000');
+    expect(next.content.match(/ccpatch:ctx/g)).toHaveLength(1);
+  });
+});
+
 describe('context window anchor validation', () => {
   it.each([
     ['missing native override', 'function jp(e,n){return $L(e,n)}'],

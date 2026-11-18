@@ -397,7 +397,7 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
       'effort',
       PATCH_COMMENT_START + 'ccpatch:effort' + PATCH_COMMENT_END,
       'PATCH 8a: effort capability',
-      /(function [\w$]+\(([\w$]+)\)\{if\([\w$]+\(\2\)\)return!1;)(let [\w$]+=[\w$]+\(\2,"effort"\);)/,
+      /(function [\w$]+\(([\w$]+)\)\{(?:let ([\w$]+)=[\w$]+\(\2\);if\([\w$]+\(\3\)\)return!1;|if\([\w$]+\(\2\)\)return!1;))(let [\w$]+=[\w$]+\((?:\2|\3),"effort"\);)/,
     );
     patchEffortCapabilitySite(
       'xhigh_effort',
@@ -489,9 +489,9 @@ export function applyLeverframePatches(source: string, config: PatchScriptModelC
     applyOnce(
       name,
       anchor,
-      (_m, ...captured) => {
-        const [head, arg, body] = groups(captured[0], captured[1], captured[2]);
-        return head + snippet(arg) + body;
+      (match, ...captured) => {
+        const [head, arg] = groups(captured[0], captured[1]);
+        return head + snippet(arg) + match.slice(head.length);
       },
       { required: true },
     );

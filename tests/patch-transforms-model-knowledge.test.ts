@@ -54,6 +54,14 @@ async function loadContextLookup(source: string): Promise<(modelId: string) => n
 }
 
 describe('native model knowledge transform', () => {
+  it('retains exported dollar-prefixed bindings when patching the native predicate', async () => {
+    const source = MODEL_KNOWLEDGE_SOURCE.replace('Wme', () => '$$');
+    const patched = applyNativeModelKnowledge(source, CONFIG);
+    const isKnown = await loadPatchedExport<(model: string) => boolean>(patched.content, '$$');
+    expect(isKnown('atlas')).toBe(true);
+    expect(isKnown('unknown')).toBe(false);
+  });
+
   it('registers only configured metadata identities, aliases, and context modes', async () => {
     const result = applyNativeModelKnowledge(MODEL_KNOWLEDGE_SOURCE, CONFIG);
     expect(result.result).toEqual({ status: 'OK', name: 'PATCH 13: native model knowledge' });

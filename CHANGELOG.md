@@ -6,6 +6,12 @@ This changelog records notable changes to Leverframe.
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-11-18
+
+### Fixed
+
+- Leverframe patches Claude Code 2.1.325, where the context-window lookup takes a third argument and the effort gate normalizes the model identity first. Older Claude Code builds keep their existing anchors. Replacement strings with `$` in a binding name stay intact, and patch errors in agent output mode reach stderr instead of disappearing.
+
 ## [0.5.5] - 2026-11-18
 
 ### Fixed

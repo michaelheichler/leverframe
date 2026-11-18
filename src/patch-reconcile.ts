@@ -351,7 +351,7 @@ function reportOutcome(outcome: ApplyOutcome, trace: boolean, presenter: PatchPr
 }
 
 const silentPatchPresenter: PatchPresenter = {
-  error() {},
+  error(message) { console.error(message); },
   warn() {},
   success() {},
   detail() {},
