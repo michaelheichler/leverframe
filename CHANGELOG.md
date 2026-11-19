@@ -6,6 +6,11 @@ This changelog records notable changes to Leverframe.
 
 ## [Unreleased]
 
+### Fixed
+
+- ChatGPT plan requests send Claude Code function schemas in OpenAI's best-effort mode. This avoids strict schema compilation errors with constraints such as `uniqueItems`.
+- GPT-6.2 ChatGPT plan requests put reusable instructions at the start of the input so OpenAI can cache them.
+
 ## [0.5.7] - 2026-11-19
 
 ### Changed

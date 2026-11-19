@@ -17,7 +17,9 @@ function normalizeTools(body: Record<string, unknown>): void {
   const localTools = [];
   const hostedTools = [];
   for (const tool of body.tools) {
-    if (tool?.type === 'function' || tool?.type === 'custom') {
+    if (tool?.type === 'function') {
+      localTools.push({ ...tool, strict: false });
+    } else if (tool?.type === 'custom') {
       localTools.push(tool);
     } else if (tool?.type === 'web_search' || tool?.type === 'web_search_preview') {
       hostedTools.push(tool);
@@ -39,6 +41,16 @@ function normalizeInput(input: unknown): unknown[] {
   });
 }
 
+function cacheableInput(body: Record<string, unknown>): unknown[] {
+  const input = normalizeInput(body.input);
+  const { model, instructions } = body;
+  if (typeof model !== 'string' || !/^gpt-6\.2(?:-|$)/.test(model) || typeof instructions !== 'string' || !instructions.trim()) {
+    return input;
+  }
+  delete body.instructions;
+  return [{ type: 'message', role: 'developer', content: [{ type: 'input_text', text: instructions }] }, ...input];
+}
+
 export function createChatGptPlanFetch(accessToken: string, fetchImpl?: typeof fetch): typeof fetch {
   return (input, init) => {
     if (String(input) !== RESPONSES_URL || init?.method !== 'POST' || typeof init.body !== 'string') {
@@ -48,7 +60,7 @@ export function createChatGptPlanFetch(accessToken: string, fetchImpl?: typeof f
     if (body.stream !== true) throw new TypeError('ChatGPT plan requests require streaming inference.');
     for (const field of OMITTED_FIELDS) delete body[field];
     body.store = false;
-    body.input = normalizeInput(body.input);
+    body.input = cacheableInput(body);
     normalizeTools(body);
     return (fetchImpl ?? globalThis.fetch)(RESPONSES_URL, {
       ...init,

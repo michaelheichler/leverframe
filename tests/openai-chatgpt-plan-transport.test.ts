@@ -14,14 +14,21 @@ it('streams ChatGPT plan inference through the public endpoint with its bearer t
     fetch: fetchUpstream,
   }, false);
 
+  const parameters = {
+    type: 'object',
+    properties: { paths: { type: 'array', items: { type: 'string' }, uniqueItems: true } },
+  } as const;
   const result = streamText({
     model,
     system: 'Keep responses brief.',
     prompt: 'Hello',
-    tools: { Read: tool({ inputSchema: jsonSchema({ type: 'object', properties: {} }) }) },
+    tools: { Read: tool({ inputSchema: jsonSchema(parameters) }) },
     maxOutputTokens: 20,
     temperature: 0.5,
-    providerOptions: { openai: { store: true, previousResponseId: 'remote-history', metadata: { source: 'test' } } },
+    providerOptions: { openai: {
+      store: true, previousResponseId: 'remote-history', metadata: { source: 'test' },
+      instructions: 'Follow the workspace rules.', promptCacheKey: 'session-cache-key',
+    } },
     maxRetries: 0,
   });
 
@@ -39,17 +46,48 @@ it('streams ChatGPT plan inference through the public endpoint with its bearer t
   expect(request.headers.get('x-openai-internal-codex-responses-lite')).toBeNull();
   const body = await request.json();
   expect(body).toMatchObject({
-    model: 'gpt-6.2-sol', stream: true, store: false,
+    model: 'gpt-6.2-sol', stream: true, store: false, prompt_cache_key: 'session-cache-key',
     input: expect.arrayContaining([
       expect.objectContaining({ role: 'developer', content: 'Keep responses brief.' }),
       { role: 'user', content: [{ type: 'input_text', text: 'Hello' }] },
     ]),
-    tools: [{ type: 'namespace', name: 'claude_code', tools: [{ type: 'function', name: 'Read' }] }],
+    tools: [{
+      type: 'namespace', name: 'claude_code',
+      tools: [{ type: 'function', name: 'Read', parameters, strict: false }],
+    }],
   });
+  expect(body.input[0]).toEqual({
+    type: 'message', role: 'developer',
+    content: [{ type: 'input_text', text: 'Follow the workspace rules.' }],
+  });
+  expect(body).not.toHaveProperty('instructions');
   expect(body).not.toHaveProperty('max_output_tokens');
   expect(body).not.toHaveProperty('temperature');
   expect(body).not.toHaveProperty('previous_response_id');
   expect(body).not.toHaveProperty('metadata');
+});
+
+it('keeps top-level instructions for earlier ChatGPT plan models', async () => {
+  const fetchUpstream = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => upstreamResponsesStream());
+  const model = await createBuiltinOpenAiModel({
+    npm: '@ai-sdk/openai', modelId: 'gpt-6.1-terra', apiKey: 'plan-token',
+    authType: 'oauth', providerId: 'openai-chatgpt-plan', fetch: fetchUpstream,
+  }, true);
+
+  const result = streamText({
+    model, prompt: 'Hello', maxRetries: 0,
+    providerOptions: { openai: { instructions: 'Follow the workspace rules.' } },
+  });
+
+  await expect(result.text).resolves.toBe('fixture response');
+  expect(fetchUpstream.mock.calls).toEqual([[
+    'https://api.openai.com/v1/responses', expect.objectContaining({ method: 'POST' }),
+  ]]);
+  const [input, init] = fetchUpstream.mock.calls[0]!;
+  await expect(new Request(input, init).json()).resolves.toMatchObject({
+    instructions: 'Follow the workspace rules.',
+    input: [{ role: 'user', content: [{ type: 'input_text', text: 'Hello' }] }],
+  });
 });
 
 it('rejects partial ChatGPT plan output when the upstream stream ends before a terminal event', async () => {
