@@ -7,10 +7,6 @@ import {
 } from './anthropic-endpoints.js';
 import { reportedContextWindow } from './context-window.js';
 import { sendJson } from './http-utils.js';
-import {
-  evictResponsesWebSocketConnectionForRequest,
-  withResponsesWebSocketDiagnosticContext
-} from './oauth/responses-websocket.js';
 import { createLanguageModel, isOpenAiOAuth, maxToolsForNpm } from './provider-factory.js';
 import {
   revalidateUpstreamUrl
@@ -35,7 +31,6 @@ import { supportsSelectorSdkTransport } from './routing-selector-attempt.js';
 import { routingSdkFailure, routingSdkPrecommit, RoutingSdkRejected } from './routing-sdk-outcome.js';
 import {
   writeInferenceResponseErrorLog,
-  writeWebSocketDiagnosticLog,
 } from './trace-log.js';
 import {
   anthropicErrorType,
@@ -117,7 +112,6 @@ function prepareProxySdk(state: ProxyMessageContext, openAiOAuth: boolean) {
       supportsParallelToolCalls: route.supportsParallelToolCalls,
       supportsReasoningToggle: route.supportsReasoningToggle,
       supportsPromptCacheBreakpoints: route.supportsPromptCacheBreakpoints,
-      useResponsesLite: route.useResponsesLite,
       interleavedReasoningField: route.interleavedReasoningField,
       upstreamModelId: route.realModelId,
     },
@@ -135,7 +129,7 @@ type PreparedProxySdk=ReturnType<typeof prepareProxySdk>;
 async function executeProxySdk(state: ProxyMessageContext, prepared: PreparedProxySdk, openAiOAuth: boolean, translationLifecycle: ProxyTranslationLifecycle): Promise<void> {
   const { res, route, anthropicBody, clientModelId, clientWantsStream, clientAbort, requestExecution,
     tracking, providerId, credentialRouteKey, credential, pooledSdk, context }=state;
-  const { providerRuntimeCache, plog, webSocketDiagnosticsLogPath }=context;
+  const { providerRuntimeCache }=context;
   const { claudeSessionId, params }=prepared;
   if (state.selectorAttemptFetch && !supportsSelectorSdkTransport(route.npm, providerId)) {
     throw new Error('Selector transport cannot enforce its attempt limit.');
@@ -166,14 +160,7 @@ async function executeProxySdk(state: ProxyMessageContext, prepared: PreparedPro
       oauthAccountId: route.oauthAccountId,
       providerData: route.providerData,
       headers: route.headers,
-      useResponsesLite: route.useResponsesLite,
-      preferWebSockets: state.selectorAttemptFetch ? false : route.preferWebSockets,
       ...(state.selectorAttemptFetch ? { fetch: state.selectorAttemptFetch } : {}),
-      minimalClientVersion: route.minimalClientVersion,
-      onDebug: (msg: string) => plog(() => msg),
-      onWebSocketDiagnostic: webSocketDiagnosticsLogPath
-        ? event => writeWebSocketDiagnosticLog(webSocketDiagnosticsLogPath, event)
-        :undefined,
     });
   const model=state.selectorAttemptFetch ? await createModel(credential!)
     : await providerRuntimeCache.getHandle(credentialRouteKey, credential!, createModel);
@@ -230,31 +217,28 @@ async function streamProxySdk(state: ProxyMessageContext, prepared: PreparedProx
 }
 
 async function streamProxySdkWithReplay(state: ProxyMessageContext, prepared: PreparedProxySdk, model: LanguageModel, translationLifecycle: ProxyTranslationLifecycle, writeStreamChunk: (chunk: string) => void): Promise<void> {
-  const { route, anthropicBody, clientModelId, trackedRequestId, clientAbort, requestExecution, tracking, context }=state;
+  const { route, anthropicBody, clientModelId, clientAbort, requestExecution, tracking, context }=state;
   const { plog }=context;
-  const { claudeSessionId, params }=prepared;
+  const { params }=prepared;
   const maxRetries=state.selectorAttemptFetch || state.routingAttempt ? 0 : autoReplayMaxRetries();
   let retryCount=0;
   while(true) {
     try {
-      await withResponsesWebSocketDiagnosticContext(
-        { requestId: trackedRequestId, claudeSessionId },
-        () => streamAnthropicResponse(
-          model,
-          params,
-          clientModelId,
-          writeStreamChunk,
-          plog,
-          {
-            onPart: partType => translationLifecycle?.onPart(partType),
-            contextWindow: reportedContextWindow(route.contextWindow, route.contextWindowUnconfirmed),
-            initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
-            abortSignal: clientAbort.signal,
-            clientAbortSignal: clientAbort.signal,
-            lifecycle: requestExecution,
-            onUsage: proxySdkUsageObserver(state),
-          },
-        ),
+      await streamAnthropicResponse(
+        model,
+        params,
+        clientModelId,
+        writeStreamChunk,
+        plog,
+        {
+          onPart: partType => translationLifecycle?.onPart(partType),
+          contextWindow: reportedContextWindow(route.contextWindow, route.contextWindowUnconfirmed),
+          initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
+          abortSignal: clientAbort.signal,
+          clientAbortSignal: clientAbort.signal,
+          lifecycle: requestExecution,
+          onUsage: proxySdkUsageObserver(state),
+        },
       );
       break;
     } catch(error) {
@@ -265,9 +249,6 @@ async function streamProxySdkWithReplay(state: ProxyMessageContext, prepared: Pr
       }
       retryCount+=1;
       const reason=sdkTranslationErrorSignature(error);
-      if(reason==='reasoning_part_not_found') {
-        evictResponsesWebSocketConnectionForRequest(trackedRequestId);
-      }
       requestExecution.recordRetryAttempt({ attempt: retryCount, reason });
       tracking.recordRetryAttempt();
       plog(() => `sdk auto-replay: retry=${retryCount}/${maxRetries} reason=${reason}`);
@@ -276,27 +257,19 @@ async function streamProxySdkWithReplay(state: ProxyMessageContext, prepared: Pr
 }
 
 async function generateProxySdk(state: ProxyMessageContext, prepared: PreparedProxySdk, model: LanguageModel, openAiOAuth: boolean, translationLifecycle: ProxyTranslationLifecycle): Promise<void> {
-  const { res, route, clientModelId, trackedRequestId, clientAbort, requestExecution, tracking, context }=state;
+  const { res, route, clientModelId, clientAbort, requestExecution, tracking, context }=state;
   const { plog }=context;
-  const { claudeSessionId, params }=prepared;
+  const { params }=prepared;
 
-  const anthropicResponse=await withResponsesWebSocketDiagnosticContext(
-    { requestId: trackedRequestId, claudeSessionId },
-    () => generateAnthropicResponse(
-      model,
-      params,
-      clientModelId,
-      {
-        forceStream: openAiOAuth,
-        contextWindow: reportedContextWindow(route.contextWindow, route.contextWindowUnconfirmed),
-        abortSignal: clientAbort.signal,
-        onPart: partType => translationLifecycle?.onPart(partType),
-        lifecycle: requestExecution,
-        log: plog,
-        onUsage: proxySdkUsageObserver(state),
-      },
-    ),
-  );
+  const anthropicResponse=await generateAnthropicResponse(model, params, clientModelId, {
+    forceStream: openAiOAuth,
+    contextWindow: reportedContextWindow(route.contextWindow, route.contextWindowUnconfirmed),
+    abortSignal: clientAbort.signal,
+    onPart: partType => translationLifecycle?.onPart(partType),
+    lifecycle: requestExecution,
+    log: plog,
+    onUsage: proxySdkUsageObserver(state),
+  });
   translationLifecycle?.onOutput(JSON.stringify(anthropicResponse));
   translationLifecycle?.complete();
   requestExecution.markStreamActivity();
@@ -308,7 +281,7 @@ async function generateProxySdk(state: ProxyMessageContext, prepared: PreparedPr
 }
 
 function respondProxySdkFailure(state: ProxyMessageContext, translationLifecycle: ProxyTranslationLifecycle, err: unknown): void {
-  const { res, route, anthropicBody, clientModelId, relayRequestId, trackedRequestId, clientAbort, requestExecution, tracking, context }=state;
+  const { res, route, anthropicBody, clientModelId, relayRequestId, clientAbort, requestExecution, tracking, context }=state;
   const { plog, inferenceLogPath }=context;
   if(clientAbort.signal.aborted) {
     translationLifecycle?.cancel();
@@ -317,9 +290,6 @@ function respondProxySdkFailure(state: ProxyMessageContext, translationLifecycle
   requestExecution.fail(err);
   tracking.fail(undefined);
   const sdkErrorSignature=sdkTranslationErrorSignature(err);
-  if(sdkErrorSignature==='reasoning_part_not_found') {
-    evictResponsesWebSocketConnectionForRequest(trackedRequestId);
-  }
   translationLifecycle?.fail(
     err instanceof Error? err.name:'UpstreamError',
     sdkErrorSignature,

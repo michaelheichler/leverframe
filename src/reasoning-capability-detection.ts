@@ -26,7 +26,6 @@ export interface ReasoningMetadata {
   supportsParallelToolCalls?: boolean;
   supportsReasoningToggle?: boolean;
   supportsPromptCacheBreakpoints?: boolean;
-  useResponsesLite?: boolean;
   interleavedReasoningField?: string;
 
   upstreamModelId?: string;
@@ -51,17 +50,6 @@ const EMPTY_REASONING: ReasoningCapabilities = {
   mode: 'none',
   source: 'none',
   confidence: 'inferred',
-};
-
-const EFFORT_DESCRIPTIONS: Record<string, string> = {
-  off: 'Turn off extended reasoning',
-  none: 'No reasoning',
-  minimal: 'Minimal reasoning',
-  low: 'Light reasoning',
-  medium: 'Balanced reasoning',
-  high: 'Deep reasoning',
-  xhigh: 'Maximum reasoning',
-  max: 'Maximum effort',
 };
 
 function isClaudeReasoningModel(modelId: string): boolean {
@@ -267,15 +255,6 @@ export function getReasoningCapabilities(
   return EMPTY_REASONING;
 }
 
-export function buildCodexReasoningLevels(
-  capabilities: Pick<ReasoningCapabilities, 'levels'>,
-): Array<{ effort: string; description: string }> {
-  return capabilities.levels.map(effort => ({
-    effort,
-    description: EFFORT_DESCRIPTIONS[effort] ?? effort,
-  }));
-}
-
 export function effortProviderOptions(
   npm: string,
   effort?: string,
@@ -381,11 +360,7 @@ export function thinkingProviderOptions(
       openai: {
         store: false,
         include: ['reasoning.encrypted_content'],
-        ...(metadata?.useResponsesLite === true
-          ? { reasoningContext: 'all_turns', parallelToolCalls: false }
-          : metadata?.supportsParallelToolCalls === false
-            ? { parallelToolCalls: false }
-            : {}),
+        ...(metadata?.supportsParallelToolCalls === false ? { parallelToolCalls: false } : {}),
         ...(metadata?.supportsReasoningSummaries === false
           || metadata?.supportsReasoningSummaryParameter === false
           ? { reasoningSummary: null }

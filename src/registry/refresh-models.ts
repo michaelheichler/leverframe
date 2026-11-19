@@ -18,8 +18,9 @@ import {
 } from './pricing.js';
 import { cachedModelCount, isLikelyPlaceholderKey, resolveRefreshCredential, skipWithCachedModels } from './refresh-credentials.js';
 import type { CachedModel, ProviderRegistry, RegistryProvider } from './types.js';
-import { buildDynamicOAuthModel, parseOpenAiModelEntries, type OpenAiModelEntry } from './openai-oauth-models.js';
-import { getInstalledClaudeVersion } from '../launch.js';
+import { buildDynamicOAuthModel, parseOpenAiModelEntries } from './chatgpt-plan-models.js';
+import { OPENAI_CHATGPT_PLAN_BASE_URL, OPENAI_CHATGPT_PLAN_PROVIDER_ID } from '../constants.js';
+import { isRetiredOpenAiProvider } from './retired-openai.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 import { redactTraceLine } from '../trace-log.js';
 import {
@@ -78,8 +79,8 @@ async function refreshOAuthProvider(
   accessToken: string,
 ): Promise<OAuthModelRefreshResult> {
   const templateId = provider.templateId ?? provider.id;
-  if (templateId === 'openai' || templateId === 'openai-oauth') {
-    return refreshOpenAiOAuthModels(accessToken);
+  if (templateId === OPENAI_CHATGPT_PLAN_PROVIDER_ID) {
+    return refreshChatGptPlanModels(accessToken);
   }
   if (templateId === 'github-copilot') {
     return refreshCopilotOAuthModels(provider, accessToken);
@@ -100,12 +101,12 @@ async function fetchJsonWithAuth(
       headers: {
         Accept: 'application/json',
         Authorization: `Bearer ${accessToken}`,
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
       },
+      redirect: 'error',
       signal: controller.signal,
     });
     if (!response.ok) {
-      const detail = await response.text().then(t => t.slice(0, 200)).catch(() => '');
+      const detail = await response.text().then(value => redactTraceLine(value, [accessToken]).slice(0, 200)).catch(() => '');
       return { body: null, error: `HTTP ${response.status}${detail ? `: ${detail}` : ''}` };
     }
     return { body: await response.json() };
@@ -116,40 +117,17 @@ async function fetchJsonWithAuth(
   }
 }
 
-async function refreshOpenAiOAuthModels(
-  accessToken: string,
-): Promise<{ models: CachedModel[]; source: 'live' | 'cache'; failureReason?: string }> {
-  const TIMEOUT_MS = 10_000;
-  const toModels = (entries: OpenAiModelEntry[]) =>
-    entries.map(entry => buildDynamicOAuthModel(entry));
-
-  const claudeVersion = getInstalledClaudeVersion();
-
-  const codexResult = await fetchJsonWithAuth(
-    `https://chatgpt.com/backend-api/codex/models?client_version=${claudeVersion}`,
-    accessToken,
-    TIMEOUT_MS,
-  );
-  const codexEntries = parseOpenAiModelEntries(codexResult.body);
-  if (codexEntries.length > 0) {
-    return { models: toModels(codexEntries), source: 'live' };
+async function refreshChatGptPlanModels(accessToken: string): Promise<OAuthModelRefreshResult> {
+  const result = await fetchJsonWithAuth(`${OPENAI_CHATGPT_PLAN_BASE_URL}/models`, accessToken, 10_000);
+  const catalog = result.body as { models?: unknown } | null;
+  if (!Array.isArray(catalog?.models) || catalog.models.some((entry: unknown) =>
+    entry === null || typeof entry !== 'object' || !('visibility' in entry) || typeof entry.visibility !== 'string'
+      || !('slug' in entry) || typeof entry.slug !== 'string' || !entry.slug.trim())) {
+    return { models: [], source: 'cache', failureReason: result.error ?? 'Invalid ChatGPT plan model catalog.' };
   }
-
-  const chatGptResult = await fetchJsonWithAuth(
-    'https://chatgpt.com/backend-api/models',
-    accessToken,
-    TIMEOUT_MS,
-  );
-  const chatGptEntries = parseOpenAiModelEntries(chatGptResult.body);
-  if (chatGptEntries.length > 0) {
-    return { models: toModels(chatGptEntries), source: 'live' };
-  }
-
-  return {
-    models: [],
-    source: 'cache',
-    failureReason: chatGptResult.error ?? codexResult.error,
-  };
+  const entries = catalog.models.filter(entry => entry.visibility === 'list');
+  const models = parseOpenAiModelEntries(entries).map(buildDynamicOAuthModel);
+  return { models, source: 'live' };
 }
 
 async function refreshApiListProvider(
@@ -347,7 +325,9 @@ async function discoverOAuthProviderModels(provider: RegistryProvider, apiKey: s
     return skipWithCachedModels(provider, `Live model discovery failed${detail}. Kept your existing cached model list instead of `
       + "overwriting it with leverframe's built-in fallback list. Try refreshing again later.");
   }
-  if (!result.models.length) return { ...identity, ok: false, reason: 'No models available for this OAuth provider. Sign in again.' };
+  if (!result.models.length && (provider.templateId ?? provider.id) !== OPENAI_CHATGPT_PLAN_PROVIDER_ID) {
+    return { ...identity, ok: false, reason: 'No models available for this OAuth provider. Sign in again.' };
+  }
   const reason = result.source === 'seed'
     ? `Live model discovery failed${detail}. Showing leverframe's built-in fallback model list, which may not include the newest models yet. Try refreshing again later.`
     : result.source === 'live' && skippedModels ? copilotPartialDiscoveryMessage(skippedModels) : undefined;
@@ -385,7 +365,8 @@ async function refreshProviderModelsInner(providerId: string, apiKey: string | n
   }
   try {
     const previousModelCount = provider.modelsCache?.models.length ?? 0;
-    const oauth = provider.authType === 'oauth' && ['openai', 'openai-oauth', 'github-copilot'].includes(provider.templateId ?? provider.id);
+    const oauth = provider.authType === 'oauth'
+      && ['github-copilot', OPENAI_CHATGPT_PLAN_PROVIDER_ID].includes(provider.templateId ?? provider.id);
     const result = await (oauth ? discoverOAuthProviderModels(provider, apiKey) : discoverApiProviderModels(provider, apiKey));
     if (!('models' in result)) return result;
     const platform = pricingPlatformForProvider(provider.templateId, provider.id);
@@ -410,6 +391,10 @@ export async function refreshProviderModels(
 ): Promise<RefreshProviderResult> {
   try {
     const configured = registry.providers.find(entry => entry.id === providerId);
+    if (configured && isRetiredOpenAiProvider(configured)) {
+      return { id: providerId, name: configured.name, ok: false,
+        reason: `The Codex device route has retired. Run leverframe providers auth ${OPENAI_CHATGPT_PLAN_PROVIDER_ID}.` };
+    }
     if (configured && ((configured.accounts?.length ?? 0) > 1 || configured.accounts?.some(account => account.name || account.tag))) {
       return await refreshConfiguredAccounts(configured, (source, key) => source.authType === 'oauth'
         ? discoverOAuthProviderModels(source, key) : discoverApiProviderModels(source, key));
@@ -450,7 +435,7 @@ export async function refreshAllProviderModels(
   const refreshed: RefreshProviderResult[] = [];
   const registry = loadRegistry();
 
-  const enabledProviders = registry.providers.filter(p => p.enabled);
+  const enabledProviders = registry.providers.filter(p => p.enabled && !isRetiredOpenAiProvider(p));
 
   for (const provider of enabledProviders) {
     const key = await resolveRefreshCredential(provider, resolveKey);

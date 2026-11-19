@@ -7,6 +7,7 @@ import type { BillingMetadata, CacheWriteRate, CachedModel, ModelPricingTier, Pr
 import { routingCost } from './model-routing-cost.js';
 import { buildProviderCapabilities, type ProviderCapabilityMatrix } from './provider-capabilities.js';
 import { accountModelsCache } from './registry/account-cache.js';
+import { isRetiredOpenAiProvider } from './registry/retired-openai.js';
 
 export interface CredentialObservation {
   providerId: string;
@@ -71,7 +72,7 @@ export interface RoutingCatalogModel {
   billing: BillingMetadata | { kind: 'unknown'; source?: string; observedAt?: string };
   discovery: { source: 'harness' | 'account' | 'api' | 'registry'; state: 'current' | 'stale' | 'failed' | 'unknown'; confirmed: boolean; fetchedAt: string };
   capabilities: ProviderCapabilityMatrix;
-  confirmedCapabilities: Array<'images' | 'reasoning' | 'tools' | 'promptCache' | 'websocket'>;
+  confirmedCapabilities: Array<'images' | 'reasoning' | 'tools' | 'promptCache'>;
   supportedReasoningEfforts?: string[];
   maxOutputTokens?: number;
   contextWindow?: number;
@@ -121,14 +122,12 @@ function materializeModel(input: CatalogSnapshotInput, provider: RegistryProvide
       confirmed: state === 'current', fetchedAt: cache.fetchedAt },
     capabilities: buildProviderCapabilities({ providerId: provider.id, reasoning: model.reasoning,
       images: model.vision, tools: model.supportedParameters?.includes('tools') ? true : undefined,
-      promptCache: model.supportsPromptCacheBreakpoints === true ? true : undefined,
-      websocket: model.preferWebSockets === true ? true : undefined }),
+      promptCache: model.supportsPromptCacheBreakpoints === true ? true : undefined }),
     confirmedCapabilities: [
       ...(model.vision === undefined ? [] : ['images' as const]),
       ...(model.reasoning === undefined ? [] : ['reasoning' as const]),
       ...(model.supportedParameters?.includes('tools') ? ['tools' as const] : []),
       ...(model.supportsPromptCacheBreakpoints === true ? ['promptCache' as const] : []),
-      ...(model.preferWebSockets === true ? ['websocket' as const] : []),
     ],
     supportedReasoningEfforts: model.supportedReasoningEfforts?.slice(),
     ...(Number.isSafeInteger(model.outputTokenLimit) && model.outputTokenLimit! > 0 ? { maxOutputTokens: model.outputTokenLimit } : {}),
@@ -145,7 +144,7 @@ function materializeModel(input: CatalogSnapshotInput, provider: RegistryProvide
 export function buildRoutingCatalog(input: CatalogSnapshotInput): RoutingCatalogSnapshot {
   const models: RoutingCatalogModel[] = [];
   for (const provider of input.registry.providers) {
-    if (!provider.enabled) continue;
+    if (!provider.enabled || isRetiredOpenAiProvider(provider)) continue;
     const caches = provider.accounts?.length
       ? provider.accounts.filter(account => account.enabled)
         .flatMap(account => {

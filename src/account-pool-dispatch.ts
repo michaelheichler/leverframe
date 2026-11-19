@@ -5,7 +5,6 @@ import { confirmRecovery, recordObservation, releaseReservation, reserveAccount 
 import type { CapacityObservation, PoolKey } from './account-pool.js';
 import type { RegistryAccount, RegistryProvider } from './registry/types.js';
 import { createHash } from 'node:crypto';
-import { codexCapacity } from './account-pool-telemetry.js';
 import { recordPoolActivity } from './account-pool-activity.js';
 import { accountModelsCache } from './registry/account-cache.js';
 import { normalizeGoogleModelId } from './registry/google-model-id.js';
@@ -62,14 +61,7 @@ export function classifyPoolFailure(input: PoolFailure): CapacityObservation | u
   const blocked = ['requests', 'input-tokens', 'output-tokens']
     .filter(unit => header(input.headers, `anthropic-ratelimit-${unit}-remaining`) === '0');
   const resets = blocked.map(unit => Date.parse(header(input.headers, `anthropic-ratelimit-${unit}-reset`) ?? ''));
-  const headers = input.headers instanceof Headers ? input.headers : new Headers(
-    Object.entries(input.headers ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-  );
-  const codexBlocked = input.provider === 'codex'
-    ? codexCapacity(headers, input.accountId, input.now).filter(item => item.status === 'rate_limited') : [];
-  const codexReset = codexBlocked.length && codexBlocked.every(item => item.resetAt !== undefined)
-    ? Math.max(...codexBlocked.map(item => item.resetAt!)) : undefined;
-  const headerReset = resets.length && resets.every(Number.isFinite) ? Math.max(...resets) : codexReset;
+  const headerReset = resets.length && resets.every(Number.isFinite) ? Math.max(...resets) : undefined;
   const resetAt = retryAt !== undefined && headerReset !== undefined ? Math.max(retryAt, headerReset) : retryAt ?? headerReset;
   return {
     accountId: input.accountId, scope: { kind: 'pool' }, source: `${input.provider}:rejection`,

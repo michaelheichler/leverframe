@@ -15,7 +15,7 @@ import {
   withRegistryWriteLock,
   withRegistryWriteLockSync,
 } from './lock.js';
-import { migrateOAuthOpenAiProvider, migrateProviderAccounts } from './migrate.js';
+import { migrateProviderAccounts } from './migrate.js';
 import { isValidProviderId } from './validate.js';
 import { parseAccountMetadata } from './account-schema.js';
 
@@ -270,16 +270,12 @@ export function loadRegistry(path = getProvidersPath()): ProviderRegistry {
   }
 
   const registry = parseRegistry(raw);
-  const oauthMigrated = migrateOAuthOpenAiProvider(registry);
-  const accountsMigrated = migrateProviderAccounts(registry);
-  if (oauthMigrated || accountsMigrated) {
+  if (migrateProviderAccounts(registry)) {
     try {
       withRegistryWriteLockSync(() => {
         if (!existsSync(path)) return;
         const current = readStrict(path);
-        const oauthChanged = migrateOAuthOpenAiProvider(current);
-        const accountsChanged = migrateProviderAccounts(current);
-        if (oauthChanged || accountsChanged) saveRegistryUnlocked(current, path);
+        if (migrateProviderAccounts(current)) saveRegistryUnlocked(current, path);
       }, { lockPath: getRegistryLockPath(path) });
     } catch {
 
@@ -292,7 +288,6 @@ export function loadRegistryStrict(path = getProvidersPath()): ProviderRegistry 
   ensureLegacyAppHomeMigrated();
   if (!existsSync(path)) return emptyRegistry();
   const registry = readStrict(path);
-  migrateOAuthOpenAiProvider(registry);
   migrateProviderAccounts(registry);
   return registry;
 }

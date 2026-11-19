@@ -2,6 +2,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { createGatewayModelCatalog, type ServerModelInfo } from '../src/server/models.js';
 import { startServer, type ServerHandle } from '../src/server/router.js';
+import { upstreamResponsesStream } from './fixtures/chatgpt-plan-responses.js';
 import { useIsolatedTestHome } from './isolated-test-home.js';
 
 const fetchSlot = vi.hoisted(() => ({ current: undefined as typeof fetch | undefined }));
@@ -11,13 +12,9 @@ vi.mock('../src/provider-factory.js', async importOriginal => {
   return {
     ...actual,
     createLanguageModel: vi.fn(async (spec: {
-      npm: string; apiKey: string; modelId: string; baseURL?: string; authType?: 'api' | 'oauth' | 'none';
+      npm: string; apiKey: string; modelId: string; providerId?: string; baseURL?: string; authType?: 'api' | 'oauth' | 'none';
     }) => {
       const fetchImpl: typeof fetch = (...args) => fetchSlot.current!(...args);
-      if (spec.authType === 'oauth') {
-        const { createOpenAI } = await import('@ai-sdk/openai');
-        return createOpenAI({ apiKey: spec.apiKey, baseURL: 'https://api.openai.fixture/v1', fetch: fetchImpl }).chat(spec.modelId);
-      }
       const { createBuiltinOpenAiModel } = await import('../src/language-model-builtins.js');
       return createBuiltinOpenAiModel({ ...spec, fetch: fetchImpl }, false);
     }),
@@ -32,7 +29,7 @@ vi.mock('../src/registry/url-security.js', async importOriginal => ({
 useIsolatedTestHome('leverframe-openai-cache-affinity-route');
 
 const sessionId = '7f4c572b-f0e3-4df1-b359-6d6d9824c901';
-const upstreamToken = 'openai-oauth-fixture-sentinel';
+const upstreamToken = 'openai-chatgpt-plan-fixture-sentinel';
 const clientToken = 'local-gateway-fixture-sentinel';
 let server: ServerHandle | undefined;
 
@@ -50,8 +47,8 @@ afterEach(async () => {
 
 function oauthChatModel(): ServerModelInfo {
   return {
-    id: 'fixture-openai-oauth', name: 'fixture OpenAI OAuth', isFree: false, brand: 'OpenAI',
-    sourceBackend: 'openai', modelFormat: 'openai', providerId: 'openai', authType: 'oauth',
+    id: 'fixture-openai-chatgpt-plan', name: 'fixture OpenAI OAuth', isFree: false, brand: 'OpenAI',
+    sourceBackend: 'openai', modelFormat: 'openai', providerId: 'openai-chatgpt-plan', authType: 'oauth',
     npm: '@ai-sdk/openai', apiKey: upstreamToken,
   };
 }
@@ -69,13 +66,7 @@ function installFakeUpstream(): CapturedCall[] {
   fetchSlot.current = async (input, init) => {
     const request = input instanceof Request ? new Request(input, init) : new Request(input, init);
     calls.push({ headers: new Headers(request.headers), body: await request.clone().json() as Record<string, unknown> });
-    const chunks = [
-      { id: 'chatcmpl-fixture', object: 'chat.completion.chunk', created: 1, model: 'fixture-openai-oauth', choices: [{ index: 0, delta: { role: 'assistant', content: 'fixture reply' }, finish_reason: null }] },
-      { id: 'chatcmpl-fixture', object: 'chat.completion.chunk', created: 1, model: 'fixture-openai-oauth', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } },
-    ];
-    return new Response(`${chunks.map(chunk => `data: ${JSON.stringify(chunk)}\n\n`).join('')}data: [DONE]\n\n`, {
-      headers: { 'content-type': 'text/event-stream' },
-    });
+    return upstreamResponsesStream('fixture reply');
   };
   return calls;
 }
@@ -85,7 +76,7 @@ async function sendChat(
   text: string,
   stream = false,
   promptCacheKey = 'caller-key-must-not-override-session',
-  modelId = 'fixture-openai-oauth',
+  modelId = 'fixture-openai-chatgpt-plan',
 ): Promise<Response> {
   const route = server;
   if (!route) throw new Error('route server is not running');
@@ -140,13 +131,13 @@ it.each([
   expect(response.status).toBe(200);
   expect(response.headers.get('content-type')).toContain(contentType);
   expect(calls).toHaveLength(1);
-  const affinity = calls[0]!.headers.get('session-id');
+  const affinity = String(calls[0]!.body['prompt_cache_key'] ?? '');
   const body = calls[0]!.body;
+  expect(calls[0]!.headers.get('session-id')).toBeNull();
   expect(affinity).toBeTruthy();
   expect(affinity).not.toBe(sessionId);
   expect(calls[0]!.headers.get('authorization')).toBe(`Bearer ${upstreamToken}`);
   expect(calls[0]!.headers.has('x-untrusted-forwarded-header')).toBe(false);
-  expect(body['prompt_cache_key']).toBe(affinity);
   expect(body['prompt_cache_key']).not.toBe('caller-key-must-not-override-session');
   expect(JSON.stringify(body)).not.toContain(sessionId);
 });
@@ -161,13 +152,11 @@ it('separates session affinity when one cached OAuth model serves distinct sessi
   expect(firstResponse.status).toBe(200);
   expect(secondResponse.status).toBe(200);
   expect(calls).toHaveLength(2);
-  const firstAffinity = calls[0]!.headers.get('session-id');
-  const secondAffinity = calls[1]!.headers.get('session-id');
+  const firstAffinity = calls[0]!.body['prompt_cache_key'];
+  const secondAffinity = calls[1]!.body['prompt_cache_key'];
   expect(firstAffinity).toBeTruthy();
   expect(secondAffinity).toBeTruthy();
   expect(secondAffinity).not.toBe(firstAffinity);
-  expect(calls[0]!.body['prompt_cache_key']).toBe(firstAffinity);
-  expect(calls[1]!.body['prompt_cache_key']).toBe(secondAffinity);
 });
 
 it('falls back without exposing malformed inbound session metadata', async () => {
@@ -178,9 +167,8 @@ it('falls back without exposing malformed inbound session metadata', async () =>
 
   expect(response.status).toBe(200);
   expect(calls).toHaveLength(1);
-  const affinity = calls[0]!.headers.get('session-id');
+  const affinity = String(calls[0]!.body['prompt_cache_key'] ?? '');
   expect(affinity).toBeTruthy();
-  expect(calls[0]!.body['prompt_cache_key']).toBe(affinity);
   expect(affinity).not.toContain(malformed);
   expect(JSON.stringify(calls[0]!.body)).not.toContain(malformed);
 });

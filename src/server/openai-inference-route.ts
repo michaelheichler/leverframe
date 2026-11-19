@@ -19,9 +19,9 @@ import { isOpenAiOAuth } from '../provider-factory.js';
 import { hasCanonicalOpenAiEndpoint } from '../openai-endpoint-provenance.js';
 import { rememberConfiguredPool } from '../account-pool-dispatch.js';
 import { extractClaudeSessionId } from '../client-session.js';
-import { dispatchOpenAiPool, dispatchOpenAiDirectPool } from './openai-pool.js';
+import { dispatchOpenAiPool, dispatchOpenAiDirectPool, type OpenAiPoolKind } from './openai-pool.js';
 import { recordObservation } from '../account-pool.js';
-import { anthropicCapacity, codexCapacity } from '../account-pool-telemetry.js';
+import { anthropicCapacity } from '../account-pool-telemetry.js';
 export async function handleOpenAIChatCompletions(
   req: IncomingMessage,
   res: ServerResponse,
@@ -161,8 +161,7 @@ async function relayOpenAiChat({ res, options, body, model, openAiTracking, open
       run: binding => relayAnthropicMessages(res, completionsUrl, forwardBody, binding.apiKey, directStream, {
         ...relayOptions, deferRejection: true, onResponseHeaders: async headers => {
           const now = Date.now();
-          const observations = kind === 'codex' ? codexCapacity(headers, binding.account.id, now)
-            : kind === 'anthropic' ? anthropicCapacity(headers, binding.account.id, now) : [];
+          const observations = kind === 'anthropic' ? anthropicCapacity(headers, binding.account.id, now) : [];
           for (const observation of observations) await recordObservation({ pool, observation, now, generation: binding.generation });
         },
       }),
@@ -195,7 +194,7 @@ async function executeOpenAiSdk(
   const kind = configuredOpenAiPool(model, options);
   if (kind) {
     const params = translateOpenAiRequest(body as unknown as OpenAiRequest, {
-      openAiOAuth: kind === 'codex', claudeSessionId: requestHeader(req, 'x-claude-code-session-id'),
+      openAiOAuth: kind === 'chatgpt-plan', claudeSessionId: requestHeader(req, 'x-claude-code-session-id'),
       providerId: model.providerId, templateId: model.templateId,
     });
     try {
@@ -207,7 +206,7 @@ async function executeOpenAiSdk(
           applyExecutionHeaders(res, openAiTracking);
         },
         run: languageModel => runOpenAiSdkResponse({ res, options, body, model, openAiTracking, openAiExecution },
-          languageModel, pooledOpenAiParams(params, body, languageModel, kind), openAiClientAbort, plog, kind === 'codex') });
+          languageModel, pooledOpenAiParams(params, body, languageModel, kind), openAiClientAbort, plog, kind === 'chatgpt-plan') });
     } catch (err) {
       if (openAiClientAbort.signal.aborted) return;
       openAiExecution.fail(err);
@@ -243,21 +242,21 @@ async function executeOpenAiSdk(
 
 function pooledOpenAiParams(
   params: ReturnType<typeof translateOpenAiRequest>, body: OpenAiRouteContext['body'], model: LanguageModel,
-  kind: 'codex' | 'anthropic' | 'provider',
+  kind: OpenAiPoolKind,
 ): ReturnType<typeof translateOpenAiRequest> {
   return {
     ...params,
     maxRetries: 0,
-    ...(kind !== 'codex' && hasCanonicalOpenAiEndpoint(model) && typeof body.prompt_cache_key === 'string'
+    ...(kind !== 'chatgpt-plan' && hasCanonicalOpenAiEndpoint(model) && typeof body.prompt_cache_key === 'string'
       ? { providerOptions: { ...params.providerOptions, openai: { ...params.providerOptions?.openai, promptCacheKey: body.prompt_cache_key } } }
       : {}),
   };
 }
 
-function configuredOpenAiPool(model: OpenAiRouteContext['model'], options: ServerOptions): 'codex' | 'anthropic' | 'provider' | undefined {
+function configuredOpenAiPool(model: OpenAiRouteContext['model'], options: ServerOptions): OpenAiPoolKind | undefined {
   if (!model.providerId || (!model.accountTag && !rememberConfiguredPool(options.managedPools ?? new Set(), model.providerId,
     model.authType === 'oauth' ? 'oauth' : 'api'))) return undefined;
-  if (isOpenAiOAuth(model.npm, model.authType, model.providerId)) return 'codex';
+  if (isOpenAiOAuth(model.npm, model.authType, model.providerId)) return 'chatgpt-plan';
   if (model.modelFormat === 'anthropic' || model.npm === '@ai-sdk/anthropic') return 'anthropic';
   return 'provider';
 }

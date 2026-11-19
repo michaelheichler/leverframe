@@ -3,6 +3,7 @@ import type { CompatibilityAgent } from './model-compatibility.js';
 import { oauthAuthRef } from './registry/import-build.js';
 import { loadRegistry } from './registry/io.js';
 import { loadRegistryProviders } from './registry/load.js';
+import { isRetiredOpenAiProvider } from './registry/retired-openai.js';
 import { refreshAllProviderModels, type RefreshModelsResult } from './registry/refresh-models.js';
 import { resolveTemplateCapabilities } from './provider-template-capabilities.js';
 import type { LocalProvider } from './types.js';
@@ -152,7 +153,7 @@ export async function fetchBrowsingProviderCatalog(
   const { refresh, refreshError } = await refreshCatalogOnce();
   const providers = await loadRegistryProviders(undefined, opts);
   const refreshedById = new Map(refresh.refreshed.map(result => [result.id, result]));
-  const statuses = loadRegistry().providers.filter(provider => provider.enabled).map(provider => {
+  const statuses = loadRegistry().providers.filter(provider => provider.enabled && !isRetiredOpenAiProvider(provider)).map(provider => {
     const result = refreshedById.get(provider.id);
     const live = result?.ok && !result.skipped && result.modelSource === 'live';
     const hasCache = (provider.modelsCache?.models.length ?? 0) > 0;
@@ -233,12 +234,13 @@ export async function resolveProvidersForDisplay(): Promise<ProviderDisplayEntry
   const entries: ProviderDisplayEntry[] = [];
 
   for (const provider of reg.providers) {
+    const retired = isRetiredOpenAiProvider(provider);
     entries.push({
       id: provider.id,
       name: provider.name,
-      modelCount: provider.modelsCache?.models.length ?? 0,
-      enabled: provider.enabled,
-      authLabel: formatRegistryAuthLabel(provider),
+      modelCount: retired ? 0 : provider.modelsCache?.models.length ?? 0,
+      enabled: !retired && provider.enabled,
+      authLabel: retired ? 'Retired' : formatRegistryAuthLabel(provider),
       inRegistry: true,
     });
   }
@@ -275,7 +277,6 @@ export function localProvidersToServerModels(localProviders: LocalProvider[]): S
       maxContextWindow: model.maxContextWindow,
       inputTokenLimit: model.inputTokenLimit,
       outputTokenLimit: model.outputTokenLimit,
-      minimalClientVersion: model.minimalClientVersion,
       contextWindowUnconfirmed: model.contextWindowUnconfirmed,
       supportedParameters: model.supportedParameters,
       reasoning: model.reasoning,
@@ -288,8 +289,6 @@ export function localProvidersToServerModels(localProviders: LocalProvider[]): S
       supportsReasoningToggle: model.supportsReasoningToggle,
       supportsPromptCacheBreakpoints: model.supportsPromptCacheBreakpoints,
       interleavedReasoningField: model.interleavedReasoningField,
-      useResponsesLite: model.useResponsesLite,
-      preferWebSockets: model.preferWebSockets,
       headers: provider.headers,
       providerData: provider.providerData,
     }))

@@ -28,7 +28,6 @@ it('sends Astra low-effort requests without foreign encrypted reasoning and pres
     reasoningMetadata: {
       upstreamModelId: 'gpt-6-astra', reasoning: true,
       supportedReasoningEfforts: OPENAI_OAUTH_ASTRA_MODEL.supported_reasoning_levels.map(level => level.effort),
-      useResponsesLite: OPENAI_OAUTH_ASTRA_MODEL.use_responses_lite,
     },
   });
 

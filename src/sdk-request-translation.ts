@@ -268,11 +268,10 @@ function openAiCacheSettings(npm: string, body: AnthropicRequest, options: Trans
   return { explicit, key };
 }
 
-function sessionHeaders(options: TranslateRequestOptions | undefined, promptCacheKey?: string, sessionId?: string): Record<string, string> | undefined {
+function sessionHeaders(options: TranslateRequestOptions | undefined, sessionId?: string): Record<string, string> | undefined {
   const providerHeaders = resolveTemplateCapabilities(options?.reasoningMetadata)?.sessionHeaders;
   if (providerHeaders && sessionId) return providerHeaders(sessionId);
   const headers: Record<string, string> = {};
-  if (options?.openAiOAuth && promptCacheKey) headers['session-id'] = promptCacheKey;
   if (options?.reasoningMetadata?.providerId === 'opencode-go' && sessionId) headers['x-opencode-session'] = sessionId;
   if (options?.reasoningMetadata?.providerId === 'antigravity' && sessionId) headers[ANTIGRAVITY_SESSION_HEADER] = sessionId;
   return Object.keys(headers).length ? headers : undefined;
@@ -330,7 +329,7 @@ export function translateRequest(
   if (options?.openAiOAuth) providerOptions = withOAuthInstructions(providerOptions, systemText, compactRequest);
 
   const openAiCache = openAiCacheSettings(npm, body, options, claudeSessionId, baseSystem, upstreamTools);
-  const { explicit: supportsExplicitOpenAiCaching, key: promptCacheKey } = openAiCache;
+  const { explicit: supportsExplicitOpenAiCaching } = openAiCache;
   const { enabled: anthropicCache, markedSystem: markedAnthropicSystem, cacheOptions } = anthropicCacheSettings(npm, body);
   providerOptions = withCacheOptions(providerOptions, openAiCache, cacheOptions);
 
@@ -349,7 +348,7 @@ export function translateRequest(
       ? undefined
       : body.temperature,
     maxRetries: requestRetryLimit(options),
-    headers: sessionHeaders(options, promptCacheKey, claudeSessionId),
+    headers: sessionHeaders(options, claudeSessionId),
     providerOptions,
     inputTokensIncludeCache: CACHE_INCLUSIVE_INPUT_NPMS.has(npm),
   };

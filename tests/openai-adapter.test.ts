@@ -78,8 +78,7 @@ describe('streamOpenAiResponse', () => {
         promptCacheKey: expect.any(String),
       },
     });
-    const cacheKey = (params.providerOptions as { openai?: { promptCacheKey?: string } }).openai?.promptCacheKey;
-    expect(params.headers).toEqual({ 'session-id': cacheKey });
+    expect(params.headers?.['session-id']).toBeUndefined();
   });
 
   it('defaults OAuth instructions when the request has no system prompt', async () => {

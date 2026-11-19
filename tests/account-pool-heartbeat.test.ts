@@ -1,3 +1,4 @@
+import { planCredential } from './fixtures/chatgpt-plan-credential.js';
 import http from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,19 +17,17 @@ let previousHome: string | undefined;
 let previousHeartbeat: string | undefined;
 let fakeKeyring: Map<string, string>;
 
-const alphaRef = 'keyring:oauth:provider:openai-oauth::credential::v1:00000000000000000000000000000001';
-const betaRef = 'keyring:oauth:provider:openai-oauth::credential::v1:00000000000000000000000000000002';
+const alphaRef = 'keyring:oauth:provider:openai-chatgpt-plan::credential::v1:00000000000000000000000000000001';
+const betaRef = 'keyring:oauth:provider:openai-chatgpt-plan::credential::v1:00000000000000000000000000000002';
 
 function saveOAuthAccounts(singleAccount = false): void {
-  const credential = (access: string, accountId: string) => JSON.stringify({
-    type: 'oauth', access, refresh: 'unused-refresh-fixture', expires: Date.now() + 3_600_000, accountId,
-  });
+  const credential = (access: string, accountId: string) => JSON.stringify(planCredential(access, accountId));
   fakeKeyring.set(alphaRef.slice('keyring:'.length), credential('oauth-alpha-access', 'oauth-alpha-account'));
   fakeKeyring.set(betaRef.slice('keyring:'.length), credential('oauth-beta-access', 'oauth-beta-account'));
   saveRegistry({
     schemaVersion: 1,
     providers: [{
-      id: 'openai-oauth', templateId: 'openai-oauth', name: 'ChatGPT OAuth', enabled: true,
+      id: 'openai-chatgpt-plan', templateId: 'openai-chatgpt-plan', name: 'ChatGPT OAuth', enabled: true,
       authType: 'oauth', authRef: alphaRef, api: {}, addedAt: '2026-01-01',
       accounts: [
         { id: 'alpha', authRef: alphaRef, enabled: true },
@@ -143,19 +142,16 @@ it('starts a pooled stream before its first SDK event and prevents late quota re
     await firstResponseReleased;
     response.writeHead(429, {
       'Content-Type': 'application/json',
-      'x-codex-primary-used-percent': '100',
-      'x-codex-primary-window-minutes': '300',
-      'x-codex-primary-reset-at': String(Math.floor(Date.now() / 1000) + 3600),
+      'Retry-After': '3600',
     });
     response.end(JSON.stringify({ error: { type: 'usage_limit_reached', message: 'limit reached' } }));
   });
   vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
     forwardSdkFetchToLocal(input, init, upstream.port));
   const route: ProxyRoute = {
-    aliasId: 'openai-oauth__gpt-4o-mini', realModelId: 'gpt-4o-mini',
+    aliasId: 'openai-chatgpt-plan__gpt-4o-mini', realModelId: 'gpt-4o-mini',
     displayName: 'ChatGPT OAuth fixture', upstreamUrl: '', apiKey: 'route-snapshot-oauth-token',
-    modelFormat: 'openai', npm: '@ai-sdk/openai', providerId: 'openai-oauth', authType: 'oauth',
-    preferWebSockets: false,
+    modelFormat: 'openai', npm: '@ai-sdk/openai', providerId: 'openai-chatgpt-plan', authType: 'oauth',
   };
   const proxy = await startProxyCatalog([route], route.aliasId, false);
 

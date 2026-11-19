@@ -15,7 +15,7 @@ import { ensureHttpProxyCaBundle } from './ca.js';
 import { registerServerRuntimeState, unregisterServerRuntimeState } from '../server-runtime.js';
 import { HTTP_PROXY_ANTHROPIC_PLACEHOLDER_KEY } from '../env.js';
 import { launcherPid, onParentExit } from './parent-watch.js';
-import { getInferenceRequestLogPath, getSessionLogPath } from '../log-paths.js';
+import { getInferenceRequestLogPath } from '../log-paths.js';
 import { resolveClaudeInstallation } from '../claude-installation.js';
 import { runLaunchPatchCheck } from '../patcher.js';
 import { loadRegistry } from '../registry/io.js';
@@ -113,7 +113,6 @@ export async function startConfiguredHttpProxy(
   debug = false,
   inferenceLogPath = getInferenceRequestLogPath(),
   debugLogPath?: string,
-  webSocketDiagnosticsLogPath?: string,
   prepareClaude = false,
   activateRouting = false,
 ): Promise<{ handle: HttpProxyHandle; loaded: LoadedHttpProxyRoutes }> {
@@ -157,7 +156,6 @@ export async function startConfiguredHttpProxy(
     debug,
     debugLogPath,
     inferenceLogPath,
-    webSocketDiagnosticsLogPath,
     ...(routing ? { routing } : {}),
   });
   if (preflight) handle.routingPreflight = preflight;
@@ -196,14 +194,10 @@ function registerProxyRuntime(handle: HttpProxyHandle): void {
 
 export async function runHttpProxyServerCommand(
   debug = false,
-  webSocketDiagnostics = false,
   port?: number,
   noDiscovery = false,
   prepareClaude = false,
 ): Promise<number> {
-  const webSocketDiagnosticsLogPath = webSocketDiagnostics
-    ? getSessionLogPath('server-websocket-diagnostics', 'jsonl')
-    : undefined;
   let started: Awaited<ReturnType<typeof startConfiguredHttpProxy>>;
   try {
     started = await startConfiguredHttpProxy(
@@ -211,7 +205,6 @@ export async function runHttpProxyServerCommand(
       debug,
       getInferenceRequestLogPath(),
       undefined,
-      webSocketDiagnosticsLogPath,
       prepareClaude,
     );
   } catch (err) {
@@ -226,10 +219,6 @@ export async function runHttpProxyServerCommand(
   console.log(`  HTTP_PROXY=http://127.0.0.1:${handle.port}`);
   console.log(`  NODE_EXTRA_CA_CERTS=${handle.caCertPath}`);
   console.log(`  Request log: ${handle.inferenceLogPath}`);
-  if (handle.webSocketDiagnosticsLogPath) {
-    console.log(`  WebSocket diagnostics: ${handle.webSocketDiagnosticsLogPath}`);
-    console.log(pc.yellow('  Diagnostic mode records request headers and metadata; credential headers are redacted.'));
-  }
   console.log('');
   printHttpProxyModels(loaded.routes, loaded.aliases);
   reportSkippedHttpProxyFavorites(loaded);

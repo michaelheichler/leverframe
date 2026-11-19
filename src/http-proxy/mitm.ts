@@ -126,7 +126,6 @@ export async function handleMitmRequest(req: http.IncomingMessage, res: http.Ser
   const decision = decideHttpProxyRoute({
     method: req.method, url: req.url, headers: req.headers, rawBody, routesById,
     hasAdapter: adapter !== null, inferenceLogPath: options.inferenceLogPath,
-    webSocketDiagnosticsLogPath: options.webSocketDiagnosticsLogPath,
     responseProgressIntervalMs: options.responseProgressIntervalMs,
   });
   switch (decision.action) {

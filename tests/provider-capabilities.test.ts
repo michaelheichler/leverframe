@@ -11,7 +11,6 @@ describe('buildProviderCapabilities', () => {
     expect(matrix.streaming).toBe(false);
     expect(matrix.tools).toBe(false);
     expect(matrix.reasoning).toBe(false);
-    expect(matrix.websocket).toBe(false);
     expect(matrix.nativeResume).toBe(false);
 
     expect(matrix.clientManagedState).toBe(true);

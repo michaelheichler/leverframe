@@ -23,7 +23,7 @@ const installation = {
 };
 
 const provider: LocalProvider = {
-  id: 'openai-oauth',
+  id: 'openai-chatgpt-plan',
   name: 'OpenAI OAuth',
   apiKey: 'provider-key',
   authType: 'oauth',
@@ -126,11 +126,10 @@ describe('Claude endpoint switch menu', () => {
     expect(code).toBe(0);
     expect(mocks.startProxyCatalog).toHaveBeenCalledTimes(1);
     expect(mocks.startProxy).not.toHaveBeenCalled();
-    const [routes, defaultAlias, , , , , aliases] = mocks.startProxyCatalog.mock.calls[0]! as [
+    const [routes, defaultAlias, , , , aliases] = mocks.startProxyCatalog.mock.calls[0]! as [
       Array<{ aliasId: string; providerId?: string }>,
       string,
       boolean,
-      unknown,
       unknown,
       unknown,
       Array<{ name: string; routeId: string }>,
@@ -139,7 +138,7 @@ describe('Claude endpoint switch menu', () => {
     expect(routes[0]).toMatchObject({ providerId: provider.id });
     expect(defaultAlias).toBe(routes[0]!.aliasId);
     expect(aliases).toEqual([
-      { name: 'leverframe:openai-oauth:gpt-cold', routeId: routes[0]!.aliasId },
+      { name: 'leverframe:openai-chatgpt-plan:gpt-cold', routeId: routes[0]!.aliasId },
       { name: 'cold', routeId: routes[0]!.aliasId },
     ]);
     expect(mocks.launchClaude).toHaveBeenCalledTimes(1);
@@ -175,8 +174,8 @@ describe('Claude endpoint switch menu', () => {
       model: string;
     }];
     expect(launch.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeUndefined();
-    expect(launch.env.ANTHROPIC_MODEL).toBe('leverframe:openai-oauth:gpt-cold');
-    expect(launch.model).toBe('leverframe:openai-oauth:gpt-cold');
+    expect(launch.env.ANTHROPIC_MODEL).toBe('leverframe:openai-chatgpt-plan:gpt-cold');
+    expect(launch.model).toBe('leverframe:openai-chatgpt-plan:gpt-cold');
     expect(mocks.runLaunchPatchCheck).toHaveBeenCalledWith(expect.objectContaining({
       selectedModel: { providerId: provider.id, modelId: provider.models[0]!.id },
     }));
@@ -213,7 +212,7 @@ describe('Claude endpoint switch menu', () => {
       model: string;
     }];
     expect(launch.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeUndefined();
-    expect(launch.env.ANTHROPIC_MODEL).toBe('leverframe:openai-oauth:gpt-cold[1m]');
-    expect(launch.model).toBe('leverframe:openai-oauth:gpt-cold[1m]');
+    expect(launch.env.ANTHROPIC_MODEL).toBe('leverframe:openai-chatgpt-plan:gpt-cold[1m]');
+    expect(launch.model).toBe('leverframe:openai-chatgpt-plan:gpt-cold[1m]');
   });
 });

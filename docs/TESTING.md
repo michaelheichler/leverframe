@@ -10,7 +10,7 @@ Compaction changes require focused Vitest coverage before production edits. Use 
 |---|---|---|---|
 | `src/sdk-adapter.ts` | Only the exact Claude Code compaction request disables tools. Ordinary structured output keeps its tool choice. | `tests/sdk-adapter.test.ts` | No captured failing API stream. |
 | `src/sdk-adapter.ts` | A text response ends with valid Anthropic SSE terminal events. | `tests/sdk-adapter.test.ts` | No end-to-end compact-request stream fixture. |
-| `src/data/openai-oauth-models.ts` | GPT-5.6 Sol uses the static `272000` seed when live metadata is absent. | `tests/openai-oauth-models.test.ts` | The fallback is not provider truth. |
+| `src/registry/chatgpt-plan-models.ts` | The account catalog supplies context metadata. Missing or invalid limits stay unconfirmed. | `tests/openai-oauth-refresh.test.ts` | The model picker needs confirmed limits. |
 | `src/context/` | Tool groups, budgets, watcher state, and request rewrite preserve their current contracts. | `tests/context-control.test.ts`, `tests/request-compaction.test.ts` | No production caller connects the modules. |
 
 ## Characterization Backlog
@@ -21,7 +21,7 @@ Compaction changes require focused Vitest coverage before production edits. Use 
 
 ## CI Gates
 
-Run `corepack pnpm exec vitest run tests/context-control.test.ts tests/request-compaction.test.ts tests/openai-oauth-models.test.ts tests/sdk-adapter.test.ts` before a Compaction change.
+Run `corepack pnpm exec vitest run tests/context-control.test.ts tests/request-compaction.test.ts tests/openai-oauth-refresh.test.ts tests/sdk-adapter.test.ts` before a Compaction change.
 
 ## Compact Stream Checks
 

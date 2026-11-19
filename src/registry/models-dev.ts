@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { OPENAI_CHATGPT_PLAN_PROVIDER_ID } from '../constants.js';
 import { getAppHome } from '../paths.js';
 import { normalizeModelIdCandidates } from './pricing.js';
 
@@ -102,7 +103,7 @@ let memoryCacheMtime = 0;
 export const REGISTRY_TO_MODELS_DEV: Record<string, string> = {
   google: 'google',
   openai: 'openai',
-  'openai-oauth': 'openai',
+  [OPENAI_CHATGPT_PLAN_PROVIDER_ID]: 'openai',
   groq: 'groq',
   mistral: 'mistral',
   togetherai: 'together',

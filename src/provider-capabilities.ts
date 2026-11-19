@@ -10,7 +10,6 @@ export interface SupplierCapabilityMetadata {
 
   reasoning?: boolean;
   promptCache?: boolean;
-  websocket?: boolean;
   conversationContinuation?: boolean;
   nativeResume?: boolean;
   idempotencyKeys?: boolean;
@@ -29,7 +28,6 @@ export interface ProviderCapabilityMatrix {
   images: boolean;
   reasoning: boolean;
   promptCache: boolean;
-  websocket: boolean;
 
   conversationContinuation: boolean;
 
@@ -53,7 +51,6 @@ const DEFAULT_CAPABILITIES: Omit<ProviderCapabilityMatrix, 'source'> = {
   images: false,
   reasoning: false,
   promptCache: false,
-  websocket: false,
   conversationContinuation: false,
   nativeResume: false,
   reconstructedRecovery: true,
@@ -106,7 +103,6 @@ export function buildProviderCapabilities(
     images: field('images', DEFAULT_CAPABILITIES.images),
     reasoning: field('reasoning', DEFAULT_CAPABILITIES.reasoning),
     promptCache: field('promptCache', DEFAULT_CAPABILITIES.promptCache),
-    websocket: field('websocket', DEFAULT_CAPABILITIES.websocket),
     conversationContinuation: field('conversationContinuation', DEFAULT_CAPABILITIES.conversationContinuation),
     nativeResume: field('nativeResume', DEFAULT_CAPABILITIES.nativeResume),
     reconstructedRecovery: DEFAULT_CAPABILITIES.reconstructedRecovery,

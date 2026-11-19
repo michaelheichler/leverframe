@@ -35,7 +35,6 @@ export interface HttpProxyOptions {
 
   inferenceLogPath?: string;
 
-  webSocketDiagnosticsLogPath?: string;
 
   anthropicOrigin?: string;
   nativeRoutingFetch?: typeof fetch;
@@ -65,7 +64,6 @@ export interface HttpProxyHandle {
   token: string;
   modelIds: string[];
   inferenceLogPath?: string;
-  webSocketDiagnosticsLogPath?: string;
   close: () => Promise<void>;
 }
 
@@ -96,7 +94,7 @@ async function startAdapter(options: HttpProxyOptions): Promise<ProxyHandle | nu
   if (!options.routes.length) return null;
   return startProxyCatalog(
     options.routes, options.routes[0]!.aliasId, options.debug, options.inferenceLogPath,
-    options.debugLogPath, options.webSocketDiagnosticsLogPath, options.modelAliases, options.routing,
+    options.debugLogPath, options.modelAliases, options.routing,
   );
 }
 
@@ -158,7 +156,6 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
       : routing?.recoveryOnly ? { routingRecoveryOnly: true as const } : {}),
     modelIds: [...(options.modelAliases ?? []).map(alias => alias.name), ...options.routes.map(route => route.aliasId)],
     inferenceLogPath: options.inferenceLogPath,
-    webSocketDiagnosticsLogPath: options.webSocketDiagnosticsLogPath,
     close: async () => {
       selectorCache?.dispose();
       noticeChannel?.dispose();

@@ -1,3 +1,4 @@
+import { planCredential } from './fixtures/chatgpt-plan-credential.js';
 /** Because automatic failover must gate proactive affinity switching. */
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,20 +15,18 @@ let home: string;
 let previousHome: string | undefined;
 let fakeKeyring: Map<string, string>;
 
-const pool: PoolKey = { providerId: 'openai-oauth', modelId: 'quota-fixture', billingType: 'oauth' };
-const alphaRef = 'keyring:oauth:provider:openai-oauth::credential::v1:00000000000000000000000000000001';
-const betaRef = 'keyring:oauth:provider:openai-oauth::credential::v1:00000000000000000000000000000002';
+const pool: PoolKey = { providerId: 'openai-chatgpt-plan', modelId: 'quota-fixture', billingType: 'oauth' };
+const alphaRef = 'keyring:oauth:provider:openai-chatgpt-plan::credential::v1:00000000000000000000000000000001';
+const betaRef = 'keyring:oauth:provider:openai-chatgpt-plan::credential::v1:00000000000000000000000000000002';
 
 function saveAccounts(): void {
-  const credential = (access: string, accountId: string) => JSON.stringify({
-    type: 'oauth', access, refresh: 'unused-refresh-fixture', expires: Date.now() + 3_600_000, accountId,
-  });
+  const credential = (access: string, accountId: string) => JSON.stringify(planCredential(access, accountId));
   fakeKeyring.set(alphaRef.slice('keyring:'.length), credential('alpha-access-sentinel', 'alpha-account-fixture'));
   fakeKeyring.set(betaRef.slice('keyring:'.length), credential('beta-access-sentinel', 'beta-account-fixture'));
   saveRegistry({
     schemaVersion: 1,
     providers: [{
-      id: 'openai-oauth', templateId: 'openai-oauth', name: 'fixture accounts', enabled: true,
+      id: 'openai-chatgpt-plan', templateId: 'openai-chatgpt-plan', name: 'fixture accounts', enabled: true,
       authType: 'oauth', authRef: alphaRef, api: {}, addedAt: '2026-01-01',
       accounts: [
         { id: 'alpha', authRef: alphaRef, enabled: true },

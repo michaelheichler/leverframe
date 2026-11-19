@@ -171,8 +171,8 @@ describe("server router streaming and disconnects", () => {
       name: 'GPT OAuth',
       isFree: false,
       brand: 'OpenAI',
-      providerId: 'openai-oauth',
-      sourceBackend: 'openai-oauth',
+      providerId: 'openai-chatgpt-plan',
+      sourceBackend: 'openai-chatgpt-plan',
       modelFormat: 'openai',
       npm: '@ai-sdk/openai',
       authType: 'oauth',
@@ -184,7 +184,7 @@ describe("server router streaming and disconnects", () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'anthropic-openai-oauth__gpt-oauth',
+        model: 'anthropic-openai-chatgpt-plan__gpt-oauth',
         messages: [{ role: 'user', content: 'ping' }],
       }),
     });
@@ -219,8 +219,8 @@ describe("server router streaming and disconnects", () => {
       name: 'GPT OAuth Cancel',
       isFree: false,
       brand: 'OpenAI',
-      providerId: 'openai-oauth',
-      sourceBackend: 'openai-oauth',
+      providerId: 'openai-chatgpt-plan',
+      sourceBackend: 'openai-chatgpt-plan',
       modelFormat: 'openai',
       npm: '@ai-sdk/openai',
       authType: 'oauth',
@@ -246,7 +246,7 @@ describe("server router streaming and disconnects", () => {
     });
     request.on('error', () => {});
     request.end(JSON.stringify({
-      model: 'anthropic-openai-oauth__gpt-oauth-cancel',
+      model: 'anthropic-openai-chatgpt-plan__gpt-oauth-cancel',
       messages: [{ role: 'user', content: 'cancel' }],
     }));
     await started;
@@ -262,8 +262,8 @@ describe("server router streaming and disconnects", () => {
       name: 'GPT OAuth OpenAI Cancel',
       isFree: false,
       brand: 'OpenAI',
-      providerId: 'openai-oauth',
-      sourceBackend: 'openai-oauth',
+      providerId: 'openai-chatgpt-plan',
+      sourceBackend: 'openai-chatgpt-plan',
       modelFormat: 'openai',
       npm: '@ai-sdk/openai',
       authType: 'oauth',

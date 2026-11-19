@@ -14,7 +14,6 @@ import type { ExecutionTrackingHandle } from './execution-tracking.js';
 import type { RequestExecutionContext } from './request-execution-context.js';
 import { createSseHeartbeat } from './sse-heartbeat.js';
 import { recordObservation } from './account-pool.js';
-import { codexCapacity, codexEventCapacity, observeCodexEvents } from './account-pool-telemetry.js';
 import { createHash } from 'node:crypto';
 import { loadRegistry } from './registry/io.js';
 import { routingGuardedFetch } from './routing-before-send.js';
@@ -62,32 +61,15 @@ function bindingKey(cache: ProviderRuntimeCache<LanguageModel>, route: ProxyRout
   return key;
 }
 
-export async function getPooledCodexModel(cache: ProviderRuntimeCache<LanguageModel>, route: ProxyRoute, binding: PoolBinding, selectorAttemptFetch?: typeof fetch): Promise<LanguageModel> {
+export async function getPooledSdkModel(cache: ProviderRuntimeCache<LanguageModel>, route: ProxyRoute, binding: PoolBinding, selectorAttemptFetch?: typeof fetch): Promise<LanguageModel> {
   const key = bindingKey(cache, route, binding);
   const credential = cache.snapshot(key, binding.apiKey);
   const create = (apiKey: string) => createLanguageModel({
     npm: route.npm!, modelId: route.realModelId, apiKey: route.authType === 'none' ? '' : apiKey,
     baseURL: route.baseURL, providerId: route.providerId, templateId: route.templateId, authType: route.authType,
     oauthAccountId: binding.oauthAccountId, providerData: { ...binding.providerData, leverframeAccountId: binding.account.id },
-    headers: route.headers, useResponsesLite: route.useResponsesLite, preferWebSockets: false,
-    fetch: async (input, init) => {
-      const response = await routingGuardedFetch(selectorAttemptFetch ?? fetch)(input, init);
-      if (route.providerId !== 'openai-oauth') return response;
-      if (response.ok) {
-        const now = Date.now();
-        for (const observation of codexCapacity(response.headers, binding.account.id, now)) {
-          await recordObservation({ pool: { providerId: 'openai-oauth', modelId: route.realModelId, billingType: 'oauth' },
-            observation, now, generation: binding.generation });
-        }
-      }
-      return observeCodexEvents(response, async payload => {
-        const now = Date.now();
-        for (const observation of codexEventCapacity(payload, binding.account.id, now)) {
-          await recordObservation({ pool: { providerId: 'openai-oauth', modelId: route.realModelId, billingType: 'oauth' },
-            observation, now, generation: binding.generation });
-        }
-      });
-    },
+    headers: route.headers,
+    fetch: (input, init) => routingGuardedFetch(selectorAttemptFetch ?? fetch)(input, init),
   });
   return selectorAttemptFetch ? create(binding.apiKey) : cache.getHandle(key, credential, snapshot => create(snapshot.credential));
 }
@@ -159,7 +141,7 @@ export async function dispatchSdkPool(options: {
     maxDispatches: options.selectorAttemptFetch ? 1 : resolveTemplateCapabilities(route)?.maxDispatches,
     skipMissingCredentials: options.deferRoutingFailure === true,
     dispatch: async binding => {
-      const model = await getPooledCodexModel(options.cache, route, binding, options.selectorAttemptFetch);
+      const model = await getPooledSdkModel(options.cache, route, binding, options.selectorAttemptFetch);
       const params = { ...options.params, maxRetries: 0 };
       try {
         options.onDispatch?.();
@@ -182,7 +164,7 @@ export async function dispatchSdkPool(options: {
       } catch (error) {
         const details = sdkUpstreamErrorDetails(error);
         const observation = classifyPoolFailure({
-          provider: route.providerId === 'openai-oauth' ? 'codex' : route.providerId!, accountId: binding.account.id, statusCode: details?.statusCode,
+          provider: route.providerId!, accountId: binding.account.id, statusCode: details?.statusCode,
           body: details?.data ?? details?.errorContent, headers: details?.responseHeaders, now: Date.now(),
         });
         if (!observation) throw error;

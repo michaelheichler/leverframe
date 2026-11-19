@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { _credentialStoreInternals } from '../src/credential-store.js';
 import { resolveProviderAccountAuth, saveProviderCredential } from '../src/env.js';
-import * as openai from '../src/oauth/openai.js';
+import * as chatgptPlan from '../src/oauth/chatgpt-plan.js';
+import { planCredential } from './fixtures/chatgpt-plan-credential.js';
 import type { StoredOAuthCredential } from '../src/oauth/types.js';
 import { migrateProviderAccounts } from '../src/registry/migrate.js';
 import { loadRegistry, saveRegistry } from '../src/registry/io.js';
@@ -25,10 +26,7 @@ function provider(overrides: Partial<RegistryProvider> = {}): RegistryProvider {
 }
 
 function oauthCredential(overrides: Partial<StoredOAuthCredential> = {}): StoredOAuthCredential {
-  return {
-    type: 'oauth', access: 'old-access', refresh: 'old-refresh', expires: 0,
-    accountId: 'old-account', providerData: { organization: 'old-organization' }, ...overrides,
-  };
+  return planCredential('old-access', 'fixture', { expires: 0, ...overrides });
 }
 
 function stubAccountKeyring(account: string, initial: StoredOAuthCredential): () => StoredOAuthCredential {
@@ -49,7 +47,7 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'leverframe-account-registry-'));
   fakeKeyring = new Map();
   vi.stubEnv('LEVERFRAME_HOME', home);
-  vi.stubEnv('LEVERFRAME_KEY_OPENAI_OAUTH', '');
+  vi.stubEnv('LEVERFRAME_KEY_OPENAI_CHATGPT_PLAN', '');
   vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockImplementation(async input => {
     if (input.operation === 'read' || input.operation === 'peek') {
       return { ok: true, value: fakeKeyring.get(input.account) ?? null };
@@ -74,19 +72,19 @@ afterEach(() => {
 
 it('migrates legacy API and OAuth providers idempotently with their existing credentials', () => {
   const apiAuthRef = 'keyring:provider:provider-fixture';
-  const oauthAuthRef = 'keyring:oauth:provider:openai-oauth';
+  const oauthAuthRef = 'keyring:oauth:provider:openai-chatgpt-plan';
   const registry: ProviderRegistry = {
     schemaVersion: 1,
     providers: [
       provider({ authType: 'api', authRef: apiAuthRef }),
-      provider({ id: 'openai-oauth', authType: 'oauth', authRef: oauthAuthRef }),
+      provider({ id: 'openai-chatgpt-plan', authType: 'oauth', authRef: oauthAuthRef }),
     ],
   };
   const secondRegistry: ProviderRegistry = {
     schemaVersion: 1,
     providers: [
       provider({ authType: 'api', authRef: apiAuthRef }),
-      provider({ id: 'openai-oauth', authType: 'oauth', authRef: oauthAuthRef }),
+      provider({ id: 'openai-chatgpt-plan', authType: 'oauth', authRef: oauthAuthRef }),
     ],
   };
 
@@ -127,14 +125,14 @@ it('allows providers to share a credential reference', () => {
 });
 
 it('resolves and refreshes an OAuth account with its returned metadata', async () => {
-  const authRef = 'keyring:oauth:provider:openai-oauth::credential::fixture';
+  const authRef = 'keyring:oauth:provider:openai-chatgpt-plan::credential::fixture';
   const stored = stubAccountKeyring(authRef.slice('keyring:'.length), oauthCredential());
   const previous = oauthCredential();
-  vi.spyOn(openai, 'refreshOpenAiAccessToken').mockResolvedValue({
-    access_token: 'new-access', refresh_token: 'new-refresh', expires_in: 3600,
-  });
+  vi.spyOn(chatgptPlan, 'refreshChatGptPlanCredential').mockResolvedValue(
+    planCredential('new-access', 'fixture', { refresh: 'new-refresh' }),
+  );
 
-  const result = await resolveProviderAccountAuth('openai-oauth', { id: 'secondary', authRef, enabled: true });
+  const result = await resolveProviderAccountAuth('openai-chatgpt-plan', { id: 'secondary', authRef, enabled: true });
 
   expect(result).toEqual({
     apiKey: 'new-access', accountId: previous.accountId, providerData: previous.providerData,
@@ -146,13 +144,13 @@ it('resolves and refreshes an OAuth account with its returned metadata', async (
 });
 
 it('uses the selected account credential instead of the provider environment override', async () => {
-  vi.stubEnv('LEVERFRAME_KEY_OPENAI_OAUTH', 'provider-level-credential');
+  vi.stubEnv('LEVERFRAME_KEY_OPENAI', 'provider-level-credential');
   vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockResolvedValue({
     ok: true, value: 'selected-account-credential',
   });
 
-  const result = await resolveProviderAccountAuth('openai-oauth', {
-    id: 'secondary', authRef: 'keyring:oauth:provider:openai-oauth::credential::fixture', enabled: true,
+  const result = await resolveProviderAccountAuth('openai', {
+    id: 'secondary', authRef: 'keyring:provider:openai:secondary', enabled: true,
   });
 
   expect(result).toEqual({ apiKey: 'selected-account-credential' });

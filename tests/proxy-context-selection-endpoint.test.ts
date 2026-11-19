@@ -142,7 +142,6 @@ describe('context selection endpoint', () => {
       false,
       undefined,
       undefined,
-      undefined,
       [
         { name: 'leverframe:openai-oauth:gpt-5.6-luna', routeId: route.aliasId },
         { name: 'atlas', routeId: route.aliasId },

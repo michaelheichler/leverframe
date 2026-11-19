@@ -104,7 +104,7 @@ export async function selectRoutingTie(input: SelectorInput, dependencies: Selec
   const tier = first?.estimate.kind === 'known' ? input.decision.ordered.filter(item => item.estimate.kind === 'known'
     && item.estimate.amount! <= first.estimate.amount! * (1 + tolerance)) : [];
   if (!options?.enabled || input.decision.source !== 'pool' || tier.length < 2) return input.decision;
-  const validCapabilities = ['tools', 'images', 'reasoning', 'promptCache', 'websocket'];
+  const validCapabilities = ['tools', 'images', 'reasoning', 'promptCache'];
   if (!/^[a-f0-9]{64}$/.test(input.taskSignature)
     || !/^[A-Za-z0-9_-]{1,128}$/.test(input.category)
     || (input.effort !== undefined && !/^[A-Za-z0-9_-]{1,64}$/.test(input.effort))

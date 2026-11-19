@@ -26,15 +26,15 @@ Use Claude Code with models from other providers. Leverframe handles authenticat
 Use Node.js 22 or newer and pnpm 10.34.5. Install Claude Code separately to use its harness, and bring your own provider access.
 
 ```bash
-git clone https://github.com/michaelheichler/leverframe.git
+git clone --branch v0.5.7 --single-branch https://github.com/michaelheichler/leverframe.git
 cd leverframe
 pnpm install --frozen-lockfile
-pnpm build
-npm link --ignore-scripts
+pnpm pack
+npm install -g ./michaelheichler-leverframe-0.5.7.tgz
 leverframe --version
 ```
 
-The package name is `@michaelheichler/leverframe`. It provides `leverframe`, `leverframe-claude`, and `claudeplus`. Install this fork from the repository or a verified package built from it. Source checkouts do not include `dist/`, so run the build before linking or invoking the CLI.
+The package name is `@michaelheichler/leverframe`. It provides `leverframe`, `leverframe-claude`, and `claudeplus`. The pack command builds the CLI before creating the archive. Restart any running Leverframe server or proxy after upgrading so it loads the new version.
 
 ## Get started
 
@@ -49,10 +49,14 @@ Choose a provider, complete sign-in or enter its API key, then browse discovered
 For direct OAuth setup, use the relevant command.
 
 ```bash
-leverframe providers auth openai
+leverframe providers auth openai-chatgpt-plan
 leverframe providers auth github-copilot
 leverframe providers auth antigravity
 ```
+
+Use `openai-chatgpt-plan` to connect through Sign in with ChatGPT. Complete consent in your browser, then choose a model from the catalog for that account.
+
+Version 0.5.7 retires the Codex device login and the `openai-oauth` route. To resume using your ChatGPT plan, sign in with the command above and reselect any favorites or aliases that used `openai-oauth`. You can remove the retired provider entry from the providers menu. If a saved Switchyard rule requires `websocket`, update that rule before using Switchyard.
 
 `claudeplus` prepares a private proxy for each session, while plain `claude` retains its normal routing. After updating Claude Code, run `leverframe patch` and inspect the integration without network access using `leverframe patch --diagnose --json`.
 
@@ -60,7 +64,7 @@ leverframe providers auth antigravity
 
 | Provider | Authentication |
 | --- | --- |
-| ChatGPT / Codex | Browser OAuth |
+| ChatGPT plan | Sign in with ChatGPT and a local browser callback |
 | GitHub Copilot | Device authorization |
 | Google Antigravity, experimental | Browser OAuth |
 | OpenAI | API key |

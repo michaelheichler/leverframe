@@ -2,6 +2,7 @@ import { cachedModelToLocal } from './registry/materialize.js';
 import { routingTransportFingerprint } from './routing-transport-identity.js';
 import type { CachedModel, RegistryAccount, RegistryProvider } from './registry/types.js';
 import { accountModelsCache } from './registry/account-cache.js';
+import { isRetiredOpenAiProvider } from './registry/retired-openai.js';
 import type { RoutingCatalogSnapshot } from './model-routing-catalog.js';
 import type { RoutingBinding } from './routing-bindings.js';
 import { eligible, sameRef, type RoutingCapability } from './routing-policy.js';
@@ -47,14 +48,14 @@ function cachedSupportsRequest(model: CachedModel, binding: RoutingBinding, body
     if (capability === 'reasoning') return model.reasoning === true;
     if (capability === 'images') return model.vision === true;
     if (capability === 'tools') return model.supportedParameters?.includes('tools') === true;
-    if (capability === 'promptCache') return model.supportsPromptCacheBreakpoints === true;
-    return model.preferWebSockets === true;
+    return model.supportsPromptCacheBreakpoints === true;
   });
 }
 
 export function routingDirectFailure(binding: RoutingBinding, provider: RegistryProvider | undefined,
   accountId?: string, body?: Record<string, unknown>): 'identity' | 'requirements' | undefined {
-  if (!provider?.enabled || provider.id !== binding.decision.target.providerId || provider.credentialSource === 'claude-code') return 'identity';
+  if (!provider?.enabled || isRetiredOpenAiProvider(provider) || provider.id !== binding.decision.target.providerId
+    || provider.credentialSource === 'claude-code') return 'identity';
   const account = accountId ? provider.accounts?.find(item => item.id === accountId && item.enabled) : undefined;
   if (accountId && !account) return 'identity';
   const cache = account ? accountModelsCache(provider, account) : provider.modelsCache;

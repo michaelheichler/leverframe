@@ -1,4 +1,5 @@
 import { updateRegistry } from './io.js';
+import { OPENAI_CHATGPT_PLAN_PROVIDER_ID } from '../constants.js';
 import type { CachedModel, RegistryAccount, RegistryProvider } from './types.js';
 import type { RefreshProviderResult } from './refresh-models.js';
 import { randomUUID } from 'node:crypto';
@@ -22,7 +23,9 @@ export async function refreshAccountCatalogs(
       });
       if (!started) throw new Error('The account changed before discovery.');
       const result = await discover(account);
-      if (!result.models.length) throw new Error('The account returned no available models.');
+      if (!result.models.length && provider.id !== OPENAI_CHATGPT_PLAN_PROVIDER_ID) {
+        throw new Error('The account returned no available models.');
+      }
       const cache = { ...result, fetchedAt: new Date().toISOString() };
       const published = updateRegistry(registry => {
         const current = registry.providers.find(item => item.id === provider.id && item.enabled);

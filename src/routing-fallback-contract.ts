@@ -131,7 +131,7 @@ export function validCandidatePin(value: unknown): value is RoutingCandidatePin 
     && (metadata.maxOutputTokens === undefined || (Number.isSafeInteger(metadata.maxOutputTokens) && metadata.maxOutputTokens > 0))
     && (metadata.supportedReasoningEfforts === undefined || (Array.isArray(metadata.supportedReasoningEfforts)
       && metadata.supportedReasoningEfforts.every(validText)))
-    && Array.isArray(pin.capabilities) && pin.capabilities.every(cap => ['tools', 'images', 'reasoning', 'promptCache', 'websocket'].includes(cap));
+    && Array.isArray(pin.capabilities) && pin.capabilities.every(cap => ['tools', 'images', 'reasoning', 'promptCache'].includes(cap));
 }
 export function candidatePin(catalog: RoutingCatalogSnapshot, ref: ModelRef, effort: string | undefined,
   requirements: RoutingRequirements | undefined, ignoreAvailability = false): RoutingCandidatePin | undefined {
@@ -141,7 +141,7 @@ export function candidatePin(catalog: RoutingCatalogSnapshot, ref: ModelRef, eff
   try {
     const resolved = routingPolicyIdentity(stable, ref, effort, requirements);
     const rows = stable.models.filter(model => sameRef(model.ref, ref) && eligible(model, effort, requirements));
-    const capabilities = (['tools', 'images', 'reasoning', 'promptCache', 'websocket'] as const)
+    const capabilities = (['tools', 'images', 'reasoning', 'promptCache'] as const)
       .filter(cap => rows.every(model => model.confirmedCapabilities.includes(cap) && model.capabilities[cap]));
     return { identity: resolved.identity, metadata: resolved.metadata, capabilities };
   } catch (error) {

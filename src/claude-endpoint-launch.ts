@@ -29,7 +29,7 @@ async function launchClaudeViaCatalog(options: CatalogLaunchOptions): Promise<nu
   });
   let handle: ProxyHandle;
   try {
-    handle = await startProxyCatalog(catalogRoutes, startingRoute.aliasId, trace, undefined, undefined, undefined, [...canonicalAliases, ...modelAliases]);
+    handle = await startProxyCatalog(catalogRoutes, startingRoute.aliasId, trace, undefined, undefined, [...canonicalAliases, ...modelAliases]);
     p.log.info(`Switch menu active - proxy on port ${handle.port} ` + pc.dim(`(${catalogRoutes.length} model${catalogRoutes.length !== 1 ? 's' : ''} in /model)`));
   } catch (error) { p.log.error(`Failed to start proxy: ${error instanceof Error ? error.message : String(error)}`); return 1; }
   const id = canonicalCatalogModelId(startingRoute) ?? startingRoute.aliasId;

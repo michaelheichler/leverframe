@@ -114,7 +114,7 @@ function providerTagColor(providerId: string): (text: string) => string {
     case 'anthropic-api':
       return pc.magenta;
     case 'openai':
-    case 'openai-oauth':
+    case 'openai-chatgpt-plan':
       return pc.white;
     default:
       return pc.yellow;

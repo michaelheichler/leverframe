@@ -1,3 +1,4 @@
+import { OPENAI_CHATGPT_PLAN_BASE_URL, OPENAI_CHATGPT_PLAN_PROVIDER_ID } from './constants.js';
 import { OPENCODE_ZEN_BASE_URL, openCodeZenCredentialNotice, openCodeZenHeaders } from './opencode-zen.js';
 import { openCodeZenModelCatalog } from './registry/opencode-zen-models.js';
 import type { CachedModel } from './registry/types.js';
@@ -80,21 +81,22 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     supported: true,
   },
   {
-    id: 'openai-oauth',
-    name: 'OpenAI (ChatGPT)',
-    authType: 'oauth',
-    npm: '@ai-sdk/openai',
-    signupUrl: 'https://chatgpt.com',
-    modelSource: 'api-list',
-    supported: true,
-  },
-  {
     id: 'github-copilot',
     name: 'GitHub Copilot',
     authType: 'oauth',
     npm: '@ai-sdk/openai-compatible',
     defaultBaseUrl: 'https://api.githubcopilot.com',
     signupUrl: 'https://github.com/features/copilot',
+    modelSource: 'api-list',
+    supported: true,
+  },
+  {
+    id: OPENAI_CHATGPT_PLAN_PROVIDER_ID,
+    name: 'ChatGPT plan',
+    authType: 'oauth',
+    npm: '@ai-sdk/openai',
+    defaultBaseUrl: OPENAI_CHATGPT_PLAN_BASE_URL,
+    signupUrl: 'https://chatgpt.com',
     modelSource: 'api-list',
     supported: true,
   },

@@ -207,7 +207,7 @@ it('passes one confirmed router preflight through proxy startup without native c
   expect(outerHome).toBeTruthy();
   expect(inside(outerHome!, getAppHome())).toBe(true);
   const startProxy = vi.spyOn(proxyServer, 'startHttpProxy');
-  const started = await startConfiguredHttpProxy(0, false, '/tmp/fixture-startup-inference.jsonl', undefined, undefined, true, true);
+  const started = await startConfiguredHttpProxy(0, false, '/tmp/fixture-startup-inference.jsonl', undefined, true, true);
   const handle = started.handle as typeof started.handle & { routingPreflight?: {
     target: typeof target;
     policyModelId: string;
@@ -245,7 +245,7 @@ it('starts an empty recovery listener for the saved recovery flag without model 
   mocks.loadPreferences.mockReturnValue({ favoriteModels: [], modelAliases: [], routing: { enabled: false, recoveryEnabled: true } });
   mocks.loadRegistry.mockClear();
   const started = await startConfiguredHttpProxy(0, false, `${outerHome}/recovery-only-inference.jsonl`, undefined,
-    undefined, true, true);
+    true, true);
 
   try {
     const recoveryRequest = await postRecovery(started.handle.port, started.handle.token, 'empty-recovery-session');
@@ -294,7 +294,7 @@ it('discovers a saved child target without adding it to the current new-job pool
     })) } });
   const startProxy = vi.spyOn(proxyServer, 'startHttpProxy');
   const started = await startConfiguredHttpProxy(0, false, `${outerHome}/recovered-target.jsonl`, undefined,
-    undefined, true, true);
+    true, true);
 
   try {
     const recoveredPolicyId = httpProxyModelId(recoveredTarget.providerId, recoveredTarget.modelId);

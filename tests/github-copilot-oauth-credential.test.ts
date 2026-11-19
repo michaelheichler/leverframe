@@ -2,7 +2,6 @@
 
 import { describe, expect, it } from 'vitest';
 import { githubCopilotTokensToStoredCredential } from '../src/oauth/github-copilot.js';
-import { extractOpenAiAccountId } from '../src/oauth/openai.js';
 import { oauthCredentialShouldRefresh, refreshStoredOAuthCredential } from '../src/oauth/refresh.js';
 import { oauthCredentialToKeychainJson, type OAuthTokenResponse } from '../src/oauth/types.js';
 
@@ -44,27 +43,5 @@ describe('githubCopilotTokensToStoredCredential', () => {
     expect(oauthCredentialShouldRefresh(cred, 'github-copilot')).toBe(true);
     await expect(refreshStoredOAuthCredential('github-copilot', cred))
       .rejects.toThrow(/leverframe providers auth github-copilot/);
-  });
-});
-
-describe('existing OpenAI oauth semantics stay unchanged', () => {
-  it('still extracts the ChatGPT account id from the OpenAI id token', () => {
-    const header = Buffer.from('{}').toString('base64url');
-    const payload = Buffer.from(JSON.stringify({ chatgpt_account_id: 'user-123' })).toString('base64url');
-
-    expect(extractOpenAiAccountId({ access_token: `${header}.${payload}.x`, refresh_token: 'r' })).toBe('user-123');
-  });
-
-  it('still flags openai-oauth credentials for proactive refresh from a soon-to-expire JWT', () => {
-    const header = Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url');
-    const payload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) - 10 })).toString('base64url');
-    const cred = {
-      type: 'oauth' as const,
-      access: `${header}.${payload}.sig`,
-      refresh: 'rt',
-      expires: Date.now() + 10 * 60 * 1000,
-    };
-
-    expect(oauthCredentialShouldRefresh(cred, 'openai-oauth')).toBe(true);
   });
 });

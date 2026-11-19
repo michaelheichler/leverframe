@@ -19,7 +19,6 @@ import {
   upstreamHttpStatus,
 } from '../upstream-error.js';
 import { silenceSdkWarnings } from '../sdk-adapter.js';
-import { evictResponsesWebSocketConnectionsForAccessToken } from '../oauth/responses-websocket.js';
 import { ProviderRuntimeCache } from '../provider-runtime-cache.js';
 import { disposeLanguageModel } from '../language-model-disposal.js';
 import {
@@ -53,7 +52,6 @@ export interface ServerOptions {
 
   inferenceLogPath?: string;
 
-  webSocketDiagnosticsLogPath?: string;
   managedPools?: Set<string>;
 }
 
@@ -101,9 +99,6 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
   silenceSdkWarnings();
   const languageModelCache = new ProviderRuntimeCache<LanguageModel>({
     disposeHandle: disposeLanguageModel,
-    onCredentialRotated: previous => {
-      evictResponsesWebSocketConnectionsForAccessToken(previous.credential);
-    },
   });
   const plog = makeServerLog(options.debugLogPath);
   reconcileExecutionsAtStartupSafely(plog);

@@ -15,7 +15,7 @@ import {
 let home: string;
 let previousHome: string | undefined;
 
-const pool: PoolKey = { providerId: 'openai-oauth', modelId: 'fixture-model', billingType: 'oauth' };
+const pool: PoolKey = { providerId: 'openai-chatgpt-plan', modelId: 'fixture-model', billingType: 'oauth' };
 const accounts = [{ id: 'alpha', enabled: true }, { id: 'beta', enabled: true }];
 const sessionId = 'fixture-session';
 

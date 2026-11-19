@@ -90,7 +90,7 @@ describe('parseProvidersArgs', () => {
 
   it('shows each native OAuth provider in the login help', () => {
     const help = providerAuthHelpText();
-    expect(help).toContain('auth openai');
+    expect(help).toContain('auth openai-chatgpt-plan');
     expect(help).toContain('auth github-copilot');
     expect(help).toContain('auth antigravity');
     expect(help).not.toContain('xai');
@@ -150,7 +150,7 @@ describe('registry crud', () => {
     const registry = emptyRegistry();
     registry.providers.push(
       openaiEntry({ authRef: 'keyring:provider:shared' }),
-      openaiEntry({ id: 'openai-oauth', name: 'OpenAI (ChatGPT)', authType: 'oauth', authRef: 'keyring:provider:shared' }),
+      openaiEntry({ id: 'openai-backup', name: 'OpenAI backup', authType: 'api', authRef: 'keyring:provider:shared' }),
     );
     saveRegistry(registry);
 
@@ -187,9 +187,9 @@ describe('providers add menu', () => {
 
     const options = selectMock.mock.calls[0]?.[0].options.map((option: { value: string }) => option.value);
     expect(options).toEqual([
+      'oauth:openai-chatgpt-plan',
       'oauth:github-copilot',
       'oauth:antigravity',
-      'oauth:openai-oauth',
       `api:${ANTHROPIC_API_PROVIDER_ID}`,
       'api:kimi',
       'api:moonshot',
@@ -212,9 +212,9 @@ describe('providers add menu', () => {
     const options = selectMock.mock.calls[0]?.[0].options.map((option: { value: string }) => option.value);
     expect(options).toEqual([
       'account:openai',
+      'oauth:openai-chatgpt-plan',
       'oauth:github-copilot',
       'oauth:antigravity',
-      'oauth:openai-oauth',
       `api:${ANTHROPIC_API_PROVIDER_ID}`,
       'api:kimi',
       'api:moonshot',

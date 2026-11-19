@@ -9,8 +9,8 @@ const rates = (input: number | undefined, output: number | undefined) => ({
 const model = (providerId: string, modelId: string, estimate: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
   ref: ref(providerId, modelId), credential: { source: 'registry', authRef: 'fixture', kind: 'api_key', available: true },
   billing: { kind: 'metered' }, discovery: { source: 'registry', state: 'current', confirmed: true, fetchedAt: 'fixture' },
-  capabilities: { tools: true, images: true, reasoning: true, promptCache: true, websocket: true },
-  confirmedCapabilities: ['tools', 'images', 'reasoning', 'promptCache', 'websocket'],
+  capabilities: { tools: true, images: true, reasoning: true, promptCache: true },
+  confirmedCapabilities: ['tools', 'images', 'reasoning', 'promptCache'],
   contextWindow: 100_000, contextWindowConfirmed: true, estimate, ...extra,
 }) as unknown as RoutingCatalogModel;
 const models = (...items: RoutingCatalogModel[]) => ({ generatedAt: 'fixture', models: items }) as RoutingCatalogSnapshot;

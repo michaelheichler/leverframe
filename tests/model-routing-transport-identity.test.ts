@@ -5,7 +5,7 @@ import { buildRoutingCatalog } from '../src/model-routing.js';
 import { getAppHome } from '../src/paths.js';
 import { ANTIGRAVITY_ORIGIN } from '../src/antigravity/types.js';
 import { COPILOT_API_BASE_URL } from '../src/copilot/backend.js';
-import { CODEX_API_BASE_URL } from '../src/constants.js';
+import { OPENAI_CHATGPT_PLAN_BASE_URL } from '../src/constants.js';
 import { routingTransportFingerprint } from '../src/routing-transport-identity.js';
 import { createRoutingBinding, resolveRoutingBinding, routingBindingErrors, routingBindingStatePath } from '../src/routing-bindings.js';
 import { routingIdentityErrors } from '../src/routing-policy-identity.js';
@@ -202,10 +202,10 @@ it('keeps native Claude transport identity pinned to the existing Anthropic orig
 });
 
 it.each([
-  { providerId: 'openai-oauth', npm: '@ai-sdk/openai', authType: 'oauth' as const,
-    format: 'openai' as const, endpoint: 'https://configured.invalid/private', expectedEndpoint: CODEX_API_BASE_URL },
-  { providerId: 'openai-oauth', npm: '@ai-sdk/openai', authType: 'oauth' as const,
-    format: 'openai' as const, endpoint: undefined, expectedEndpoint: CODEX_API_BASE_URL },
+  { providerId: 'openai-chatgpt-plan', npm: '@ai-sdk/openai', authType: 'oauth' as const,
+    format: 'openai' as const, endpoint: 'https://configured.invalid/private', expectedEndpoint: OPENAI_CHATGPT_PLAN_BASE_URL },
+  { providerId: 'openai-chatgpt-plan', npm: '@ai-sdk/openai', authType: 'oauth' as const,
+    format: 'openai' as const, endpoint: undefined, expectedEndpoint: OPENAI_CHATGPT_PLAN_BASE_URL },
   { providerId: 'github-copilot', npm: '@ai-sdk/openai-compatible', authType: 'oauth' as const,
     format: 'openai' as const, endpoint: 'https://configured.invalid/copilot', expectedEndpoint: COPILOT_API_BASE_URL },
   { providerId: 'antigravity', npm: '@ai-sdk/google', authType: 'oauth' as const,

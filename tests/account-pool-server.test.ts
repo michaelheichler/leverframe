@@ -1,3 +1,4 @@
+import { planCredential } from './fixtures/chatgpt-plan-credential.js';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,7 +22,7 @@ let previousAlpha: string | undefined;
 let previousBeta: string | undefined;
 let fakeKeyring: Map<string, string>;
 
-const oauthAlphaRef = 'keyring:oauth:provider:openai-oauth::credential::v1:00000000000000000000000000000001';
+const oauthAlphaRef = 'keyring:oauth:provider:openai-chatgpt-plan::credential::v1:00000000000000000000000000000001';
 
 function saveApiAccounts(): void {
   saveRegistry({
@@ -38,16 +39,14 @@ function saveApiAccounts(): void {
 }
 
 function saveOAuthAccounts(): void {
-  const betaRef = 'keyring:oauth:provider:openai-oauth::credential::v1:00000000000000000000000000000002';
-  const oauthCredential = (access: string, accountId: string) => JSON.stringify({
-    type: 'oauth', access, refresh: 'unused-refresh-fixture', expires: Date.now() + 3_600_000, accountId,
-  });
+  const betaRef = 'keyring:oauth:provider:openai-chatgpt-plan::credential::v1:00000000000000000000000000000002';
+  const oauthCredential = (access: string, accountId: string) => JSON.stringify(planCredential(access, accountId));
   fakeKeyring.set(oauthAlphaRef.slice('keyring:'.length), oauthCredential('oauth-alpha-access', 'oauth-alpha-account'));
   fakeKeyring.set(betaRef.slice('keyring:'.length), oauthCredential('oauth-beta-access', 'oauth-beta-account'));
   saveRegistry({
     schemaVersion: 1,
     providers: [{
-      id: 'openai-oauth', templateId: 'openai-oauth', name: 'ChatGPT OAuth', enabled: true,
+      id: 'openai-chatgpt-plan', templateId: 'openai-chatgpt-plan', name: 'ChatGPT OAuth', enabled: true,
       authType: 'oauth', authRef: oauthAlphaRef, api: {}, addedAt: '2026-01-01',
       accounts: [
         { id: 'alpha', authRef: oauthAlphaRef, enabled: true },
@@ -171,9 +170,7 @@ it('fails over the server translated ChatGPT OAuth route with resolved account m
     if (call.authorization === 'Bearer oauth-alpha-access') {
       response.writeHead(429, {
         'Content-Type': 'application/json',
-        'x-codex-primary-used-percent': '100',
-        'x-codex-primary-window-minutes': '300',
-        'x-codex-primary-reset-at': String(Math.floor(Date.now() / 1000) + 3600),
+        'Retry-After': '3600',
       });
       response.end(JSON.stringify({ error: { type: 'usage_limit_reached', message: 'limit reached' } }));
       return;
@@ -188,8 +185,8 @@ it('fails over the server translated ChatGPT OAuth route with resolved account m
     catalog: createGatewayModelCatalog([{
       id: 'gpt-4o-mini', name: 'ChatGPT OAuth fixture', isFree: false,
       brand: 'OpenAI', sourceBackend: 'fixture', modelFormat: 'openai',
-      providerId: 'openai-oauth', authType: 'oauth', npm: '@ai-sdk/openai',
-      apiKey: 'server-route-snapshot-token', preferWebSockets: false,
+      providerId: 'openai-chatgpt-plan', authType: 'oauth', npm: '@ai-sdk/openai',
+      apiKey: 'server-route-snapshot-token',
     }]),
   });
 
@@ -203,11 +200,11 @@ it('fails over the server translated ChatGPT OAuth route with resolved account m
     expect(await response.text()).toContain('OAuth fixture response');
     expect(upstream.calls).toEqual([
       {
-        authorization: 'Bearer oauth-alpha-access', accountId: 'oauth-alpha-account',
+        authorization: 'Bearer oauth-alpha-access', accountId: undefined,
         model: 'gpt-4o-mini', path: expect.stringContaining('/responses'),
       },
       {
-        authorization: 'Bearer oauth-beta-access', accountId: 'oauth-beta-account',
+        authorization: 'Bearer oauth-beta-access', accountId: undefined,
         model: 'gpt-4o-mini', path: expect.stringContaining('/responses'),
       },
     ]);
@@ -222,9 +219,7 @@ it('preserves execution identity headers when the server OAuth pool is exhausted
   const upstream = await startOpenAiUpstream((_call, response) => {
     response.writeHead(429, {
       'Content-Type': 'application/json',
-      'x-codex-primary-used-percent': '100',
-      'x-codex-primary-window-minutes': '300',
-      'x-codex-primary-reset-at': String(Math.floor(Date.now() / 1000) + 3600),
+      'Retry-After': '3600',
     });
     response.end(JSON.stringify({ error: { type: 'usage_limit_reached', message: 'limit reached' } }));
   });
@@ -236,8 +231,8 @@ it('preserves execution identity headers when the server OAuth pool is exhausted
     catalog: createGatewayModelCatalog([{
       id: 'gpt-4o-mini', name: 'ChatGPT OAuth fixture', isFree: false,
       brand: 'OpenAI', sourceBackend: 'fixture', modelFormat: 'openai',
-      providerId: 'openai-oauth', authType: 'oauth', npm: '@ai-sdk/openai',
-      apiKey: 'server-route-snapshot-token', preferWebSockets: false,
+      providerId: 'openai-chatgpt-plan', authType: 'oauth', npm: '@ai-sdk/openai',
+      apiKey: 'server-route-snapshot-token',
     }]),
   });
 
@@ -276,8 +271,8 @@ it('fails over a server translated OAuth request after an upstream HTTP 429', as
     catalog: createGatewayModelCatalog([{
       id: 'gpt-4o-mini', name: 'ChatGPT OAuth fixture', isFree: false,
       brand: 'OpenAI', sourceBackend: 'fixture', modelFormat: 'openai',
-      providerId: 'openai-oauth', authType: 'oauth', npm: '@ai-sdk/openai',
-      apiKey: 'server-route-snapshot-token', preferWebSockets: false,
+      providerId: 'openai-chatgpt-plan', authType: 'oauth', npm: '@ai-sdk/openai',
+      apiKey: 'server-route-snapshot-token',
     }]),
   });
 
@@ -322,8 +317,8 @@ it('does not replay a server OAuth stream after partial output reaches the clien
     catalog: createGatewayModelCatalog([{
       id: 'gpt-4o-mini', name: 'ChatGPT OAuth fixture', isFree: false,
       brand: 'OpenAI', sourceBackend: 'fixture', modelFormat: 'openai',
-      providerId: 'openai-oauth', authType: 'oauth', npm: '@ai-sdk/openai',
-      apiKey: 'server-route-snapshot-token', preferWebSockets: false,
+      providerId: 'openai-chatgpt-plan', authType: 'oauth', npm: '@ai-sdk/openai',
+      apiKey: 'server-route-snapshot-token',
     }]),
   });
 
@@ -359,8 +354,8 @@ it('logs usage from a successful pooled server OAuth stream', async () => {
     catalog: createGatewayModelCatalog([{
       id: 'gpt-4o-mini', name: 'ChatGPT OAuth fixture', isFree: false,
       brand: 'OpenAI', sourceBackend: 'fixture', modelFormat: 'openai',
-      providerId: 'openai-oauth', authType: 'oauth', npm: '@ai-sdk/openai',
-      apiKey: 'server-route-snapshot-token', preferWebSockets: false,
+      providerId: 'openai-chatgpt-plan', authType: 'oauth', npm: '@ai-sdk/openai',
+      apiKey: 'server-route-snapshot-token',
     }]),
   });
 

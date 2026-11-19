@@ -153,7 +153,6 @@ interface TrustedHostRule {
 const HARDCODED_TRUSTED_HOSTS: ReadonlyArray<TrustedHostRule> = [
   { host: 'api.openai.com', basePath: '/v1' },
   { host: 'api.anthropic.com', basePath: '' },
-  { host: 'chatgpt.com', basePath: '/backend-api/codex' },
 ];
 
 function trustedPathnameMatches(pathname: string, basePath: string): boolean {

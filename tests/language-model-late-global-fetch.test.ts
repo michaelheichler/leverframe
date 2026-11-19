@@ -1,18 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { generateText } from 'ai';
+import { generateText, streamText } from 'ai';
 import { expect, it } from 'vitest';
 import type { ProviderModelSpec } from '../src/language-model-factory.js';
+import { upstreamResponsesStream } from './fixtures/chatgpt-plan-responses.js';
 import { useIsolatedTestHome } from './isolated-test-home.js';
 
 useIsolatedTestHome('leverframe-late-global-fetch');
-
-function openAiReply(text: string): Response {
-  return Response.json({
-    id: 'chat-fixture', object: 'chat.completion', created: 1, model: 'gpt-fixture',
-    choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
-    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-  });
-}
 
 function anthropicReply(text: string): Response {
   return Response.json({
@@ -26,18 +19,21 @@ it.each<{
   provider: string;
   spec: Omit<ProviderModelSpec, 'apiKey'>;
   reply: (text: string) => Response;
+  complete: typeof generateText | typeof streamText;
 }>([
   {
-    provider: 'OpenAI OAuth',
-    spec: { npm: '@ai-sdk/openai', modelId: 'gpt-fixture', authType: 'oauth', openAiEndpoint: 'chat' },
-    reply: openAiReply,
+    provider: 'ChatGPT plan',
+    spec: { npm: '@ai-sdk/openai', modelId: 'gpt-fixture', authType: 'oauth', providerId: 'openai-chatgpt-plan' },
+    reply: upstreamResponsesStream,
+    complete: streamText,
   },
   {
     provider: 'Anthropic',
     spec: { npm: '@ai-sdk/anthropic', modelId: 'claude-fixture', authType: 'api' },
     reply: anthropicReply,
+    complete: generateText,
   },
-])('$provider uses the global fetch installed after model creation', async ({ spec, reply }) => {
+])('$provider uses the global fetch installed after model creation', async ({ spec, reply, complete }) => {
   const originalFetch = globalThis.fetch;
   const currentReply = 'reply from the transport installed for this request';
   try {
@@ -46,9 +42,9 @@ it.each<{
     const model = await createLanguageModel({ ...spec, apiKey: randomUUID() });
     globalThis.fetch = async () => reply(currentReply);
 
-    const result = await generateText({ model, prompt: 'Hello', maxRetries: 0 });
+    const result = await complete({ model, prompt: 'Hello', maxRetries: 0 });
 
-    expect(result.text).toBe(currentReply);
+    expect(await result.text).toBe(currentReply);
   } finally {
     globalThis.fetch = originalFetch;
   }

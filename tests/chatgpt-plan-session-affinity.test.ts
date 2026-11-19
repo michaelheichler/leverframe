@@ -15,23 +15,26 @@ function oauthParams(body: Parameters<typeof translateRequest>[0], claudeSession
   return translateRequest(body, '@ai-sdk/openai', { openAiOAuth: true, claudeSessionId });
 }
 
-it('keeps the OAuth session header aligned and stable across history changes', () => {
+it('keeps the ChatGPT plan cache key stable across history changes', () => {
   const sessionId = '11111111-1111-4111-8111-111111111111';
   const first = oauthParams(request(sessionId));
   const next = oauthParams({ ...request(sessionId), messages: [
     { role: 'user' as const, content: 'Inspect the request path again.' },
   ] });
 
-  expect(first.headers?.['session-id']).toBe(first.providerOptions?.openai?.promptCacheKey);
-  expect(next.headers?.['session-id']).toBe(first.headers?.['session-id']);
-  expect(first.headers?.['session-id']).not.toContain(sessionId);
+  expect(first.providerOptions?.openai?.promptCacheKey).toBe(claudeSessionPromptCacheKey(sessionId));
+  expect(next.providerOptions?.openai?.promptCacheKey).toBe(first.providerOptions?.openai?.promptCacheKey);
+  expect(first.headers?.['session-id']).toBeUndefined();
+  expect(next.headers?.['session-id']).toBeUndefined();
 });
 
 it('separates valid session UUIDs on the same model', () => {
   const first = oauthParams(request('11111111-1111-4111-8111-111111111111'));
   const second = oauthParams(request('22222222-2222-4222-8222-222222222222'));
 
-  expect(first.headers?.['session-id']).not.toBe(second.headers?.['session-id']);
+  expect(first.providerOptions?.openai?.promptCacheKey).not.toBe(second.providerOptions?.openai?.promptCacheKey);
+  expect(first.headers?.['session-id']).toBeUndefined();
+  expect(second.headers?.['session-id']).toBeUndefined();
 });
 
 it('uses the valid body session before the caller header session', () => {
@@ -39,13 +42,16 @@ it('uses the valid body session before the caller header session', () => {
   const headerSession = '22222222-2222-4222-8222-222222222222';
   const params = oauthParams(request(bodySession), headerSession);
 
-  expect(params.headers?.['session-id']).toBe(claudeSessionPromptCacheKey(bodySession));
+  expect(params.providerOptions?.openai?.promptCacheKey).toBe(claudeSessionPromptCacheKey(bodySession));
+  expect(params.headers?.['session-id']).toBeUndefined();
 });
 
-it('aligns fallback session affinity with the existing prefix cache key', () => {
-  const params = oauthParams({ ...request(), metadata: { user_id: '{invalid session metadata' },
-    system: 'Use the current instructions.' });
+it('uses the prefix cache key when session metadata is malformed', () => {
+  const body = { ...request(), system: 'Use the current instructions.' };
+  const fallback = oauthParams(body).providerOptions?.openai?.promptCacheKey;
+  const params = oauthParams({ ...body, metadata: { user_id: '{invalid session metadata' } });
 
-  expect(params.headers?.['session-id']).toBe(params.providerOptions?.openai?.promptCacheKey);
-  expect(params.headers?.['session-id']).not.toContain('invalid session metadata');
+  expect(fallback).toEqual(expect.any(String));
+  expect(params.providerOptions?.openai?.promptCacheKey).toBe(fallback);
+  expect(params.headers?.['session-id']).toBeUndefined();
 });

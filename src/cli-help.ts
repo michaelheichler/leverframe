@@ -79,7 +79,7 @@ ${pc.bold('Options:')}
 
 ${pc.bold('Providers:')}
   openai         OpenAI API key (platform.openai.com)
-  openai-oauth   ChatGPT/Codex plan OAuth, sign in with leverframe providers auth openai
+  openai-chatgpt-plan   ChatGPT plan, sign in with leverframe providers auth openai-chatgpt-plan
   kimi           Kimi Coding Plan membership key
   moonshot       Moonshot pay-as-you-go API key
   zai            z.ai Coding Plan API key
@@ -110,7 +110,7 @@ ${pc.bold('Examples:')}
   leverframe claude --trace --resume abc-123
   leverframe claude --endpoint
   leverframe claude --endpoint --save-mode
-  leverframe claude --provider openai-oauth --model gpt-5.6-sol
+  leverframe claude --provider openai-chatgpt-plan --model gpt-6.2-sol
   leverframe claude -- --print "hello"
   leverframe claude -- --dangerously-skip-permissions`;
 }
@@ -138,8 +138,6 @@ ${pc.bold('Common options (both modes):')}
                                ~/.leverframe/server-runtime.json, so the
                                leverframe-claude wrapper never bridges to it
                                (LEVERFRAME_NO_DISCOVERY=1 works too)
-  --ws-diagnostics             Log sanitized request envelopes and WebSocket
-                               head decisions
   --help, --version            Help / version
 
 ${pc.bold('Endpoint mode only')} ${pc.dim('(error if combined with --proxy)')}:
@@ -168,7 +166,7 @@ ${pc.bold('Bare leverframe server:')}
   password or LEVERFRAME_SERVER_PASSWORD.
 
 ${pc.bold('--mask-gateway-ids explained:')}
-  Endpoint-mode discovery ids look like anthropic-openai-oauth__gpt-5.6.
+  Endpoint-mode discovery ids look like anthropic-openai-chatgpt-plan__gpt-6.2-sol.
   Some Claude clients validate model names (Claude Desktop / Cowork pickers,
   Claude Code skill/agent "model:" frontmatter) and reject or filter ids that
   contain non-Anthropic vendor names. Masking reverses the provider and model
@@ -202,7 +200,7 @@ Manage favorite models for mid-session switching.
 ${pc.bold('Usage:')}
   leverframe favorites
   leverframe models --list
-  leverframe models --alias sol=leverframe:openai-oauth:gpt-5.6-sol
+  leverframe models --alias sol=leverframe:openai-chatgpt-plan:gpt-6.2-sol
   leverframe models --unalias sol
   leverframe models
   leverframe favorites --help
@@ -230,7 +228,7 @@ ${pc.bold('How it works:')}
 
 ${pc.bold('Examples:')}
   leverframe favorites
-  leverframe models --alias sol=leverframe:openai-oauth:gpt-5.6-sol
+  leverframe models --alias sol=leverframe:openai-chatgpt-plan:gpt-6.2-sol
   leverframe claude    ${['#'].join('')} fresh routable catalog; favorites affect ordering`;
 }
 

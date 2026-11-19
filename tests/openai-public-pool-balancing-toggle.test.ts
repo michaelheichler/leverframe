@@ -1,3 +1,4 @@
+import { planCredential } from './fixtures/chatgpt-plan-credential.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,8 +11,8 @@ import { createGatewayModelCatalog } from '../src/server/models.js';
 import { saveRegistry } from '../src/registry/io.js';
 import { forwardSdkFetchToLocal, startOpenAiUpstream } from './fixtures/account-pool-proxy.js';
 
-const alphaRef = 'keyring:oauth:provider:openai-oauth::credential::v1:00000000000000000000000000000041';
-const betaRef = 'keyring:oauth:provider:openai-oauth::credential::v1:00000000000000000000000000000042';
+const alphaRef = 'keyring:oauth:provider:openai-chatgpt-plan::credential::v1:00000000000000000000000000000041';
+const betaRef = 'keyring:oauth:provider:openai-chatgpt-plan::credential::v1:00000000000000000000000000000042';
 let home: string;
 let previousHome: string | undefined;
 let fakeKeyring: Map<string, string>;
@@ -19,15 +20,13 @@ let server: ServerHandle | undefined;
 let closeUpstream: (() => Promise<void>) | undefined;
 
 function savePinnedAccounts(): void {
-  const credential = (access: string, accountId: string) => JSON.stringify({
-    type: 'oauth', access, refresh: 'fixture-refresh-unused', expires: Date.now() + 3_600_000, accountId,
-  });
+  const credential = (access: string, accountId: string) => JSON.stringify(planCredential(access, accountId));
   fakeKeyring.set(alphaRef.slice('keyring:'.length), credential('oauth-alpha-access', 'oauth-alpha-account'));
   fakeKeyring.set(betaRef.slice('keyring:'.length), credential('oauth-beta-access', 'oauth-beta-account'));
   saveRegistry({
     schemaVersion: 1,
     providers: [{
-      id: 'openai-oauth', templateId: 'openai-oauth', name: 'fixture OAuth pool', enabled: true,
+      id: 'openai-chatgpt-plan', templateId: 'openai-chatgpt-plan', name: 'fixture OAuth pool', enabled: true,
       authType: 'oauth', authRef: alphaRef, pinnedAccountId: 'alpha', api: {}, addedAt: '2026-01-01',
       accounts: [
         { id: 'alpha', authRef: alphaRef, enabled: true },
@@ -74,11 +73,11 @@ it('keeps a pinned session on its account when balancing is disabled despite bet
     host: '127.0.0.1', port: 0, apiKey: 'fixture-gateway-sentinel', serverPassword: null,
     catalog: createGatewayModelCatalog([{
       id: 'gpt-pool-toggle-fixture', name: 'fixture OAuth model', isFree: false, brand: 'OpenAI',
-      sourceBackend: 'fixture', modelFormat: 'openai', providerId: 'openai-oauth', authType: 'oauth',
-      npm: '@ai-sdk/openai', apiKey: 'catalog-token-sentinel', preferWebSockets: false,
+      sourceBackend: 'fixture', modelFormat: 'openai', providerId: 'openai-chatgpt-plan', authType: 'oauth',
+      npm: '@ai-sdk/openai', apiKey: 'catalog-token-sentinel',
     }]),
   });
-  const pool: PoolKey = { providerId: 'openai-oauth', modelId: 'gpt-pool-toggle-fixture', billingType: 'oauth' };
+  const pool: PoolKey = { providerId: 'openai-chatgpt-plan', modelId: 'gpt-pool-toggle-fixture', billingType: 'oauth' };
   const session = '33333333-3333-4333-8333-333333333333';
   const send = () => gatewayFetch(`${server!.url}/openai/v1/chat/completions`, {
     method: 'POST', headers: { 'content-type': 'application/json', 'x-claude-code-session-id': session },

@@ -15,7 +15,6 @@ function modelToCached(model: LocalProviderModel): CachedModel {
     maxContextWindow: model.maxContextWindow,
     inputTokenLimit: model.inputTokenLimit,
     outputTokenLimit: model.outputTokenLimit,
-    minimalClientVersion: model.minimalClientVersion,
     cost: model.cost,
     usageMultiplier: model.usageMultiplier,
     usageMultiplierApplies: model.usageMultiplierApplies,
@@ -38,8 +37,6 @@ function modelToCached(model: LocalProviderModel): CachedModel {
     supportsReasoningToggle: model.supportsReasoningToggle,
     supportsPromptCacheBreakpoints: model.supportsPromptCacheBreakpoints,
     interleavedReasoningField: model.interleavedReasoningField,
-    useResponsesLite: model.useResponsesLite,
-    preferWebSockets: model.preferWebSockets,
   };
 }
 

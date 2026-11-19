@@ -30,7 +30,6 @@ export type ProxyRequestContext={
   plog: ReturnType<typeof makeProxyLog>;
   modelsPayload: () => string;
   inferenceLogPath?: string;
-  webSocketDiagnosticsLogPath?: string;
 };
 
 export async function handleProxyRequest(req: IncomingMessage, res: ServerResponse, context: ProxyRequestContext): Promise<void> {

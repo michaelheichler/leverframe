@@ -190,7 +190,6 @@ export function translateOpenAiRequest(
       toolChoice: sdkToolChoice,
       temperature: body.temperature,
       maxRetries: 0,
-      headers: { 'session-id': promptCacheKey },
       providerOptions: {
         openai: {
           promptCacheKey,

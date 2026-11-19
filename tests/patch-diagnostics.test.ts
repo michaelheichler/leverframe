@@ -17,6 +17,7 @@ import type { FavoriteModel } from '../src/types.js';
 import { applyLeverframePatches, type PatchScriptModelConfig } from '../src/patch-transforms.js';
 import { buildDesiredPatchConfig } from '../src/patcher.js';
 import { loadRegistry, saveRegistry } from '../src/registry/io.js';
+import { planCredential } from './fixtures/chatgpt-plan-credential.js';
 import type { CachedModel } from '../src/registry/types.js';
 
 const VERSION = '2.1.223';
@@ -79,13 +80,14 @@ function unreadableRuntime(): PatchRuntime {
   };
 }
 
-function seedRegistry(models: CachedModel[], authRef = 'env:LEVERFRAME_TEST_CATALOG_KEY'): void {
+function seedRegistry(models: CachedModel[], authRef = 'env:LEVERFRAME_TEST_CATALOG_KEY', providerId = 'openai'): void {
   vi.stubEnv('LEVERFRAME_TEST_CATALOG_KEY', 'catalog-key');
   saveRegistry({
     ...loadRegistry(),
     providers: [{
-      id: 'openai',
-      templateId: 'openai',
+      id: providerId,
+      templateId: providerId,
+      authType: providerId === 'openai-chatgpt-plan' ? 'oauth' : 'api',
       name: 'OpenAI',
       enabled: true,
       authRef,
@@ -188,10 +190,10 @@ function cliPatch(installation: ClaudeInstallation): Promise<number> {
   return runPatchCommandV2({ installation, runtime: runtime() }, silentPresenter);
 }
 
-const OAUTH_ACCOUNT = 'oauth:provider:openai';
+const OAUTH_ACCOUNT = 'oauth:provider:openai-chatgpt-plan';
 
 function stubExpiredOAuthKeyring(): string[] {
-  const expired = JSON.stringify({ type: 'oauth', access: 'expired-dummy', refresh: 'refresh-dummy', expires: 0 });
+  const expired = JSON.stringify(planCredential('expired-dummy', 'fixture', { expires: 0 }));
   const operations: string[] = [];
   vi.spyOn(_credentialStoreInternals, 'keyringOperation').mockImplementation(async input => {
     operations.push(input.operation);
@@ -204,8 +206,8 @@ function stubExpiredOAuthKeyring(): string[] {
 describe('patch diagnostics after a fresh patch', () => {
   it('reads an expired OAuth credential without refreshing or rewriting it', async () => {
     const path = prepareTarget('leverframe-diagnostics-oauth-');
-    seedRegistry([catalogModel('favorite')], `keyring:${OAUTH_ACCOUNT}`);
-    savePreferences({ favoriteModels: [{ providerId: 'openai', modelId: 'favorite' }] });
+    seedRegistry([catalogModel('favorite')], `keyring:${OAUTH_ACCOUNT}`, 'openai-chatgpt-plan');
+    savePreferences({ favoriteModels: [{ providerId: 'openai-chatgpt-plan', modelId: 'favorite' }] });
     const operations = stubExpiredOAuthKeyring();
     const network = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network disabled'));
     const exitCode = await cliPatch(resolveFixtureInstallation(path));
@@ -214,8 +216,8 @@ describe('patch diagnostics after a fresh patch', () => {
 
     expect(exitCode).toBe(0);
     expect(report.state).toBe('patched');
-    expect(report.catalog).toEqual({ source: 'cache', refreshDue: ['openai'], unstable: [] });
-    expect(formatPatchDiagnosticsText(report)).toContainEqual(expect.stringMatching(/refreshes credentials for openai$/));
+    expect(report.catalog).toEqual({ source: 'cache', refreshDue: ['openai-chatgpt-plan'], unstable: [] });
+    expect(formatPatchDiagnosticsText(report)).toContainEqual(expect.stringMatching(/refreshes credentials for openai-chatgpt-plan$/));
     expect(network).not.toHaveBeenCalled();
     expect(new Set(operations)).toEqual(new Set(['peek']));
   });

@@ -74,7 +74,6 @@ export interface CachedModel {
   maxContextWindow?: number;
   inputTokenLimit?: number;
   outputTokenLimit?: number;
-  minimalClientVersion?: string;
   isFree?: boolean;
   freeStatus?: FreeStatus;
   modelFormat: 'anthropic' | 'openai' | 'cloud-code';
@@ -108,9 +107,7 @@ export interface CachedModel {
 
   interleavedReasoningField?: string;
 
-  useResponsesLite?: boolean;
 
-  preferWebSockets?: boolean;
 }
 
 export interface RegistryAccount {

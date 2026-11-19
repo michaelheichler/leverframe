@@ -6,6 +6,12 @@ This changelog records notable changes to Leverframe.
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-11-19
+
+### Changed
+
+- ChatGPT plan usage now uses Sign in with ChatGPT and OpenAI's public Responses API. Leverframe removed the Codex device login, its credential import, and the Responses Lite WebSocket transport. Existing users can sign in with `leverframe providers auth openai-chatgpt-plan` and update favorites and aliases that point to `openai-oauth`.
+
 ## [0.5.6] - 2026-11-18
 
 ### Fixed

@@ -11,7 +11,6 @@ export {
 } from './language-model-factory.js';
 export {
   getReasoningCapabilities,
-  buildCodexReasoningLevels,
   effortProviderOptions,
   deepMergeProviderOptions,
   thinkingProviderOptions,

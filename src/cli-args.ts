@@ -124,7 +124,6 @@ function parseServerArgs(rest: string[]): ParsedArgs {
     else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
     else if (consumeBridgeModeFlag(arg, parsed)) continue;
     else if (arg === '--save-mode') parsed.saveBridgeMode = true;
-    else if (arg === '--ws-diagnostics') parsed.serverWsDiagnostics = true;
     else if (arg === '--no-discovery') parsed.serverNoDiscovery = true;
     else if (arg === '--prepare-claude') parsed.serverPrepareClaude = true;
     else if (arg === '--quick' || arg === '--saved') parsed.serverQuick = true;

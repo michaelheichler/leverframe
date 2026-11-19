@@ -11,22 +11,23 @@ import {
   githubCopilotTokensToStoredCredential,
   runGitHubCopilotDeviceCodeFlow,
 } from '../oauth/github-copilot.js';
-import { runOpenAiDeviceCodeFlow } from '../oauth/openai.js';
+import { runChatGptPlanOAuthFlow } from '../oauth/chatgpt-plan.js';
+import { OPENAI_CHATGPT_PLAN_PROVIDER_ID } from '../constants.js';
 import { runAntigravityOAuthFlow } from '../oauth/antigravity.js';
 import { sleepMs } from '../oauth/pkce.js';
 import {
   supportsNativeOAuth,
-  tokensToStoredCredential,
   oauthCredentialToKeychainJson,
   type NativeOAuthProviderId,
   type StoredOAuthCredential,
 } from '../oauth/types.js';
 import { getTemplateById } from '../provider-templates.js';
-import { oauthAuthRef, toOAuthRegistryId } from './import-build.js';
+import { oauthAuthRef } from './import-build.js';
 import { loadRegistry, updateRegistry } from './io.js';
 import { cancelCredentialDelete, journalCredentialWrite, reconcilePendingCredentialDeletes } from './credential-lifecycle.js';
 import { withCredentialMutationLock, withProviderMutationLock } from './lock.js';
 import { refreshProviderModels } from './refresh-models.js';
+import { saveChatGptPlanReauthorization, selectChatGptPlanRegistration } from './chatgpt-plan-account.js';
 import type { RegistryProvider } from './types.js';
 
 export type { StoredOAuthCredential } from '../oauth/types.js';
@@ -45,10 +46,8 @@ export interface ProviderAuthResult {
   registryProvider: RegistryProvider;
 }
 
-const OPENAI_DISPLAY = 'OpenAI ChatGPT Plus/Pro';
 const PROVIDER_DISPLAY: Record<NativeOAuthProviderId, string> = {
-  openai: OPENAI_DISPLAY,
-  'openai-oauth': OPENAI_DISPLAY,
+  [OPENAI_CHATGPT_PLAN_PROVIDER_ID]: 'ChatGPT plan (Sign in with ChatGPT)',
   'github-copilot': 'GitHub Copilot',
   antigravity: 'Google Antigravity',
 };
@@ -62,7 +61,7 @@ function openBrowser(url: string): void {
 }
 
 async function runNativeDeviceCode(
-  providerId: NativeOAuthProviderId,
+  providerId: Exclude<NativeOAuthProviderId, typeof OPENAI_CHATGPT_PLAN_PROVIDER_ID>,
   signal: AbortSignal | undefined,
 ): Promise<StoredOAuthCredential> {
   const label = PROVIDER_DISPLAY[providerId];
@@ -91,59 +90,24 @@ async function runNativeDeviceCode(
       spinner.stop(pc.green('Signed in to Google Antigravity'));
       return credential;
     }
-    if (providerId === 'github-copilot') {
-      const { tokens } = await runGitHubCopilotDeviceCodeFlow(onDeviceCode, {
-        sleep: sleepMs,
-        now: () => Date.now(),
-        signal,
-        onWarning: warning => {
-          p.log.warn(`GitHub OAuth token polling returned HTTP ${warning.status}; retrying`);
-        },
-      });
-      spinner.stop(pc.green('Signed in to GitHub Copilot'));
-      return githubCopilotTokensToStoredCredential(tokens);
-    }
-
-    const { tokens, accountId } = await runOpenAiDeviceCodeFlow(onDeviceCode);
-    spinner.stop(pc.green('Signed in to OpenAI ChatGPT'));
-    return tokensToStoredCredential(tokens, undefined, accountId);
+    const { tokens } = await runGitHubCopilotDeviceCodeFlow(onDeviceCode, {
+      sleep: sleepMs,
+      now: () => Date.now(),
+      signal,
+      onWarning: warning => {
+        p.log.warn(`GitHub OAuth token polling returned HTTP ${warning.status}; retrying`);
+      },
+    });
+    spinner.stop(pc.green('Signed in to GitHub Copilot'));
+    return githubCopilotTokensToStoredCredential(tokens);
   } catch (error) {
     spinner.stop('');
     throw error;
   }
 }
 
-export async function saveNativeOAuthCredential(
-  providerId: string,
-  tokens: import('../oauth/types.js').OAuthTokenResponse,
-  accountId?: string,
-  providerData?: Record<string, unknown>,
-): Promise<void> {
-  try {
-    const cred = providerId === 'github-copilot'
-      ? githubCopilotTokensToStoredCredential(tokens)
-      : tokensToStoredCredential(tokens, undefined, accountId, providerData);
-    const registryId = toOAuthRegistryId(providerId);
-    const diagnostics: string[] = [];
-    const authRef = oauthAuthRef(registryId);
-    if (registryId === 'openai-oauth' && loadRegistry().providers.some(provider => provider.id === registryId)) {
-      await addOAuthProviderAccount(registryId, oauthCredentialToKeychainJson(cred));
-    } else {
-      await persistOAuthProvider(providerId, cred, authRef, diagnostics);
-    }
-  } finally {
-    await reconcilePendingCredentialDeletes(message => p.log.warn(message));
-  }
-}
-
-function oauthDisplayName(registryId: string, fallbackName: string): string {
-  if (registryId === 'openai-oauth') return 'OpenAI (ChatGPT)';
-  return fallbackName;
-}
-
-async function upsertOAuthProvider(providerId: string, _cred: StoredOAuthCredential): Promise<RegistryProvider> {
-  const registryId = toOAuthRegistryId(providerId);
-  const templateId = providerId.replace(/-oauth$/, '') || providerId;
+async function upsertOAuthProvider(registryId: string): Promise<RegistryProvider> {
+  const templateId = registryId;
   return withProviderMutationLock(registryId, () => updateRegistry(registry => {
     const authRef = oauthAuthRef(registryId);
     const template = getTemplateById(templateId);
@@ -153,12 +117,12 @@ async function upsertOAuthProvider(providerId: string, _cred: StoredOAuthCredent
       entry = { ...existing, authType: 'oauth', authRef, templateId };
     } else {
       if (!template) {
-        throw new Error(`Provider "${providerId}" is not in your registry and has no template`);
+        throw new Error(`Provider "${registryId}" is not in your registry and has no template`);
       }
       entry = {
         id: registryId,
         templateId,
-        name: oauthDisplayName(registryId, template.name),
+        name: template.name,
         enabled: true,
         authRef,
         authType: 'oauth',
@@ -170,7 +134,7 @@ async function upsertOAuthProvider(providerId: string, _cred: StoredOAuthCredent
         addedAt: new Date().toISOString(),
       };
     }
-    if (providerId === 'antigravity') {
+    if (registryId === 'antigravity') {
       delete entry.modelsCache;
       delete entry.refreshedAt;
       delete entry.modelDiscoveryError;
@@ -199,7 +163,7 @@ async function persistOAuthProvider(
     if (!saved) {
       throw new Error(`Could not save OAuth tokens${diagnostics.length ? ` - ${diagnostics.at(-1)}` : ' - check credential storage permissions and try again'}`);
     }
-    const entry = await upsertOAuthProvider(providerId, credential);
+    const entry = await upsertOAuthProvider(providerId);
     try {
       await cancelCredentialDelete(authRef);
     } catch (error) {
@@ -209,14 +173,38 @@ async function persistOAuthProvider(
   });
 }
 
+async function authenticateChatGptPlan(options: ProviderAuthOptions) {
+  const providerId = OPENAI_CHATGPT_PLAN_PROVIDER_ID;
+  const existing = options.accountIdentity ? undefined : await selectChatGptPlanRegistration(
+    loadRegistry().providers.find(provider => provider.id === providerId),
+  );
+  const credential = await runChatGptPlanOAuthFlow({
+    signal: options.signal,
+    existing: existing?.providerData,
+    openBrowser: url => {
+      p.log.info(`Continue with ChatGPT in your browser: ${url}`);
+      openBrowser(url);
+    },
+  });
+  const registryProvider = existing
+    ? await saveChatGptPlanReauthorization(existing.authRef, credential)
+    : await withCredentialMutationLock('chatgpt-plan-account-registration', async () => {
+      const provider = loadRegistry().providers.find(item => item.id === providerId);
+      if (!provider || provider.authRef === 'none:anonymous') {
+        return persistOAuthProvider(providerId, credential, oauthAuthRef(providerId), []);
+      }
+      await addOAuthProviderAccount(providerId, oauthCredentialToKeychainJson(credential), undefined, options.accountIdentity);
+      return loadRegistry().providers.find(item => item.id === providerId)!;
+    });
+  return { providerId, credential, registryProvider };
+}
+
 async function authenticateProviderInner(
   providerId: string,
   options: ProviderAuthOptions = {},
 ): Promise<ProviderAuthResult> {
-  const registryId = toOAuthRegistryId(providerId);
-
   if (!supportsNativeOAuth(providerId)) {
-    throw new Error(`OAuth sign-in is available for ${Object.keys(PROVIDER_DISPLAY).filter(id => id !== 'openai-oauth').join(', ')}.`);
+    throw new Error(`OAuth sign-in is available for ${Object.keys(PROVIDER_DISPLAY).join(', ')}.`);
   }
 
   for (const diagnostic of await diagnoseCredentialStorage()) {
@@ -224,22 +212,14 @@ async function authenticateProviderInner(
     else p.log.info(diagnostic.message);
   }
 
-  const cred = await runNativeDeviceCode(providerId, options.signal);
-
-  const nativeDiagnostics: string[] = [];
-  const authRef = oauthAuthRef(registryId);
-  let registryProvider: RegistryProvider;
-  if ((registryId === 'openai-oauth' || options.accountIdentity) && loadRegistry().providers.some(provider => provider.id === registryId)) {
-    await addOAuthProviderAccount(registryId, oauthCredentialToKeychainJson(cred), undefined, options.accountIdentity);
-    registryProvider = loadRegistry().providers.find(provider => provider.id === registryId)!;
-  } else {
-    registryProvider = await persistOAuthProvider(providerId, cred, authRef, nativeDiagnostics);
-  }
+  const result = providerId === OPENAI_CHATGPT_PLAN_PROVIDER_ID
+    ? await authenticateChatGptPlan(options)
+    : await authenticateOtherOAuth(providerId, options);
 
   const refreshSpinner = p.spinner();
   refreshSpinner.start('Refreshing model list...');
   try {
-    const refreshResult = await refreshProviderModels(registryId, cred.access);
+    const refreshResult = await refreshProviderModels(providerId, result.credential.access);
     if (!refreshResult.ok || refreshResult.skipped) {
       const reason = refreshResult.reason ?? 'Model discovery failed without a reason';
       refreshSpinner.stop(`Could not refresh models: ${reason} - run leverframe providers refresh-models later`);
@@ -251,7 +231,21 @@ async function authenticateProviderInner(
     refreshSpinner.stop(`Could not refresh models: ${reason} - run leverframe providers refresh-models later`);
   }
 
-  return { providerId: registryId, credential: cred, registryProvider };
+  return result;
+}
+
+async function authenticateOtherOAuth(
+  providerId: Exclude<NativeOAuthProviderId, typeof OPENAI_CHATGPT_PLAN_PROVIDER_ID>,
+  options: ProviderAuthOptions,
+): Promise<ProviderAuthResult> {
+  const credential = await runNativeDeviceCode(providerId, options.signal);
+  if (options.accountIdentity && loadRegistry().providers.some(provider => provider.id === providerId)) {
+    await addOAuthProviderAccount(providerId, oauthCredentialToKeychainJson(credential), undefined, options.accountIdentity);
+    const registryProvider = loadRegistry().providers.find(provider => provider.id === providerId)!;
+    return { providerId, credential, registryProvider };
+  }
+  const registryProvider = await persistOAuthProvider(providerId, credential, oauthAuthRef(providerId), []);
+  return { providerId, credential, registryProvider };
 }
 
 export async function authenticateProvider(
@@ -266,7 +260,7 @@ export async function authenticateProvider(
 }
 
 export function providerAuthHelpText(): string {
-  const providers = Object.entries(PROVIDER_DISPLAY).filter(([id]) => id !== 'openai-oauth');
+  const providers = Object.entries(PROVIDER_DISPLAY);
   return `${pc.bold('leverframe providers auth')} - sign in with OAuth
 
 ${pc.bold('Usage:')}
@@ -275,6 +269,6 @@ ${providers.map(([id]) => `  leverframe providers auth ${id}`).join('\n')}
 ${pc.bold('Providers:')}
 ${providers.map(([id, label]) => `  ${id.padEnd(15)} ${label}`).join('\n')}
 
-ChatGPT and GitHub Copilot use device codes (works on SSH/VPS).
-Antigravity uses browser sign-in with a local callback.`;
+GitHub Copilot uses a device code (works on SSH/VPS).
+ChatGPT plan and Antigravity use browser sign-in with a local callback.`;
 }

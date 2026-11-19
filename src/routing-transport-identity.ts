@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto';
-import { CODEX_API_BASE_URL } from './constants.js';
+import { OPENAI_CHATGPT_PLAN_BASE_URL, OPENAI_CHATGPT_PLAN_PROVIDER_ID } from './constants.js';
 import { ANTIGRAVITY_ORIGIN } from './antigravity/types.js';
 import { COPILOT_API_BASE_URL } from './copilot/backend.js';
-import { isOpenAiOAuth } from './language-model-factory.js';
 
 export function routingTransportFingerprint(input: {
   endpoint: string | undefined;
@@ -15,7 +14,7 @@ export function routingTransportFingerprint(input: {
   const endpoint = input.credentialSource === 'claude-code' ? input.endpoint
     : input.providerId === 'antigravity' ? ANTIGRAVITY_ORIGIN
     : input.providerId === 'github-copilot' || input.npm === '@github/copilot-sdk' ? COPILOT_API_BASE_URL
-    : isOpenAiOAuth(input.npm, input.authType, input.providerId) ? CODEX_API_BASE_URL : input.endpoint;
+    : input.providerId === OPENAI_CHATGPT_PLAN_PROVIDER_ID ? OPENAI_CHATGPT_PLAN_BASE_URL : input.endpoint;
   if (typeof endpoint !== 'string' || !endpoint) return undefined;
   let url: URL;
   try { url = new URL(endpoint); } catch { return undefined; }

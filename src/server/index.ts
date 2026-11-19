@@ -18,6 +18,7 @@ import {
 import { MAX_MODEL_CATALOG, DEFAULT_SERVER_PORT } from '../constants.js';
 import { fetchProviderCatalog } from '../provider-catalog.js';
 import { loadRegistry } from '../registry/io.js';
+import { isRetiredOpenAiProvider } from '../registry/retired-openai.js';
 import type { ServerModelInfo } from './models.js';
 import {
   loadServerModels,
@@ -54,7 +55,7 @@ import {
   registerServerRuntimeState,
   unregisterServerRuntimeState,
 } from '../server-runtime.js';
-import { getInferenceRequestLogPath, getSessionLogPath } from '../log-paths.js';
+import { getInferenceRequestLogPath } from '../log-paths.js';
 
 export interface ServerRunConfig {
   exposedProviders: string[] | null;
@@ -71,7 +72,6 @@ export interface ServerCommandOptions {
   providerIds?: string[];
   maskGatewayIds?: boolean;
   password?: string;
-  wsDiagnostics?: boolean;
 
   port?: number;
 
@@ -283,7 +283,7 @@ async function runServerWizard(): Promise<{ runConfig: ServerRunConfig; promptFo
 }
 
 export async function resolveServerUpstreamApiKey(): Promise<string | null> {
-  return loadRegistry().providers.some(provider => provider.enabled) ? 'registry-local' : null;
+  return loadRegistry().providers.some(provider => provider.enabled && !isRetiredOpenAiProvider(provider)) ? 'registry-local' : null;
 }
 
 export async function runServerCommand(options: ServerCommandOptions = {}): Promise<number> {
@@ -298,7 +298,7 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
       p.log.error('--proxy is a local-only server mode and cannot be combined with endpoint-mode server options.');
       return 1;
     }
-    return runHttpProxyServerCommand(false, options.wsDiagnostics, options.port, noDiscovery, options.prepareClaude);
+    return runHttpProxyServerCommand(false, options.port, noDiscovery, options.prepareClaude);
   }
   if (options.prepareClaude) {
     p.log.error('--prepare-claude requires proxy mode.');
@@ -386,9 +386,6 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
 
   const modelAliases = loadPreferences().modelAliases ?? [];
   const inferenceLogPath = getInferenceRequestLogPath();
-  const webSocketDiagnosticsLogPath = options.wsDiagnostics
-    ? getSessionLogPath('server-websocket-diagnostics', 'jsonl')
-    : undefined;
   const requestedPort = options.port ?? DEFAULT_SERVER_PORT;
   let server;
   try {
@@ -402,7 +399,6 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
       gateway,
       aliasNames: new Set(modelAliases.map(alias => alias.name)),
       inferenceLogPath,
-      webSocketDiagnosticsLogPath,
     });
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
@@ -425,10 +421,6 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
   console.log(`  Anthropic:  http://127.0.0.1:${server.port}/anthropic`);
   console.log(`  OpenAI:     http://127.0.0.1:${server.port}/openai/v1`);
   console.log(`  Request log: ${inferenceLogPath}`);
-  if (webSocketDiagnosticsLogPath) {
-    console.log(`  WebSocket diagnostics: ${webSocketDiagnosticsLogPath}`);
-    console.log(pc.yellow('  Diagnostic mode records request headers and metadata; credential headers are redacted.'));
-  }
   if (mode === 'network') {
     for (const { name, address } of getLocalIps()) {
       console.log(`  Network (${name}):`);

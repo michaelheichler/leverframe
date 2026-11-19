@@ -1,6 +1,7 @@
 
 
-import { refreshOpenAiAccessToken } from './openai.js';
+import { OPENAI_CHATGPT_PLAN_PROVIDER_ID } from '../constants.js';
+import { refreshChatGptPlanCredential } from './chatgpt-plan.js';
 import { refreshAntigravityAccessToken } from './antigravity.js';
 import type { StoredOAuthCredential } from './types.js';
 import { accessTokenIsExpiring, NATIVE_OAUTH_PROVIDER_IDS, oauthCredentialNeedsRefresh, tokensToStoredCredential } from './types.js';
@@ -28,14 +29,10 @@ export async function refreshStoredOAuthCredential(
   if (!cred.refresh) {
     throw new Error(`${providerId}: OAuth refresh token missing. Run leverframe providers auth ${providerId}`);
   }
+  if (providerId === OPENAI_CHATGPT_PLAN_PROVIDER_ID) return refreshChatGptPlanCredential(cred);
   if (providerId === 'antigravity') {
     const tokens = await refreshAntigravityAccessToken(cred.refresh);
     return tokensToStoredCredential(tokens, cred.refresh, cred.accountId, cred.providerData);
   }
-  if (providerId !== 'openai' && providerId !== 'openai-oauth') {
-    throw new Error(`OAuth refresh not implemented for provider "${providerId}"`);
-  }
-
-  const tokens = await refreshOpenAiAccessToken(cred.refresh);
-  return tokensToStoredCredential(tokens, cred.refresh, cred.accountId, cred.providerData);
+  throw new Error(`OAuth refresh not implemented for provider "${providerId}"`);
 }

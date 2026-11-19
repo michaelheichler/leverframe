@@ -4,7 +4,7 @@ import { startProxyCatalog, type ProxyRoute } from '../src/proxy.js';
 import { claudeSessionPromptCacheKey } from '../src/sdk-adapter.js';
 import { useIsolatedTestHome } from './isolated-test-home.js';
 
-useIsolatedTestHome('leverframe-codex-session-proxy');
+useIsolatedTestHome('leverframe-plan-session-proxy');
 
 vi.mock('../src/registry/url-security.js', async importOriginal => ({
   ...(await importOriginal<typeof import('../src/registry/url-security.js')>()),
@@ -23,9 +23,9 @@ afterEach(async () => {
 
 function route(): ProxyRoute {
   return {
-    aliasId: 'anthropic-openai-oauth__gpt-session-fixture', realModelId: 'gpt-session-fixture',
+    aliasId: 'anthropic-openai-chatgpt-plan__gpt-session-fixture', realModelId: 'gpt-session-fixture',
     displayName: 'GPT Session Fixture', upstreamUrl: 'https://provider.invalid', apiKey: 'fixture-access-token',
-    modelFormat: 'openai', providerId: 'openai-oauth', authType: 'oauth',
+    modelFormat: 'openai', providerId: 'openai-chatgpt-plan', authType: 'oauth',
     oauthAccountId: 'fixture-account-id', npm: '@ai-sdk/openai',
   };
 }
@@ -70,11 +70,11 @@ it('passes translated session affinity through the SDK proxy route', async () =>
     headers: { 'Content-Type': 'text/event-stream' },
   }));
   vi.stubGlobal('fetch', providerFetch);
-  const proxy = await startProxyCatalog([route()], 'anthropic-openai-oauth__gpt-session-fixture');
+  const proxy = await startProxyCatalog([route()], 'anthropic-openai-chatgpt-plan__gpt-session-fixture');
   closeProxy = proxy.close;
 
   const response = await postMessages(proxy.port, proxy.token, {
-    model: 'anthropic-openai-oauth__gpt-session-fixture',
+    model: 'anthropic-openai-chatgpt-plan__gpt-session-fixture',
     metadata: { user_id: JSON.stringify({ session_id: sessionId }) },
     messages: [{ role: 'user', content: 'fixture request' }],
   });
@@ -85,8 +85,7 @@ it('passes translated session affinity through the SDK proxy route', async () =>
   const headers = new Headers(init.headers);
   const upstreamBody = JSON.parse(String(init.body)) as Record<string, unknown>;
   expect(upstreamBody.prompt_cache_key).toBe(claudeSessionPromptCacheKey(sessionId));
-  expect(headers.get('session-id')).toBe(claudeSessionPromptCacheKey(sessionId));
-  expect(headers.get('session-id')).not.toContain(sessionId);
-  expect(headers.get('chatgpt-account-id')).toBe('fixture-account-id');
-  expect(headers.get('authorization')).toMatch(/^Bearer /);
+  expect(headers.get('session-id')).toBeNull();
+  expect(headers.get('chatgpt-account-id')).toBeNull();
+  expect(headers.get('authorization')).toBe('Bearer fixture-access-token');
 });

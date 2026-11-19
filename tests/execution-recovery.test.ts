@@ -44,7 +44,6 @@ function capabilities(overrides: Partial<ProviderCapabilityMatrix> = {}): Provid
     images: false,
     reasoning: false,
     promptCache: false,
-    websocket: false,
     conversationContinuation: false,
     nativeResume: false,
     reconstructedRecovery: false,

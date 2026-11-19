@@ -11,7 +11,6 @@ import { startHttpProxy } from '../../src/http-proxy/server.js';
 
 export type FirstPartyFixture = {
   inferenceLogPath: string;
-  diagnosticsLogPath: string;
   caCert: string;
   origin: https.Server;
   proxy: Awaited<ReturnType<typeof startHttpProxy>>;
@@ -62,16 +61,15 @@ function createOrigin(
 export async function startFirstPartyFixture(testHome: string): Promise<FirstPartyFixture> {
   const certificates = ensureHttpProxyCertificates();
   const inferenceLogPath = join(testHome, 'anthropic-inference.jsonl');
-  const diagnosticsLogPath = join(testHome, 'websocket-diagnostics.jsonl');
   const received = { body: Buffer.alloc(0), auth: undefined as string | undefined,
     path: undefined as string | undefined, rawHeaders: [] as string[] };
   const origin = createOrigin(certificates, received);
   const originPort = await listen(origin);
   const proxy = await startHttpProxy({
-    routes: [], inferenceLogPath, webSocketDiagnosticsLogPath: diagnosticsLogPath,
+    routes: [], inferenceLogPath,
     anthropicOrigin: `https://127.0.0.1:${originPort}`, anthropicRejectUnauthorized: false,
   });
-  return { inferenceLogPath, diagnosticsLogPath, caCert: certificates.caCert, origin, proxy, received };
+  return { inferenceLogPath, caCert: certificates.caCert, origin, proxy, received };
 }
 
 export async function sendFirstPartyRequest(fixture: FirstPartyFixture, body: Buffer): Promise<string> {
@@ -163,17 +161,4 @@ export function assertUsageLog(entries: any[], raw: string): void {
   expect(completed).toMatchObject({ requestId: entries[0].requestId, statusCode: 200, route: 'passthrough' });
   expect(raw).not.toContain('private-image-data');
   expect(raw).not.toContain('private response text');
-}
-
-export function assertDiagnostic(path: string, requestId: string): void {
-  const raw = readFileSync(path, 'utf8');
-  const diagnostic = JSON.parse(raw.trim());
-  expect(diagnostic).toMatchObject({
-    event: 'request_diagnostic', requestId,
-    headers: { authorization: '[REDACTED]' },
-    body: { parameters: { model: 'claude-sonnet-4-6', stream: true }, messages: { count: 1 } },
-  });
-  expect(raw).not.toContain('subscription-oauth-token');
-  expect(raw).not.toContain('private-image-data');
-  expect(raw).not.toContain('identify this Sonnet request');
 }

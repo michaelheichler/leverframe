@@ -1,7 +1,7 @@
 import type { ServerResponse } from 'node:http';
 import type { LanguageModel } from 'ai';
 import { classifyPoolFailure, dispatchWithPool, poolExhaustionMessage, poolExhaustionStatus, type PoolBinding } from '../account-pool-dispatch.js';
-import { getPooledCodexModel } from '../account-pool-sdk.js';
+import { getPooledSdkModel } from '../account-pool-sdk.js';
 import { createLanguageModel } from '../provider-factory.js';
 import { recordObservation } from '../account-pool.js';
 import { anthropicCapacity } from '../account-pool-telemetry.js';
@@ -12,7 +12,7 @@ import { upstreamModelId } from './models.js';
 import { sendJson } from '../http-utils.js';
 import { resolveTemplateCapabilities } from '../provider-template-capabilities.js';
 
-type PoolKind = 'codex' | 'anthropic' | 'provider';
+export type OpenAiPoolKind = 'chatgpt-plan' | 'anthropic' | 'provider';
 
 function poolKey(model: ServerModelInfo) {
   return { providerId: model.providerId!, modelId: upstreamModelId(model),
@@ -38,18 +38,18 @@ async function anthropicModel(model: ServerModelInfo, binding: PoolBinding): Pro
   });
 }
 
-async function pooledModel(model: ServerModelInfo, binding: PoolBinding, cache: ProviderRuntimeCache<LanguageModel>, kind: PoolKind) {
+async function pooledModel(model: ServerModelInfo, binding: PoolBinding, cache: ProviderRuntimeCache<LanguageModel>, kind: OpenAiPoolKind) {
   if (kind === 'anthropic') return anthropicModel(model, binding);
-  return getPooledCodexModel(cache, {
+  return getPooledSdkModel(cache, {
     aliasId: model.id, realModelId: upstreamModelId(model), displayName: model.name,
     upstreamUrl: model.baseUrl ?? '', apiKey: binding.apiKey, modelFormat: 'openai', npm: model.npm,
     providerId: model.providerId, templateId: model.templateId, authType: model.authType, baseURL: model.apiBaseUrl,
-    headers: model.headers, useResponsesLite: model.useResponsesLite, minimalClientVersion: model.minimalClientVersion,
+    headers: model.headers,
   }, binding);
 }
 
 export async function dispatchOpenAiPool(options: {
-  res: ServerResponse; model: ServerModelInfo; cache: ProviderRuntimeCache<LanguageModel>; kind: PoolKind;
+  res: ServerResponse; model: ServerModelInfo; cache: ProviderRuntimeCache<LanguageModel>; kind: OpenAiPoolKind;
   sessionId?: string; run: (model: LanguageModel, binding: PoolBinding) => Promise<void>;
   onExhausted: () => void;
 }): Promise<void> {
@@ -87,7 +87,7 @@ export async function dispatchOpenAiPool(options: {
 }
 
 export async function dispatchOpenAiDirectPool(options: {
-  res: ServerResponse; model: ServerModelInfo; kind: PoolKind; sessionId?: string;
+  res: ServerResponse; model: ServerModelInfo; kind: OpenAiPoolKind; sessionId?: string;
   run: (binding: PoolBinding) => Promise<{ status: number; body: string; headers: Headers } | undefined>;
   onExhausted: () => void;
   onFailure: (status: number, body: string) => void;

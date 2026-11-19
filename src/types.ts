@@ -39,7 +39,6 @@ export interface LocalProviderModel {
   maxContextWindow?: number;
   inputTokenLimit?: number;
   outputTokenLimit?: number;
-  minimalClientVersion?: string;
   contextWindowUnconfirmed?: boolean;
 
   supportedParameters?: string[];
@@ -58,9 +57,7 @@ export interface LocalProviderModel {
 
   interleavedReasoningField?: string;
 
-  useResponsesLite?: boolean;
 
-  preferWebSockets?: boolean;
 
   isFree?: boolean;
   freeStatus?: FreeStatus;
@@ -164,7 +161,6 @@ export interface ParsedArgs {
 
   serverPort?: number;
 
-  serverWsDiagnostics?: boolean;
 
   serverNoDiscovery?: boolean;
 

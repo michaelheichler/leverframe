@@ -10,6 +10,7 @@ import { isValidProviderId } from './validate.js';
 import { resolveTemplateCapabilities } from '../provider-template-capabilities.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 import { effectiveProviderBaseUrl, resolveProviderTemplate } from './resolve-template.js';
+import { isRetiredOpenAiProvider } from './retired-openai.js';
 
 export type CredentialResolver = (provider: RegistryProvider) => string | null;
 
@@ -82,7 +83,6 @@ export function cachedModelToLocal(
     maxContextWindow: cached.maxContextWindow,
     inputTokenLimit: cached.inputTokenLimit,
     outputTokenLimit: cached.outputTokenLimit,
-    minimalClientVersion: cached.minimalClientVersion,
     contextWindowUnconfirmed: cached.contextWindowUnconfirmed,
     supportedParameters: cached.supportedParameters,
     reasoning: cached.reasoning,
@@ -95,8 +95,6 @@ export function cachedModelToLocal(
     supportsReasoningToggle: cached.supportsReasoningToggle,
     supportsPromptCacheBreakpoints: cached.supportsPromptCacheBreakpoints,
     interleavedReasoningField: cached.interleavedReasoningField,
-    useResponsesLite: cached.useResponsesLite,
-    preferWebSockets: cached.preferWebSockets,
   };
 }
 
@@ -110,7 +108,7 @@ function materializeOne(
   resolveCredential: CredentialResolver,
   agent: CompatibilityAgent,
 ): LocalProvider | null {
-  if (!provider.enabled) return null;
+  if (!provider.enabled || isRetiredOpenAiProvider(provider)) return null;
   if (!isValidProviderId(provider.id)) return null;
 
   const freeOnly = provider.subscriptionFilter === 'free';

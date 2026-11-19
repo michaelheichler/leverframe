@@ -22,10 +22,7 @@ it('keeps one session affinity key across turns and separates distinct sessions'
 
   expect(typeof firstKey).toBe('string');
   expect(laterTurn.providerOptions?.openai?.promptCacheKey).toBe(firstKey);
-  expect(firstTurn.headers?.['session-id']).toBe(firstKey);
-  expect(laterTurn.headers?.['session-id']).toBe(firstKey);
   expect(otherSession.providerOptions?.openai?.promptCacheKey).not.toBe(firstKey);
-  expect(otherSession.headers?.['session-id']).not.toBe(firstKey);
   expect(JSON.stringify(firstTurn)).not.toContain(firstSession);
 });
 
@@ -39,7 +36,6 @@ it('uses a deterministic prefix key when session metadata is malformed', () => {
   });
 
   expect(typeof translated.providerOptions?.openai?.promptCacheKey).toBe('string');
-  expect(translated.headers?.['session-id']).toBe(translated.providerOptions?.openai?.promptCacheKey);
   expect(JSON.stringify(translated)).not.toContain('not-a-session-uuid');
 });
 
@@ -55,7 +51,6 @@ it('prefers validated metadata identity over a header fallback', () => {
   } as unknown as OpenAiRequest, { openAiOAuth: true, claudeSessionId: '2d6fe10e-2a59-4b56-9505-4ca539e04cd9' });
 
   expect(first.providerOptions?.openai?.promptCacheKey).toBe(second.providerOptions?.openai?.promptCacheKey);
-  expect(first.headers?.['session-id']).toBe(second.headers?.['session-id']);
 });
 
 it('does not treat the generic OpenAI user field as session identity', () => {

@@ -2,12 +2,10 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type * as http from 'node:http';
 import type { ProxyRoute } from '../src/proxy.js';
 import { decideHttpProxyRoute, type HttpProxyRouteInput } from '../src/http-proxy/routing-decision.js';
 import { buildProxyRoutesById } from '../src/http-proxy/server.js';
 
-const SESSION_ID = '11111111-2222-4333-8444-555555555555';
 
 function route(overrides: Partial<ProxyRoute> = {}): ProxyRoute {
   return {
@@ -152,22 +150,6 @@ describe('decideHttpProxyRoute logging and privacy', () => {
     }));
     decideHttpProxyRoute(baseInput({ hasAdapter: true, inferenceLogPath, rawBody }));
     expect(readFileSync(inferenceLogPath, 'utf8')).not.toContain('private tool output');
-  });
-
-  it('extracts the Claude session id from the header, redacting it from the diagnostic body', () => {
-    const webSocketDiagnosticsLogPath = join(testHome, 'diagnostics.jsonl');
-    const headers: http.IncomingHttpHeaders = { 'x-claude-code-session-id': SESSION_ID };
-    decideHttpProxyRoute(baseInput({ headers, hasAdapter: false, webSocketDiagnosticsLogPath }));
-    const [entry] = readEntries(webSocketDiagnosticsLogPath);
-    expect(entry).toMatchObject({ claudeSessionId: SESSION_ID, route: 'passthrough' });
-  });
-
-  it('ignores a malformed session id header rather than logging garbage', () => {
-    const webSocketDiagnosticsLogPath = join(testHome, 'diagnostics-invalid.jsonl');
-    const headers: http.IncomingHttpHeaders = { 'x-claude-code-session-id': 'not-a-uuid' };
-    decideHttpProxyRoute(baseInput({ headers, hasAdapter: false, webSocketDiagnosticsLogPath }));
-    const [entry] = readEntries(webSocketDiagnosticsLogPath);
-    expect(entry).not.toHaveProperty('claudeSessionId');
   });
 
   afterAll(() => {

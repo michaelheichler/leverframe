@@ -21,7 +21,6 @@ describe('reported OpenAI reasoning capabilities', () => {
         supportsReasoningSummaries: OPENAI_OAUTH_ASTRA_MODEL.supports_reasoning_summaries,
         supportsReasoningSummaryParameter: OPENAI_OAUTH_ASTRA_MODEL.supports_reasoning_summary_parameter,
         supportsParallelToolCalls: OPENAI_OAUTH_ASTRA_MODEL.supports_parallel_tool_calls,
-        useResponsesLite: OPENAI_OAUTH_ASTRA_MODEL.use_responses_lite,
       },
     });
 
@@ -31,8 +30,6 @@ describe('reported OpenAI reasoning capabilities', () => {
       reasoningEffort: 'max',
       forceReasoning: true,
       systemMessageMode: 'developer',
-      reasoningContext: 'all_turns',
-      parallelToolCalls: false,
     });
     expect(params.temperature).toBeUndefined();
   });
@@ -59,7 +56,6 @@ describe('reported OpenAI reasoning capabilities', () => {
       reasoningMetadata: {
         reasoning: true,
         supportedReasoningEfforts,
-        useResponsesLite: OPENAI_OAUTH_ASTRA_MODEL.use_responses_lite,
       },
     });
 
@@ -70,7 +66,6 @@ describe('reported OpenAI reasoning capabilities', () => {
 
     expect(JSON.parse(requests[0] ?? '{}')).toMatchObject({
       reasoning: { effort },
-      parallel_tool_calls: false,
     });
   });
 });

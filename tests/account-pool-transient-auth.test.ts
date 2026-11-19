@@ -14,7 +14,7 @@ async function transientRejection(body: (typeof transientBodies)[number]) {
   const home = process.env['LEVERFRAME_TEST_HOME'];
   if (!home) throw new Error('isolated test home is missing');
   const statePath = join(home, `transient-auth-${randomUUID()}.json`);
-  const pool: PoolKey = { providerId: 'openai-oauth', modelId: 'retry-fixture', billingType: 'oauth' };
+  const pool: PoolKey = { providerId: 'openai-chatgpt-plan', modelId: 'retry-fixture', billingType: 'oauth' };
   const now = 1_800_000_000_000;
   const observation = classifyPoolFailure({ provider: pool.providerId, accountId: 'only', statusCode: 401, body, now });
   if (!observation) throw new Error('transient authentication failure needs a retryable observation');

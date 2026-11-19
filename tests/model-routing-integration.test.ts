@@ -207,7 +207,7 @@ it('selects a confirmed capable pool model through the authenticated launch endp
     const { preparation, launch } = await prepareAndLaunch(`${origin}/v1/leverframe/routing-launch`, context, {
       sessionId, launchId: 'launch-capable-pool-model', agentType: 'reviewer', category: 'implementation',
       effort: 'low', task: 'Select a model with confirmed image and context support',
-      clientConfig: { requirements: { capabilities: ['websocket'], contextTokens: 999_999 }, requirementsFromConfig: true },
+      clientConfig: { requirements: { capabilities: ['promptCache'], contextTokens: 999_999 }, requirementsFromConfig: true },
     });
     const clientBinding = launch.body as { modelId: string; policyModelId: string; revision: number };
     const binding = await resolveRoutingBinding({ sessionId, modelId: clientBinding.modelId });
@@ -253,7 +253,7 @@ it('uses host requirements when a launch payload supplies forged requirement met
       body: JSON.stringify({ action: ROUTING_LAUNCH_ACTION, sessionId, launchId: 'launch-forged-requirements',
         role: 'specialist', agentType: 'reviewer', category: 'implementation', effort: 'low',
         task: prepared.prompt, resume: false, originalPrompt: prepared.prompt, delegatedTask: task, handoff, policy,
-        requirements: { capabilities: ['websocket'], contextTokens: 999_999 }, requirementsFromConfig: true }),
+        requirements: { capabilities: ['promptCache'], contextTokens: 999_999 }, requirementsFromConfig: true }),
     });
     const launched = await launchResponse.json() as { modelId: string; policyModelId: string };
     const binding = await resolveRoutingBinding({ sessionId, modelId: launched.modelId });

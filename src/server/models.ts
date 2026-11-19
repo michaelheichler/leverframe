@@ -52,16 +52,13 @@ export interface ServerModelInfo {
   supportsPromptCacheBreakpoints?: boolean;
   interleavedReasoningField?: string;
 
-  useResponsesLite?: boolean;
 
-  preferWebSockets?: boolean;
 
   defaultEffort?: string;
   contextWindow?: number;
   maxContextWindow?: number;
   inputTokenLimit?: number;
   outputTokenLimit?: number;
-  minimalClientVersion?: string;
 
   contextWindowUnconfirmed?: boolean;
 

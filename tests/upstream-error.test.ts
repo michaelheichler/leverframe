@@ -21,30 +21,30 @@ describe('typed provider transport errors', () => {
   const error = new ProviderTransportError({
     provider: 'openai',
     model: 'gpt-test',
-    phase: 'websocket_upgrade',
+    phase: 'headers',
     httpStatus: 429,
     providerRequestId: 'provider-request-123',
     retryAfterMs: 2_500,
     retryable: true,
     outputEmitted: false,
-    safeMessage: 'Provider WebSocket upgrade was rejected.',
+    safeMessage: 'Provider request was rejected.',
     attemptCount: 2,
   });
 
   it('preserves status, retry, request, and phase metadata', () => {
     expect(sdkUpstreamErrorDetails(error)).toEqual({
       statusCode: 429,
-      errorContent: 'Provider WebSocket upgrade was rejected.',
+      errorContent: 'Provider request was rejected.',
       isRetryable: true,
       retriesExhausted: false,
       attemptCount: 2,
       retryAfterMs: 2_500,
       providerRequestId: 'provider-request-123',
-      failurePhase: 'websocket_upgrade',
+      failurePhase: 'headers',
     });
     expect(upstreamHttpStatus(error, '')).toBe(429);
     expect(formatUpstreamError(error)).toBe(
-      'Provider WebSocket upgrade was rejected. (HTTP 429)',
+      'Provider request was rejected. (HTTP 429)',
     );
   });
 

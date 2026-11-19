@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import pkg from '../package.json' with { type: 'json' };
 import type { ModelFormat } from './types.js';
 
-export const CODEX_API_BASE_URL = 'https://chatgpt.com/backend-api/codex';
+export const OPENAI_CHATGPT_PLAN_PROVIDER_ID = 'openai-chatgpt-plan';
+export const OPENAI_CHATGPT_PLAN_BASE_URL = 'https://api.openai.com/v1';
 export const ANTHROPIC_API_ORIGIN = 'https://api.anthropic.com';
 export const ROUTING_ACTIVE_ENV = 'LEVERFRAME_ROUTING_ACTIVE';
 export const ROUTING_ACTIVE_VALUE = '1';
@@ -15,11 +16,6 @@ export const ROUTING_CONTROL_BODY_LIMIT = 1024 * 1024;
 export const ROUTING_PROMPT_POLICY_LIMIT = 128 * 1024;
 export const ROUTING_HANDOFF_LIMIT = 96 * 1024;
 export const ROUTING_SNAPSHOT_LABEL = 'LAUNCH SNAPSHOT. This is the original task and historical launch state. The existing transcript and latest instructions describe current state. Retain original constraints unless newer user instructions explicitly change them.\n';
-export const CODEX_RESPONSES_LITE_WS_URL = 'wss://chatgpt.com/backend-api/codex/responses';
-
-export const CODEX_RESPONSES_LITE_VERSION = '0.159.2';
-
-export const CODEX_RESPONSES_WEBSOCKETS_BETA = 'responses_websockets=2026-02-06';
 
 export const CONFLICTING_ENV_VARS = [
   'CLAUDE_CODE_USE_VERTEX',

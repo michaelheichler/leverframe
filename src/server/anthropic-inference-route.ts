@@ -5,9 +5,6 @@ import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { LanguageModel } from 'ai';
 import { sendJson } from '../http-utils.js';
-import {
-  writeWebSocketDiagnosticRequestLog,
-} from '../trace-log.js';
 import type { ServerOptions } from './router.js';
 import {
   extractClaudeSessionId,
@@ -85,16 +82,6 @@ export async function handleAnthropicMessages(
     });
     plog(() => formatRequestPolicyOutcome(policy, performance.now() - policyStarted));
     if (clientAbort.signal.aborted) return;
-    if (options.webSocketDiagnosticsLogPath) {
-      writeWebSocketDiagnosticRequestLog(options.webSocketDiagnosticsLogPath, {
-        requestId,
-        claudeSessionId,
-        provider: inferenceProvider(model),
-        route: passthrough ? 'passthrough' : 'translated',
-        headers: req.headers,
-        body,
-      });
-    }
 
     plog(() => `anthropic-messages model=${body.model} format=${model.modelFormat} npm=${model.npm ?? 'none'} stream=${body.stream}`);
 

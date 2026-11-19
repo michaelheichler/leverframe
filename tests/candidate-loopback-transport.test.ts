@@ -7,7 +7,6 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   CANDIDATE_TEST_CREDENTIAL,
-  CANDIDATE_MARKER,
   CANDIDATE_TRANSPORT_NAME,
   CANDIDATE_ROUTE_ROWS,
   createCandidateProvenanceHook,
@@ -80,8 +79,6 @@ function fullFixture(): Record<string, unknown> {
       npm: row.npm,
       apiUrl: `http://127.0.0.1:43721${row.path}`,
       ...(row.context === null ? { contextWindowUnconfirmed: true } : { contextWindow: row.context }),
-      ...(row.expectedTransport.useResponsesLite ? { useResponsesLite: true } : {}),
-      ...(row.expectedTransport.preferWebSockets ? { preferWebSockets: true } : {}),
     });
     providers.set(row.providerId, provider);
   }
@@ -144,32 +141,20 @@ describe('candidate loopback transport', () => {
     }
   });
 
-  it('uses the provider-neutral marker and compatible OAuth route metadata', () => {
-    expect(CANDIDATE_MARKER).toBe('PROVIDER-NEUTRAL-CAPTURE-V1');
-    const oauthRows = CANDIDATE_ROUTE_ROWS.filter(row => row.providerId === 'openai-oauth');
-    expect(oauthRows).toHaveLength(3);
-    expect(oauthRows.map(row => row.npm)).toEqual([
-      '@ai-sdk/openai-compatible',
-      '@ai-sdk/openai-compatible',
-      '@ai-sdk/openai-compatible',
-    ]);
-    expect(oauthRows.every(row => row.expectedTransport.npm === '@ai-sdk/openai-compatible')).toBe(true);
-  });
-
   it('keeps the twelve route-row provenance hashes deterministic', () => {
     expect(CANDIDATE_ROUTE_ROWS.map(routeRowSha256)).toEqual([
-      'd33c65cc4bff4b56fe88fdf7f4bb0014fce4f8b987e43b24f67da5c8247ce13c',
-      '008e6441232e6ae7717619c0d665a33065a24e690c386ae2df0481874b61acb6',
-      'e0eb8b73f4afe117a4b60cc66fe1dde0ccebc7062f8dca964025a47ba107cb94',
-      '82e360f1c5edca5753a6bad57a988e57b4a52b2b991aa3f41195046c6ac76ec5',
-      '7b71029c50fffaac34caec77e64bcd3f2afeedefc73a3f14e780c1260ab30739',
-      '0e0dd2bb871b5e3678a4540e343a40c34bbb385c168fdef51fef2e9cbb16abb6',
-      '7dab2f87f2109f12300acd67924ea949abb8f2c1e2962bdf2d4e0818891685ce',
-      'a674970c3370e4cdc5eac79b4c600ec5334cdddc87c67012ee6f5055244e40eb',
-      'a25c6596d1ed5b52f53683f0250284e3fd610ef7416b6c8a1e665cf2cd30cae5',
-      'dee263367b37dba50543502a1625674cf6b80b6e1de212a0855e772dfacc7f93',
-      '2d97a6f2025bd33c3290d9d081c5f321e7843ba9a6673c7035b2f7fcf32ff7d1',
-      '8f67c66d699f2b839023459d63737148e5021d56fb8b48153275498f7e747966',
+      '1c6f0e7d5229c33243fdbd864cc661951a695dc6adff7b4173b8a69b51bf74ca',
+      '9875bdb4ff4d933ec23486133b735ff3957f9f07292806e5b28b41e9f6f59f87',
+      '872a0cd0d7de38835f5ef8a47e4869d1649a97d30f60fbff7c1867e765b90a7d',
+      '8a452be3fb258496633d42be8c7a2520f5b4e7fee64bc99f69bfbf5eb65eba38',
+      '11e87ddc923fe813a995ad52eeb8019c450f3cf48c99110e793efb7871ab95f4',
+      '03b185e125767896a7d9a86ba133fb15bbf07335ab274565780a330d7e9a24e7',
+      '5fa5f0a8a605b9b046c4b51bc975256090d6a7ae1bcc73433fc718f08ac2bff5',
+      '81e81ee9586798183101b4efd84075f7a9091c60d06090aaf72a42f8965623ed',
+      '985d1eff09efaf6dbf66e9f4db652166c43083391f905c82ba8326b2bbb80fc1',
+      '71a6c2d69b1581bc6ad17ab2e5b668ee1e042803c1b26b68f6e959f1fa2b887a',
+      '6d02ae65c4807b172dc402bf5b438a4674202c36955585cea842734028d5ab7d',
+      '220560d4f339609b88e2e2b73bb463f82f7b525e0fb38587a64fd86b51d1e9f1',
     ]);
   });
 

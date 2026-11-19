@@ -63,7 +63,7 @@ function category(value: unknown, path: string, key: string): void {
     if (Object.keys(requirements).some(name => !['capabilities', 'contextTokens'].includes(name))) invalid(`${path}.requirements`);
     if (requirements.capabilities !== undefined) {
       if (!Array.isArray(requirements.capabilities) || requirements.capabilities.some(value =>
-        !['tools', 'images', 'reasoning', 'promptCache', 'websocket'].includes(value))
+        !['tools', 'images', 'reasoning', 'promptCache'].includes(value))
         || new Set(requirements.capabilities).size !== requirements.capabilities.length) invalid(`${path}.requirements.capabilities`);
     }
     if (requirements.contextTokens !== undefined) number(requirements.contextTokens, `${path}.requirements.contextTokens`, 1, Number.MAX_SAFE_INTEGER, true);

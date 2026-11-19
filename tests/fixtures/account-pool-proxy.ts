@@ -124,7 +124,7 @@ export async function forwardSdkFetchToLocal(
 ): Promise<Response> {
   const sourceRequest = input instanceof Request ? input : undefined;
   const url = new URL(sourceRequest?.url ?? String(input));
-  if (!['chatgpt.com', 'api.openai.com'].includes(url.hostname)) {
+  if (url.hostname !== 'api.openai.com') {
     throw new Error(`Unexpected non-OpenAI request in local fixture: ${url.hostname}`);
   }
   const headers = new Headers(init?.headers ?? sourceRequest?.headers);
@@ -154,7 +154,7 @@ export async function forwardSdkFetchToLocal(
         headers: {
           'Content-Type': response.headers['content-type'] ?? 'application/json',
           ...Object.fromEntries(Object.entries(response.headers)
-            .filter(([name, value]) => name.startsWith('x-codex-') && typeof value === 'string')),
+            .filter(([name, value]) => name === 'retry-after' && typeof value === 'string')),
         },
       }));
     });

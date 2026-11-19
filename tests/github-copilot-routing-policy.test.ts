@@ -18,8 +18,12 @@ it('does not apply Codex subscription behavior to Copilot Responses', () => {
   expect(isOpenAiOAuth('@ai-sdk/openai', 'oauth', 'github-copilot')).toBe(false);
 });
 
-it.each(['openai', 'openai-oauth', undefined])('preserves OpenAI OAuth behavior for %s', providerId => {
-  expect(isOpenAiOAuth('@ai-sdk/openai', 'oauth', providerId)).toBe(true);
+it('forces subscription transport for the ChatGPT plan provider', () => {
+  expect(isOpenAiOAuth('@ai-sdk/openai', 'oauth', 'openai-chatgpt-plan')).toBe(true);
+});
+
+it.each(['openai', 'openai-oauth', undefined])('refuses subscription transport for %s', providerId => {
+  expect(isOpenAiOAuth('@ai-sdk/openai', 'oauth', providerId)).toBe(false);
 });
 
 it.each(['api', 'none', undefined])('does not treat %s authentication as OpenAI OAuth', authType => {

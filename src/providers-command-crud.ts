@@ -1,6 +1,7 @@
 
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
+import { OPENAI_CHATGPT_PLAN_PROVIDER_ID } from './constants.js';
 import {
   formatRegistryAuthLabel,
   fetchBrowsingProviderCatalog,
@@ -21,6 +22,7 @@ import {
   toggleProviderEnabled,
 } from './registry/crud.js';
 import { loadRegistry } from './registry/io.js';
+import { isRetiredOpenAiProvider } from './registry/retired-openai.js';
 import { reconcilePendingCredentialDeletes } from './registry/credential-lifecycle.js';
 import { supportsNativeOAuth } from './oauth/types.js';
 import { browseAllModels } from './prompts.js';
@@ -44,7 +46,7 @@ import { formatProviderAccounts } from './account-management.js';
 export async function runProvidersList(): Promise<number> {
   const entries = await resolveProvidersForDisplay();
   if (entries.length === 0) {
-    p.log.info('No providers configured. Run leverframe providers add or leverframe providers auth openai.');
+    p.log.info('No providers configured. Run leverframe providers add or leverframe providers auth openai-chatgpt-plan.');
     return 0;
   }
 
@@ -176,6 +178,7 @@ function buildProvidersAddOptions(providers: import('./registry/types.js').Regis
   const options: AddMenuItem[] = [];
 
   for (const provider of providers) {
+    if (isRetiredOpenAiProvider(provider)) continue;
     options.push({
       value: `account:${provider.id}`,
       label: `${provider.name}: add or manage accounts`,
@@ -188,10 +191,9 @@ function buildProvidersAddOptions(providers: import('./registry/types.js').Regis
   for (const tpl of oauthTemplates) {
     options.push({
       value: `oauth:${tpl.id}`,
-      label: tpl.id === 'openai-oauth'
-        ? 'Sign in with ChatGPT (Plus/Pro plan)'
-        : `Sign in with ${tpl.name} (OAuth)`,
-      hint: tpl.id === 'antigravity' ? 'Browser sign-in, no API key needed' : 'OAuth device code, no API key needed',
+      label: tpl.id === OPENAI_CHATGPT_PLAN_PROVIDER_ID ? 'Continue with ChatGPT' : `Sign in with ${tpl.name} (OAuth)`,
+      hint: tpl.id === 'antigravity' || tpl.id === OPENAI_CHATGPT_PLAN_PROVIDER_ID
+        ? 'Browser sign-in, no API key needed' : 'OAuth device code, no API key needed',
     });
   }
 
@@ -293,6 +295,10 @@ async function browseProvider(id: string, provider: import('./registry/types.js'
 }
 
 function providerDetailOptions(provider: import('./registry/types.js').RegistryProvider): AddMenuItem[] {
+  if (isRetiredOpenAiProvider(provider)) return [
+    { value: 'remove', label: 'Remove retired provider' },
+    { value: 'back', label: 'Back' },
+  ];
   const id = provider.id;
   const modelCount = provider.modelsCache?.models.length ?? 0;
   const detailOptions: Array<{ value: string; label: string; hint?: string }> = [];
@@ -334,8 +340,12 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed'> {
   if (!provider) return 'back';
   const modelCount = provider.modelsCache?.models.length ?? 0;
   const authLabel = formatRegistryAuthLabel(provider);
-  printProviderDetailPanel(provider.name, modelCount, authLabel, provider.modelDiscoveryError?.reason);
-  for (const line of formatProviderAccounts(provider)) p.log.info(line);
+  if (isRetiredOpenAiProvider(provider)) {
+    printProviderDetailPanel(provider.name, 0, 'Retired', 'Run leverframe providers auth openai-chatgpt-plan to sign in.');
+  } else {
+    printProviderDetailPanel(provider.name, modelCount, authLabel, provider.modelDiscoveryError?.reason);
+    for (const line of formatProviderAccounts(provider)) p.log.info(line);
+  }
 
   const action = await p.select({
     message: 'What would you like to do?',
@@ -397,10 +407,6 @@ export async function runProvidersHub(): Promise<number> {
       });
     }
 
-    const configuredIds = new Set(entries.map(entry => entry.id));
-    if (listVisibleOAuthTemplates(configuredIds).length > 0) {
-      options.push({ value: 'auth-menu', label: '→ Sign in with ChatGPT (OAuth)', hint: 'device code' });
-    }
     if (entries.length > 0) {
       options.push({ value: 'refresh-all', label: '↺ Refresh all models', hint: 'Update model lists for all providers' });
     }
@@ -423,10 +429,6 @@ export async function runProvidersHub(): Promise<number> {
     }
     if (choice === 'refresh-all') {
       await runProvidersRefreshModels();
-      continue;
-    }
-    if (choice === 'auth-menu') {
-      await runProvidersAuth('openai');
       continue;
     }
     if (typeof choice === 'string' && choice.startsWith('provider:')) {

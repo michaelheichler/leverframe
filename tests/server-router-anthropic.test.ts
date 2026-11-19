@@ -4,7 +4,6 @@ import { createGatewayModelCatalog, type ServerModelInfo } from '../src/server/m
 import { startServer, type ServerHandle } from '../src/server/router.js';
 import { createLanguageModel } from '../src/provider-factory.js';
 import { generateAnthropicResponse } from '../src/sdk-adapter.js';
-import { ProviderTransportError } from '../src/provider-error.js';
 import { useIsolatedTestHome } from './isolated-test-home.js';
 
 useIsolatedTestHome('leverframe-server-router');
@@ -297,47 +296,6 @@ describe("server router Anthropic routes", () => {
     expect(body.error.type).toBe('invalid_request_error');
     expect(body.error.message).toMatch(/^prompt is too long: \d+ tokens > 10 maximum$/);
     expect(body.request_id).toEqual(expect.any(String));
-  });
-
-  it('returns safe WebSocket status, retry, and provider request headers', async () => {
-    const oauthCatalog = createGatewayModelCatalog([{
-      id: 'gpt-oauth-rejected',
-      name: 'GPT OAuth Rejected',
-      isFree: false,
-      brand: 'OpenAI',
-      providerId: 'openai-oauth',
-      sourceBackend: 'openai-oauth',
-      modelFormat: 'openai',
-      npm: '@ai-sdk/openai',
-      authType: 'oauth',
-      apiKey: 'oauth-access-token',
-    }]);
-    const server = await startTestServer({ catalog: oauthCatalog });
-    vi.mocked(generateAnthropicResponse).mockRejectedValueOnce(new ProviderTransportError({
-      provider: 'openai',
-      model: 'gpt-oauth-rejected',
-      phase: 'websocket_upgrade',
-      httpStatus: 429,
-      providerRequestId: 'provider-request-safe',
-      retryAfterMs: 2_500,
-      retryable: true,
-      outputEmitted: false,
-      safeMessage: 'Provider WebSocket upgrade was rejected.',
-    }));
-
-    const response = await fetch(`${server.url}/anthropic/v1/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'anthropic-openai-oauth__gpt-oauth-rejected',
-        messages: [{ role: 'user', content: 'ping' }],
-      }),
-    });
-
-    expect(response.status).toBe(429);
-    expect(response.headers.get('retry-after')).toBe('3');
-    expect(response.headers.get('x-provider-request-id')).toBe('provider-request-safe');
-    expect(await response.text()).not.toContain('oauth-access-token');
   });
 
   it('returns HTTP 400 for malformed translated tool-result images', async () => {

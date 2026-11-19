@@ -10,7 +10,6 @@ import {
 import {
   writeInferenceRequestLog,
   writeInferenceResponseErrorLog,
-  writeWebSocketDiagnosticLog,
   type InferenceRequestLogEntry,
 } from '../trace-log.js';
 import { createLanguageModel } from '../provider-factory.js';
@@ -55,7 +54,6 @@ export function executionCapabilities(model: ServerModelInfo, body: JsonBody) {
     streaming: true,
     tools: Array.isArray(body.tools) || supported.includes('tools'),
     reasoning: model.reasoning,
-    websocket: model.preferWebSockets,
     clientManagedState: true,
   });
 }
@@ -229,7 +227,6 @@ export async function getOrInitLanguageModel(
   npm: string,
   baseURL: string | undefined,
   apiKey: string,
-  webSocketDiagnosticsLogPath?: string,
 ): Promise<LanguageModel> {
   const routeKey = providerRuntimeRouteKey(model, npm, baseURL);
   let credential = modelCache.snapshot(routeKey, apiKey);
@@ -248,12 +245,6 @@ export async function getOrInitLanguageModel(
     oauthAccountId: model.oauthAccountId,
     providerData: model.providerData,
     headers: model.headers,
-    useResponsesLite: model.useResponsesLite,
-    preferWebSockets: model.preferWebSockets,
-    minimalClientVersion: model.minimalClientVersion,
-    onWebSocketDiagnostic: webSocketDiagnosticsLogPath
-      ? event => writeWebSocketDiagnosticLog(webSocketDiagnosticsLogPath, event)
-      : undefined,
   }));
 }
 

@@ -11,8 +11,8 @@ const rates = (amount: number) => ({ kind: 'known', currency: 'USD', unit: 'per-
 const catalogModel = (modelRef: ReturnType<typeof ref>, amount: number) => ({ ref: modelRef,
   credential: { source: 'registry', authRef: 'fixture', kind: 'api_key', available: true }, billing: { kind: 'metered' },
   discovery: { source: 'registry', state: 'current', confirmed: true, fetchedAt: 'fixture' },
-  capabilities: { tools: true, images: true, reasoning: true, promptCache: true, websocket: true },
-  confirmedCapabilities: ['tools', 'images', 'reasoning', 'promptCache', 'websocket'], supportedReasoningEfforts: ['balanced', 'deep'],
+  capabilities: { tools: true, images: true, reasoning: true, promptCache: true },
+  confirmedCapabilities: ['tools', 'images', 'reasoning', 'promptCache'], supportedReasoningEfforts: ['balanced', 'deep'],
   contextWindow: 100_000, contextWindowConfirmed: true, estimate: rates(amount),
 });
 const ordered = [

@@ -12,9 +12,6 @@ reconcileExecutionsAtStartup
 } from './execution-tracking.js';
 import { disposeLanguageModel } from './language-model-disposal.js';
 import { listenTcpServer } from './listener-ready.js';
-import {
-evictResponsesWebSocketConnectionsForAccessToken
-} from './oauth/responses-websocket.js';
 import { ProviderRuntimeCache } from './provider-runtime-cache.js';
 import { handleProxyRequest } from './proxy-handler.js';
 import {
@@ -51,7 +48,6 @@ export async function startProxyCatalog(
   debug = false,
   inferenceLogPath?: string,
   debugLogPath?: string,
-  webSocketDiagnosticsLogPath?: string,
   modelAliases?: ProxyModelAlias[],
   routing?: Omit<RoutingControlContext, 'proxyToken'>,
 ): Promise<ProxyHandle> {
@@ -60,9 +56,6 @@ export async function startProxyCatalog(
   silenceSdkWarnings();
   const providerRuntimeCache = new ProviderRuntimeCache<LanguageModel>({
     disposeHandle: disposeLanguageModel,
-    onCredentialRotated: previous => {
-      evictResponsesWebSocketConnectionsForAccessToken(previous.credential);
-    },
   });
 
   if (routes.length === 0) {
@@ -80,7 +73,7 @@ export async function startProxyCatalog(
   const modelsPayload = () => proxyModelsPayload(routes);
   let adapterClosed = false;
   const requestContext = { proxyToken, byAlias, defaultRoute, managedPools, providerRuntimeCache, plog,
-    modelsPayload, inferenceLogPath, webSocketDiagnosticsLogPath, routing };
+    modelsPayload, inferenceLogPath, routing };
 
   const server = createServer(async (req, res) => {
     try {
@@ -210,9 +203,6 @@ export function startProxy(
     supportsReasoningToggle?: boolean;
     supportsPromptCacheBreakpoints?: boolean;
     interleavedReasoningField?: string;
-    useResponsesLite?: boolean;
-    preferWebSockets?: boolean;
-    minimalClientVersion?: string;
   },
   apiKey?: string,
 ): Promise<ProxyHandle> {
@@ -243,8 +233,5 @@ export function startProxy(
     supportsReasoningToggle: sdk?.supportsReasoningToggle,
     supportsPromptCacheBreakpoints: sdk?.supportsPromptCacheBreakpoints,
     interleavedReasoningField: sdk?.interleavedReasoningField,
-    useResponsesLite: sdk?.useResponsesLite,
-    preferWebSockets: sdk?.preferWebSockets,
-    minimalClientVersion: sdk?.minimalClientVersion,
   }], clientModelId, debug);
 }

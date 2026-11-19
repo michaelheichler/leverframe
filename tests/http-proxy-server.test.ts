@@ -9,7 +9,6 @@ import { once } from 'node:events';
 import { ensureHttpProxyCertificates } from '../src/http-proxy/ca.js';
 import { startHttpProxy } from '../src/http-proxy/server.js';
 import {
-  assertDiagnostic,
   assertForwardedRequest,
   assertUsageLog,
   firstPartyBody,
@@ -74,7 +73,6 @@ afterAll(() => {
       assertForwardedRequest(fixture, body);
       const { raw, entries } = await readInferenceLog(fixture.inferenceLogPath);
       assertUsageLog(entries, raw);
-      assertDiagnostic(fixture.diagnosticsLogPath, entries[0].requestId);
     } finally {
       if (previousRequestPreview === undefined) delete process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'];
       else process.env['LEVERFRAME_LOG_REQUEST_PREVIEW'] = previousRequestPreview;

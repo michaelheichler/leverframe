@@ -1,9 +1,10 @@
-
+import { OPENAI_CHATGPT_PLAN_PROVIDER_ID } from '../constants.js';
 
 export interface StoredOAuthCredential {
   type: 'oauth';
   access: string;
   refresh: string;
+  idToken?: string;
 
   expires: number;
   accountId?: string;
@@ -77,7 +78,7 @@ export function accessTokenIsExpiring(token: string | undefined, skewMs = OAUTH_
   }
 }
 
-export const NATIVE_OAUTH_PROVIDER_IDS = ['openai', 'openai-oauth', 'github-copilot', 'antigravity'] as const;
+export const NATIVE_OAUTH_PROVIDER_IDS = [OPENAI_CHATGPT_PLAN_PROVIDER_ID, 'github-copilot', 'antigravity'] as const;
 export type NativeOAuthProviderId = typeof NATIVE_OAUTH_PROVIDER_IDS[number];
 
 export function supportsNativeOAuth(providerId: string): providerId is NativeOAuthProviderId {

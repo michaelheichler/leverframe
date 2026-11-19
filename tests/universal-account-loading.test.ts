@@ -1,3 +1,4 @@
+import { planAccountId, planCredential } from './fixtures/chatgpt-plan-credential.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,8 +10,8 @@ import type { CachedModel, RegistryProvider } from '../src/registry/types.js';
 import type { LocalProvider } from '../src/types.js';
 
 const previousHome = process.env.LEVERFRAME_HOME;
-const oauthPrimaryRef = 'keyring:oauth:provider:openai-oauth::credential::v1:00000000000000000000000000000051';
-const oauthSecondaryRef = 'keyring:oauth:provider:openai-oauth::credential::v1:00000000000000000000000000000052';
+const oauthPrimaryRef = 'keyring:oauth:provider:openai-chatgpt-plan::credential::v1:00000000000000000000000000000051';
+const oauthSecondaryRef = 'keyring:oauth:provider:openai-chatgpt-plan::credential::v1:00000000000000000000000000000052';
 let home: string;
 let keyring: Map<string, string>;
 const catalogReaders: Array<{ catalog: string; read: () => Promise<LocalProvider[]> }> = [
@@ -46,7 +47,7 @@ function cachedModel(id: string, overrides: Partial<CachedModel> = {}): CachedMo
 }
 
 function oauthCredential(access: string, accountId: string): string {
-  return JSON.stringify({ type: 'oauth', access, refresh: 'unused-refresh', expires: Date.now() + 3_600_000, accountId });
+  return JSON.stringify(planCredential(access, accountId));
 }
 
 function scopedApiProvider(): RegistryProvider {
@@ -67,13 +68,13 @@ function scopedOAuthProvider(): RegistryProvider {
   keyring.set(oauthPrimaryRef.slice('keyring:'.length), oauthCredential('primary-access', 'oauth-primary'));
   keyring.set(oauthSecondaryRef.slice('keyring:'.length), oauthCredential('secondary-access', 'oauth-secondary'));
   return {
-    id: 'openai-oauth', templateId: 'openai-oauth', name: 'ChatGPT OAuth', enabled: true, authType: 'oauth',
+    id: 'openai-chatgpt-plan', templateId: 'openai-chatgpt-plan', name: 'ChatGPT OAuth', enabled: true, authType: 'oauth',
     authRef: oauthPrimaryRef, api: { npm: '@ai-sdk/openai', url: 'https://api.openai.com/v1' }, addedAt: '2026-11-02',
     accounts: [
       { id: 'primary', authRef: oauthPrimaryRef, enabled: true, name: 'Primary', tag: 'HOME',
-        modelsCache: { oauthAccountId: 'oauth-primary', fetchedAt: '2026-11-02', models: [cachedModel('primary-oauth-model', { npm: '@ai-sdk/openai', apiUrl: 'https://api.openai.com/v1' })] } },
+        modelsCache: { oauthAccountId: planAccountId('oauth-primary'), fetchedAt: '2026-11-02', models: [cachedModel('primary-oauth-model', { npm: '@ai-sdk/openai', apiUrl: 'https://api.openai.com/v1' })] } },
       { id: 'secondary', authRef: oauthSecondaryRef, enabled: true, name: 'Secondary', tag: 'WORK',
-        modelsCache: { oauthAccountId: 'oauth-primary', fetchedAt: '2026-11-02', models: [cachedModel('secondary-oauth-model', { npm: '@ai-sdk/openai', apiUrl: 'https://api.openai.com/v1' })] } },
+        modelsCache: { oauthAccountId: planAccountId('oauth-primary'), fetchedAt: '2026-11-02', models: [cachedModel('secondary-oauth-model', { npm: '@ai-sdk/openai', apiUrl: 'https://api.openai.com/v1' })] } },
     ],
   };
 }
@@ -97,7 +98,7 @@ it.each(catalogReaders)('$catalog catalog rejects OAuth model caches belonging t
   const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
   const providers = await read();
-  const models = providers.find(provider => provider.id === 'openai-oauth')?.models ?? [];
+  const models = providers.find(provider => provider.id === 'openai-chatgpt-plan')?.models ?? [];
 
   expect(models.some(model => model.accountId === 'primary' && model.upstreamModelId === 'primary-oauth-model')).toBe(true);
   expect(models.some(model => model.accountId === 'secondary' || model.upstreamModelId === 'secondary-oauth-model')).toBe(false);

@@ -6,7 +6,6 @@ import { isOpenAiOAuth, maxToolsForNpm } from '../provider-factory.js';
 import { anthropicErrorType, clientFacingAnthropicStatus, formatUpstreamError, isContextLengthExceededError, isTerminalUsageLimitText, sdkUpstreamErrorDetails, sdkUpstreamResponseHeaders } from '../upstream-error.js';
 import { reportedContextWindow } from '../context-window.js';
 import { translateRequest as sdkTranslateRequest, streamAnthropicResponse, generateAnthropicResponse, anthropicEffortFromRequest, type AnthropicRequest, type AnthropicUsageTrace } from '../sdk-adapter.js';
-import { withResponsesWebSocketDiagnosticContext } from '../oauth/responses-websocket.js';
 import { applyExecutionHeaders, auditInference, auditSdkError, getOrInitLanguageModel, getResponseModelId, inferenceProvider } from './route-helpers.js';
 import { upstreamModelId } from './models.js';
 import { createTrackedSseResponse } from './sse-response.js';
@@ -31,15 +30,12 @@ export async function handleSdkAnthropicMessages(context: NativeRequestContext):
           upstreamUrl: model.baseUrl ?? '', apiKey, modelFormat: 'openai', npm: model.npm,
           providerId: model.providerId, templateId: model.templateId, authType: model.authType, baseURL: model.apiBaseUrl,
           accountId: model.accountId,
-          headers: model.headers, useResponsesLite: model.useResponsesLite,
-          minimalClientVersion: model.minimalClientVersion,
+          headers: model.headers,
         },
       });
       return;
     }
-    const languageModel = await getOrInitLanguageModel(
-      modelCache, model, model.npm!, model.apiBaseUrl, apiKey, options.webSocketDiagnosticsLogPath,
-    );
+    const languageModel = await getOrInitLanguageModel(modelCache, model, model.npm!, model.apiBaseUrl, apiKey);
     if (clientWantsStream) {
       await executeSdkStream(context, prepared, languageModel);
     } else {
@@ -85,7 +81,6 @@ function prepareSdkRequest(context: NativeRequestContext) {
       supportsParallelToolCalls: model.supportsParallelToolCalls,
       supportsReasoningToggle: model.supportsReasoningToggle,
       supportsPromptCacheBreakpoints: model.supportsPromptCacheBreakpoints,
-      useResponsesLite: model.useResponsesLite,
       interleavedReasoningField: model.interleavedReasoningField,
       upstreamModelId: upstreamModelId(model),
     },
@@ -127,7 +122,7 @@ function createSdkUsageObserver(context: NativeRequestContext) {
 type PreparedSdkRequest = ReturnType<typeof prepareSdkRequest>;
 
 async function executeSdkStream(context: NativeRequestContext, prepared: PreparedSdkRequest, languageModel: LanguageModel): Promise<void> {
-  const { res, body, model, requestId, claudeSessionId, clientAbort, requestExecution, tracking } = context;
+  const { res, body, model, clientAbort, requestExecution, tracking } = context;
   const { params, responseModelId, onUsage } = prepared;
   const sse = createTrackedSseResponse({
     res,
@@ -137,17 +132,14 @@ async function executeSdkStream(context: NativeRequestContext, prepared: Prepare
   });
   sse.start();
   try {
-    await withResponsesWebSocketDiagnosticContext(
-      { requestId, claudeSessionId },
-      () => streamAnthropicResponse(languageModel, params, responseModelId, sse.writeChunk, undefined, {
-        onUsage,
-        initialInputTokens: estimateAnthropicInputTokens(body),
-        abortSignal: clientAbort.signal,
-        clientAbortSignal: clientAbort.signal,
-        lifecycle: requestExecution,
-        contextWindow: reportedContextWindow(model.contextWindow, model.contextWindowUnconfirmed),
-      }),
-    );
+    await streamAnthropicResponse(languageModel, params, responseModelId, sse.writeChunk, undefined, {
+      onUsage,
+      initialInputTokens: estimateAnthropicInputTokens(body),
+      abortSignal: clientAbort.signal,
+      clientAbortSignal: clientAbort.signal,
+      lifecycle: requestExecution,
+      contextWindow: reportedContextWindow(model.contextWindow, model.contextWindowUnconfirmed),
+    });
     requestExecution.markStreamActivity();
     requestExecution.complete();
     if (!res.headersSent) sse.writeChunk('');
@@ -158,19 +150,16 @@ async function executeSdkStream(context: NativeRequestContext, prepared: Prepare
 }
 
 async function executeSdkGenerate(context: NativeRequestContext, prepared: PreparedSdkRequest, languageModel: LanguageModel): Promise<void> {
-  const { res, model, requestId, claudeSessionId, clientAbort, requestExecution, tracking } = context;
+  const { res, model, clientAbort, requestExecution, tracking } = context;
   const { params, responseModelId, openAiOAuth, onUsage } = prepared;
 
-  const anthropicResponse = await withResponsesWebSocketDiagnosticContext(
-    { requestId, claudeSessionId },
-    () => generateAnthropicResponse(languageModel, params, responseModelId, {
-      forceStream: openAiOAuth,
-      abortSignal: clientAbort.signal,
-      onUsage,
-      lifecycle: requestExecution,
-      contextWindow: reportedContextWindow(model.contextWindow, model.contextWindowUnconfirmed),
-    }),
-  );
+  const anthropicResponse = await generateAnthropicResponse(languageModel, params, responseModelId, {
+    forceStream: openAiOAuth,
+    abortSignal: clientAbort.signal,
+    onUsage,
+    lifecycle: requestExecution,
+    contextWindow: reportedContextWindow(model.contextWindow, model.contextWindowUnconfirmed),
+  });
   requestExecution.markStreamActivity();
   requestExecution.markOutputEmitted();
   requestExecution.complete();

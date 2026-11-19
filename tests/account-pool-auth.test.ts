@@ -1,3 +1,4 @@
+import { planCredential } from './fixtures/chatgpt-plan-credential.js';
 import http from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -46,17 +47,15 @@ function saveAccounts(authRef = 'env:ACCOUNT_ALPHA_FIXTURE', single = false): vo
 }
 
 function saveOAuthAccounts(single = false): void {
-  const alphaRef = 'keyring:oauth:provider:openai-oauth::credential::v1:00000000000000000000000000000001';
-  const betaRef = 'keyring:oauth:provider:openai-oauth::credential::v1:00000000000000000000000000000002';
-  const credential = (access: string, accountId: string) => JSON.stringify({
-    type: 'oauth', access, refresh: 'unused-refresh-fixture', expires: Date.now() + 3_600_000, accountId,
-  });
+  const alphaRef = 'keyring:oauth:provider:openai-chatgpt-plan::credential::v1:00000000000000000000000000000001';
+  const betaRef = 'keyring:oauth:provider:openai-chatgpt-plan::credential::v1:00000000000000000000000000000002';
+  const credential = (access: string, accountId: string) => JSON.stringify(planCredential(access, accountId));
   fakeKeyring.set(alphaRef.slice('keyring:'.length), credential('oauth-alpha-access', 'oauth-alpha-account'));
   fakeKeyring.set(betaRef.slice('keyring:'.length), credential('oauth-beta-access', 'oauth-beta-account'));
   saveRegistry({
     schemaVersion: 1,
     providers: [{
-      id: 'openai-oauth', templateId: 'openai-oauth', name: 'ChatGPT OAuth', enabled: true,
+      id: 'openai-chatgpt-plan', templateId: 'openai-chatgpt-plan', name: 'ChatGPT OAuth', enabled: true,
       authType: 'oauth', authRef: alphaRef, api: {}, addedAt: '2026-01-01',
       accounts: [
         { id: 'alpha', authRef: alphaRef, enabled: true },
@@ -68,10 +67,9 @@ function saveOAuthAccounts(single = false): void {
 
 function oauthRoute(): ProxyRoute {
   return {
-    aliasId: 'openai-oauth__gpt-4o-mini', realModelId: 'gpt-4o-mini',
+    aliasId: 'openai-chatgpt-plan__gpt-4o-mini', realModelId: 'gpt-4o-mini',
     displayName: 'ChatGPT OAuth fixture', upstreamUrl: '', apiKey: 'route-snapshot-oauth-token',
-    modelFormat: 'openai', npm: '@ai-sdk/openai', providerId: 'openai-oauth', authType: 'oauth',
-    preferWebSockets: false,
+    modelFormat: 'openai', npm: '@ai-sdk/openai', providerId: 'openai-chatgpt-plan', authType: 'oauth',
   };
 }
 

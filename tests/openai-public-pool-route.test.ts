@@ -1,3 +1,4 @@
+import { planCredential } from './fixtures/chatgpt-plan-credential.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,8 +14,8 @@ import {
   startNativeUpstream, startOpenAiUpstream,
 } from './fixtures/account-pool-proxy.js';
 
-const alphaRef = 'keyring:oauth:provider:openai-oauth::credential::v1:00000000000000000000000000000031';
-const betaRef = 'keyring:oauth:provider:openai-oauth::credential::v1:00000000000000000000000000000032';
+const alphaRef = 'keyring:oauth:provider:openai-chatgpt-plan::credential::v1:00000000000000000000000000000031';
+const betaRef = 'keyring:oauth:provider:openai-chatgpt-plan::credential::v1:00000000000000000000000000000032';
 const apiAlphaRef = 'keyring:provider:anthropic-api:123e4567-e89b-42d3-a456-426614174110';
 const apiBetaRef = 'keyring:provider:anthropic-api:123e4567-e89b-42d3-a456-426614174111';
 const gatewayToken = 'fixture-openai-gateway-sentinel';
@@ -27,15 +28,13 @@ let fakeKeyring: Map<string, string>;
 let server: ServerHandle | undefined;
 
 function saveOAuthAccounts(accountState = { alphaEnabled: true, betaEnabled: true }): void {
-  const credential = (access: string, accountId: string) => JSON.stringify({
-    type: 'oauth', access, refresh: 'unused-refresh-fixture', expires: Date.now() + 3_600_000, accountId,
-  });
+  const credential = (access: string, accountId: string) => JSON.stringify(planCredential(access, accountId));
   fakeKeyring.set(alphaRef.slice('keyring:'.length), credential('oauth-alpha-access', 'oauth-alpha-account'));
   fakeKeyring.set(betaRef.slice('keyring:'.length), credential('oauth-beta-access', 'oauth-beta-account'));
   saveRegistry({
     schemaVersion: 1,
     providers: [{
-      id: 'openai-oauth', templateId: 'openai-oauth', name: 'ChatGPT OAuth', enabled: true,
+      id: 'openai-chatgpt-plan', templateId: 'openai-chatgpt-plan', name: 'ChatGPT OAuth', enabled: true,
       authType: 'oauth', authRef: alphaRef, api: {}, addedAt: '2026-01-01',
       accounts: [
         { id: 'alpha', authRef: alphaRef, enabled: accountState.alphaEnabled },
@@ -49,7 +48,7 @@ function saveOnlyBetaAccount(): void {
   saveRegistry({
     schemaVersion: 1,
     providers: [{
-      id: 'openai-oauth', templateId: 'openai-oauth', name: 'ChatGPT OAuth', enabled: true,
+      id: 'openai-chatgpt-plan', templateId: 'openai-chatgpt-plan', name: 'ChatGPT OAuth', enabled: true,
       authType: 'oauth', authRef: alphaRef, api: {}, addedAt: '2026-01-01',
       accounts: [{ id: 'beta', authRef: betaRef, enabled: true }],
     }],
@@ -75,8 +74,8 @@ function saveAnthropicApiAccounts(): void {
 function openAiCatalog() {
   return createGatewayModelCatalog([{
     id: 'gpt-pool-fixture', name: 'OAuth pool fixture', isFree: false, brand: 'OpenAI',
-    sourceBackend: 'fixture', modelFormat: 'openai', providerId: 'openai-oauth',
-    authType: 'oauth', npm: '@ai-sdk/openai', apiKey: catalogToken, preferWebSockets: false,
+    sourceBackend: 'fixture', modelFormat: 'openai', providerId: 'openai-chatgpt-plan',
+    authType: 'oauth', npm: '@ai-sdk/openai', apiKey: catalogToken,
   }]);
 }
 
@@ -151,11 +150,11 @@ it.each([false, true])('uses the configured OAuth pool on public OpenAI route (s
     expect(body).toContain('OAuth fixture response');
     expect(upstream.calls).toEqual([
       {
-        authorization: 'Bearer oauth-alpha-access', accountId: 'oauth-alpha-account',
+        authorization: 'Bearer oauth-alpha-access', accountId: undefined,
         model: 'gpt-pool-fixture', path: expect.stringContaining('/responses'),
       },
       {
-        authorization: 'Bearer oauth-beta-access', accountId: 'oauth-beta-account',
+        authorization: 'Bearer oauth-beta-access', accountId: undefined,
         model: 'gpt-pool-fixture', path: expect.stringContaining('/responses'),
       },
     ]);
@@ -188,7 +187,7 @@ it('uses one configured OAuth account and does not fail over when failover is di
 
     expect(response.status).toBe(429);
     expect(upstream.calls).toEqual([{
-      authorization: 'Bearer oauth-alpha-access', accountId: 'oauth-alpha-account',
+      authorization: 'Bearer oauth-alpha-access', accountId: undefined,
       model: 'gpt-pool-fixture', path: expect.stringContaining('/responses'),
     }]);
   } finally {
@@ -225,7 +224,7 @@ it('moves a public OpenAI session to a verified higher-capacity OAuth account', 
     forwardSdkFetchToLocal(input, init, upstream.port));
   const route = await startPublicOpenAiServer();
   const session = '11111111-1111-4111-8111-111111111111';
-  const pool: PoolKey = { providerId: 'openai-oauth', modelId: 'gpt-pool-fixture', billingType: 'oauth' };
+  const pool: PoolKey = { providerId: 'openai-chatgpt-plan', modelId: 'gpt-pool-fixture', billingType: 'oauth' };
 
   try {
     const send = () => upstreamFetch(`${route.url}/openai/v1/chat/completions`, {

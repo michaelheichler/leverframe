@@ -410,7 +410,6 @@ export function trackProxyMessage(prepared: Pick<PreparedProxyMessage, 'req' | '
     streaming: true,
     tools: Array.isArray(anthropicBody.tools),
     reasoning: route.reasoning,
-    websocket: route.preferWebSockets,
     clientManagedState: true,
   });
   let tracking: ExecutionTrackingHandle;

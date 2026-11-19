@@ -33,7 +33,6 @@ export function localModelToRoute(lp: LocalProvider, model: LocalProviderModel):
     maxContextWindow: model.maxContextWindow,
     inputTokenLimit: model.inputTokenLimit,
     outputTokenLimit: model.outputTokenLimit,
-    minimalClientVersion: model.minimalClientVersion,
     contextWindowUnconfirmed: model.contextWindowUnconfirmed,
     npm: model.npm,
     baseURL: model.apiBaseUrl,
@@ -57,8 +56,6 @@ export function localModelToRoute(lp: LocalProvider, model: LocalProviderModel):
     supportsReasoningToggle: model.supportsReasoningToggle,
     supportsPromptCacheBreakpoints: model.supportsPromptCacheBreakpoints,
     interleavedReasoningField: model.interleavedReasoningField,
-    useResponsesLite: model.useResponsesLite,
-    preferWebSockets: model.preferWebSockets,
   };
 }
 

@@ -6,6 +6,7 @@ import { _credentialStoreInternals } from '../src/credential-store.js';
 import { loadRegistryProviders } from '../src/registry/load.js';
 import { saveRegistry } from '../src/registry/io.js';
 import type { RegistryProvider } from '../src/registry/types.js';
+import { planAccountId, planCredential } from './fixtures/chatgpt-plan-credential.js';
 import { resolveServerUpstreamApiKey } from '../src/server/index.js';
 
 let home: string;
@@ -13,7 +14,7 @@ let home: string;
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'leverframe-keychain-reads-'));
   vi.stubEnv('LEVERFRAME_HOME', home);
-  vi.stubEnv('LEVERFRAME_KEY_OPENAI_OAUTH', '');
+  vi.stubEnv('LEVERFRAME_KEY_OPENAI_CHATGPT_PLAN', '');
   vi.stubEnv('LEVERFRAME_KEY_DISABLED', '');
 });
 
@@ -23,9 +24,9 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-function oauthProvider(id = 'openai-oauth', enabled = true): RegistryProvider {
+function oauthProvider(id = 'openai-chatgpt-plan', enabled = true): RegistryProvider {
   return {
-    id, enabled, name: id, templateId: 'openai-oauth', authType: 'oauth',
+    id, enabled, name: id, templateId: 'openai-chatgpt-plan', authType: 'oauth',
     authRef: `keyring:oauth:provider:${id}`, api: { npm: '@ai-sdk/openai' },
     addedAt: '2026-01-01T00:00:00Z',
     modelsCache: { fetchedAt: '2026-01-01T00:00:00Z', models: [{
@@ -35,10 +36,7 @@ function oauthProvider(id = 'openai-oauth', enabled = true): RegistryProvider {
 }
 
 function freshCredential() {
-  return JSON.stringify({
-    type: 'oauth', access: 'fixture-access', refresh: 'fixture-refresh', expires: Date.now() + 3_600_000,
-    accountId: 'fixture-account', providerData: { organization: 'fixture-organization' },
-  });
+  return JSON.stringify(planCredential('fixture-access', 'fixture-account'));
 }
 
 it('loads access and account metadata from one fresh OAuth Keychain read', async () => {
@@ -50,11 +48,11 @@ it('loads access and account metadata from one fresh OAuth Keychain read', async
 
   expect(providers).toHaveLength(1);
   expect(providers[0]).toMatchObject({
-    apiKey: 'fixture-access', oauthAccountId: 'fixture-account',
-    providerData: { organization: 'fixture-organization' },
+    apiKey: 'fixture-access', oauthAccountId: planAccountId('fixture-account'),
+    providerData: expect.objectContaining({ subject: 'fixture-account' }),
   });
   expect(keyring).toHaveBeenCalledTimes(1);
-  expect(keyring).toHaveBeenCalledWith({ operation: 'read', service: 'leverframe', account: 'oauth:provider:openai-oauth' });
+  expect(keyring).toHaveBeenCalledWith({ operation: 'read', service: 'leverframe', account: 'oauth:provider:openai-chatgpt-plan' });
 });
 
 it('does not access credentials for disabled registry providers', async () => {

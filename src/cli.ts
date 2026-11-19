@@ -151,7 +151,7 @@ function runServer(parsed: ReturnType<typeof parseArgs>): Promise<number> | numb
     httpProxy: bridgeMode === 'proxy', quick: parsed.serverQuick, listenMode: parsed.serverListenMode,
     providersMode: parsed.serverProvidersMode, providerIds: parsed.serverProviderIds,
     maskGatewayIds: parsed.serverMaskGatewayIds, password: parsed.serverPassword ?? process.env['LEVERFRAME_SERVER_PASSWORD'],
-    wsDiagnostics: parsed.serverWsDiagnostics, port: parsed.serverPort, noDiscovery: parsed.serverNoDiscovery,
+    port: parsed.serverPort, noDiscovery: parsed.serverNoDiscovery,
     prepareClaude: parsed.serverPrepareClaude,
   });
 }

@@ -2,10 +2,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createGatewayModelCatalog } from '../src/server/models.js';
 import { startServer } from '../src/server/router.js';
 import { createLanguageModel } from '../src/provider-factory.js';
-import { generateAnthropicResponse } from '../src/sdk-adapter.js';
+import { claudeSessionPromptCacheKey, generateAnthropicResponse } from '../src/sdk-adapter.js';
 import { useIsolatedTestHome } from './isolated-test-home.js';
 
-useIsolatedTestHome('leverframe-codex-session-server');
+useIsolatedTestHome('leverframe-plan-session-server');
 
 vi.mock('../src/provider-factory.js', async importOriginal => ({
   ...(await importOriginal<typeof import('../src/provider-factory.js')>()),
@@ -34,7 +34,7 @@ it('passes translated session affinity through the native server route', async (
   const sessionId = '11111111-1111-4111-8111-111111111111';
   const catalog = createGatewayModelCatalog([{
     id: 'gpt-session-fixture', name: 'GPT Session Fixture', isFree: false, brand: 'OpenAI',
-    providerId: 'openai-oauth', sourceBackend: 'openai-oauth', modelFormat: 'openai',
+    providerId: 'openai-chatgpt-plan', sourceBackend: 'openai-chatgpt-plan', modelFormat: 'openai',
     npm: '@ai-sdk/openai', authType: 'oauth', apiKey: 'fixture-access-token',
   }]);
   const server = await startServer({
@@ -45,7 +45,7 @@ it('passes translated session affinity through the native server route', async (
   const response = await fetch(`${server.url}/anthropic/v1/messages`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'anthropic-openai-oauth__gpt-session-fixture',
+      model: 'anthropic-openai-chatgpt-plan__gpt-session-fixture',
       metadata: { user_id: JSON.stringify({ session_id: sessionId }) },
       messages: [{ role: 'user', content: 'fixture request' }],
     }),
@@ -56,6 +56,5 @@ it('passes translated session affinity through the native server route', async (
     headers?: Record<string, string | undefined>;
     providerOptions?: { openai?: { promptCacheKey?: string } };
   };
-  expect(params.headers?.['session-id']).toBe(params.providerOptions?.openai?.promptCacheKey);
-  expect(params.headers?.['session-id']).not.toContain(sessionId);
+  expect(params.providerOptions?.openai?.promptCacheKey).toBe(claudeSessionPromptCacheKey(sessionId));
 });

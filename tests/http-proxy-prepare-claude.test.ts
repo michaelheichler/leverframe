@@ -55,7 +55,7 @@ beforeEach(() => {
 
 describe('HTTP proxy Claude preparation', () => {
   it('prepares the complete discovered catalog before opening the proxy listener', async () => {
-    const { loaded } = await startConfiguredHttpProxy(0, false, '/fixture/inference.jsonl', undefined, undefined, true);
+    const { loaded } = await startConfiguredHttpProxy(0, false, '/fixture/inference.jsonl', undefined, true);
 
     expect(loaded.providers.flatMap(entry => entry.models.map(model => model.id))).toEqual(['available-model']);
     expect(mocks.prepare).toHaveBeenCalledWith({
@@ -73,7 +73,7 @@ describe('HTTP proxy Claude preparation', () => {
   it('rejects preparation failure before opening a listener', async () => {
     mocks.prepare.mockRejectedValueOnce(new Error('fixture patch failure'));
 
-    await expect(startConfiguredHttpProxy(0, false, '/fixture/inference.jsonl', undefined, undefined, true))
+    await expect(startConfiguredHttpProxy(0, false, '/fixture/inference.jsonl', undefined, true))
       .rejects.toThrow('fixture patch failure');
     expect(mocks.bind).not.toHaveBeenCalled();
   });
@@ -81,7 +81,7 @@ describe('HTTP proxy Claude preparation', () => {
   it('rejects a missing Claude installation before opening a listener', async () => {
     mocks.installation.mockReturnValueOnce(null);
 
-    await expect(startConfiguredHttpProxy(0, false, '/fixture/inference.jsonl', undefined, undefined, true))
+    await expect(startConfiguredHttpProxy(0, false, '/fixture/inference.jsonl', undefined, true))
       .rejects.toThrow(/claude/i);
     expect(mocks.prepare).not.toHaveBeenCalled();
     expect(mocks.bind).not.toHaveBeenCalled();
@@ -90,7 +90,7 @@ describe('HTTP proxy Claude preparation', () => {
   it('delegates an empty catalog to the existing restore or no-op preparation', async () => {
     mocks.catalog.mockResolvedValueOnce({ providers: [], unavailable: [] });
 
-    const { loaded } = await startConfiguredHttpProxy(0, false, '/fixture/inference.jsonl', undefined, undefined, true);
+    const { loaded } = await startConfiguredHttpProxy(0, false, '/fixture/inference.jsonl', undefined, true);
 
     expect(loaded.providers).toEqual([]);
     expect(mocks.prepare).toHaveBeenCalledWith({

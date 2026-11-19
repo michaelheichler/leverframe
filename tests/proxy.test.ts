@@ -208,7 +208,6 @@ describe('catalog model aliases', () => {
       false,
       undefined,
       undefined,
-      undefined,
       [{ name: 'sol', routeId: aliasTarget.aliasId }],
     );
 
@@ -277,7 +276,6 @@ describe('catalog model aliases', () => {
       [route],
       route.aliasId,
       false,
-      undefined,
       undefined,
       undefined,
       [{ name: 'sonnet', routeId: route.aliasId }],
@@ -355,7 +353,6 @@ describe('catalog model aliases', () => {
       [route],
       route.aliasId,
       false,
-      undefined,
       undefined,
       undefined,
       [{ name: 'ghost', routeId: 'leverframe:test:not-a-route' }],

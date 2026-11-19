@@ -1,5 +1,5 @@
 
-import { ANTHROPIC_API_ORIGIN, CONFLICTING_ENV_VARS } from './constants.js';
+import { ANTHROPIC_API_ORIGIN, CONFLICTING_ENV_VARS, OPENAI_CHATGPT_PLAN_PROVIDER_ID } from './constants.js';
 import { claudeCodeClientModelId } from './context-model-id.js';
 import {
   oauthCredentialToKeychainJson,
@@ -7,6 +7,8 @@ import {
   type StoredOAuthCredential,
 } from './oauth/types.js';
 import { refreshStoredOAuthCredential, oauthCredentialShouldRefresh } from './oauth/refresh.js';
+import { parseChatGptPlanCredential } from './oauth/chatgpt-plan.js';
+import { resolveChatGptPlanAuth, resolveStoredChatGptPlanCredential } from './oauth/chatgpt-plan-credential-source.js';
 import type { ConflictInfo } from './types.js';
 import {
   deleteStoredCredential,
@@ -210,7 +212,12 @@ export async function resolveProviderCredential(
   options: ResolveCredentialOptions = {},
 ): Promise<string | null> {
   const parsed = parseAuthRef(authRef);
-  if (!parsed || parsed.kind === 'none') return null;
+  if (!parsed || parsed.kind === 'none' || providerId === 'openai-oauth' || isRetiredOpenAiKeyringRef(parsed)) return null;
+  const planAccount = chatGptPlanKeyringAccount(parsed);
+  if (providerId === OPENAI_CHATGPT_PLAN_PROVIDER_ID) {
+    return (await resolveChatGptPlanAuth(planAccount, refreshOAuthKeyringAccount, diag, options.rejectedAccessToken)).apiKey;
+  }
+  if (planAccount) return null;
 
   const namespaced = readEnvCredential(leverframeKeyEnvVar(providerId));
   if (namespaced && namespaced !== options.rejectedAccessToken) return namespaced;
@@ -236,9 +243,24 @@ export interface ResolvedProviderAuth {
   providerData?: Record<string, unknown>;
 }
 
+function chatGptPlanKeyringAccount(ref: ParsedAuthRef | null): string | undefined {
+  return ref?.kind === 'keyring' && oauthProviderIdFromAccount(ref.account) === OPENAI_CHATGPT_PLAN_PROVIDER_ID
+    ? ref.account : undefined;
+}
+
+function isRetiredOpenAiKeyringRef(ref: ParsedAuthRef | null): boolean {
+  if (ref?.kind !== 'keyring') return false;
+  const providerId = oauthProviderIdFromAccount(ref.account);
+  return providerId === 'openai' || providerId === 'openai-oauth';
+}
+
 export async function resolveStoredAccountCredential(providerId: string, account: RegistryAccount): Promise<StoredProviderCredential> {
   const parsed = parseAuthRef(account.authRef);
-  if (!parsed) return { value: null, refreshDue: false };
+  const planAccount = chatGptPlanKeyringAccount(parsed);
+  if (providerId === OPENAI_CHATGPT_PLAN_PROVIDER_ID) return resolveStoredChatGptPlanCredential(planAccount);
+  if (!parsed || planAccount || providerId === 'openai-oauth' || isRetiredOpenAiKeyringRef(parsed)) {
+    return { value: null, refreshDue: false };
+  }
   if (parsed.kind === 'none') return { value: 'anonymous', refreshDue: false };
   if (parsed.kind === 'env') return { value: readEnvCredential(parsed.varName), refreshDue: false };
   const raw = await peekStoredCredential(parsed.account);
@@ -254,7 +276,11 @@ export async function resolveProviderAccountAuth(
   diag?: (msg: string) => void,
 ): Promise<ResolvedProviderAuth> {
   const parsed = parseAuthRef(account.authRef);
-  if (!parsed || parsed.kind === 'none') return { apiKey: null };
+  const planAccount = chatGptPlanKeyringAccount(parsed);
+  if (providerId === OPENAI_CHATGPT_PLAN_PROVIDER_ID) return resolveChatGptPlanAuth(planAccount, refreshOAuthKeyringAccount, diag);
+  if (!parsed || parsed.kind === 'none' || planAccount || providerId === 'openai-oauth' || isRetiredOpenAiKeyringRef(parsed)) {
+    return { apiKey: null };
+  }
   if (parsed.kind === 'env') return { apiKey: readEnvCredential(parsed.varName) };
   const raw = await readKeyringAccount(parsed.account, diag);
   const credential = parseStoredOAuthCredential(raw);
@@ -276,6 +302,9 @@ export async function resolveProviderAuth(
   diag?: (msg: string) => void,
 ): Promise<ResolvedProviderAuth> {
   const parsed = parseAuthRef(authRef);
+  const planAccount = chatGptPlanKeyringAccount(parsed);
+  if (providerId === OPENAI_CHATGPT_PLAN_PROVIDER_ID) return resolveChatGptPlanAuth(planAccount, refreshOAuthKeyringAccount, diag);
+  if (planAccount || providerId === 'openai-oauth' || isRetiredOpenAiKeyringRef(parsed)) return { apiKey: null };
   if (!parsed || parsed.kind !== 'keyring' || readEnvCredential(leverframeKeyEnvVar(providerId))) {
     return { apiKey: await resolveProviderCredential(providerId, authRef, diag) };
   }
@@ -306,7 +335,11 @@ export async function resolveStoredProviderCredential(
   authRef: string,
 ): Promise<StoredProviderCredential> {
   const parsed = parseAuthRef(authRef);
-  if (!parsed || parsed.kind === 'none') return { value: null, refreshDue: false };
+  const planAccount = chatGptPlanKeyringAccount(parsed);
+  if (providerId === OPENAI_CHATGPT_PLAN_PROVIDER_ID) return resolveStoredChatGptPlanCredential(planAccount);
+  if (!parsed || parsed.kind === 'none' || planAccount || providerId === 'openai-oauth' || isRetiredOpenAiKeyringRef(parsed)) {
+    return { value: null, refreshDue: false };
+  }
   const namespaced = readEnvCredential(leverframeKeyEnvVar(providerId));
   if (namespaced) return { value: providerId === 'antigravity' ? null : namespaced, refreshDue: false };
   if (parsed.kind === 'env') return { value: readEnvCredential(parsed.varName), refreshDue: false };
@@ -329,7 +362,7 @@ export async function resolveProviderOAuthAccountId(
   diag?: (msg: string) => void,
 ): Promise<string | undefined> {
   const parsed = parseAuthRef(authRef);
-  if (!parsed || parsed.kind !== 'keyring' || !oauthProviderIdFromAccount(parsed.account)) return undefined;
+  if (!parsed || parsed.kind !== 'keyring' || !oauthProviderIdFromAccount(parsed.account) || isRetiredOpenAiKeyringRef(parsed)) return undefined;
   const raw = await readKeyringAccount(parsed.account, diag);
   return parseStoredOAuthCredential(raw)?.accountId;
 }
@@ -339,9 +372,9 @@ export async function resolveProviderOAuthProviderData(
   diag?: (msg: string) => void,
 ): Promise<Record<string, unknown> | undefined> {
   const parsed = parseAuthRef(authRef);
-  if (!parsed || parsed.kind !== 'keyring' || !oauthProviderIdFromAccount(parsed.account)) return undefined;
+  if (!parsed || parsed.kind !== 'keyring' || !oauthProviderIdFromAccount(parsed.account) || isRetiredOpenAiKeyringRef(parsed)) return undefined;
   const raw = await readKeyringAccount(parsed.account, diag);
-  return parseStoredOAuthCredential(raw)?.providerData;
+  return (chatGptPlanKeyringAccount(parsed) ? parseChatGptPlanCredential(raw) : parseStoredOAuthCredential(raw))?.providerData;
 }
 
 function decodeProviderSecret(raw: string | null): string | null {
@@ -377,8 +410,10 @@ async function refreshOAuthKeyringAccount(
       const latestRaw = await readKeyringAccount(account, diag);
       if (!latestRaw) return null;
       raw = latestRaw;
-      const credential = parseStoredOAuthCredential(raw);
+      const chatGptPlan = providerId === OPENAI_CHATGPT_PLAN_PROVIDER_ID;
+      const credential = chatGptPlan ? parseChatGptPlanCredential(raw) : parseStoredOAuthCredential(raw);
       if (!credential) {
+        if (chatGptPlan) return null;
         const decoded = decodeProviderSecret(raw);
         return decoded === rejectedAccessToken ? null : decoded;
       }

@@ -14,6 +14,7 @@ import { expandAccountModels } from '../account-models.js';
 import { hasAccountCatalog, loadAccountProvider } from './account-loading.js';
 import { resolveTemplateCapabilities } from '../provider-template-capabilities.js';
 import type { RegistryProvider } from './types.js';
+import { isRetiredOpenAiProvider } from './retired-openai.js';
 
 function credentialDiagnostic(provider: RegistryProvider, diag?: (message: string) => void) {
   let reported = false;
@@ -38,7 +39,7 @@ export async function loadRegistryProviders(
   const oauthProviderData = new Map<string, Record<string, unknown>>();
   const accountProviders: LocalProvider[] = [];
   for (const provider of registry.providers) {
-    if (!provider.enabled) continue;
+    if (!provider.enabled || isRetiredOpenAiProvider(provider)) continue;
     const reportAuth = credentialDiagnostic(provider, diag);
     if (hasAccountCatalog(provider)) {
       const loaded = await loadAccountProvider(provider, account => resolveProviderAccountAuth(provider.id, account, diag)
@@ -84,7 +85,7 @@ export async function loadStoredRegistryProviders(
   const unstable: string[] = [];
   const accountProviders: LocalProvider[] = [];
   for (const provider of registry.providers) {
-    if (!provider.enabled) continue;
+    if (!provider.enabled || isRetiredOpenAiProvider(provider)) continue;
     if (hasAccountCatalog(provider)) {
       const loaded = await loadAccountProvider(provider, async account => {
         try {

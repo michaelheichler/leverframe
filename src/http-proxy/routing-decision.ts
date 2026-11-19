@@ -10,7 +10,6 @@ import { lookupRoute } from '../proxy-request.js';
 import {
   getLatestMessagePreview,
   writeInferenceRequestLog,
-  writeWebSocketDiagnosticRequestLog,
 } from '../trace-log.js';
 
 export interface HttpProxyRouteLifecycle {
@@ -55,7 +54,6 @@ export interface HttpProxyRouteInput {
 
   hasAdapter: boolean;
   inferenceLogPath?: string;
-  webSocketDiagnosticsLogPath?: string;
   responseProgressIntervalMs?: number;
 }
 
@@ -124,16 +122,6 @@ function writeRequestLogs(ctx: DecisionContext): void {
     });
   }
 
-  if (input.webSocketDiagnosticsLogPath) {
-    writeWebSocketDiagnosticRequestLog(input.webSocketDiagnosticsLogPath, {
-      requestId,
-      claudeSessionId,
-      provider,
-      route: routeKind,
-      headers: input.headers,
-      body: parsed ? parsed as unknown as Record<string, unknown> : {},
-    });
-  }
 }
 
 function buildLifecycle(ctx: DecisionContext): HttpProxyRouteLifecycle | undefined {

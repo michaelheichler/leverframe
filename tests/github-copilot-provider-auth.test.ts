@@ -17,7 +17,6 @@ const boundary = vi.hoisted(() => ({
   reconcilePendingCredentialDeletes: vi.fn(),
   refreshProviderModels: vi.fn(),
   runGitHubCopilotDeviceCodeFlow: vi.fn(),
-  runOpenAiDeviceCodeFlow: vi.fn(),
   saveProviderCredential: vi.fn(),
   spinnerStart: vi.fn(),
   spinnerStop: vi.fn(),
@@ -41,9 +40,6 @@ vi.mock('../src/credential-store.js', () => ({
 }));
 vi.mock('../src/env.js', () => ({
   saveProviderCredential: boundary.saveProviderCredential,
-}));
-vi.mock('../src/oauth/openai.js', () => ({
-  runOpenAiDeviceCodeFlow: boundary.runOpenAiDeviceCodeFlow,
 }));
 vi.mock('../src/oauth/github-copilot.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/oauth/github-copilot.js')>();

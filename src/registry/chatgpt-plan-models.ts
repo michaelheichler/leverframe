@@ -9,7 +9,6 @@ export interface OpenAiModelEntry {
   max_context_window?: unknown;
   inputTokenLimit?: unknown;
   outputTokenLimit?: unknown;
-  minimalClientVersion?: string;
   supportedParameters?: string[];
   reasoning?: boolean;
   supportedReasoningEfforts?: string[];
@@ -19,8 +18,6 @@ export interface OpenAiModelEntry {
   supportsParallelToolCalls?: boolean;
   supportsReasoningToggle?: boolean;
   defaultReasoningEffort?: string;
-  useResponsesLite?: boolean;
-  preferWebSockets?: boolean;
 }
 
 function readReasoningEfforts(value: unknown): string[] | undefined {
@@ -48,7 +45,7 @@ function readReasoningToggle(value: unknown): boolean | undefined {
   ));
 }
 
-function readCapabilityFlags(m: Record<string, unknown>): Pick<OpenAiModelEntry, 'inputTokenLimit' | 'outputTokenLimit' | 'minimalClientVersion' | 'supportedParameters' | 'reasoning' | 'supportedReasoningEfforts' | 'supportsTemperature' | 'supportsReasoningSummaries' | 'supportsReasoningSummaryParameter' | 'supportsParallelToolCalls' | 'supportsReasoningToggle' | 'defaultReasoningEffort' | 'useResponsesLite' | 'preferWebSockets'> {
+function readCapabilityFlags(m: Record<string, unknown>): Omit<OpenAiModelEntry, 'id' | 'name' | 'context_window' | 'max_context_window'> {
   const bool = (v: unknown): boolean | undefined => (typeof v === 'boolean' ? v : undefined);
   const limit = m.limit;
   const limitRecord = limit !== null && typeof limit === 'object' && !Array.isArray(limit)
@@ -64,9 +61,6 @@ function readCapabilityFlags(m: Record<string, unknown>): Pick<OpenAiModelEntry,
   return {
     inputTokenLimit: limitRecord?.input ?? m.inputTokenLimit,
     outputTokenLimit: limitRecord?.output ?? m.outputTokenLimit,
-    minimalClientVersion: typeof m.minimal_client_version === 'string'
-      ? m.minimal_client_version.trim() || undefined
-      : undefined,
     supportedParameters,
     reasoning: reportedReasoning ?? (
       supportedReasoningEfforts === undefined ? undefined : supportedReasoningEfforts.length > 0
@@ -80,8 +74,6 @@ function readCapabilityFlags(m: Record<string, unknown>): Pick<OpenAiModelEntry,
     defaultReasoningEffort: typeof m.default_reasoning_level === 'string'
       ? m.default_reasoning_level.trim() || undefined
       : undefined,
-    useResponsesLite: bool(m['use_responses_lite']),
-    preferWebSockets: bool(m['prefer_websockets']),
   };
 }
 
@@ -89,33 +81,18 @@ function confirmedContextWindow(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
-export function parseOpenAiModelEntries(body: unknown): OpenAiModelEntry[] {
-  if (!body || typeof body !== 'object') return [];
-  const b = body as Record<string, unknown>;
-
-  if (Array.isArray(b.models)) {
-    return (b.models as Array<Record<string, unknown>>)
-      .map(m => ({
-        id: (m.slug as string) ?? '',
-        name: (m.title as string) ?? (m.name as string) ?? (m.slug as string) ?? '',
-        context_window: m.context_window,
-        max_context_window: m.max_context_window,
-        ...readCapabilityFlags(m),
-      }))
-      .filter(m => m.id.length > 0);
-  }
-  if (Array.isArray(b.data)) {
-    return (b.data as Array<Record<string, unknown>>)
-      .map(m => ({
-        id: (m.id as string) ?? '',
-        name: (m.name as string) ?? (m.id as string) ?? '',
-        context_window: m.context_window,
-        max_context_window: m.max_context_window,
-        ...readCapabilityFlags(m),
-      }))
-      .filter(m => m.id.length > 0);
-  }
-  return [];
+export function parseOpenAiModelEntries(entries: Array<Record<string, unknown>>): OpenAiModelEntry[] {
+  return entries.flatMap(model => {
+    const { slug, display_name, context_window, max_context_window } = model;
+    if (typeof slug !== 'string' || !slug.trim()) return [];
+    return [{
+      id: slug,
+      name: typeof display_name === 'string' && display_name.trim() ? display_name : slug,
+      context_window,
+      max_context_window,
+      ...readCapabilityFlags(model),
+    }];
+  });
 }
 
 export function buildDynamicOAuthModel(entry: OpenAiModelEntry): CachedModel {
@@ -133,7 +110,6 @@ export function buildDynamicOAuthModel(entry: OpenAiModelEntry): CachedModel {
     maxContextWindow,
     inputTokenLimit: confirmedContextWindow(entry.inputTokenLimit),
     outputTokenLimit: confirmedContextWindow(entry.outputTokenLimit),
-    minimalClientVersion: entry.minimalClientVersion,
     contextWindowUnconfirmed: contextWindow === undefined ? true : undefined,
     modelFormat: 'openai' as const,
     npm: '@ai-sdk/openai',
@@ -146,7 +122,5 @@ export function buildDynamicOAuthModel(entry: OpenAiModelEntry): CachedModel {
     supportsReasoningSummaryParameter: entry.supportsReasoningSummaryParameter,
     supportsParallelToolCalls: entry.supportsParallelToolCalls,
     supportsReasoningToggle: entry.supportsReasoningToggle,
-    useResponsesLite: entry.useResponsesLite,
-    preferWebSockets: entry.preferWebSockets,
   };
 }

@@ -113,7 +113,6 @@ export function enrichServerModelReasoning(model: ServerModelInfo): ServerModelI
     supportsParallelToolCalls: model.supportsParallelToolCalls,
     supportsReasoningToggle: model.supportsReasoningToggle,
     supportsPromptCacheBreakpoints: model.supportsPromptCacheBreakpoints,
-    useResponsesLite: model.useResponsesLite,
     interleavedReasoningField: model.interleavedReasoningField,
   });
   if (!caps.defaultLevel) return model;

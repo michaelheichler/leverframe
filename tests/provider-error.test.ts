@@ -65,14 +65,14 @@ describe('ProviderTransportError', () => {
     const error = new ProviderTransportError({
       provider: 'openai',
       model: 'gpt-test',
-      phase: 'websocket_upgrade',
+      phase: 'headers',
       httpStatus: 503,
       providerRequestId: 'req-safe',
       retryAfterMs: 2_000,
       retryable: true,
       outputEmitted: false,
       cause,
-      safeMessage: 'Provider rejected the WebSocket upgrade.',
+      safeMessage: 'Provider rejected the request.',
       responseHeaders: { 'retry-after': '2', 'x-request-id': 'req-safe' },
       attemptCount: 1,
     });
@@ -81,13 +81,13 @@ describe('ProviderTransportError', () => {
       name: 'ProviderTransportError',
       provider: 'openai',
       model: 'gpt-test',
-      phase: 'websocket_upgrade',
+      phase: 'headers',
       httpStatus: 503,
       providerRequestId: 'req-safe',
       retryAfterMs: 2_000,
       retryable: true,
       outputEmitted: false,
-      safeMessage: 'Provider rejected the WebSocket upgrade.',
+      safeMessage: 'Provider rejected the request.',
       attemptCount: 1,
     });
     expect(error.cause).toBe(cause);
@@ -118,7 +118,6 @@ describe('classifyProviderErrorCategory', () => {
     [{ phase: 'stream' as const, cancelled: 'local' as const }, 'local_shutdown'],
     [{ phase: 'stream' as const, cancelled: 'provider' as const }, 'cancellation'],
     [{ phase: 'stream' as const }, 'truncated_stream'],
-    [{ phase: 'websocket_upgrade' as const }, 'protocol'],
     [{ phase: 'completion' as const }, 'unknown'],
   ])('classifies %j as %s', (input, expected) => {
     expect(classifyProviderErrorCategory(input)).toBe(expected);

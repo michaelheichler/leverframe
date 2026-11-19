@@ -1,5 +1,21 @@
 # Codex subscription usage investigation
 
+This file records the retired Codex device route. Current ChatGPT plan connections use `openai-chatgpt-plan` and the public Responses API. See [setup instructions](../README.md#get-started).
+
+## GPT-6.2 model access on November 19, 2026
+
+Claude Code displayed an HTTP 400 for `gpt-6.2-astra` that reported a model restriction for the ChatGPT account. The user also reported trouble with `gpt-6.2-sol`. The investigation traced the source and checked public documentation without replaying either request against OpenAI.
+
+- The old device sign-in used the Codex device flow. Model discovery sent the installed Claude Code version as `client_version` to the Codex catalog and could fall back to the general ChatGPT catalog. A listing alone could not verify inference access.
+- The old inference route sent OAuth requests to the Codex backend. For Responses Lite, Leverframe used a model-specific catalog minimum when it exceeded the `0.159.2` default. OpenAI requires native Codex CLI `0.166.0` or later for the two models. The installed CLI reported `0.170.0`, but Leverframe sent its own requests. The older default could have contributed. The investigation did not capture the failing request headers or the server admission decision. [Codex model availability](https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex)
+- OpenAI documents a separate OAuth flow for open-source apps using ChatGPT plans. It grants `chatgpt.tokens.use.direct` and uses the selected account token for `GET https://api.openai.com/v1/models` and `POST https://api.openai.com/v1/responses`. The inference example uses `gpt-6.2-sol`. [Registration and sign-in](https://developers.openai.com/siwc/token-sharing-open-source/sign-in) · [Models and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
+
+The available records do not confirm the scope or current status of Leverframe's approval. To verify access, use the app registration and grant that OpenAI authorizes, check both IDs in the same account catalog, and send one minimal streamed request per available model. Capture the HTTP status, structured error code if present, request ID, and terminal stream event. A native Codex check with the same workspace can confirm native model access. [OpenAI error guidance](https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery)
+
+Leverframe removed the Codex device route, its model discovery, and its transport. The `openai-chatgpt-plan` provider uses the selected account catalog and public Responses streaming. Live GPT-6.2 access depends on the account and grant.
+
+## Subscription usage
+
 The user reports much faster ChatGPT allowance consumption when Codex models run through Claude Code and Leverframe than in native Codex. Local records establish a large cache efficiency difference. They do not yet establish its cause or a subscription charging multiplier.
 
 ## Local evidence

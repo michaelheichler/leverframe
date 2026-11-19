@@ -1,3 +1,4 @@
+import { planCredential } from './fixtures/chatgpt-plan-credential.js';
 import http from 'node:http';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -21,19 +22,17 @@ let previousHome: string | undefined;
 let previousHeartbeat: string | undefined;
 let fakeKeyring: Map<string, string>;
 
-const oauthAlphaRef = 'keyring:oauth:provider:openai-oauth::credential::v1:00000000000000000000000000000001';
+const oauthAlphaRef = 'keyring:oauth:provider:openai-chatgpt-plan::credential::v1:00000000000000000000000000000001';
 
 function saveChatGptOAuthProvider(pinnedAccountId?: string): void {
-  const betaRef = 'keyring:oauth:provider:openai-oauth::credential::v1:00000000000000000000000000000002';
-  const credential = (access: string, accountId: string) => JSON.stringify({
-    type: 'oauth', access, refresh: 'unused-refresh-fixture', expires: Date.now() + 3_600_000, accountId,
-  });
+  const betaRef = 'keyring:oauth:provider:openai-chatgpt-plan::credential::v1:00000000000000000000000000000002';
+  const credential = (access: string, accountId: string) => JSON.stringify(planCredential(access, accountId));
   fakeKeyring.set(oauthAlphaRef.slice('keyring:'.length), credential('oauth-alpha-access', 'oauth-alpha-account'));
   fakeKeyring.set(betaRef.slice('keyring:'.length), credential('oauth-beta-access', 'oauth-beta-account'));
   saveRegistry({
     schemaVersion: 1,
     providers: [{
-      id: 'openai-oauth', templateId: 'openai-oauth', name: 'ChatGPT OAuth', enabled: true,
+      id: 'openai-chatgpt-plan', templateId: 'openai-chatgpt-plan', name: 'ChatGPT OAuth', enabled: true,
       authType: 'oauth', authRef: oauthAlphaRef, api: {}, addedAt: '2026-01-01',
       ...(pinnedAccountId ? { pinnedAccountId } : {}),
       accounts: [
@@ -46,10 +45,9 @@ function saveChatGptOAuthProvider(pinnedAccountId?: string): void {
 
 function chatGptRoute(): ProxyRoute {
   return {
-    aliasId: 'openai-oauth__gpt-4o-mini', realModelId: 'gpt-4o-mini',
+    aliasId: 'openai-chatgpt-plan__gpt-4o-mini', realModelId: 'gpt-4o-mini',
     displayName: 'ChatGPT OAuth fixture', upstreamUrl: '', apiKey: 'route-snapshot-oauth-token',
-    modelFormat: 'openai', npm: '@ai-sdk/openai', providerId: 'openai-oauth', authType: 'oauth',
-    preferWebSockets: false,
+    modelFormat: 'openai', npm: '@ai-sdk/openai', providerId: 'openai-chatgpt-plan', authType: 'oauth',
   };
 }
 
@@ -147,9 +145,7 @@ it('fails over translated ChatGPT OAuth through the SDK with each account identi
     if (call.authorization === 'Bearer oauth-alpha-access') {
       response.writeHead(429, {
         'Content-Type': 'application/json',
-        'x-codex-primary-used-percent': '100',
-        'x-codex-primary-window-minutes': '300',
-        'x-codex-primary-reset-at': String(Math.floor(Date.now() / 1000) + 3600),
+        'Retry-After': '3600',
       });
       response.end(JSON.stringify({ error: { type: 'usage_limit_reached', message: 'limit reached' } }));
       return;
@@ -166,11 +162,11 @@ it('fails over translated ChatGPT OAuth through the SDK with each account identi
 
     expect(upstream.calls).toEqual([
       {
-        authorization: 'Bearer oauth-alpha-access', accountId: 'oauth-alpha-account',
+        authorization: 'Bearer oauth-alpha-access', accountId: undefined,
         model: 'gpt-4o-mini', path: expect.stringContaining('/responses'),
       },
       {
-        authorization: 'Bearer oauth-beta-access', accountId: 'oauth-beta-account',
+        authorization: 'Bearer oauth-beta-access', accountId: undefined,
         model: 'gpt-4o-mini', path: expect.stringContaining('/responses'),
       },
     ]);
@@ -187,9 +183,7 @@ it('preserves execution identity headers when every pooled OAuth account is exha
   const upstream = await startOpenAiUpstream((_call, response) => {
     response.writeHead(429, {
       'Content-Type': 'application/json',
-      'x-codex-primary-used-percent': '100',
-      'x-codex-primary-window-minutes': '300',
-      'x-codex-primary-reset-at': String(Math.floor(Date.now() / 1000) + 3600),
+      'Retry-After': '3600',
     });
     response.end(JSON.stringify({ error: { type: 'usage_limit_reached', message: 'limit reached' } }));
   });
@@ -269,10 +263,7 @@ it('updates OAuth account metadata for new requests without disrupting an active
   try {
     const originalStream = postMessages(proxy.port, proxy.token, route.aliasId, true);
     await firstRequestSeen;
-    fakeKeyring.set(oauthAlphaRef.slice('keyring:'.length), JSON.stringify({
-      type: 'oauth', access: 'oauth-alpha-refreshed-access', refresh: 'unused-refresh-fixture',
-      expires: Date.now() + 3_600_000, accountId: 'oauth-alpha-refreshed-account',
-    }));
+    fakeKeyring.set(oauthAlphaRef.slice('keyring:'.length), JSON.stringify(planCredential('oauth-alpha-refreshed-access', 'oauth-alpha-refreshed-account')));
     const refreshedRequest = await postMessages(proxy.port, proxy.token, route.aliasId);
     releaseFirstResponse();
     const originalResponse = await originalStream;
@@ -281,8 +272,8 @@ it('updates OAuth account metadata for new requests without disrupting an active
     expect(originalResponse.body).toContain('OAuth fixture response');
     expect(refreshedRequest.body).toContain('OAuth fixture response');
     expect(upstream.calls.map(call => [call.authorization, call.accountId])).toEqual([
-      ['Bearer oauth-alpha-access', 'oauth-alpha-account'],
-      ['Bearer oauth-alpha-refreshed-access', 'oauth-alpha-refreshed-account'],
+      ['Bearer oauth-alpha-access', undefined],
+      ['Bearer oauth-alpha-refreshed-access', undefined],
     ]);
   } finally {
     releaseFirstResponse();
@@ -365,9 +356,7 @@ it('shows the latest account switch without exposing credentials or raw session 
     if (call.authorization === 'Bearer oauth-alpha-access') {
       response.writeHead(429, {
         'Content-Type': 'application/json',
-        'x-codex-primary-used-percent': '100',
-        'x-codex-primary-window-minutes': '300',
-        'x-codex-primary-reset-at': String(Math.floor(Date.now() / 1000) + 3600),
+        'Retry-After': '3600',
       });
       response.end(JSON.stringify({ error: { type: 'usage_limit_reached', message: 'limit reached' } }));
       return;
@@ -382,8 +371,8 @@ it('shows the latest account switch without exposing credentials or raw session 
 
   try {
     const response = await postMessages(proxy.port, proxy.token, route.aliasId, false, sessionId);
-    const activity = await readLatestPoolActivity('openai-oauth');
-    const provider = loadRegistry().providers.find(item => item.id === 'openai-oauth')!;
+    const activity = await readLatestPoolActivity('openai-chatgpt-plan');
+    const provider = loadRegistry().providers.find(item => item.id === 'openai-chatgpt-plan')!;
     const display = formatProviderAccounts(provider, activity ?? undefined).join('\n');
 
     expect(response.status).toBe(200);
@@ -409,9 +398,7 @@ it('keeps quota exclusion after the same OAuth credential is rotated', async () 
     if (call.authorization === 'Bearer oauth-alpha-access') {
       response.writeHead(429, {
         'Content-Type': 'application/json',
-        'x-codex-primary-used-percent': '100',
-        'x-codex-primary-window-minutes': '300',
-        'x-codex-primary-reset-at': String(Math.floor(Date.now() / 1000) + 3600),
+        'Retry-After': '3600',
       });
       response.end(JSON.stringify({ error: { type: 'usage_limit_reached', message: 'limit reached' } }));
       return;
@@ -425,10 +412,7 @@ it('keeps quota exclusion after the same OAuth credential is rotated', async () 
 
   try {
     const first = await postMessages(proxy.port, proxy.token, route.aliasId);
-    fakeKeyring.set(alphaAccountName, JSON.stringify({
-      type: 'oauth', access: 'oauth-alpha-rotated-access', refresh: 'unused-refresh-fixture',
-      expires: Date.now() + 3_600_000, accountId: 'oauth-alpha-account',
-    }));
+    fakeKeyring.set(alphaAccountName, JSON.stringify(planCredential('oauth-alpha-rotated-access', 'oauth-alpha-account')));
     const second = await postMessages(proxy.port, proxy.token, route.aliasId);
 
     expect([first.status, second.status]).toEqual([200, 200]);
@@ -451,9 +435,7 @@ it('logs a successful pooled OAuth translation and returns execution identity he
     if (call.authorization === 'Bearer oauth-alpha-access') {
       response.writeHead(429, {
         'Content-Type': 'application/json',
-        'x-codex-primary-used-percent': '100',
-        'x-codex-primary-window-minutes': '300',
-        'x-codex-primary-reset-at': String(Math.floor(Date.now() / 1000) + 3600),
+        'Retry-After': '3600',
       });
       response.end(JSON.stringify({ error: { type: 'usage_limit_reached', message: 'limit reached' } }));
       return;

@@ -13,7 +13,6 @@ const DIR_MODE = 0o700;
 
 export const CLAUDE_DEBUG_LOG = 'claude-debug.log';
 export const PROXY_DEBUG_LOG = 'proxy-debug.log';
-export const CODEX_PROXY_DEBUG_LOG = 'codex-proxy-debug.log';
 export const GEMINI_PROXY_DEBUG_LOG = 'gemini-proxy-debug.log';
 export const PROVIDER_DEBUG_LOG = 'provider-debug.log';
 export const UI_DEBUG_LOG = 'ui-debug.log';
@@ -44,10 +43,6 @@ export function prepareClaudeTraceLog(path = getClaudeDebugLogPath()): string {
 
 export function getProxyDebugLogPath(): string {
   return join(ensureLogsDir(), PROXY_DEBUG_LOG);
-}
-
-export function getCodexProxyDebugLogPath(): string {
-  return join(ensureLogsDir(), CODEX_PROXY_DEBUG_LOG);
 }
 
 export function getGeminiProxyDebugLogPath(): string {

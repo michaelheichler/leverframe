@@ -3,12 +3,12 @@ import type { LanguageModel } from 'ai';
 import { createCopilotHttpLanguageModel } from './copilot/provider.js';
 import { createAntigravityLanguageModel } from './antigravity/provider.js';
 import { createBuiltinAnthropicModel, createBuiltinOpenAiModel } from './language-model-builtins.js';
-import type { ResponsesWebSocketDiagnosticEvent } from './oauth/responses-websocket.js';
 import { revalidateCustomEndpointUrl } from './registry/url-security.js';
 import { neutralClientHeaders } from './neutral-client-request.js';
 import { openCodeGoFetch, openCodeGoHeaders } from './opencode-go-headers.js';
 import { createCompatibleCacheUsage } from './compatible-cache-usage.js';
 import { configureOpenCodeZen } from './opencode-zen-model.js';
+import { OPENAI_CHATGPT_PLAN_PROVIDER_ID } from './constants.js';
 
 type SdkProviderFactory = (options: { apiKey: string; baseURL?: string; name?: string; headers?: Record<string, string>; fetch?: typeof fetch }) => {
   (modelId: string): LanguageModel;
@@ -42,12 +42,7 @@ export interface ProviderModelSpec {
   vertex?: VertexProviderConfig;
   headers?: Record<string, string>;
   fetch?: typeof fetch;
-  useResponsesLite?: boolean;
-  preferWebSockets?: boolean;
-  minimalClientVersion?: string;
   openAiEndpoint?: OpenAiEndpoint;
-  onDebug?: (msg: string) => void;
-  onWebSocketDiagnostic?: (event: ResponsesWebSocketDiagnosticEvent) => void;
 }
 
 /** Because all Copilot protocols need OAuth isolation. */
@@ -55,9 +50,8 @@ export function isSdkMigratedNpm(npm: string | undefined, providerId?: string): 
   return !!npm && (npm !== '@ai-sdk/anthropic' || providerId === 'github-copilot');
 }
 
-/** Because Copilot Responses do not use Codex rules. */
 export function isOpenAiOAuth(npm: string | undefined, authType: string | undefined, providerId?: string): boolean {
-  return npm === '@ai-sdk/openai' && authType === 'oauth' && providerId !== 'github-copilot';
+  return npm === '@ai-sdk/openai' && authType === 'oauth' && providerId === OPENAI_CHATGPT_PLAN_PROVIDER_ID;
 }
 
 /** Because Groq rejects more than 128 tool definitions. */

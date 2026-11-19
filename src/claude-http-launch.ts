@@ -109,7 +109,7 @@ export async function runClaudeHttpProxyCommand(options: HttpProxyLaunchOptions)
   const inferenceLogPath = getInferenceSessionLogPath('claude-http-proxy');
   const proxyDebugLogPath = parsed.trace ? getSessionLogPath('claude-proxy-debug') : undefined;
   let started: Awaited<ReturnType<typeof startConfiguredHttpProxy>>;
-  try { started = await startConfiguredHttpProxy(0, parsed.trace, inferenceLogPath, proxyDebugLogPath, undefined, false, true); }
+  try { started = await startConfiguredHttpProxy(0, parsed.trace, inferenceLogPath, proxyDebugLogPath, false, true); }
   catch (error) {
     p.log.error(`Failed to start proxy: ${error instanceof Error ? error.message : String(error)}`);
     return 1;

@@ -2,7 +2,7 @@ import type { ModelRef, RoutingConfig } from './model-routing.js';
 import type { RoutingCatalogModel, RoutingCatalogSnapshot } from './model-routing-catalog.js';
 import { estimateWorkload, type RoutingWorkload, type WorkloadEstimate } from './routing-estimate.js';
 
-export type RoutingCapability = 'tools' | 'images' | 'reasoning' | 'promptCache' | 'websocket';
+export type RoutingCapability = 'tools' | 'images' | 'reasoning' | 'promptCache';
 export interface RoutingRequirements { capabilities?: RoutingCapability[]; contextTokens?: number; requireExternalBounds?: true }
 export interface RoutingPolicyInput {
   config: RoutingConfig;

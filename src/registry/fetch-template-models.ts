@@ -42,8 +42,6 @@ interface ProviderModelListRow {
   isFree?: boolean;
   pricing?: Record<string, string | number | undefined>;
   cost?: ListedCost;
-  use_responses_lite?: boolean;
-  prefer_websockets?: boolean;
 }
 
 function modelFormatForNpm(npm: string): 'anthropic' | 'openai' {
@@ -169,8 +167,6 @@ function parseModelList(body: OpenAiModelListResponse, npm: string): CachedModel
       modelFormat: format,
       npm,
       supportedParameters: Array.isArray(row.supported_parameters) ? row.supported_parameters : undefined,
-      useResponsesLite: typeof row.use_responses_lite === 'boolean' ? row.use_responses_lite : undefined,
-      preferWebSockets: typeof row.prefer_websockets === 'boolean' ? row.prefer_websockets : undefined,
     });
   }
 

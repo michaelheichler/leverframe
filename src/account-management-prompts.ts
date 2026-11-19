@@ -42,7 +42,7 @@ export async function runAccountManagement(providerId: string): Promise<void> {
       message: 'Manage accounts',
       options: [
         { value: 'add', label: provider.authType === 'oauth' ? 'Sign in to another account' : provider.authType === 'none' ? 'Add named configuration' : 'Add API key' },
-        ...(['openai-oauth', 'anthropic-api'].includes(providerId) ? [{ value: 'import', label: providerId === 'openai-oauth' ? 'Import from ~/.codex/auth.json' : 'Import ANTHROPIC_API_KEY' }] : []),
+        ...(providerId === 'anthropic-api' ? [{ value: 'import', label: 'Import ANTHROPIC_API_KEY' }] : []),
         { value: 'rename', label: 'Rename account or change tag' },
         { value: 'pin', label: 'Pin account' },
         { value: 'remove', label: 'Remove account' },
@@ -54,11 +54,10 @@ export async function runAccountManagement(providerId: string): Promise<void> {
       if (choice === 'add') {
         await setupProviderAccount(provider);
       } else if (choice === 'import') {
-        const confirmed = await p.confirm({ message: providerId === 'openai-oauth'
-          ? 'Import credentials from ~/.codex/auth.json?' : 'Import ANTHROPIC_API_KEY?', initialValue: false });
+        const confirmed = await p.confirm({ message: 'Import ANTHROPIC_API_KEY?', initialValue: false });
         if (!p.isCancel(confirmed) && confirmed) {
           const id = await p.text({ message: 'Account name (optional):' });
-          if (!p.isCancel(id)) await importProviderAccount(providerId, providerId === 'openai-oauth' ? 'codex' : 'anthropic-env', id);
+          if (!p.isCancel(id)) await importProviderAccount(providerId, 'anthropic-env', id);
         }
       } else if (choice === 'pin' || choice === 'remove' || choice === 'rename') {
         await manageExistingAccount(providerId, choice, provider.accounts ?? []);

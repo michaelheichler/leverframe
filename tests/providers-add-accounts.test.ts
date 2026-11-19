@@ -44,7 +44,7 @@ describe('adding accounts to configured providers', () => {
     const registry = emptyRegistry();
     registry.providers.push(
       provider('anthropic-api', 'anthropic-api', 'Billing API', 'api', 'work'),
-      provider('openai-oauth', 'openai', 'ChatGPT OAuth', 'oauth', 'chat'),
+      provider('openai-chatgpt-plan', 'openai-chatgpt-plan', 'ChatGPT plan', 'oauth', 'chat'),
     );
     saveRegistry(registry);
     selectMock.mockResolvedValue('noop');
@@ -53,7 +53,7 @@ describe('adding accounts to configured providers', () => {
 
     const options = selectMock.mock.calls[0]?.[0].options.map((option: { value: string }) => option.value);
     expect(options).toContain('account:anthropic-api');
-    expect(options).toContain('account:openai-oauth');
+    expect(options).toContain('account:openai-chatgpt-plan');
     expect(options).toContain('api:openai');
   });
 
@@ -85,7 +85,7 @@ describe('adding accounts to configured providers', () => {
     const registry = emptyRegistry();
     registry.providers.push(
       provider('anthropic-api', 'anthropic-api', 'Billing API', 'api', 'work'),
-      provider('openai-oauth', 'openai', 'ChatGPT OAuth', 'oauth', 'chat'),
+      provider('openai-chatgpt-plan', 'openai-chatgpt-plan', 'ChatGPT plan', 'oauth', 'chat'),
       provider('kimi', 'kimi', 'Kimi', 'api', 'main'),
       provider('opencode-go', 'opencode-go', 'OpenCode Go', 'api', 'main'),
       provider('github-copilot', 'github-copilot', 'GitHub Copilot', 'oauth', 'main'),
@@ -99,7 +99,7 @@ describe('adding accounts to configured providers', () => {
 
     const options = selectMock.mock.calls[0]?.[0].options.map((option: { value: string }) => option.value);
     expect(options).toEqual(expect.arrayContaining([
-      'account:anthropic-api', 'account:openai-oauth', 'account:kimi', 'account:opencode-go',
+      'account:anthropic-api', 'account:openai-chatgpt-plan', 'account:kimi', 'account:opencode-go',
       'account:github-copilot', 'account:antigravity', 'account:custom-local',
     ]));
   });

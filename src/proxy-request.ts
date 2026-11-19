@@ -87,7 +87,6 @@ export interface ProxyRoute {
   maxContextWindow?: number;
   inputTokenLimit?: number;
   outputTokenLimit?: number;
-  minimalClientVersion?: string;
 
   contextWindowUnconfirmed?: boolean;
   npm?: string;      // OpenCode api.npm - when SDK-migrated, routes via the adapter
@@ -111,9 +110,7 @@ export interface ProxyRoute {
   supportsPromptCacheBreakpoints?: boolean;
   interleavedReasoningField?: string;
 
-  useResponsesLite?: boolean;
 
-  preferWebSockets?: boolean;
 
   headers?: Record<string, string>;
 

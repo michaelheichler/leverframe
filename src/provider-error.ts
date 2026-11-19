@@ -1,13 +1,11 @@
 export type ProviderFailurePhase =
   | 'connect'
-  | 'websocket_upgrade'
   | 'headers'
   | 'stream'
   | 'completion';
 
 const PROVIDER_FAILURE_PHASES = new Set<ProviderFailurePhase>([
   'connect',
-  'websocket_upgrade',
   'headers',
   'stream',
   'completion',
@@ -152,7 +150,6 @@ export function classifyProviderErrorCategory(input: ClassifyProviderErrorInput)
   if (status !== undefined && status >= 500) return 'upstream';
 
   if (input.phase === 'connect') return 'connection';
-  if (input.phase === 'websocket_upgrade') return 'protocol';
   if (input.phase === 'stream') return 'truncated_stream';
 
   return 'unknown';
