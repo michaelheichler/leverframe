@@ -74,6 +74,10 @@ function runPatch(parsed: ReturnType<typeof parseArgs>): Promise<number> | numbe
 
 export async function main(args: string[] = process.argv.slice(2)): Promise<number> {
   if (args[0] === 'evidence') return runEvidenceCommand(args.slice(1));
+  if (args[0] === 'retrieval') {
+    const { runRetrievalCommand } = await import('./retrieval-command.js');
+    return runRetrievalCommand(args.slice(1));
+  }
   await installOutboundProxyDispatcher();
 
   if (args[0] === 'executions') {

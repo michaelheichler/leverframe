@@ -1,6 +1,9 @@
 import { deriveBrand } from '../models.js';
 import type { CachedModel } from './types.js';
 
+const ANTHROPIC_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+type AnthropicEffortLevel = typeof ANTHROPIC_EFFORT_LEVELS[number];
+
 export interface AnthropicModelRow {
   id?: string;
   display_name?: string;
@@ -8,6 +11,9 @@ export interface AnthropicModelRow {
   max_input_tokens?: number | null;
   max_tokens?: number | null;
   lifecycle?: string;
+  capabilities?: {
+    effort?: { supported?: boolean } & Partial<Record<AnthropicEffortLevel, { supported?: boolean } | null>>;
+  } | null;
 }
 
 export interface AnthropicModelPage {
@@ -40,6 +46,10 @@ export function anthropicRowToCachedModel(row: AnthropicModelRow, apiUrl: string
   if (!id || !isActiveRow(row)) return undefined;
   const contextWindow = positiveTokenCount(row.max_input_tokens);
   const outputTokenLimit = positiveTokenCount(row.max_tokens);
+  const effort = row.capabilities?.effort;
+  const supportedReasoningEfforts = effort?.supported === true
+    ? ANTHROPIC_EFFORT_LEVELS.filter(level => effort[level]?.supported === true)
+    : effort?.supported === false ? [] : undefined;
   return {
     id,
     name: row.display_name?.trim() || row.name?.trim() || id,
@@ -53,6 +63,7 @@ export function anthropicRowToCachedModel(row: AnthropicModelRow, apiUrl: string
     modelFormat: 'anthropic',
     npm: '@ai-sdk/anthropic',
     apiUrl,
+    ...(supportedReasoningEfforts !== undefined ? { supportedReasoningEfforts } : {}),
   };
 }
 

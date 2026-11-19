@@ -350,7 +350,8 @@ export function translateRequest(
     maxRetries: requestRetryLimit(options),
     headers: sessionHeaders(options, claudeSessionId),
     providerOptions,
-    inputTokensIncludeCache: CACHE_INCLUSIVE_INPUT_NPMS.has(npm),
+    inputTokensIncludeCache: CACHE_INCLUSIVE_INPUT_NPMS.has(npm)
+      || (npm === '@ai-sdk/google' && options?.reasoningMetadata?.providerId === 'antigravity'),
   };
 }
 

@@ -66,7 +66,7 @@ describe('maxToolsForNpm', () => {
 describe('getReasoningCapabilities', () => {
   it('returns anthropic levels for claude-sonnet-4-6', () => {
     const caps = getReasoningCapabilities('@ai-sdk/anthropic', 'claude-sonnet-4-6');
-    expect(caps.levels).toEqual(['low', 'medium', 'high']);
+    expect(caps.levels).toEqual(['low', 'medium', 'high', 'max']);
     expect(caps.defaultLevel).toBe('high');
     expect(caps.supportsSummaries).toBe(true);
   });

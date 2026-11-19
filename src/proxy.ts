@@ -66,7 +66,7 @@ export async function startProxyCatalog(
   const defaultRoute = byAlias.get(defaultAliasId) ?? routes[0]!;
 
   const plog = makeProxyLog(debug, debugLogPath);
-  logStartupRecovery(plog);
+  if (debug) logStartupRecovery(plog);
 
   const cleanupListeners = installProxyErrorHandlers(plog);
 

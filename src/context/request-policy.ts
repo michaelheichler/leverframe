@@ -46,6 +46,10 @@ export async function applyRequestContextPolicy<T extends object>(input: Request
   if (!Number.isSafeInteger(contextWindow) || !contextWindow || contextWindow <= 0) return unchanged('unconfirmed_context_window');
   if (!Array.isArray(body.messages) || !body.messages.every(isJsonShapedAnthropicMessage)) return unchanged('invalid_messages');
   try {
+    let preferences: ReturnType<typeof loadPreferences> | undefined;
+    try { preferences = loadPreferences(); } catch {}
+    const providerId = input.routeIdentity.split(':', 1)[0] ?? '';
+    if (preferences?.preserveCachePrefixProviders?.includes(providerId)) return unchanged('preserve_cache_prefix');
     const groups = groupAnthropicContext(body.messages);
     if (groups.diagnostics.length) return unchanged('invalid_context');
     const estimatedInputTokens = estimateAnthropicInputTokens(request);
@@ -62,7 +66,7 @@ export async function applyRequestContextPolicy<T extends object>(input: Request
     if (signal.aborted) return unchanged('aborted');
     const fallback: RequestPolicyResult<T> = { request: reduced.request, outcome: reduced.reduced ? 'reduced' : 'unchanged', reason: reduced.reduced ? 'duplicate_evidence' : storageFailed ? 'evidence_unavailable' : 'no_reduction', estimatedInputTokens };
     try {
-      const settings = loadPreferences().summarySettings;
+      const settings = preferences?.summarySettings;
       if (!settings?.enabled || !settings.engineId) return fallback;
       const engine = configuredPaidSummaryEngine(settings.engineId);
       if (!engine) return fallback;

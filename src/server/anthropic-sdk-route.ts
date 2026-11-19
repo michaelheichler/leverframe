@@ -112,6 +112,8 @@ function createSdkUsageObserver(context: NativeRequestContext) {
         cacheCreation5mInputTokens: usage.cache_creation_5m_input_tokens,
         cacheCreation1hInputTokens: usage.cache_creation_1h_input_tokens,
         cacheReadInputTokens: usage.cache_read_input_tokens,
+        totalInputTokens: usage.totalInputTokens,
+        openCodeGoAllowanceUsd: usage.openCodeGoAllowanceUsd,
         promptCacheKeyHash: usage.promptCacheKeyHash,
       })
     : undefined;

@@ -3,8 +3,17 @@ import type { MetadataExtractor } from '@ai-sdk/openai-compatible';
 import type { LanguageModelV4, LanguageModelV4Middleware, LanguageModelV4Usage, SharedV4ProviderMetadata } from '@ai-sdk/provider';
 
 const metadataKey = 'leverframeCompatibleCacheUsage';
+const openCodeGoBaseUrls = new Set([
+  'https://opencode.ai/zen/go/v1',
+  'https://opencode.ai/inference/go/v1',
+  'https://opencode.ai/inference/go/openai/v1',
+]);
 type Counts = { input?: number; read?: number; write?: number; write5m?: number; write1h?: number;
-  output?: number; standardOutput?: number; goPartition?: number; goRead?: number };
+  output?: number; standardOutput?: number; goPartition?: number; goRead?: number; openCodeGoAllowanceUsd?: number };
+
+export function isOpenCodeGoCompatibleEndpoint(baseURL: string | undefined): boolean {
+  return typeof baseURL === 'string' && openCodeGoBaseUrls.has(baseURL.replace(/\/$/, ''));
+}
 
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -12,6 +21,10 @@ function object(value: unknown): Record<string, unknown> {
 
 function count(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function allowanceUsd(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 function defined(values: Counts): Counts {
@@ -22,14 +35,15 @@ function usageCounts(value: unknown, endpoint: string | undefined): Counts {
   const usage = object(object(value).usage);
   const details = object(usage.prompt_tokens_details);
   const base = { read: count(details.cached_tokens) };
-  if (endpoint === 'https://opencode.ai/zen/go/v1') {
+  if (endpoint !== undefined && openCodeGoBaseUrls.has(endpoint)) {
     const opencode = object(usage.opencode);
     const rawTokens = opencode.tokens;
     const tokens = object(rawTokens);
     const goPartition = 'tokens' in opencode ? 1 : undefined;
     return defined({ ...base, goPartition, input: count(tokens.input), goRead: count(tokens.cache_read),
       output: count(tokens.output), standardOutput: count(usage.completion_tokens),
-      write5m: count(tokens.cache_write_5m), write1h: count(tokens.cache_write_1h) });
+      write5m: count(tokens.cache_write_5m), write1h: count(tokens.cache_write_1h),
+      openCodeGoAllowanceUsd: allowanceUsd(opencode.allowance) });
   }
   if (endpoint === 'https://api.moonshot.ai/v1') {
     return defined({ ...base, write: count(details.cache_write_tokens) });
@@ -57,11 +71,13 @@ function applyCounts(usage: LanguageModelV4Usage, providerMetadata: SharedV4Prov
   const noCache = goPartition ? input : (total !== undefined && read !== undefined && write !== undefined && total >= read + write
     ? total - read - write : undefined);
   const { [metadataKey]: _private, ...rest } = providerMetadata ?? {};
-  const ttl = { ...(first === undefined ? {} : { cacheCreation5mInputTokens: first }),
-    ...(second === undefined ? {} : { cacheCreation1hInputTokens: second }) };
+  const allowance = allowanceUsd(counts.openCodeGoAllowanceUsd);
+  const evidence = { ...(first === undefined ? {} : { cacheCreation5mInputTokens: first }),
+    ...(second === undefined ? {} : { cacheCreation1hInputTokens: second }),
+    ...(allowance === undefined ? {} : { openCodeGoAllowanceUsd: allowance }) };
   return { usage: { ...usage, inputTokens: { ...usage.inputTokens, total, noCache, cacheRead: read, cacheWrite: write },
     outputTokens: output === undefined ? usage.outputTokens : { total: output, text: undefined, reasoning: undefined } },
-    providerMetadata: Object.keys(ttl).length ? { ...rest, leverframeCacheUsage: ttl } : rest };
+    providerMetadata: Object.keys(evidence).length ? { ...rest, leverframeCacheUsage: evidence } : rest };
 }
 
 export function createCompatibleCacheUsage(baseURL: string | undefined) {

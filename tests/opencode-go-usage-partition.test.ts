@@ -59,17 +59,17 @@ async function runRawStreamUsage(usageChunks: Record<string, unknown>[], baseURL
   return result.totalUsage;
 }
 
-async function runJsonAudit(usage: Record<string, unknown>) {
+async function runJsonAudit(usage: Record<string, unknown>, baseURL?: string) {
   const fetchImpl = vi.fn(async () => completion(usage));
-  const model = await createGoModel(fetchImpl as typeof fetch);
+  const model = await createGoModel(fetchImpl as typeof fetch, baseURL);
   const audit: AnthropicUsageTrace[] = [];
   await generateAnthropicResponse(model, requestParams(), 'fixture-model', { onUsage: value => audit.push(value) });
   return audit;
 }
 
-async function runStreamAudit(usageChunks: Record<string, unknown>[]) {
+async function runStreamAudit(usageChunks: Record<string, unknown>[], baseURL?: string) {
   const fetchImpl = vi.fn(async () => streamedCompletion(usageChunks));
-  const model = await createGoModel(fetchImpl as typeof fetch);
+  const model = await createGoModel(fetchImpl as typeof fetch, baseURL);
   const audit: AnthropicUsageTrace[] = [];
   await generateAnthropicResponse(model, requestParams(), 'fixture-model', {
     forceStream: true, onUsage: value => audit.push(value),
@@ -191,4 +191,45 @@ it.each([
   const usage = await runRawJsonUsage(usageData, baseURL);
 
   expect(usage.inputTokens).toBe(1_200);
+});
+
+it.each([
+  'https://opencode.ai/inference/go/v1',
+  'https://opencode.ai/inference/go/openai/v1',
+])('audits cache partitions and allowance from the Go endpoint %s', async baseURL => {
+  const audit = await runJsonAudit({
+    opencode: {
+      billing_source: 'go', allowance: 0.00412,
+      tokens: { input: 80, output: 300, reasoning: 120, cache_read: 8_000, cache_write_5m: 200, cache_write_1h: 50 },
+    },
+  }, baseURL);
+
+  expect(audit).toEqual([{
+    model: 'fixture-model', input_tokens: 80, output_tokens: 300, cache_read_input_tokens: 8_000,
+    cache_creation_input_tokens: 250, cache_creation_5m_input_tokens: 200, cache_creation_1h_input_tokens: 50,
+    openCodeGoAllowanceUsd: 0.00412,
+  }]);
+});
+
+it('retains an explicit zero allowance on the last Go usage frame', async () => {
+  const audit = await runStreamAudit([
+    { opencode: { tokens: { input: 80, output: 300, cache_read: 8_000, cache_write_5m: 0, cache_write_1h: 0 } } },
+    { opencode: { billing_source: 'go-plus', allowance: 0 } },
+  ], 'https://opencode.ai/zen/go/v1');
+
+  expect(audit).toEqual([{
+    model: 'fixture-model', input_tokens: 80, output_tokens: 300, cache_read_input_tokens: 8_000,
+    cache_creation_input_tokens: 0, cache_creation_5m_input_tokens: 0, cache_creation_1h_input_tokens: 0,
+    openCodeGoAllowanceUsd: 0,
+  }]);
+});
+
+it.each([
+  ['https://opencode.ai.fixture.invalid/inference/go/v1', 0.00412],
+  ['https://opencode.ai/inference/go/v1', -1],
+  ['https://opencode.ai/inference/go/v1', '0.00412'],
+])('ignores untrusted allowance evidence at %s with value %s', async (baseURL, allowance) => {
+  const audit = await runJsonAudit({ opencode: { billing_source: 'go', allowance } }, baseURL);
+
+  expect(audit).toEqual([{ model: 'fixture-model', output_tokens: 300 }]);
 });

@@ -26,15 +26,15 @@ Use Claude Code with models from other providers. Leverframe handles authenticat
 Use Node.js 22 or newer and pnpm 10.34.5. Install Claude Code separately to use its harness, and bring your own provider access.
 
 ```bash
-git clone --branch v0.5.7 --single-branch https://github.com/michaelheichler/leverframe.git
+git clone --branch v0.5.8 --single-branch https://github.com/michaelheichler/leverframe.git
 cd leverframe
 pnpm install --frozen-lockfile
 pnpm pack
-npm install -g ./michaelheichler-leverframe-0.5.7.tgz
+npm install -g ./michaelheichler-leverframe-0.5.8.tgz
 leverframe --version
 ```
 
-The package name is `@michaelheichler/leverframe`. It provides `leverframe`, `leverframe-claude`, and `claudeplus`. The pack command builds the CLI before creating the archive. Restart any running Leverframe server or proxy after upgrading so it loads the new version.
+The package name is `@michaelheichler/leverframe`. It provides `leverframe`, `leverframe-claude`, `claudeplus`, and `leverframe-cache-report`. The pack command builds the CLI before creating the archive. Restart any running Leverframe server or proxy after upgrading so it loads the new version.
 
 ## Get started
 
@@ -93,6 +93,8 @@ With failover enabled, Auto handles confirmed credit or quota failures internall
 Context metadata flows through browsing, routes, and the Claude Code picker. Proxy mode offers default and maximum context when the provider confirms distinct sizes. Auto uses the smallest confirmed context among participating account catalogs, or leaves it unknown when any participating catalog omits it.
 
 See [account management](docs/account-pools.md) and [context selection](docs/CONTEXT-SELECTION.md).
+
+Use `leverframe-cache-report` to compare cache usage from existing session logs. The workspace retrieval tools offer an opt-in way to look up tracked source during a coding session. See [cache reporting](https://github.com/michaelheichler/leverframe/blob/v0.5.8/docs/backend-caching.md#compare-session-logs-offline) and [local retrieval](https://github.com/michaelheichler/leverframe/blob/v0.5.8/docs/local-retrieval.md).
 
 ## Routes, aliases, and local servers
 

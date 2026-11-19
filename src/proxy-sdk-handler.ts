@@ -1,11 +1,13 @@
 import type { LanguageModel } from 'ai';
 import { randomUUID } from 'node:crypto';
 import { dispatchSdkPool } from './account-pool-sdk.js';
+import { ANTIGRAVITY_ORIGIN } from './antigravity/types.js';
 import {
   anthropicPromptTooLongMessage,
   estimateAnthropicInputTokens
 } from './anthropic-endpoints.js';
 import { reportedContextWindow } from './context-window.js';
+import { isOpenCodeGoCompatibleEndpoint } from './compatible-cache-usage.js';
 import { sendJson } from './http-utils.js';
 import { createLanguageModel, isOpenAiOAuth, maxToolsForNpm } from './provider-factory.js';
 import {
@@ -31,6 +33,7 @@ import { supportsSelectorSdkTransport } from './routing-selector-attempt.js';
 import { routingSdkFailure, routingSdkPrecommit, RoutingSdkRejected } from './routing-sdk-outcome.js';
 import {
   writeInferenceResponseErrorLog,
+  writeInferenceResponseLifecycleLog,
 } from './trace-log.js';
 import {
   anthropicErrorType,
@@ -48,10 +51,30 @@ import type { ProxyMessageContext } from './proxy-message-context.js';
 import { routingSdkUsage } from './routing-inference-log.js';
 import type { AnthropicUsageTrace } from './sdk-adapter.js';
 
+function upstreamUsageLogPath(state: ProxyMessageContext): string | undefined {
+  const { route, context } = state;
+  const go = route.npm === '@ai-sdk/openai-compatible' && route.authType !== 'oauth' && route.authType !== 'none'
+    && isOpenCodeGoCompatibleEndpoint(route.baseURL);
+  const antigravity = route.providerId === 'antigravity' && route.npm === '@ai-sdk/google' && route.authType === 'oauth'
+    && route.baseURL?.replace(/\/$/, '') === ANTIGRAVITY_ORIGIN;
+  return go || antigravity ? context.inferenceLogPath : undefined;
+}
+
 function proxySdkUsageObserver(state: ProxyMessageContext): ((usage: AnthropicUsageTrace) => void) | undefined {
-  if (!state.routingUsage && !state.selectorUsage) return undefined;
+  const logPath = upstreamUsageLogPath(state);
+  if (!logPath && !state.routingUsage && !state.selectorUsage) return undefined;
   return usage => {
     const measured = routingSdkUsage(usage);
+    if (logPath) writeInferenceResponseLifecycleLog(logPath, {
+      ...measured,
+      event: 'upstream_usage',
+      requestId: state.relayRequestId ?? state.trackedRequestId,
+      modelId: usage.model,
+      provider: state.providerId,
+      route: 'translated',
+      totalInputTokens: usage.totalInputTokens,
+      openCodeGoAllowanceUsd: usage.openCodeGoAllowanceUsd,
+    });
     state.routingUsage?.(measured);
     state.selectorUsage?.(measured);
   };

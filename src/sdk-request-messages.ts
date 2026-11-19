@@ -164,7 +164,7 @@ function thinkingToSdkPart(
     if (npm === '@ai-sdk/google' && !openAiSignature) {
       part.providerOptions = { google: { thoughtSignature: block.signature } };
     } else if ((npm === '@ai-sdk/openai' || npm === '@ai-sdk/openai-compatible') && openAiSignature) {
-      part.providerOptions = { openai: { reasoningEncryptedContent: openAiSignature } };
+      part.providerOptions = { openai: openAiSignature };
     }
   }
   return part;

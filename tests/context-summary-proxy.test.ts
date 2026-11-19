@@ -4,13 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { KeyringOperation, KeyringResult } from '../src/keyring-operations.js';
-import { savePreferences } from '../src/config.js';
+import { savePreferences, setPreserveCachePrefix } from '../src/config.js';
 import * as requestPolicy from '../src/context/request-policy.js';
 import { openEvidenceStore } from '../src/context/evidence-runtime.js';
 import { reserveSummarySpend } from '../src/context/summary-spend.js';
 import { isLeverframeSummaryMessage, type CompactionMessage } from '../src/context/request-compaction.js';
 import * as paidSummaryEngine from '../src/context/paid-summary-engine.js';
 import type { SummaryEngine } from '../src/context/summary-engine.js';
+import { getConfigPath, getProvidersPath } from '../src/paths.js';
 import { saveRegistry } from '../src/registry/io.js';
 import { startProxyCatalog, type ProxyHandle, type ProxyRoute } from '../src/proxy.js';
 import { sourceMessages } from './fixtures/context-summary-fixtures.js';
@@ -191,6 +192,8 @@ async function startFixture(invalidSynopsis = false): Promise<Fixture> {
   vi.stubEnv('LEVERFRAME_SUMMARY_API_KEY', 'unused-fake-key');
   guardFetchToLoopback();
   memoryKeyring.entries.clear();
+  expect(getConfigPath()).toBe(join(home, 'config.json'));
+  expect(getProvidersPath()).toBe(join(home, 'providers.json'));
   saveFixtureSettings();
   const summaryCalls = fakeSummaryState.calls;
   fakeSummaryState.engine = fakeEngine(summaryCalls, invalidSynopsis);
@@ -245,6 +248,59 @@ function assertSourceContext(body: Record<string, unknown>, original: Record<str
   expect(JSON.stringify(messages)).toContain('The failed lookup error must stay visible.');
   expect(JSON.stringify(messages)).not.toContain('old result '.repeat(120));
 }
+
+it.each([
+  { optedInProvider: 'anthropic-api', outcome: 'unchanged', reason: 'preserve_cache_prefix', summaryCalls: 0 },
+  { optedInProvider: 'openai-chatgpt-plan', outcome: 'reduced', reason: 'summary', summaryCalls: 1 },
+])('keeps cache-prefix preferences scoped to the selected provider $optedInProvider', async ({ optedInProvider, outcome, reason, summaryCalls }) => {
+  fixture = await startFixture();
+  setPreserveCachePrefix(optedInProvider, true);
+  const request = fixture.body;
+
+  const result = await requestPolicy.applyRequestContextPolicy({
+    request, sessionId: '11111111-1111-4111-8111-111111111111',
+    routeIdentity: 'anthropic-api:summary-fixture-model', contextWindow: 128_000,
+    signal: new AbortController().signal,
+  });
+
+  expect(result).toMatchObject({ outcome, reason });
+  expect(Object.is(result.request, request)).toBe(outcome === 'unchanged');
+  expect(fixture.summaryCalls).toHaveLength(summaryCalls);
+});
+
+function requestWithDuplicateResults(): Record<string, unknown> {
+  const result = 'same tool output '.repeat(180);
+  const lookup = { type: 'tool_use', name: 'lookup', input: { record: 'same' } };
+  return {
+    model: 'anthropic-api__summary-fixture', max_tokens: 200,
+    messages: [
+      { role: 'user', content: 'Look up the record twice.' },
+      { role: 'assistant', content: [{ ...lookup, id: 'first' }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'first', content: result }] },
+      { role: 'assistant', content: [{ ...lookup, id: 'second' }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'second', content: result }] },
+    ],
+  };
+}
+
+it.each([
+  { optedInProvider: 'anthropic-api', outcome: 'unchanged', reason: 'preserve_cache_prefix' },
+  { optedInProvider: 'openai-chatgpt-plan', outcome: 'reduced', reason: 'duplicate_evidence' },
+])('keeps duplicate tool results intact only for the opted-in provider $optedInProvider', async ({ optedInProvider, outcome, reason }) => {
+  fixture = await startFixture();
+  savePreferences({ summarySettings: { enabled: false } });
+  setPreserveCachePrefix(optedInProvider, true);
+  const request = requestWithDuplicateResults();
+
+  const result = await requestPolicy.applyRequestContextPolicy({
+    request, sessionId: '11111111-1111-4111-8111-111111111111',
+    routeIdentity: 'anthropic-api:summary-fixture-model', contextWindow: 128_000,
+    signal: new AbortController().signal,
+  });
+
+  expect(result).toMatchObject({ outcome, reason });
+  expect(Object.is(result.request, request)).toBe(outcome === 'unchanged');
+});
 
 it('applies saved summary opt-in once before quota failover and forwards the same safe summary', async () => {
   fixture = await startFixture();

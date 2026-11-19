@@ -1,6 +1,8 @@
 export interface CacheTtlEvidence {
   cache_creation_5m_input_tokens?: number;
   cache_creation_1h_input_tokens?: number;
+  totalInputTokens?: number;
+  openCodeGoAllowanceUsd?: number;
 }
 
 export function cacheTtlEvidence(metadata: unknown): CacheTtlEvidence {
@@ -9,8 +11,11 @@ export function cacheTtlEvidence(metadata: unknown): CacheTtlEvidence {
   if (!value || typeof value !== 'object') return {};
   const evidence = value as Record<string, unknown>;
   const valid = (item: unknown): item is number => typeof item === 'number' && Number.isSafeInteger(item) && item >= 0;
+  const allowance = evidence.openCodeGoAllowanceUsd;
   return {
     ...(valid(evidence.cacheCreation5mInputTokens) ? { cache_creation_5m_input_tokens: evidence.cacheCreation5mInputTokens } : {}),
     ...(valid(evidence.cacheCreation1hInputTokens) ? { cache_creation_1h_input_tokens: evidence.cacheCreation1hInputTokens } : {}),
+    ...(valid(evidence.totalInputTokens) ? { totalInputTokens: evidence.totalInputTokens } : {}),
+    ...(typeof allowance === 'number' && Number.isFinite(allowance) && allowance >= 0 ? { openCodeGoAllowanceUsd: allowance } : {}),
   };
 }

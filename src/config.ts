@@ -6,6 +6,7 @@ import { durableAtomicWrite } from './durable-io.js';
 import { CONFIG_DIR_MODE, acquireServerPasswordLock, withConfigWriteLock } from './config-lock.js';
 import { normalizeModelAliases } from './model-aliases.js';
 import { parseRoutingConfig } from './routing-config.js';
+import { isValidProviderId } from './registry/validate.js';
 
 export { ConfigLockBusyError, _configLockInternals } from './config-lock.js';
 
@@ -13,6 +14,12 @@ const CONFIG_FILE_MODE = 0o600;
 
 function validQuotaThreshold(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value < 100;
+}
+
+function providerCachePrefixIds(raw: unknown): string[] {
+  return Array.isArray(raw)
+    ? [...new Set(raw.filter((id): id is string => typeof id === 'string' && isValidProviderId(id)))].sort()
+    : [];
 }
 
 function validateContextCeilingOverrides(raw: unknown): string[] | undefined {
@@ -105,8 +112,10 @@ export function loadPreferences(): UserPreferences {
   const modelAliases = config.modelAliases === undefined
     ? undefined
     : normalizeModelAliases(config.modelAliases);
+  const preserveCachePrefixProviders = providerCachePrefixIds(config.preserveCachePrefixProviders);
   return {
     ...(config.routing === undefined ? {} : { routing: parseRoutingConfig(config.routing) }),
+    ...(preserveCachePrefixProviders.length > 0 ? { preserveCachePrefixProviders } : {}),
     summarySettings: validateSummarySettings(config.summarySettings),
     accountPoolBalancing: typeof config.accountPoolBalancing === 'boolean' ? config.accountPoolBalancing : true,
     accountPoolFailover: typeof config.accountPoolFailover === 'boolean' ? config.accountPoolFailover : true,
@@ -125,6 +134,20 @@ export function loadPreferences(): UserPreferences {
     launch: validateLaunchConfig(config.launch),
     server: config.server,
   };
+}
+
+export function setPreserveCachePrefix(providerId: string, enabled: boolean): void {
+  if (!isValidProviderId(providerId)) throw new TypeError('Invalid provider ID.');
+  withConfigWriteLock(() => {
+    const config = readConfig();
+    const ids = new Set(providerCachePrefixIds(config.preserveCachePrefixProviders));
+    if (ids.has(providerId) === enabled) return;
+    if (enabled) ids.add(providerId);
+    else ids.delete(providerId);
+    if (ids.size > 0) config.preserveCachePrefixProviders = [...ids].sort();
+    else delete config.preserveCachePrefixProviders;
+    writeConfig(config);
+  });
 }
 
 export function savePreferences(prefs: Partial<Pick<UserPreferences, 'routing' | 'lastModel' | 'lastProvider' | 'recentModelsByProvider' | 'favoriteModels' | 'modelAliases' | 'claudeBridgeMode' | 'serverBridgeMode' | 'appPathOverrides' | 'recentLaunchFolders' | 'contextCeilingOverrides' | 'accountPoolBalancing' | 'accountPoolFailover' | 'accountPoolQuotaThresholdPercent' | 'summarySettings'>>): void {

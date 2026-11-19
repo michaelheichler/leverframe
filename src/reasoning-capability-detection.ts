@@ -1,5 +1,6 @@
 
 import { VERTEX_ANTHROPIC_NPM } from './constants.js';
+import { isCanonicalOpenAiBaseUrl } from './openai-endpoint-provenance.js';
 
 export type ReasoningMode = 'none' | 'internal-only' | 'controllable';
 export type ReasoningSource = 'provider-metadata' | 'provider-rule' | 'model-metadata' | 'none';
@@ -42,6 +43,10 @@ export interface ReasoningCapabilities {
 }
 
 const ANTHROPIC_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
+const ANTHROPIC_WIRE_EFFORT_LEVELS = new Set<string>([...ANTHROPIC_EFFORT_LEVELS, 'xhigh', 'max']);
+const OPENAI_GPT_62_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+const CLAUDE_XHIGH_MODELS = /^claude-(?:(?:opus|sonnet)-5(?:-5)?|(?:fable|mythos)-5(?:-[12])?|haiku-5-5|opus-4-[78]|mythos-preview)(?:-\d{8})?$/;
+const CLAUDE_MAX_MODELS = /^claude-(?:opus|sonnet)-4-6(?:-\d{8})?$/;
 
 const EMPTY_REASONING: ReasoningCapabilities = {
   levels: [],
@@ -56,10 +61,10 @@ function isClaudeReasoningModel(modelId: string): boolean {
   const lower = modelId.toLowerCase();
   if (!lower.startsWith('claude-')) return false;
   if (lower.includes('fable') || lower.includes('mythos')) return true;
-  const m = lower.match(/claude-(?:opus|sonnet|haiku)-(\d+)-(\d+)/);
+  const m = lower.match(/^claude-(?:opus|sonnet|haiku)-(\d+)(?:-(\d+))?/);
   if (!m) return false;
   const major = Number(m[1]);
-  const minor = Number(m[2]);
+  const minor = Number(m[2] ?? 0);
   return major > 4 || (major === 4 && minor >= 6);
 }
 
@@ -152,6 +157,24 @@ function metadataReasoningCapabilities(
   return EMPTY_REASONING;
 }
 
+function openAiReasoningCapabilities(npm: string, modelId: string, metadata?: ReasoningMetadata): ReasoningCapabilities {
+  const wireFormat = { kind: 'openai-reasoning-effort' } as const;
+  if (npm === '@ai-sdk/openai' && metadata?.providerId === 'openai'
+    && /^gpt-6\.2-(?:astra|sol)$/.test(modelId) && isCanonicalOpenAiBaseUrl(metadata.apiBaseUrl)
+    && metadata.reasoning !== false && metadata.supportedReasoningEfforts === undefined) {
+    return {
+      levels: [...OPENAI_GPT_62_EFFORT_LEVELS],
+      defaultLevel: defaultReportedReasoningLevel([...OPENAI_GPT_62_EFFORT_LEVELS], metadata.defaultReasoningEffort) || 'medium',
+      supportsSummaries: metadata.supportsReasoningSummaries === true,
+      mode: 'controllable',
+      source: 'provider-rule',
+      confidence: 'documented',
+      wireFormat,
+    };
+  }
+  return metadataReasoningCapabilities(metadata, wireFormat);
+}
+
 function reportedEffort(metadata: ReasoningMetadata | undefined, effort: string): string | undefined {
   const levels = reportedReasoningLevels(metadata);
   return levels?.includes(effort) ? effort : undefined;
@@ -169,24 +192,36 @@ function openAiCompatibleReasoningWireFormat(
   return undefined;
 }
 
-function mapCodexEffortToAnthropic(effort: string): string | undefined {
-  switch (effort) {
-    case 'none':
-    case 'minimal':
-    case 'low':
-      return 'low';
-    case 'medium':
-      return 'medium';
-    case 'high':
-    case 'xhigh':
-    case 'max':
-      return effort === 'xhigh' ? 'high' : effort === 'max' ? 'max' : 'high';
-    default:
-      if (ANTHROPIC_EFFORT_LEVELS.includes(effort as typeof ANTHROPIC_EFFORT_LEVELS[number])) {
-        return effort;
-      }
-      return undefined;
+function anthropicReasoningCapabilities(npm: string, modelId: string, metadata?: ReasoningMetadata): ReasoningCapabilities {
+  if (metadata?.reasoning === false) return EMPTY_REASONING;
+  const wireFormat = { kind: 'anthropic-thinking' } as const;
+  const reported = reportedReasoningLevels(metadata)?.filter(level => ANTHROPIC_WIRE_EFFORT_LEVELS.has(level));
+  const isClaude = isClaudeReasoningModel(modelId);
+  if (reported === undefined && !isClaude && metadata?.reasoning !== true) return EMPTY_REASONING;
+  const levels: string[] = reported ?? [...ANTHROPIC_EFFORT_LEVELS];
+  if (reported === undefined && npm === '@ai-sdk/anthropic'
+    && (metadata?.apiBaseUrl === undefined || /^https:\/\/api\.anthropic\.com(?:\/v1)?\/?$/.test(metadata.apiBaseUrl))) {
+    if (CLAUDE_XHIGH_MODELS.test(modelId)) levels.push('xhigh', 'max');
+    else if (CLAUDE_MAX_MODELS.test(modelId)) levels.push('max');
   }
+  const documentedDefault = /^claude-(?:opus|haiku)-5-5(?:-\d{8})?$/.test(modelId) ? 'medium' : 'high';
+  return {
+    levels,
+    defaultLevel: defaultReportedReasoningLevel(levels, metadata?.defaultReasoningEffort)
+      || (isClaude && levels.includes(documentedDefault) ? documentedDefault : ''),
+    supportsSummaries: metadata?.supportsReasoningSummaries ?? isClaude,
+    mode: levels.length > 0 ? 'controllable' : metadata?.reasoning === true ? 'internal-only' : 'none',
+    source: reported !== undefined || !isClaude ? 'model-metadata' : 'provider-rule',
+    confidence: reported !== undefined || isClaude ? 'documented' : 'inferred',
+    wireFormat,
+  };
+}
+
+function mapCodexEffortToAnthropic(effort: string, levels: string[]): string | undefined {
+  if (levels.includes(effort)) return effort;
+  if ((effort === 'none' || effort === 'minimal') && levels.includes('low')) return 'low';
+  if (effort === 'xhigh' && levels.includes('high')) return 'high';
+  return undefined;
 }
 
 export function getReasoningCapabilities(
@@ -199,23 +234,11 @@ export function getReasoningCapabilities(
   }
 
   if (npm === '@ai-sdk/anthropic' || npm === VERTEX_ANTHROPIC_NPM) {
-    const isClaude = isClaudeReasoningModel(modelId);
-    if (isClaude || metadata?.reasoning) {
-      return {
-        levels: [...ANTHROPIC_EFFORT_LEVELS],
-        defaultLevel: 'high',
-        supportsSummaries: true,
-        mode: 'controllable',
-        source: isClaude ? 'provider-rule' : 'model-metadata',
-        confidence: isClaude ? 'documented' : 'inferred',
-        wireFormat: { kind: 'anthropic-thinking' },
-      };
-    }
-    return EMPTY_REASONING;
+    return anthropicReasoningCapabilities(npm, modelId, metadata);
   }
 
   if (npm === '@ai-sdk/openai' || npm === '@ai-sdk/azure') {
-    return metadataReasoningCapabilities(metadata, { kind: 'openai-reasoning-effort' });
+    return openAiReasoningCapabilities(npm, modelId, metadata);
   }
 
   if (npm === '@ai-sdk/google') {
@@ -270,9 +293,7 @@ export function effortProviderOptions(
   }
 
   if (npm === '@ai-sdk/openai' || npm === '@ai-sdk/azure') {
-    if (metadata?.reasoning === false) return undefined;
-    const reportedLevels = reportedReasoningLevels(metadata);
-    if (reportedLevels === undefined || !reportedLevels.includes(effort)) return undefined;
+    if (!openAiReasoningCapabilities(npm, modelId ?? '', metadata).levels.includes(effort)) return undefined;
     return {
       openai: {
         reasoningEffort: effort,
@@ -289,11 +310,11 @@ export function effortProviderOptions(
   }
 
   if (npm === '@ai-sdk/anthropic' || npm === VERTEX_ANTHROPIC_NPM) {
-    if (!modelId || !isClaudeReasoningModel(modelId)) return undefined;
-    const mapped = mapCodexEffortToAnthropic(effort);
-    return mapped
-      ? { anthropic: { thinking: { type: 'adaptive' }, effort: mapped } }
-      : undefined;
+    if (!modelId) return undefined;
+    const mapped = mapCodexEffortToAnthropic(effort, anthropicReasoningCapabilities(npm, modelId, metadata).levels);
+    if (!mapped) return undefined;
+    const thinking = isClaudeReasoningModel(modelId) ? { type: 'adaptive' } : undefined;
+    return { anthropic: { ...(thinking ? { thinking } : {}), effort: mapped } };
   }
 
   if (npm === '@ai-sdk/google') {

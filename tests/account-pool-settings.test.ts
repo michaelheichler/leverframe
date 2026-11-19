@@ -3,8 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import * as prompts from '@clack/prompts';
-import { loadPreferences } from '../src/config.js';
+import { loadPreferences, setPreserveCachePrefix } from '../src/config.js';
 import { runAccountPoolSettings } from '../src/account-management-prompts.js';
+import { getConfigPath } from '../src/paths.js';
+import { runProviderCacheSettings } from '../src/provider-cache-settings.js';
 
 const settingsPrompt = vi.hoisted(() => ({
   responses: [] as string[],
@@ -43,6 +45,36 @@ afterEach(() => {
 
 it('defaults account balancing and quota failover to enabled', () => {
   expect(loadPreferences()).toMatchObject({ accountPoolBalancing: true, accountPoolFailover: true });
+});
+
+it('returns one provider to the current cache policy and leaves the other opt-in saved', async () => {
+  expect(getConfigPath()).toBe(join(home, '.leverframe', 'config.json'));
+  setPreserveCachePrefix('anthropic-api', true);
+  setPreserveCachePrefix('openai-chatgpt-plan', true);
+  settingsPrompt.responses = ['anthropic-api', 'current'];
+  const providers = [
+    { id: 'anthropic-api', name: 'Anthropic API', enabled: true },
+    { id: 'openai-chatgpt-plan', name: 'ChatGPT plan', enabled: true },
+    { id: 'opencode-go', name: 'OpenCode Go', enabled: false },
+  ];
+
+  await runProviderCacheSettings(providers);
+
+  expect(prompts.select).toHaveBeenCalledTimes(2);
+  expect(prompts.select).toHaveBeenNthCalledWith(1, expect.objectContaining({
+    options: [
+      expect.objectContaining({ value: 'anthropic-api' }),
+      expect.objectContaining({ value: 'openai-chatgpt-plan' }),
+    ],
+  }));
+  expect(prompts.select).toHaveBeenNthCalledWith(2, expect.objectContaining({
+    initialValue: 'preserve',
+    options: [
+      expect.objectContaining({ value: 'current' }),
+      expect.objectContaining({ value: 'preserve' }),
+    ],
+  }));
+  expect(loadPreferences().preserveCachePrefixProviders).toEqual(['openai-chatgpt-plan']);
 });
 
 it.each([

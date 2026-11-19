@@ -32,12 +32,15 @@ try {
     'docs/model-picker.png',
     'package.json',
     'scripts/claudeplus.py',
+    'scripts/cache-session-report.mjs',
   ].sort();
   const actual = records[0].files.map(file => file.path).sort();
   const chunks = actual.filter(path => /^dist\/chunk-[A-Z0-9]+\.js$/.test(path));
   const nativeChunks = actual.filter(path => /^dist\/claude-bundle-native-[A-Z0-9]+\.js$/.test(path));
-  const fixed = actual.filter(path => !chunks.includes(path) && !nativeChunks.includes(path));
-  if (chunks.length !== 1 || nativeChunks.length !== 1 || JSON.stringify(fixed) !== JSON.stringify(expected)) {
+  const retrievalChunks = actual.filter(path => /^dist\/retrieval-command-[A-Z0-9]+\.js$/.test(path));
+  const fixed = actual.filter(path => !chunks.includes(path) && !nativeChunks.includes(path) && !retrievalChunks.includes(path));
+  if (chunks.length !== 1 || nativeChunks.length !== 1 || retrievalChunks.length !== 1
+    || JSON.stringify(fixed) !== JSON.stringify(expected)) {
     throw new Error(`Unexpected package contents:\n${actual.join('\n')}`);
   }
   if (records[0].unpackedSize > 4_000_000) {
@@ -78,6 +81,11 @@ try {
     encoding: 'utf8',
   }).trim();
   if (version !== packageVersion) throw new Error(`Packed CLI returned unexpected version: ${version}`);
+  const retrievalHelp = execFileSync(process.execPath, [installedCli, 'retrieval', '--help'], {
+    cwd: consumer,
+    encoding: 'utf8',
+  });
+  if (!retrievalHelp.includes('leverframe retrieval serve')) throw new Error('Packed CLI is missing retrieval.');
   // Because transitive SDK dependencies can add binaries.
   const dependencies = execFileSync(npm, ['ls', '--all', '--parseable'], {
     cwd: consumer, encoding: 'utf8',

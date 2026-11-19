@@ -1,6 +1,6 @@
 {
   "name": "@michaelheichler/leverframe",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "description": "Bridge Claude Code to OpenAI-compatible providers, including OpenAI, ChatGPT plans, Kimi, Moonshot, and z.ai",
   "author": "Michael Heichler",
   "license": "MIT",
@@ -21,7 +21,8 @@
   "bin": {
     "leverframe": "dist/cli.js",
     "leverframe-claude": "dist/claude-wrapper.js",
-    "claudeplus": "scripts/claudeplus.py"
+    "claudeplus": "scripts/claudeplus.py",
+    "leverframe-cache-report": "scripts/cache-session-report.mjs"
   },
   "files": [
     "dist/*.js",
@@ -30,6 +31,7 @@
     "docs/assets/leverframe-orange-slate-logo.png",
     "docs/model-picker.png",
     "scripts/claudeplus.py",
+    "scripts/cache-session-report.mjs",
     "THIRD_PARTY_NOTICES.md",
     "README.md"
   ],
@@ -56,6 +58,7 @@
     "@ai-sdk/provider": "4.0.3",
     "@ai-sdk/provider-utils": "5.0.7",
     "@clack/prompts": "0.9.1",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "ai": "7.0.22",
     "https-proxy-agent": "9.1.0",
     "ipaddr.js": "2.4.0",

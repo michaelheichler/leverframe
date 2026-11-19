@@ -90,6 +90,7 @@ export type BridgeMode = 'endpoint' | 'proxy';
 
 export interface UserPreferences {
   routing?: RoutingConfig;
+  preserveCachePrefixProviders?: string[];
   summarySettings?: {
     enabled: boolean;
     engineId?: string;

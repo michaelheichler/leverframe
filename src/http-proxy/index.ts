@@ -116,8 +116,16 @@ export async function startConfiguredHttpProxy(
   prepareClaude = false,
   activateRouting = false,
 ): Promise<{ handle: HttpProxyHandle; loaded: LoadedHttpProxyRoutes }> {
+  let stageStarted = prepareClaude ? performance.now() : 0;
+  const reportStartupStage = (stage: string) => {
+    if (!prepareClaude) return;
+    const now = performance.now();
+    console.error(`[leverframe startup] ${stage}: ${Math.round(now - stageStarted)} ms`);
+    stageStarted = now;
+  };
   const recovery = activateRouting ? scanRoutingRecovery() : undefined;
   const loaded = await loadHttpProxyRoutes(activateRouting, recovery?.needed === true);
+  reportStartupStage('provider catalog');
   const evidence = activateRouting ? loaded.routingEvidence : undefined;
   const catalog = evidence ? await buildRoutingRuntime({ config: { ...evidence.config,
     pool: [...(evidence.config.pool ?? []), ...(recovery?.targets ?? [])] }, registry: loadRegistry(),
@@ -134,6 +142,7 @@ export async function startConfiguredHttpProxy(
       acceptNewBinding: () => loadPreferences().routing?.enabled === true }
     : recoveredCatalog && recoveryEvidence ? { config: { ...recoveryEvidence.config, enabled: false },
       catalog: recoveredCatalog, workload: {}, recoveryOnly: true as const } : undefined;
+  reportStartupStage('routing setup');
   if (prepareClaude) {
     const installation = resolveClaudeInstallation();
     if (!installation) throw new Error('Claude Code installation not found for proxy preparation.');
@@ -147,6 +156,7 @@ export async function startConfiguredHttpProxy(
       routingPreflight: preflight,
       ...(recoveryOnly ? { routingRecoveryOnly: true } : {}),
     });
+    reportStartupStage('Claude preparation');
   }
   const handle = await startHttpProxy({
     host: '127.0.0.1',
@@ -163,6 +173,7 @@ export async function startConfiguredHttpProxy(
     handle.caCertPath,
     process.env['NODE_EXTRA_CA_CERTS'],
   );
+  reportStartupStage('proxy listener and certificates');
   return { handle, loaded };
 }
 

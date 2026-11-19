@@ -138,7 +138,8 @@ export type InferenceResponseLifecycleEvent =
   | 'response_completed'
   | 'response_failed'
   | 'response_client_disconnected'
-  | 'response_usage';
+  | 'response_usage'
+  | 'upstream_usage';
 
 export type InferenceResponsePhase =
   | 'preparing_translation'
@@ -176,6 +177,7 @@ export interface InferenceResponseLifecycleLogEntry {
   cacheCreation5mInputTokens?: number;
   cacheCreation1hInputTokens?: number;
   totalInputTokens?: number;
+  openCodeGoAllowanceUsd?: number;
   promptCacheKeyHash?: string;
   lastPartType?: string;
   errorType?: string;
@@ -270,6 +272,7 @@ export function writeInferenceResponseLifecycleLog(
   const cacheCreation5mInputTokens = nonNegativeInteger(entry.cacheCreation5mInputTokens);
   const cacheCreation1hInputTokens = nonNegativeInteger(entry.cacheCreation1hInputTokens);
   const totalInputTokens = nonNegativeInteger(entry.totalInputTokens);
+  const allowance = entry.openCodeGoAllowanceUsd;
   writeSecureLogLine(path, JSON.stringify({
     timestamp: new Date().toISOString(),
     event: entry.event,
@@ -298,6 +301,7 @@ export function writeInferenceResponseLifecycleLog(
     ...(cacheCreation5mInputTokens !== undefined ? { cacheCreation5mInputTokens } : {}),
     ...(cacheCreation1hInputTokens !== undefined ? { cacheCreation1hInputTokens } : {}),
     ...(totalInputTokens !== undefined ? { totalInputTokens } : {}),
+    ...(typeof allowance === 'number' && Number.isFinite(allowance) && allowance >= 0 ? { openCodeGoAllowanceUsd: allowance } : {}),
     ...(entry.promptCacheKeyHash
       ? { promptCacheKeyHash: compactLogValue(entry.promptCacheKeyHash, 100) }
       : {}),

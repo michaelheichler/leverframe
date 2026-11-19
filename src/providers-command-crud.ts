@@ -9,6 +9,7 @@ import {
   type ProviderDisplayEntry,
 } from './provider-catalog.js';
 import { reportBrowsingCatalogStatus } from './provider-catalog-status.js';
+import { runProviderCacheSettings } from './provider-cache-settings.js';
 import {
   listAddableTemplates,
   listVisibleOAuthTemplates,
@@ -396,6 +397,7 @@ export async function runProvidersHub(): Promise<number> {
       { value: 'add', label: pc.bold('+ Add a provider'), hint: '' },
       { value: 'pool-settings', label: 'Account pool settings', hint: '' },
     ];
+    if (entries.some(entry => entry.enabled)) options.push({ value: 'cache-settings', label: 'Cache settings' });
 
     for (const entry of entries) {
       const hint = entry.id;
@@ -425,6 +427,10 @@ export async function runProvidersHub(): Promise<number> {
     }
     if (choice === 'pool-settings') {
       await runAccountPoolSettings();
+      continue;
+    }
+    if (choice === 'cache-settings') {
+      await runProviderCacheSettings(entries);
       continue;
     }
     if (choice === 'refresh-all') {

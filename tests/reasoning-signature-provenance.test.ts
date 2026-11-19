@@ -48,3 +48,30 @@ it('keeps OpenAI encrypted content out of Google thought signatures', () => {
 
   expect(result).toEqual([{ role: 'assistant', content: [{ type: 'reasoning', text: 'Visible reasoning' }] }]);
 });
+
+it('replays the original OpenAI reasoning item ID with its encrypted content', () => {
+  const signature = grabRoundTripSignature({
+    type: 'reasoning-end',
+    providerMetadata: { openai: { itemId: 'rs_original', reasoningEncryptedContent: 'encrypted-fixture' } },
+  });
+
+  const result = translateMessages([{ role: 'assistant', content: [{
+    type: 'thinking', thinking: 'Visible reasoning', signature,
+  }] }], '@ai-sdk/openai');
+
+  expect(result).toEqual([{ role: 'assistant', content: [{
+    type: 'reasoning', text: 'Visible reasoning',
+    providerOptions: { openai: { itemId: 'rs_original', reasoningEncryptedContent: 'encrypted-fixture' } },
+  }] }]);
+});
+
+it('replays OpenAI thinking signatures from existing sessions without an item ID', () => {
+  const result = translateMessages([{ role: 'assistant', content: [{
+    type: 'thinking', thinking: '', signature: 'leverframe:openai:v1:encrypted-fixture',
+  }] }], '@ai-sdk/openai');
+
+  expect(result).toEqual([{ role: 'assistant', content: [{
+    type: 'reasoning', text: '',
+    providerOptions: { openai: { reasoningEncryptedContent: 'encrypted-fixture' } },
+  }] }]);
+});

@@ -18,7 +18,7 @@ export type FullStreamPart = {
   };
   providerMetadata?: {
     google?: { thoughtSignature?: string; thought_signature?: string };
-    openai?: { reasoningEncryptedContent?: string | null };
+    openai?: { reasoningEncryptedContent?: string | null; itemId?: string | null };
     leverframeCacheUsage?: { cacheCreation5mInputTokens?: number; cacheCreation1hInputTokens?: number };
   };
   error?: unknown;
@@ -30,7 +30,9 @@ export function grabRoundTripSignature(part: FullStreamPart): string | undefined
   const openAiSignature = md?.openai?.reasoningEncryptedContent;
   return md?.google?.thoughtSignature
     ?? md?.google?.thought_signature
-    ?? (openAiSignature ? encodeOpenAiReasoningSignature(openAiSignature) : undefined)
+    ?? (openAiSignature
+      ? encodeOpenAiReasoningSignature(openAiSignature, part.type === 'reasoning-end' ? md?.openai?.itemId : undefined)
+      : undefined)
     ?? undefined;
 }
 

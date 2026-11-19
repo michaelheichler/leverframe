@@ -52,6 +52,8 @@ export interface AnthropicUsageTrace extends Partial<AnthropicUsage> {
   promptCacheKeyHash?: string;
   cache_creation_5m_input_tokens?: number;
   cache_creation_1h_input_tokens?: number;
+  totalInputTokens?: number;
+  openCodeGoAllowanceUsd?: number;
 }
 
 export function measuredAnthropicUsage(usage: SdkUsage | undefined, inputTokensIncludeCache: boolean): Partial<AnthropicUsage> {

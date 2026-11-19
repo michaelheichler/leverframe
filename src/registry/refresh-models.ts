@@ -432,15 +432,18 @@ export async function refreshProviderModels(
 export async function refreshAllProviderModels(
   resolveKey: (provider: RegistryProvider) => Promise<string | null>,
 ): Promise<RefreshModelsResult> {
-  const refreshed: RefreshProviderResult[] = [];
   const registry = loadRegistry();
-
   const enabledProviders = registry.providers.filter(p => p.enabled && !isRetiredOpenAiProvider(p));
-
-  for (const provider of enabledProviders) {
-    const key = await resolveRefreshCredential(provider, resolveKey);
-    refreshed.push(await refreshProviderModels(provider.id, key, registry));
-  }
-
+  const refreshed: RefreshProviderResult[] = [];
+  const pending = enabledProviders.entries();
+  const concurrency = Math.min(3, enabledProviders.length);
+  const workers = await Promise.allSettled(Array.from({ length: concurrency }, async () => {
+    for (const [index, provider] of pending) {
+      const key = await resolveRefreshCredential(provider, resolveKey);
+      refreshed[index] = await refreshProviderModels(provider.id, key, registry);
+    }
+  }));
+  const failure = workers.find(result => result.status === 'rejected');
+  if (failure) throw failure.reason;
   return { refreshed };
 }

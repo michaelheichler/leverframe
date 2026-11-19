@@ -374,9 +374,10 @@ it('logs usage from a successful pooled server OAuth stream', async () => {
     expect(body).toContain('OAuth fixture response');
     expect(response.headers.get('x-leverframe-execution-id')).toBeTruthy();
     expect(response.headers.get('x-leverframe-generation')).toBeTruthy();
-    expect(entries).toContainEqual(expect.objectContaining({
-      event: 'response_usage', usageStage: 'message_delta', inputTokens: 4, outputTokens: 3,
-    }));
+    const finalUsage = entries.find(entry => entry.event === 'response_usage' && entry.usageStage === 'message_delta');
+    expect(finalUsage).toMatchObject({ totalInputTokens: 4, outputTokens: 3 });
+    expect(finalUsage).not.toHaveProperty('inputTokens');
+    expect(finalUsage).not.toHaveProperty('cacheReadInputTokens');
   } finally {
     await server.close();
     await upstream.close();

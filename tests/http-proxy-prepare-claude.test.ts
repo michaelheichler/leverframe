@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseArgs } from '../src/cli-args.js';
 import { startConfiguredHttpProxy } from '../src/http-proxy/index.js';
 
@@ -34,6 +34,8 @@ const provider = {
     contextWindow: 272_000,
   }],
 };
+
+afterEach(() => vi.restoreAllMocks());
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -119,4 +121,19 @@ describe('HTTP proxy Claude preparation', () => {
     expect(parsed.error).toBeUndefined();
     expect(parsed.serverPrepareClaude).toBe(true);
   });
+});
+
+it('reports elapsed time for each ClaudePlus startup stage', async () => {
+  const readings = [0, 300, 320, 900, 920];
+  vi.spyOn(performance, 'now').mockImplementation(() => readings.shift() ?? NaN);
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+  await startConfiguredHttpProxy(0, false, '/fixture/inference.jsonl', undefined, true);
+
+  expect(log.mock.calls).toEqual([
+    ['[leverframe startup] provider catalog: 300 ms'],
+    ['[leverframe startup] routing setup: 20 ms'],
+    ['[leverframe startup] Claude preparation: 580 ms'],
+    ['[leverframe startup] proxy listener and certificates: 20 ms'],
+  ]);
 });

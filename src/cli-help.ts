@@ -15,6 +15,7 @@ ${pc.bold('Usage:')}
   leverframe switchyard [enable|disable|status|costs|refresh|set|billing]
   leverframe executions <list|show|reconcile>
   leverframe evidence get <session-id> <reference>
+  leverframe retrieval --help
   leverframe --help
   leverframe --version
 
@@ -32,6 +33,7 @@ ${pc.bold('Commands:')}
   switchyard  Configure automatic model routing
   executions  Inspect and reconcile interrupted executions
   evidence    Retrieve stored evidence for a session
+  retrieval   Serve local workspace retrieval and measure paired runs
 
 Evidence expires after 30 days and is limited to 32 MiB by default. Set
 LEVERFRAME_EVIDENCE_MAX_BYTES to a positive byte count to change the limit.

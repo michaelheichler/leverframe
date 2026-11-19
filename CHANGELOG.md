@@ -4,12 +4,33 @@
 
 This changelog records notable changes to Leverframe.
 
-## [Unreleased]
+## [0.5.8] - 2026-11-19
+
+### Added
+
+- Providers has a per-provider Cache settings menu with an opt-in Preserve prefix mode for comparing provider cache reuse against local context reduction.
+- ChatGPT Plan backends log local prefix comparisons and provider cache counts by default. Set `LEVERFRAME_OPENAI_CACHE_DIAGNOSTICS=1` to request OpenAI comparisons on GPT-6.2. Set `LEVERFRAME_OPENAI_APPEND_ONLY_TOOLS=1` to try keeping new local tool declarations in conversation history.
+- The `leverframe-cache-report` command compares local session logs by model, effort, tool mode, and observed overlap. It can produce redacted support samples for repeated misses.
+- Optional workspace retrieval finds tracked file and identifier locations and reads short, version-checked source ranges through MCP. The offline evaluator compares cost per resolved task against Preserve prefix. See [local retrieval](docs/local-retrieval.md).
 
 ### Fixed
 
+#### Startup and request handling
+
+- Startup refreshes up to three providers at once while keeping model discovery fresh and preserving registry result order.
 - ChatGPT plan requests send Claude Code function schemas in OpenAI's best-effort mode. This avoids strict schema compilation errors with constraints such as `uniqueItems`.
 - GPT-6.2 ChatGPT plan requests put reusable instructions at the start of the input so OpenAI can cache them.
+- Ordinary proxy and gateway startup skip the execution history scan used for debug reporting.
+- GPT-6.2 ChatGPT plan requests keep local tool ordering stable. OpenAI reasoning replay keeps the original reasoning item ID, and SDK usage preserves missing cache reads as unknown.
+- ChatGPT Plan streams fail if the connection ends before a terminal event.
+- Workspace retrieval checks that the opened file matches the file it inspected before opening.
+
+#### Provider metadata and accounting
+
+- Canonical OpenAI API-key GPT-6.2 Responses requests use developer messages for reusable instructions even when discovery omits reasoning metadata.
+- Anthropic model discovery retains reported effort levels, and translated requests honor those levels. Canonical OpenAI API-key Astra and Sol use documented effort levels when the public catalog omits them.
+- Anthropic models honor an explicit reasoning disable even when the catalog also lists effort levels.
+- OpenCode Go Chat Completions records reported plan allowance and cache usage on the configured and newer official endpoints. Antigravity measured usage preserves the reported prompt total and distinguishes an omitted cache count from zero.
 
 ## [0.5.7] - 2026-11-19
 

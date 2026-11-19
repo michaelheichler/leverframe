@@ -101,7 +101,7 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
     disposeHandle: disposeLanguageModel,
   });
   const plog = makeServerLog(options.debugLogPath);
-  reconcileExecutionsAtStartupSafely(plog);
+  if (options.debugLogPath) reconcileExecutionsAtStartupSafely(plog);
 
   const server = createServer((req, res) => {
     void routeRequest(req, res, options, languageModelCache, plog);
